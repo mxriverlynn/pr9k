@@ -13,7 +13,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 - `ralph-bash/` — Original bash implementation
   - `ralph-loop` — Main orchestrator script. Run from the **target repo**, not from this repo: `path/to/ralph-loop <iterations>`
   - `ralph-hitl` — Human-in-the-loop single-prompt runner: `path/to/ralph-hitl [prompt-name]`
-  - `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
+- `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
 - `ralph-tui/` — Go TUI replacement (in progress). See "In Progress: ralph-tui" section below.
 - `prompts/` — Prompt files consumed by both bash and TUI orchestrators. Each prompt is passed to `claude -p`. Iteration prompts get `ISSUENUMBER=` and `STARTINGSHA=` prepended.
 - `docs/plans/` — Implementation plans (e.g., `ralph-tui.md` for the Go/Glyph TUI replacement)
@@ -52,7 +52,9 @@ ralph-tui/
     cli/
       args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
       args_test.go
-    workflow/                 # (not yet implemented)
+    workflow/
+      workflow.go             # ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir
+      workflow_test.go
     ui/
       ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
       ui_test.go

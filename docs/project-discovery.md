@@ -15,6 +15,12 @@
 - Coding standards: `docs/coding-standards/` (empty)
 - Prompts: `prompts/` (8 markdown prompt files consumed by both orchestrators)
 
+## scripts
+
+- Root: `scripts/`
+- Language: Bash
+- Helper scripts shared by both orchestrators: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`
+
 ## ralph-bash
 
 - Root: `ralph-bash/`
@@ -51,7 +57,7 @@
 - Run: `./ralph-tui <iterations> [-project-dir <path>]`
 - Test: `cd ralph-tui && go test ./...`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `configs/`
+- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `configs/`
 
 ### Configuration
 
