@@ -71,12 +71,21 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 		scanner := bufio.NewScanner(pipe)
 		buf := make([]byte, 256*1024)
 		scanner.Buffer(buf, 256*1024)
+		var logErr error
 		for scanner.Scan() {
 			line := scanner.Text()
-			_ = r.log.Log(stepName, line)
+			if logErr == nil {
+				logErr = r.log.Log(stepName, line)
+				if logErr != nil {
+					_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+				}
+			}
 			r.mu.Lock()
 			_, _ = fmt.Fprintln(r.logWriter, line)
 			r.mu.Unlock()
+		}
+		if err := scanner.Err(); err != nil {
+			_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
 		}
 	}
 
