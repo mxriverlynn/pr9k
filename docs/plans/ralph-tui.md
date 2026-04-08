@@ -425,6 +425,8 @@ ralph-tui <iterations> [-project-dir <path>]
 - **`<iterations>`** (required) — Number of iterations to run. Must be > 0.
 - **`-project-dir <path>`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
 
+Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -project-dir /tmp` and `ralph-tui -project-dir /tmp 3` are valid). This is handled by `reorderArgs` in `internal/cli/args.go`, which moves flag args before positionals prior to parsing, working around Go's `flag` package stopping at the first non-flag argument.
+
 ---
 
 ## Acceptance Criteria & Test Plans
@@ -452,12 +454,15 @@ ralph-tui <iterations> [-project-dir <path>]
 - When `prependVars` is true, prepends `ISSUENUMBER=<id>\nSTARTINGSHA=<sha>\n` before prompt content
 - When `prependVars` is false, returns prompt content as-is
 - Returns an error if the prompt file cannot be read
+- Returns an error if `PromptFile` is empty (validated before attempting file I/O)
 
 **Unit tests:**
 - Build a prompt with `prependVars: true` — verify the output starts with the two variable lines followed by file content
 - Build a prompt with `prependVars: false` — verify output equals raw file content exactly
-- Return error when prompt file path does not exist
+- Return error when prompt file path does not exist; error message includes the full file path and wraps `os.ErrNotExist`
 - Verify real newlines are used (not literal `\n` characters)
+- Return error when `PromptFile` is empty string
+- Multiline prompt file content is preserved exactly
 
 ### Command template variables (`internal/workflow/workflow.go`)
 

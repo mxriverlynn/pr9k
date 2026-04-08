@@ -50,14 +50,14 @@ ralph-tui/
     main.go                   # entry point: parses CLI args, prints parsed values
   internal/
     cli/
-      args.go                 # ParseArgs: iterations + optional -project-dir flag
+      args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
       args_test.go
     workflow/                 # (not yet implemented)
     ui/
       ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
       ui_test.go
     steps/
-      steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs
+      steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs; BuildPrompt with empty PromptFile validation
       steps_test.go
     logger/                   # (not yet implemented)
   configs/
@@ -81,3 +81,5 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - Step definitions loaded from `configs/ralph-steps.json` at runtime, resolved relative to `projectDir`
 - Logs to `logs/ralph-YYYY-MM-DD-HHMMSS.log`
 - `projectDir` resolved via `os.Executable()` with `filepath.EvalSymlinks` (symlink-safe)
+- `-project-dir` flag can appear before or after `<iterations>` — `reorderArgs` in `args.go` reorders args before parsing to work around Go's `flag` package stopping at the first positional
+- `BuildPrompt` validates that `PromptFile` is non-empty before attempting file I/O
