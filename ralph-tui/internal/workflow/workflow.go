@@ -1,9 +1,97 @@
 package workflow
 
 import (
+	"bufio"
+	"fmt"
+	"io"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 )
+
+// Runner executes workflow steps and streams subprocess output through an io.Pipe.
+// The read end of the pipe is passed to the UI component; the write end receives
+// forwarded stdout/stderr from each subprocess.
+type Runner struct {
+	logReader  *io.PipeReader
+	logWriter  *io.PipeWriter
+	mu         sync.Mutex
+	log        *logger.Logger
+	workingDir string
+}
+
+// NewRunner creates a Runner that streams subprocess output to log and through
+// an io.Pipe. workingDir is set as cmd.Dir for every subprocess.
+func NewRunner(log *logger.Logger, workingDir string) *Runner {
+	r, w := io.Pipe()
+	return &Runner{
+		logReader:  r,
+		logWriter:  w,
+		log:        log,
+		workingDir: workingDir,
+	}
+}
+
+// LogReader returns the read end of the pipe. Pass this to the UI log component
+// for real-time display.
+func (r *Runner) LogReader() *io.PipeReader {
+	return r.logReader
+}
+
+// RunStep executes command as a subprocess and streams its stdout and stderr in
+// real-time to both the pipe and the file logger. A WaitGroup ensures both
+// pipes are fully drained before cmd.Wait() is called. Writes to the shared
+// PipeWriter are mutex-protected because io.PipeWriter is not safe for
+// concurrent use.
+func (r *Runner) RunStep(stepName string, command []string) error {
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = r.workingDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("workflow: stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("workflow: stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("workflow: start %q: %w", command[0], err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	forward := func(pipe io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(pipe)
+		buf := make([]byte, 256*1024)
+		scanner.Buffer(buf, 256*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			_ = r.log.Log(stepName, line)
+			r.mu.Lock()
+			_, _ = fmt.Fprintln(r.logWriter, line)
+			r.mu.Unlock()
+		}
+	}
+
+	go forward(stdout)
+	go forward(stderr)
+
+	wg.Wait()
+	return cmd.Wait()
+}
+
+// Close closes the logWriter, sending EOF to the reader. Call this after all
+// steps complete.
+func (r *Runner) Close() error {
+	return r.logWriter.Close()
+}
 
 // ResolveCommand replaces template variables in command and resolves relative
 // script paths against projectDir.
