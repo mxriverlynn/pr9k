@@ -53,7 +53,7 @@ ralph-tui/
       args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
       args_test.go
     workflow/
-      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir
+      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; Terminate: sends SIGTERM to current subprocess, SIGKILL after 3s timeout; ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir
       workflow_test.go
     ui/
       ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
@@ -87,6 +87,7 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - `projectDir` resolved via `os.Executable()` with `filepath.EvalSymlinks` (symlink-safe)
 - `-project-dir` flag can appear before or after `<iterations>` — `reorderArgs` in `args.go` reorders args before parsing to work around Go's `flag` package stopping at the first positional
 - `BuildPrompt` validates that `PromptFile` is non-empty before attempting file I/O
+- `Runner.Terminate()` sends SIGTERM to the active subprocess; if not exited within 3 seconds, sends SIGKILL — safe to call when idle (no-op)
 
 ## Project Discovery
 
