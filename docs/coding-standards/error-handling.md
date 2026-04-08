@@ -67,3 +67,15 @@ for scanner.Scan() {
 ## bufio.Writer error surfacing
 
 `bufio.Writer` buffers writes; errors from individual writes may not surface until `Flush` or `Close`. Document this in API comments so callers are not surprised when per-write errors are not returned.
+
+## Log warnings for discarded external command output
+
+When a call to `CaptureOutput` (or any helper that runs an external command to fetch a value) fails, log a warning rather than silently continuing with an empty string. Silent discard makes failures invisible in production logs and is indistinguishable from a command that legitimately returned an empty result.
+
+```go
+username, err := executor.CaptureOutput([]string{"get_gh_user"})
+if err != nil {
+    logger.Log("warn: get_gh_user failed: " + err.Error())
+}
+// username may be empty — callers must tolerate that
+```

@@ -48,6 +48,26 @@ Template placeholder strings shared between config JSON and Go code (e.g., `{{IS
 const issueIDPlaceholder = "{{ISSUE_ID}}"
 ```
 
+## Adapter types for interface narrowing
+
+When a single concrete type satisfies multiple interfaces that route the same method name to different behaviors, use a thin adapter struct rather than adding conditional logic to the callee. This keeps each call site unambiguous and the concrete type free of orchestration knowledge.
+
+```go
+// iterHeader routes SetStepState to the iteration columns of the header.
+type iterHeader struct{ h RunHeader }
+
+func (a iterHeader) SetStepState(idx int, state ui.StepState) {
+    a.h.SetStepState(idx, state)
+}
+
+// finalHeader routes the same SetStepState call to the finalization columns.
+type finalHeader struct{ h RunHeader }
+
+func (a finalHeader) SetStepState(idx int, state ui.StepState) {
+    a.h.SetFinalizeStepState(idx, state)
+}
+```
+
 ## Document platform-scoped assumptions
 
 If a function uses platform-specific behavior (e.g., `/` as the path separator to detect script paths vs. bare commands), document the assumption at the call site so future maintainers know it is intentional, not an oversight.

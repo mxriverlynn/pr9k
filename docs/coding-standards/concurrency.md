@@ -65,3 +65,54 @@ const (
 )
 actions := make(chan StepAction, 1)
 ```
+
+## Non-blocking send for signal-safe channel writes
+
+Signal handlers and any code that must not block must use a non-blocking select when writing to a channel. A direct send blocks if the channel is full; this causes a deadlock when the handler fires while the orchestration goroutine is not listening.
+
+```go
+// Good — never blocks; drops the send if the channel is already full
+select {
+case h.Actions <- ActionQuit:
+default:
+}
+
+// Bad — blocks if channel is full (deadlock risk from signal handler)
+h.Actions <- ActionQuit
+```
+
+## Unexported field + mutex-protected getter for cross-goroutine reads
+
+When a field is written by one goroutine and read by another, make it unexported and expose it only through a mutex-protected getter. Exported fields bypass the mutex and invite data races in test code and callers.
+
+```go
+type KeyHandler struct {
+    mu           sync.Mutex
+    shortcutLine string
+}
+
+// ShortcutLine is safe to call from any goroutine.
+func (h *KeyHandler) ShortcutLine() string {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.shortcutLine
+}
+```
+
+## Non-blocking drain before each loop iteration
+
+When an orchestration loop receives control signals through a channel, drain the channel with a non-blocking select at the top of each iteration. This picks up any signal (e.g., `ActionQuit` injected by `ForceQuit`) that arrived while the previous step was running, before the next step starts.
+
+```go
+for _, step := range steps {
+    // Drain any pending quit injected while previous step was running.
+    select {
+    case action := <-h.Actions:
+        if action == ActionQuit {
+            return ActionQuit
+        }
+    default:
+    }
+    // ... run step ...
+}
+```

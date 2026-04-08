@@ -73,6 +73,29 @@ func projectRoot(t *testing.T) string {
 }
 ```
 
+## Test doubles with shared state need mutexes
+
+Spy and fake types used in tests are not exempt from the race detector. If a spy collects calls in a slice that is written by one goroutine and read by another (e.g., in an assertion after the goroutine finishes), protect the slice with a `sync.Mutex`. A data race in a test double produces false results as reliably as a race in production code.
+
+```go
+type spyHeader struct {
+    mu    sync.Mutex
+    calls []string
+}
+
+func (s *spyHeader) SetStepState(idx int, state StepState) {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.calls = append(s.calls, fmt.Sprintf("step %d=%v", idx, state))
+}
+
+func (s *spyHeader) getCalls() []string {
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    return slices.Clone(s.calls)
+}
+```
+
 ## Verify go vet before committing
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
