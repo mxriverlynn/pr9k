@@ -51,7 +51,7 @@
 - Run: `./ralph-tui <iterations> [-project-dir <path>]`
 - Test: `cd ralph-tui && go test ./...`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `configs/`
+- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `configs/`
 
 ### Configuration
 

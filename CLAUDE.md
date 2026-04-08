@@ -59,7 +59,9 @@ ralph-tui/
     steps/
       steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs; BuildPrompt with empty PromptFile validation
       steps_test.go
-    logger/                   # (not yet implemented)
+    logger/
+      logger.go               # Logger: concurrent-safe file logger with timestamped, prefixed lines; SetContext/Log/Close
+      logger_test.go
   configs/
     ralph-steps.json          # 8 iteration step definitions
     ralph-finalize-steps.json # 3 finalization step definitions
