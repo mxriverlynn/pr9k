@@ -172,6 +172,72 @@ func TestQuitConfirm_N_FromErrorMode_RestoresErrorMode(t *testing.T) {
 	}
 }
 
+// --- Constructor ---
+
+func TestNewKeyHandler_InitialState(t *testing.T) {
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(func() {}, actions)
+
+	if h.ShortcutLine != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts, got %q", h.ShortcutLine)
+	}
+	if h.Actions != actions {
+		t.Error("expected Actions to be the provided channel")
+	}
+}
+
+func TestNewKeyHandler_NilCancel_NKey_NoAction_NoPanic(t *testing.T) {
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+
+	h.Handle("n")
+
+	if len(actions) != 0 {
+		t.Error("no action should be sent when cancel is nil and n is pressed")
+	}
+	if h.mode != ModeNormal {
+		t.Error("mode should remain ModeNormal")
+	}
+}
+
+// --- Error mode ---
+
+func TestErrorMode_OtherKeys_Ignored(t *testing.T) {
+	h, _, actions := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.Handle("x")
+
+	if len(actions) != 0 {
+		t.Error("no action should be sent for unrecognized key in error mode")
+	}
+	if h.mode != ModeError {
+		t.Errorf("mode should remain ModeError, got %v", h.mode)
+	}
+	if h.ShortcutLine != ErrorShortcuts {
+		t.Errorf("ShortcutLine should remain ErrorShortcuts, got %q", h.ShortcutLine)
+	}
+}
+
+// --- Quit confirmation from error mode ---
+
+func TestQuitConfirm_Y_FromErrorMode_SendsActionQuit(t *testing.T) {
+	h, _, actions := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.Handle("q")
+	h.Handle("y")
+
+	select {
+	case action := <-actions:
+		if action != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", action)
+		}
+	default:
+		t.Error("expected ActionQuit to be sent on channel")
+	}
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {
