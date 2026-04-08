@@ -1,0 +1,5 @@
+[
+  {"name": "Deferred work",   "model": "sonnet", "promptFile": "deferred-work.md",   "isClaude": true, "prependVars": false},
+  {"name": "Lessons learned", "model": "sonnet", "promptFile": "lessons-learned.md", "isClaude": true, "prependVars": false},
+  {"name": "Final git push",  "isClaude": false,  "command": ["git", "push"]}
+]

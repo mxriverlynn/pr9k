@@ -1,0 +1,2 @@
+- Integration test (T7) for main.go binary: build and run with os/exec to verify stdout/stderr/exit codes match acceptance criteria — lower priority since main.go is a thin wrapper
+- Add `prependVars` field to the `step` struct in configs_test.go and validate that claude steps have it set correctly — ensures the orchestrator's variable prepend logic is covered by config validation tests

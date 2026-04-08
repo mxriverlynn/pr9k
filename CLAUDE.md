@@ -14,6 +14,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
   - `ralph-loop` — Main orchestrator script. Run from the **target repo**, not from this repo: `path/to/ralph-loop <iterations>`
   - `ralph-hitl` — Human-in-the-loop single-prompt runner: `path/to/ralph-hitl [prompt-name]`
   - `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
+- `ralph-tui/` — Go TUI replacement (in progress). See "In Progress: ralph-tui" section below.
 - `prompts/` — Prompt files consumed by both bash and TUI orchestrators. Each prompt is passed to `claude -p`. Iteration prompts get `ISSUENUMBER=` and `STARTINGSHA=` prepended.
 - `docs/plans/` — Implementation plans (e.g., `ralph-tui.md` for the Go/Glyph TUI replacement)
 
@@ -37,10 +38,42 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Non-claude steps (`close_gh_issue`, `git push`) capture stderr with `2>&1`
 
-## Planned: ralph-tui (Go/Glyph)
+## In Progress: ralph-tui (Go/Glyph)
 
-A Go TUI replacement for `ralph-loop` is planned in `docs/plans/ralph-tui.md`. It will live in `ralph-tui/` and use [Glyph](https://useglyph.sh/) for real-time streaming output. Key architectural notes:
+A Go TUI replacement for `ralph-loop` is being built in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+
+### Current directory structure
+
+```
+ralph-tui/
+  cmd/ralph-tui/
+    main.go                   # entry point: parses CLI args, prints parsed values
+  internal/
+    cli/
+      args.go                 # ParseArgs: iterations + optional -project-dir flag
+      args_test.go
+    workflow/                 # (not yet implemented)
+    ui/                       # (not yet implemented)
+    steps/                    # (not yet implemented)
+    logger/                   # (not yet implemented)
+  configs/
+    ralph-steps.json          # 8 iteration step definitions
+    ralph-finalize-steps.json # 3 finalization step definitions
+    configs_test.go           # validates JSON structure of both config files
+  go.mod                      # module: github.com/mxriverlynn/pr9k/ralph-tui
+```
+
+### Build and run
+
+```bash
+cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
+./ralph-tui <iterations> [-project-dir <path>]
+```
+
+Use `go build` — `go run` won't work because `projectDir` is resolved via `os.Executable()`.
+
+### Key architectural notes
 - Uses `io.Pipe` for subprocess streaming (Glyph's `Log` component takes an `io.Reader`)
-- Step definitions loaded from `ralph-steps.json`
+- Step definitions loaded from `configs/ralph-steps.json` at runtime, resolved relative to `projectDir`
 - Logs to `logs/ralph-YYYY-MM-DD-HHMMSS.log`
-- `projectDir` resolved via `os.Executable()` (won't work with `go run` — use `go build` first)
+- `projectDir` resolved via `os.Executable()` with `filepath.EvalSymlinks` (symlink-safe)

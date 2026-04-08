@@ -1,0 +1,64 @@
+## Code Review (Issue #1 — ralph-tui project scaffolding)
+
+Ran code review on all ralph-tui scaffolding files since commit 39e161e. Reviewed: main.go, args.go, args_test.go, configs_test.go, ralph-steps.json, ralph-finalize-steps.json, go.mod.
+
+### Findings
+- 0 critical, 0 major issues
+- 2 minor findings: (1) configs_test.go step struct is missing `prependVars` field — tests don't validate this flag which the orchestrator will need; (2) two args tests use identical inputs but check different fields (style nit, no change needed)
+- 3 informational notes: config JSON structure is correct and matches the plan, go.mod is minimal/correct, main.go is appropriately thin
+- Overall verdict: Approve with minor suggestions. Solid foundation for TUI implementation.
+
+---
+
+## Test Writing (Issue #1 — ralph-tui project scaffolding)
+
+Implemented all high and medium priority tests from test-plan.md (T1–T6). Added T3 (config JSON validation) in a new `ralph-tui/configs/configs_test.go` file using package `configs_test`. Extended `ralph-tui/internal/cli/args_test.go` with 7 new tests: non-integer iterations (T1), negative iterations via flag and separator (T2), flag-before-positional ordering (T4), unknown flags rejection (T5), and large iteration boundary (T6). Skipped T7 (low priority integration test for main.go binary). Deferred T7 remains in deferred.txt.
+
+---
+
+## Test Planning (Issue #1 — ralph-tui project scaffolding)
+
+Ran test planning against commits from 39e161e (HEAD). Analyzed all ralph-tui scaffolding files: main.go, args.go, args_test.go, config JSONs, go.mod.
+
+### Findings
+- Existing test suite has 5 tests covering ParseArgs happy path and two error cases
+- Identified 7 test gaps (3 high, 3 medium, 1 low priority):
+  - T1 (High): Non-integer iterations input not tested
+  - T2 (High): Negative iterations not tested
+  - T3 (High): Config JSON files have no validation tests (8 iteration steps, 3 finalization steps)
+  - T4 (Medium): Flag-before-positional ordering not tested
+  - T5 (Medium): Unknown flags rejection not tested
+  - T6 (Medium): Large iteration counts boundary not tested
+  - T7 (Low): Build-and-run integration test for main.go acceptance criteria
+- Deferred: resolveProjectDir isolation test (unexported, already exercised through ParseArgs)
+- Test plan written to test-plan.md
+
+---
+
+## Issue #10 — ralph-tui: UI keyboard shortcuts and shortcut bar
+
+Implemented the keyboard shortcut state machine in `ralph-tui/internal/ui/ui.go`:
+
+- `StepAction` type with constants: `ActionRetry`, `ActionContinue`, `ActionQuit`
+- `Mode` type with constants: `ModeNormal`, `ModeError`, `ModeQuitConfirm`
+- Shortcut text constants: `NormalShortcuts`, `ErrorShortcuts`, `QuitConfirmPrompt`
+- `KeyHandler` struct with `ShortcutLine` string (Glyph reads via pointer), `Actions` channel, and `cancel` func
+- `NewKeyHandler(cancel func(), actions chan StepAction)` constructor
+- `Handle(key string)` method dispatches keypresses to mode-specific handlers
+- `SetMode(mode Mode)` switches modes from the orchestration goroutine (e.g., on step failure)
+- Normal mode: `n` calls cancel (subprocess skip), `q` enters quit-confirm
+- Error mode: `c` sends ActionContinue, `r` sends ActionRetry, `q` enters quit-confirm
+- Quit-confirm mode: `y` sends ActionQuit, `n` restores previous mode, other keys ignored
+
+Tests in `ralph-tui/internal/ui/ui_test.go` cover all acceptance criteria (10 test functions).
+
+### Acceptance criteria status
+- [x] Shortcut bar displays correct keys for normal mode
+- [x] Shortcut bar updates to error-specific keys when a step fails
+- [x] `n` during a running step triggers subprocess cancellation
+- [x] `q` shows quit confirmation prompt
+- [x] `y` during quit confirmation exits the TUI
+- [x] `n` during quit confirmation restores normal shortcut bar
+- [x] `c` in error state sends `ActionContinue` on the channel
+- [x] `r` in error state sends `ActionRetry` on the channel
+- [x] Other keys during quit confirmation are ignored
