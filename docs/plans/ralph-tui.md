@@ -71,7 +71,7 @@ When a step fails (non-zero exit from `claude` or any subprocess), the TUI switc
 
 - The step checkbox shows `[✗]` 
 - Shortcut bar changes to show error-specific keys
-- `c` — skip this step, continue to the next one
+- `c` — skip this step, continue to the next one. **Caution:** Skipping a claude step may leave downstream steps in a broken state (e.g., skipping "Code review" means `code-review.md` won't exist for "Review fixes"). The TUI does not prevent this — the user takes responsibility for the consequences. Skipping directly to "Close issue" or "Git push" after a failure could close an issue or push broken code.
 - `r` — retry the failed step from scratch
 - `q` — quit (with confirmation)
 
@@ -129,17 +129,28 @@ Key Glyph features:
 A single goroutine runs the workflow (replicated from `ralph-loop` logic):
 
 1. Display `ralph-bash/ralph-art.txt` contents in the output log as a startup banner
-2. Get GitHub username via `gh api user`
-2. Loop N iterations:
-   a. Get next issue via `gh` CLI
-   b. Get current git SHA
+2. Get GitHub username via `gh api user` (equivalent to `ralph-bash/scripts/get_gh_user`)
+3. Loop N iterations:
+   a. Get next issue by calling `ralph-bash/scripts/get_next_issue <USERNAME>` (the username from step 2 is passed as the first argument)
+   b. Get current git SHA by calling `ralph-bash/scripts/get_commit_sha` (equivalent to `git rev-parse HEAD`)
    c. Run each step sequentially (spawn subprocess, stream output, wait for exit)
-3. Run finalization steps (deferred work, lessons learned, final push)
-4. Display completion summary: "Ralph completed after N iteration(s) and 3 finalizing tasks."
+4. Run finalization steps (deferred work, lessons learned, final push)
+5. Display completion summary: "Ralph completed after N iteration(s) and 3 finalizing tasks." — where N is the number of iterations actually executed (not the requested count), tracked by incrementing a counter at the end of each iteration loop body.
 
-If `get_next_issue` returns an empty string (no issues labeled "ralph" assigned to the user), the orchestration goroutine should log a message to the TUI output, mark the iteration as skipped, and exit the loop early — mirroring `ralph-bash/ralph-loop`'s behavior at line 43-46.
+If `get_next_issue` returns an empty string (no issues labeled "ralph" assigned to the user), the orchestration goroutine should log a message to the TUI output, mark the iteration as skipped, and exit the loop early. **Note:** The bash script calls `exit 0` here, skipping finalization entirely. The TUI intentionally differs — finalization still runs after the loop exits, because `progress.txt` or `deferred.txt` from prior iterations may still need processing.
 
-This goroutine communicates with the TUI by mutating shared state (which Glyph reads via pointers).
+This goroutine communicates with the TUI by:
+- **Outbound (workflow → UI):** Mutating shared state via pointers (which Glyph reads on each render cycle). E.g., updating `iterationLine`, step checkbox states, `shortcutLine`.
+- **Inbound (UI → workflow):** A `chan StepAction` channel. After a step fails, the orchestration goroutine blocks on this channel. The keyboard handler sends `ActionRetry`, `ActionContinue`, or `ActionQuit`. For `n` (skip during a running step), the keyboard handler calls `cancel()` directly and the orchestration goroutine detects the cancellation via `cmd.Wait()` returning a context error.
+
+```go
+type StepAction int
+const (
+    ActionRetry StepAction = iota
+    ActionContinue
+    ActionQuit
+)
+```
 
 ### Finalization phase
 
@@ -180,8 +191,13 @@ All subprocesses (`claude`, `git push`, scripts) must run with `cmd.Dir` set to 
 ```go
 // logReader and logWriter are created once at startup via io.Pipe().
 // logReader is passed to Glyph's Log() component; logWriter is shared across all steps.
-// Glyph's Log internally spawns its own goroutine with bufio.Scanner and its own sync.Mutex,
-// so no external synchronization is needed — just write to logWriter.
+//
+// IMPORTANT: io.PipeWriter is NOT safe for concurrent writes from multiple goroutines.
+// A sync.Mutex protects all writes to logWriter to prevent interleaved/corrupted lines.
+// logWriter.Close() must be called after all steps (including finalization) complete,
+// so Glyph's internal reader goroutine receives EOF and can exit cleanly.
+
+var logMu sync.Mutex  // protects writes to logWriter
 
 ctx, cancel := context.WithCancel(context.Background())
 cmd := exec.CommandContext(ctx, "claude", "--permission-mode", "acceptEdits", "--verbose", "--model", model, "-p", prompt)
@@ -201,8 +217,15 @@ forwardPipe := func(pipe io.ReadCloser) {
     scanner.Buffer(make([]byte, 256*1024), 256*1024)
     for scanner.Scan() {
         line := scanner.Text()
+        logMu.Lock()
         fmt.Fprintln(logWriter, line)   // Glyph's Log reads this via logReader
+        logMu.Unlock()
         fileLogger.Log(stepName, line)  // also write to the log file
+    }
+    if err := scanner.Err(); err != nil {
+        logMu.Lock()
+        fmt.Fprintf(logWriter, "[warning] scanner error on %s: %v\n", stepName, err)
+        logMu.Unlock()
     }
 }
 
@@ -217,7 +240,9 @@ cancel()     // clean up context
 
 The `cancel` function is stored by the orchestration goroutine so that keyboard handlers (`n` to skip, `q` to quit) can trigger subprocess termination (see "Subprocess termination" below).
 
-**No shared slice or external mutex needed.** Glyph's `Log` component owns its own internal `[]string` buffer and `sync.Mutex`. The orchestration code simply writes lines to the `io.PipeWriter` end, and Glyph's internal `readLoop` goroutine consumes them safely.
+**Write-side mutex required.** Although Glyph's `Log` component owns its own internal buffer and mutex on the read side, `io.PipeWriter` is not safe for concurrent writes from multiple goroutines. A `sync.Mutex` (`logMu` above) must protect all writes to `logWriter`. Glyph's internal `readLoop` goroutine consumes from `logReader` safely.
+
+**Pipe lifecycle:** `logWriter.Close()` must be called after all steps (including finalization) complete. This sends EOF to Glyph's internal reader goroutine, allowing it to exit cleanly. Without this, the program will hang on exit.
 
 > **Note:** The `--verbose` flag is intentionally added for the TUI (not present in `ralph-loop`) to provide richer streaming output during real-time display.
 
@@ -225,8 +250,10 @@ The `cancel` function is stored by the orchestration goroutine so that keyboard 
 
 When the user presses `n` (skip step) or confirms `q` (quit), the currently running subprocess must be terminated cleanly:
 
-1. Call `cancel()` on the step's context — this sends SIGKILL via `exec.CommandContext`
-2. Alternatively, for a gentler shutdown: call `cmd.Process.Signal(syscall.SIGTERM)`, wait up to 3 seconds, then `cmd.Process.Kill()` if still running
+1. Send `syscall.SIGTERM` to the subprocess via `cmd.Process.Signal(syscall.SIGTERM)` — gives claude a chance to flush partial work and exit cleanly
+2. Wait up to 3 seconds for the process to exit
+3. If still running after 3 seconds, call `cmd.Process.Kill()` (SIGKILL) as a fallback
+4. **Do not use `exec.CommandContext` cancellation as the primary termination mechanism** — it sends SIGKILL immediately, which can corrupt files mid-write. Instead, manage termination explicitly with SIGTERM-then-SIGKILL. Use `exec.CommandContext` only for the context plumbing (timeout propagation), and override the kill behavior
 3. The scanner goroutines will exit naturally when the pipes close
 4. `wg.Wait()` and `cmd.Wait()` will return, allowing the orchestration goroutine to proceed
 
@@ -267,7 +294,7 @@ type Step struct {
 func loadSteps(projectDir string) ([]Step, error) {
     // projectDir is the repo root, resolved at startup via os.Executable().
     // Note: os.Executable() returns a temp path when using `go run`.
-    // During development, use `go build && ./ralph-tui` or pass a -project-dir flag.
+    // During development, use `go build` or pass the -project-dir flag (see CLI args below).
     data, err := os.ReadFile(filepath.Join(projectDir, "ralph-tui", "configs", "ralph-steps.json"))
     if err != nil {
         return nil, fmt.Errorf("could not read configs/ralph-steps.json: %w", err)
@@ -336,7 +363,7 @@ Every line goes to both the TUI and a timestamped log file:
 
 Location: `logs/ralph-YYYY-MM-DD-HHMMSS.log` — one file per run. The `logs/` directory is at the repo root, resolved relative to `projectDir`, and created with `os.MkdirAll` at startup if it doesn't exist.
 
-Written via a simple `io.Writer` that timestamps and prefixes each line with the current step name. The log writer is called from the same scanner goroutines that append to `outputLines`, so it must be safe for concurrent writes — either use a mutex-protected writer or a dedicated log goroutine consuming from a channel.
+Written via a simple `io.Writer` that timestamps and prefixes each line with the current step name. The log writer is called from the same scanner goroutines that write to the `io.PipeWriter`, so it must be safe for concurrent writes — either use a mutex-protected writer or a dedicated log goroutine consuming from a channel.
 
 ---
 
@@ -386,6 +413,17 @@ pr9k/                               # repo root (projectDir)
   - `internal/steps/` — Step definition loading from JSON, prompt building.
   - `internal/logger/` — Timestamped log file writer with concurrent write safety.
 - **`configs/`** — Configuration files (step definitions). Not Go code — JSON consumed at runtime.
+
+---
+
+## CLI Arguments
+
+```
+ralph-tui <iterations> [-project-dir <path>]
+```
+
+- **`<iterations>`** (required) — Number of iterations to run. Must be > 0.
+- **`-project-dir <path>`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
 
 ---
 
@@ -500,6 +538,8 @@ pr9k/                               # repo root (projectDir)
 - Verify `cmd.Dir` is set to the captured working directory for every subprocess
 - Verify finalization steps run after iteration loop completes
 - Verify startup banner content is written to the log pipe
+- Verify `get_next_issue` is called with the GitHub username as its argument
+- Verify finalization still runs when `get_next_issue` returns empty (differs from bash `exit 0` behavior)
 
 **Integration tests:**
 - Run the orchestration with a mock `gh` / `claude` that exits immediately, verify the full flow from start to completion summary
@@ -589,8 +629,8 @@ pr9k/                               # repo root (projectDir)
 
 ## Verification
 
-1. `cd ralph-tui && go build -o ralph-tui ./cmd/ralph-tui` — compiles
-2. Run with `./ralph-tui 1` against a real repo with a "ralph" labeled issue
+1. `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui` — compiles and places binary at repo root (required for `os.Executable()` directory resolution)
+2. From the target repo, run with `path/to/pr9k/ralph-tui 1`
 3. Verify: output streams line-by-line in the log panel as claude runs
 4. Verify: step checkboxes update as steps complete
 5. Verify: `j`/`k`/arrows scroll the log, auto-scroll resumes at bottom
@@ -607,6 +647,8 @@ pr9k/                               # repo root (projectDir)
 ---
 
 ## Review Summary
+
+### Original Review (prior to iterative plan review)
 
 **Iterations completed:** 3 (stopped at iteration 3 — below 80% probability of meaningful structural improvement)
 
@@ -629,3 +671,22 @@ pr9k/                               # repo root (projectDir)
 - Documented `\n` literal vs real newline behavioral difference (harmless)
 - Added log writer concurrency note
 - Added `go run` development caveat for `os.Executable()`
+
+### Iterative Plan Review (2026-04-08)
+
+**Iterations completed:** 3 (stopped — below 80% probability of further structural improvement)
+
+**Assumptions challenged:** 8 new assumptions across 3 iterations
+- Iteration 1 (4): `get_next_issue` missing USERNAME argument (refuted), `get_commit_sha` invocation unspecified (refuted), stale `outputLines` reference (refuted), prompt file locations correct (verified)
+- Iteration 2 (2): Build command inconsistent with directory resolution (refuted), exit-loop-early vs bash `exit 0` behavior (uncertain → documented as intentional)
+- Iteration 3 (2): `-project-dir` flag undocumented (refuted), orchestration tests missing USERNAME verification (gap)
+
+**Agent validation (Glyph API verification):**
+All 11 Glyph API assumptions verified against pkg.go.dev: `Log(r io.Reader) LogC`, `.AutoScroll(bool)`, `.BindVimNav()`, `.OnUpdate(func())`, `.MaxLines(int)`, `.Grow(any)`, `VBox`, `HBox`, `Border(BorderRounded)`, `Spinner`, `app.RequestRender()`.
+
+**Agent validation (adversarial — 10 findings, 6 incorporated):**
+- **Critical (2 fixed):** `io.PipeWriter` concurrent writes unsafe — added `sync.Mutex` around all writes; `io.Pipe` never closed — added lifecycle documentation requiring `logWriter.Close()` after finalization
+- **High (1 fixed):** Keyboard→orchestration communication unspecified — added `chan StepAction` protocol with `ActionRetry`/`ActionContinue`/`ActionQuit`
+- **Medium (2 fixed):** SIGTERM should be default over SIGKILL — updated subprocess termination to use SIGTERM-then-SIGKILL; scanner `ErrTooLong` silently lost — added error check after scan loop
+- **Low (1 fixed):** `ITERATIONS_RUN` tracking — clarified completion message uses actual count
+- **Acknowledged but not changed (4):** Continue-after-failure guardrails (added caution note, user takes responsibility); empty `ISSUE_ID` validation (covered by early-exit logic); `--verbose` flag output format (needs runtime verification); `go install` directory resolution (mitigated by `-project-dir` flag)
