@@ -55,3 +55,21 @@ func TestRetryStepSeparator_ConsistentFormat(t *testing.T) {
 		}
 	}
 }
+
+// T4 — StepSeparator with empty step name
+func TestStepSeparator_WithEmptyName(t *testing.T) {
+	got := StepSeparator("")
+	want := "──  ─────────────"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// T5 — RetryStepSeparator with empty step name
+func TestRetryStepSeparator_WithEmptyName(t *testing.T) {
+	got := RetryStepSeparator("")
+	want := "──  (retry) ─────────────"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

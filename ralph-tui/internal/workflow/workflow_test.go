@@ -635,6 +635,104 @@ func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {
 	_ = log.Close()
 }
 
+// WriteToLog tests
+
+// T1 — WriteToLog line appears in pipe output
+func TestWriteToLog_LineAppearsInPipe(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	r.WriteToLog("injected line")
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "injected line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'injected line' in pipe output, got %v", lines)
+	}
+}
+
+// T2 — WriteToLog interleaves correctly with RunStep output
+func TestWriteToLog_InterleaveWithRunStep(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	if err := r.RunStep("step-before", []string{"echo", "before"}); err != nil {
+		t.Fatalf("RunStep before: %v", err)
+	}
+	r.WriteToLog("--- separator ---")
+	if err := r.RunStep("step-after", []string{"echo", "after"}); err != nil {
+		t.Fatalf("RunStep after: %v", err)
+	}
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	foundBefore, foundSep, foundAfter := false, false, false
+	for _, l := range lines {
+		switch l {
+		case "before":
+			foundBefore = true
+		case "--- separator ---":
+			foundSep = true
+		case "after":
+			foundAfter = true
+		}
+	}
+	if !foundBefore {
+		t.Errorf("expected 'before' in pipe output, got %v", lines)
+	}
+	if !foundSep {
+		t.Errorf("expected '--- separator ---' in pipe output, got %v", lines)
+	}
+	if !foundAfter {
+		t.Errorf("expected 'after' in pipe output, got %v", lines)
+	}
+}
+
+// T3 — WriteToLog with empty string writes a blank line (no panic, no no-op)
+func TestWriteToLog_EmptyString(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	r.WriteToLog("before")
+	r.WriteToLog("")
+	r.WriteToLog("after")
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	// Expect three lines: "before", "", "after"
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines (including blank), got %d: %v", len(lines), lines)
+	}
+	if lines[1] != "" {
+		t.Errorf("expected blank line at index 1, got %q", lines[1])
+	}
+}
+
+// T6 — WriteToLog after Close does not panic
+func TestWriteToLog_AfterCloseNoPanic(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	// Should not panic; write error is silently discarded.
+	r.WriteToLog("late line")
+}
+
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
