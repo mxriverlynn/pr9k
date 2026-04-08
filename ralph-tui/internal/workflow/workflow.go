@@ -139,6 +139,14 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	return cmd.Wait()
 }
 
+// WriteToLog writes a single line directly to the log pipe. Use this to
+// inject separator lines between subprocess outputs without running a command.
+func (r *Runner) WriteToLog(line string) {
+	r.mu.Lock()
+	_, _ = fmt.Fprintln(r.logWriter, line)
+	r.mu.Unlock()
+}
+
 // Close closes the logWriter, sending EOF to the reader. Call this after all
 // steps complete.
 func (r *Runner) Close() error {
