@@ -608,6 +608,20 @@ func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
 
 // WasTerminated tests
 
+// Gap 6 — WasTerminated returns false on a fresh Runner before any RunStep call.
+func TestWasTerminated_FalseOnFreshRunner(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	if r.WasTerminated() {
+		t.Error("WasTerminated should be false on a freshly constructed Runner")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
 // TestWasTerminated_FalseBeforeTerminate verifies the flag is false when
 // Terminate has not been called.
 func TestWasTerminated_FalseBeforeTerminate(t *testing.T) {

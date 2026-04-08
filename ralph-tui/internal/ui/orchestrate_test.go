@@ -261,6 +261,161 @@ func TestOrchestrate_BlocksOnActionChannelDuringErrorState(t *testing.T) {
 
 // --- Quit ---
 
+// --- Happy path ---
+
+// Gap 1 — All steps succeed without error; both are marked StepDone.
+func TestOrchestrate_AllStepsSucceed_ReturnsActionContinue(t *testing.T) {
+	stub := &stubRunner{results: []error{nil, nil}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	done := runOrchestrate(steps, stub, spy, h)
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return for all-success run")
+	}
+
+	for i := range 2 {
+		state, ok := spy.lastStateFor(i)
+		if !ok || state != StepDone {
+			t.Errorf("expected step %d to be StepDone, got %v (ok=%v)", i, state, ok)
+		}
+	}
+}
+
+// Gap 2 — Empty steps slice returns immediately with ActionContinue.
+func TestOrchestrate_EmptySteps_ReturnsActionContinue(t *testing.T) {
+	stub := &stubRunner{}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+
+	done := runOrchestrate([]ResolvedStep{}, stub, spy, h)
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return for empty steps")
+	}
+
+	if stub.callCount != 0 {
+		t.Errorf("expected no RunStep calls for empty steps, got %d", stub.callCount)
+	}
+}
+
+// --- Retry fails again ---
+
+// Gap 3 — Retry fails again; user continues on the second failure.
+func TestOrchestrate_RetryFailsAgain_ThenContinue(t *testing.T) {
+	stub := &stubRunner{results: []error{errors.New("fail1"), errors.New("fail2")}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 2)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "step0", Command: []string{"x"}}}
+
+	done := runOrchestrate(steps, stub, spy, h)
+
+	time.Sleep(30 * time.Millisecond) // blocked on first error
+	h.Actions <- ActionRetry
+
+	time.Sleep(30 * time.Millisecond) // blocked on second error
+	h.Actions <- ActionContinue
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after retry-fail-continue")
+	}
+
+	if stub.callCount != 2 {
+		t.Errorf("expected 2 RunStep calls (original + retry), got %d", stub.callCount)
+	}
+
+	state, ok := spy.lastStateFor(0)
+	if !ok || state != StepFailed {
+		t.Errorf("expected step 0 to remain StepFailed after continue, got %v (ok=%v)", state, ok)
+	}
+}
+
+// --- Quit mid-sequence ---
+
+// Gap 4 — Quitting on the first failed step prevents subsequent steps from running.
+func TestOrchestrate_QuitMidSequence_SkipsRemainingSteps(t *testing.T) {
+	stub := &stubRunner{results: []error{errors.New("fail"), nil}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	done := runOrchestrate(steps, stub, spy, h)
+
+	time.Sleep(30 * time.Millisecond) // blocked on step 0 error
+	h.Actions <- ActionQuit
+
+	select {
+	case result := <-done:
+		if result != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after ActionQuit")
+	}
+
+	if stub.callCount != 1 {
+		t.Errorf("expected only 1 RunStep call (step 1 skipped), got %d", stub.callCount)
+	}
+}
+
+// --- Mode restoration ---
+
+// Gap 5 — After ActionContinue, mode and shortcut bar are restored to Normal.
+func TestOrchestrate_Continue_RestoresModeToNormal(t *testing.T) {
+	stub := &stubRunner{results: []error{errors.New("fail")}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "step0", Command: []string{"x"}}}
+
+	done := runOrchestrate(steps, stub, spy, h)
+
+	time.Sleep(30 * time.Millisecond) // blocked in error state
+	h.Actions <- ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after ActionContinue")
+	}
+
+	if h.ShortcutLine != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after continue, got %q", h.ShortcutLine)
+	}
+	if h.mode != ModeNormal {
+		t.Errorf("expected ModeNormal after continue, got %v", h.mode)
+	}
+}
+
+// --- Quit ---
+
 // TestOrchestrate_Quit_ReturnsActionQuit passes through the quit action.
 func TestOrchestrate_Quit_ReturnsActionQuit(t *testing.T) {
 	stub, spy, h, steps := newOrchestrateTest(t, errors.New("exit 1"))
