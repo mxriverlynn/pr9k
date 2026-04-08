@@ -83,3 +83,20 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - `projectDir` resolved via `os.Executable()` with `filepath.EvalSymlinks` (symlink-safe)
 - `-project-dir` flag can appear before or after `<iterations>` — `reorderArgs` in `args.go` reorders args before parsing to work around Go's `flag` package stopping at the first positional
 - `BuildPrompt` validates that `PromptFile` is non-empty before attempting file I/O
+
+## Project Discovery
+
+- See [`docs/project-discovery.md`](docs/project-discovery.md) for full project discovery details including languages, frameworks, tooling, commands, test structure, documentation paths, and infrastructure for all projects in this repository.
+- Default branch: main
+- Docs: `docs/`
+
+### ralph-bash
+
+- Language: Bash
+- No build, test, or lint commands
+
+### ralph-tui
+
+- Language: Go 1.23
+- Test: `cd ralph-tui && go test ./...`
+- Build: `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
