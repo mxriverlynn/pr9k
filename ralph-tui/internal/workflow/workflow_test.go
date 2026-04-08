@@ -551,6 +551,90 @@ func TestTerminate_SIGTERMSentBeforeSIGKILL(t *testing.T) {
 	}
 }
 
+// TestTerminate_SIGKILLFallbackWhenSIGTERMIgnored starts a subprocess that
+// traps and ignores SIGTERM, calls Terminate(), and verifies RunStep returns
+// within 5 seconds (SIGKILL fires after the 3-second timeout).
+func TestTerminate_SIGKILLFallbackWhenSIGTERMIgnored(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	// trap '' TERM ignores SIGTERM entirely; the process will only die via SIGKILL.
+	script := `trap '' TERM; while true; do sleep 0.1; done`
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("sigkill-step", []string{"sh", "-c", script})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+		// RunStep returned — SIGKILL fired after 3s timeout
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds; SIGKILL fallback may be broken")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TestTerminate_NoOpWhenNoSubprocessRunning verifies that calling Terminate()
+// when no subprocess is running does not panic and returns without blocking.
+func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	// Should not panic and should return immediately.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Terminate()
+	}()
+
+	select {
+	case <-done:
+		// returned cleanly
+	case <-time.After(1 * time.Second):
+		t.Fatal("Terminate() blocked when no subprocess was running")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TestTerminate_AfterSubprocessAlreadyExited runs a fast command, waits for it
+// to finish, then calls Terminate() and verifies no panic and no hang.
+func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	if err := r.RunStep("fast-step", []string{"echo", "done"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+
+	// The subprocess has already exited; Terminate should be safe to call.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Terminate()
+	}()
+
+	select {
+	case <-done:
+		// returned cleanly
+	case <-time.After(1 * time.Second):
+		t.Fatal("Terminate() blocked after subprocess already exited")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
