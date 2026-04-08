@@ -79,7 +79,7 @@ func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
 // SetFinalizeStepState updates the state of finalization step idx (0-based).
 // Must be called after SetFinalization.
 func (h *StatusHeader) SetFinalizeStepState(idx int, state StepState) {
-	if h.finalizeNames == nil || idx < 0 || idx >= len(h.finalizeNames) {
+	if h.finalizeNames == nil || idx < 0 || idx >= 8 || idx >= len(h.finalizeNames) {
 		return
 	}
 	label := checkboxLabel(state, h.finalizeNames[idx])
