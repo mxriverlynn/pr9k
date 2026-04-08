@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 type fakeExecutor struct {
 	runStepCalls       []runStepCall
+	runStepErrors      []error // per-call errors; nil entries mean success
 	captureOutputCalls [][]string
 	captureResults     []captureResult
 	captureIdx         int
@@ -33,7 +35,11 @@ type captureResult struct {
 }
 
 func (f *fakeExecutor) RunStep(name string, command []string) error {
+	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
+	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {
+		return f.runStepErrors[idx]
+	}
 	return nil
 }
 
@@ -558,6 +564,400 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s not found in output (looking for %q); got: %v", c.desc, c.contain, collected)
+		}
+	}
+}
+
+// TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization verifies that
+// when Orchestrate returns ActionQuit during an iteration, Run closes the
+// executor and skips finalization and the completion summary.
+func TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		captureResults: oneIssueResults("testuser", "42", "abc123"),
+		runStepErrors:  []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if !executor.closed {
+		t.Error("expected executor to be closed on quit")
+	}
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			t.Error("finalization step should not have run after iteration quit")
+		}
+	}
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Ralph completed") {
+			t.Errorf("expected no completion summary on quit, found: %q", line)
+		}
+	}
+}
+
+// TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary verifies that
+// when Orchestrate returns ActionQuit during finalization, Run closes the
+// executor without writing the completion summary.
+func TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		captureResults: oneIssueResults("testuser", "42", "abc123"),
+		// index 0 = iteration step (succeeds), index 1 = finalize step (fails)
+		runStepErrors: []error{nil, errors.New("finalize failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if !executor.closed {
+		t.Error("expected executor to be closed on finalization quit")
+	}
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Ralph completed") {
+			t.Errorf("expected no completion summary on quit, found: %q", line)
+		}
+	}
+}
+
+// TestBuildIterationSteps_ClaudeStep verifies that a claude step produces the
+// correct CLI command with the expected flags and prompt content.
+func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "test-prompt.txt"), []byte("do something"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{
+		Name:        "test-step",
+		IsClaude:    true,
+		Model:       "claude-opus-4-6",
+		PromptFile:  "test-prompt.txt",
+		PrependVars: true,
+	}
+
+	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved step, got %d", len(resolved))
+	}
+
+	rs := resolved[0]
+	if rs.Name != "test-step" {
+		t.Errorf("expected name %q, got %q", "test-step", rs.Name)
+	}
+	if len(rs.Command) < 7 || rs.Command[0] != "claude" {
+		t.Fatalf("unexpected command: %v", rs.Command)
+	}
+	if rs.Command[1] != "--permission-mode" || rs.Command[2] != "acceptEdits" {
+		t.Errorf("expected --permission-mode acceptEdits, got %v %v", rs.Command[1], rs.Command[2])
+	}
+	if rs.Command[3] != "--model" || rs.Command[4] != "claude-opus-4-6" {
+		t.Errorf("expected --model claude-opus-4-6, got %v %v", rs.Command[3], rs.Command[4])
+	}
+	if rs.Command[5] != "-p" {
+		t.Errorf("expected -p flag, got %q", rs.Command[5])
+	}
+	prompt := rs.Command[6]
+	if !strings.Contains(prompt, "ISSUENUMBER=42") {
+		t.Errorf("expected ISSUENUMBER=42 in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "STARTINGSHA=abc123") {
+		t.Errorf("expected STARTINGSHA=abc123 in prompt, got %q", prompt)
+	}
+}
+
+// TestBuildIterationSteps_ClaudeStepMissingPromptFile verifies that a claude
+// step with a missing prompt file returns a non-nil error containing the step name.
+func TestBuildIterationSteps_ClaudeStepMissingPromptFile(t *testing.T) {
+	dir := t.TempDir()
+
+	step := steps.Step{
+		Name:       "bad-step",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	_, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "bad-step") {
+		t.Errorf("expected error to contain step name %q, got %q", "bad-step", err.Error())
+	}
+}
+
+// TestRun_BuildIterationStepsErrorLogsAndContinuesToFinalization verifies that
+// when buildIterationSteps fails, Run logs "Error preparing steps", skips the
+// iteration, still runs finalization, and reports 0 iterations in the summary.
+func TestRun_BuildIterationStepsErrorLogsAndContinuesToFinalization(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: "42"},
+			{output: "abc123"},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	claudeStep := steps.Step{
+		Name:       "bad-claude",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         []steps.Step{claudeStep},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	foundErr := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Error preparing steps") {
+			foundErr = true
+		}
+	}
+	if !foundErr {
+		t.Errorf("expected 'Error preparing steps' in log, got %v", executor.logLines)
+	}
+
+	for _, call := range executor.runStepCalls {
+		if call.name == "bad-claude" {
+			t.Errorf("iteration step %q should not have run", call.name)
+		}
+	}
+
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run after buildIterationSteps error")
+	}
+
+	found0 := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "0 iteration(s)") {
+			found0 = true
+		}
+	}
+	if !found0 {
+		t.Errorf("expected '0 iteration(s)' in completion summary, got %v", executor.logLines)
+	}
+}
+
+// TestBuildFinalizeSteps_ClaudeStep verifies that a finalize claude step
+// produces the correct CLI command and uses empty issueID/sha.
+func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "finalize-prompt.txt"), []byte("finalize this"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{
+		Name:        "finalize-claude",
+		IsClaude:    true,
+		Model:       "claude-sonnet-4-6",
+		PromptFile:  "finalize-prompt.txt",
+		PrependVars: true,
+	}
+
+	resolved, err := buildFinalizeSteps(dir, []steps.Step{step})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved step, got %d", len(resolved))
+	}
+
+	rs := resolved[0]
+	if rs.Name != "finalize-claude" {
+		t.Errorf("expected name %q, got %q", "finalize-claude", rs.Name)
+	}
+	if len(rs.Command) < 7 || rs.Command[0] != "claude" {
+		t.Fatalf("unexpected command: %v", rs.Command)
+	}
+	if rs.Command[5] != "-p" {
+		t.Errorf("expected -p flag at index 5, got %q", rs.Command[5])
+	}
+	prompt := rs.Command[6]
+	if !strings.HasPrefix(prompt, "ISSUENUMBER=\nSTARTINGSHA=\n") {
+		t.Errorf("expected empty ISSUENUMBER and STARTINGSHA in prompt, got %q", prompt)
+	}
+}
+
+// TestFinalHeader_SetStepStateRoutesToSetFinalizeStepState verifies that
+// finalHeader.SetStepState delegates to RunHeader.SetFinalizeStepState and
+// does not call SetStepState.
+func TestFinalHeader_SetStepStateRoutesToSetFinalizeStepState(t *testing.T) {
+	h := &fakeRunHeader{}
+	fh := &finalHeader{h: h}
+
+	fh.SetStepState(2, ui.StepActive)
+
+	if len(h.finalizeStepCalls) != 1 {
+		t.Fatalf("expected 1 SetFinalizeStepState call, got %d", len(h.finalizeStepCalls))
+	}
+	if h.finalizeStepCalls[0].idx != 2 || h.finalizeStepCalls[0].state != ui.StepActive {
+		t.Errorf("expected finalizeStepCalls[0]={2, StepActive}, got %+v", h.finalizeStepCalls[0])
+	}
+	if len(h.stepStateCalls) != 0 {
+		t.Errorf("expected 0 SetStepState calls, got %d", len(h.stepStateCalls))
+	}
+}
+
+// TestRun_BuildFinalizeStepsErrorSkipsFinalizationButWritesSummary verifies
+// that when buildFinalizeSteps fails, Run skips finalization Orchestrate but
+// still writes the completion summary and closes the executor.
+func TestRun_BuildFinalizeStepsErrorSkipsFinalizationButWritesSummary(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: ""}, // no issue → skip iteration
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	claudeFinalStep := steps.Step{
+		Name:       "bad-finalize",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: []steps.Step{claudeFinalStep},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	for _, call := range executor.runStepCalls {
+		if call.name == "bad-finalize" {
+			t.Error("finalization step should not have run when buildFinalizeSteps errors")
+		}
+	}
+
+	found := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Ralph completed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected completion summary in log, got %v", executor.logLines)
+	}
+
+	if !executor.closed {
+		t.Error("expected executor to be closed")
+	}
+}
+
+// TestRun_SetFinalizationCalledWithStepNames verifies that SetFinalization
+// receives the names of all finalize steps in order.
+func TestRun_SetFinalizationCalledWithStepNames(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: ""}, // no issue
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final-a", "final-b", "final-c"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.finalizationCalls) == 0 {
+		t.Fatal("expected SetFinalization to be called")
+	}
+	names := header.finalizationCalls[0].names
+	wantNames := []string{"final-a", "final-b", "final-c"}
+	if len(names) != len(wantNames) {
+		t.Fatalf("expected %d finalize step names, got %d: %v", len(wantNames), len(names), names)
+	}
+	for i, want := range wantNames {
+		if names[i] != want {
+			t.Errorf("name[%d]: want %q, got %q", i, want, names[i])
+		}
+	}
+}
+
+// TestRun_StepsPendingSetBeforeIteration verifies that all step indices are
+// set to StepPending before the first StepActive call in each iteration.
+func TestRun_StepsPendingSetBeforeIteration(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: oneIssueResults("testuser", "42", "abc123"),
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("s1", "s2", "s3"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	pendingBeforeActive := map[int]bool{}
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepPending {
+			pendingBeforeActive[call.idx] = true
+		} else if call.state == ui.StepActive {
+			break
+		}
+	}
+	for _, idx := range []int{0, 1, 2} {
+		if !pendingBeforeActive[idx] {
+			t.Errorf("expected StepPending for index %d before first StepActive", idx)
 		}
 	}
 }
