@@ -232,6 +232,117 @@ func TestRunStep_IntegrationStderrInPipe(t *testing.T) {
 	_ = log.Close()
 }
 
+// T1 — RunStep returns error on command failure
+func TestRunStep_ReturnsErrorOnNonZeroExit(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	err := r.RunStep("test-step", []string{"sh", "-c", "exit 1"})
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	if err == nil {
+		t.Fatal("expected error from non-zero exit, got nil")
+	}
+}
+
+// T2 — RunStep returns error for non-existent command
+func TestRunStep_ReturnsErrorForNonExistentCommand(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	err := r.RunStep("test-step", []string{"nonexistent-binary-xyz"})
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	if err == nil {
+		t.Fatal("expected error for non-existent command, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow: start") {
+		t.Errorf("expected error to contain 'workflow: start', got %q", err.Error())
+	}
+}
+
+// T3 — Multiple sequential RunStep calls share the same pipe
+func TestRunStep_MultipleSequentialCallsSharePipe(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	if err := r.RunStep("step-one", []string{"echo", "output from step one"}); err != nil {
+		t.Fatalf("RunStep step-one: %v", err)
+	}
+	if err := r.RunStep("step-two", []string{"echo", "output from step two"}); err != nil {
+		t.Fatalf("RunStep step-two: %v", err)
+	}
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	foundOne, foundTwo := false, false
+	for _, l := range lines {
+		if l == "output from step one" {
+			foundOne = true
+		}
+		if l == "output from step two" {
+			foundTwo = true
+		}
+	}
+	if !foundOne {
+		t.Errorf("expected 'output from step one' in pipe output, got %v", lines)
+	}
+	if !foundTwo {
+		t.Errorf("expected 'output from step two' in pipe output, got %v", lines)
+	}
+}
+
+// T4 — stepName appears in log file lines
+func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+
+	r := NewRunner(log, dir)
+	collect := collectLines(t, r)
+
+	if err := r.RunStep("my-named-step", []string{"echo", "some output"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+
+	logLines := readLogFile(t, log, dir)
+	found := false
+	for _, l := range logLines {
+		if strings.Contains(l, "my-named-step") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected step name 'my-named-step' in log file lines, got %v", logLines)
+	}
+}
+
+// T5 — Close is idempotent
+func TestClose_IsIdempotent(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	// Second close should not panic and should return nil (io.PipeWriter behavior)
+	err := r.Close()
+	if err != nil {
+		t.Errorf("expected nil on second Close(), got %v", err)
+	}
+}
+
 func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 	projectDir := "/home/user/project"
 	cmd := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
