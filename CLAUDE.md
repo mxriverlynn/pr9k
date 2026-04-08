@@ -42,43 +42,6 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 
 A Go TUI replacement for `ralph-loop` is being built in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
 
-### Current directory structure
-
-```
-ralph-tui/
-  cmd/ralph-tui/
-    main.go                   # entry point: initializes logger, loads steps, creates Runner and KeyHandler, wires OS signal handling (SIGINT/SIGTERM → ForceQuit), launches Run goroutine, waits for completion, exits 0 on success or 1 if signaled
-  internal/
-    cli/
-      args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
-      args_test.go
-    workflow/
-      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; Terminate: sends SIGTERM to current subprocess, SIGKILL after 3s timeout; WasTerminated: reports whether the last RunStep was user-terminated (reset at start of each RunStep); ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir; WriteToLog: injects a line directly into the log pipe without running a subprocess; CaptureOutput: runs a command and returns trimmed stdout (used for get_next_issue, get_gh_user, git rev-parse HEAD)
-      run.go                  # Run: main orchestration goroutine — displays banner, fetches GitHub username, runs N iterations, runs finalization, writes completion summary; StepExecutor/RunHeader interfaces; RunConfig struct; buildIterationSteps/buildFinalizeSteps helpers; iterHeader/finalHeader adapters
-      workflow_test.go
-      run_test.go
-    ui/
-      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm); shortcutLine is mutex-protected; ShortcutLine() method is safe to call from any goroutine; ForceQuit() cancels the current subprocess and non-blocking sends ActionQuit — safe to call from a signal handler goroutine
-      ui_test.go
-      header.go               # StatusHeader: pointer-mutable TUI status display; StepState (Pending/Active/Done/Failed); SetIteration, SetStepState, SetFinalization, SetFinalizeStepState
-      header_test.go
-      log.go                  # StepSeparator / RetryStepSeparator: returns visual separator strings for step transitions in the output log
-      log_test.go
-      orchestrate.go          # Orchestrate: runs ResolvedSteps in sequence via StepRunner/StepHeader interfaces; drains h.Actions with a non-blocking select before each step (catches ActionQuit injected by ForceQuit); on non-terminated failure enters error mode and blocks on KeyHandler.Actions for continue/retry/quit
-      orchestrate_test.go
-    steps/
-      steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs; BuildPrompt with empty PromptFile validation
-      steps_test.go
-    logger/
-      logger.go               # Logger: concurrent-safe file logger with timestamped, prefixed lines; SetContext/Log/Close
-      logger_test.go
-  configs/
-    ralph-steps.json          # 8 iteration step definitions
-    ralph-finalize-steps.json # 3 finalization step definitions
-    configs_test.go           # validates JSON structure of both config files
-  go.mod                      # module: github.com/mxriverlynn/pr9k/ralph-tui
-```
-
 ### Build and run
 
 ```bash
@@ -88,23 +51,27 @@ cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
 
 Use `go build` — `go run` won't work because `projectDir` is resolved via `os.Executable()`.
 
-### Key architectural notes
-- Uses `io.Pipe` for subprocess streaming (Glyph's `Log` component takes an `io.Reader`)
-- Step definitions loaded from `configs/ralph-steps.json` at runtime, resolved relative to `projectDir`
-- Logs to `logs/ralph-YYYY-MM-DD-HHMMSS.log`
-- `projectDir` resolved via `os.Executable()` with `filepath.EvalSymlinks` (symlink-safe)
-- `-project-dir` flag can appear before or after `<iterations>` — `reorderArgs` in `args.go` reorders args before parsing to work around Go's `flag` package stopping at the first positional
-- `BuildPrompt` validates that `PromptFile` is non-empty before attempting file I/O
-- `Runner.Terminate()` sends SIGTERM to the active subprocess; if not exited within 3 seconds, sends SIGKILL — safe to call when idle (no-op)
-- `Runner.WasTerminated()` reports whether the most recent `RunStep` was ended by a `Terminate()` call; the flag is reset at the start of each `RunStep` — used by `Orchestrate` to distinguish user-initiated termination from genuine failures
-- `Runner.WriteToLog(line)` injects a line directly into the log pipe under the mutex; used to write step separator lines between subprocess outputs without spawning a command
-- `Runner.CaptureOutput(command)` runs a command and returns trimmed stdout; stderr is discarded; used for single-value queries (get_next_issue, get_gh_user, git rev-parse HEAD)
-- `StepSeparator(name)` / `RetryStepSeparator(name)` in `ui/log.go` produce the formatted separator strings passed to `WriteToLog`
-- `Orchestrate(steps, runner, header, h)` in `ui/orchestrate.go` runs `ResolvedStep` slices in sequence; before each step it performs a non-blocking drain of `h.Actions` to pick up any `ActionQuit` injected by `ForceQuit`; on non-terminated failure it sets the step to `StepFailed`, enters `ModeError`, and blocks on `h.Actions` — ActionContinue advances, ActionRetry re-runs the step with a separator, ActionQuit halts the loop
-- `KeyHandler.ForceQuit()` cancels the current subprocess (via the cancel func) and non-blocking sends `ActionQuit` to `h.Actions`; safe to call from a signal handler goroutine; used by `main.go` OS signal handling (SIGINT/SIGTERM) to trigger clean shutdown
-- `Run(executor, header, keyHandler, cfg)` in `workflow/run.go` is the top-level orchestration goroutine: displays banner, resolves GitHub username, loops over N iterations (each calling `Orchestrate` for iteration steps), runs finalization phase, writes completion summary, closes executor
-- `StepExecutor` interface (in `run.go`) wraps `ui.StepRunner` + `CaptureOutput` + `Close`; `RunHeader` interface covers `SetIteration`, `SetStepState`, `SetFinalization`, `SetFinalizeStepState`
-- `KeyHandler.ShortcutLine()` is a mutex-protected getter for the shortcut bar text; use it instead of field access when reading from a goroutine other than the key handler
+See [`docs/architecture.md`](docs/architecture.md) for detailed architectural documentation including block diagrams, data flow, and links to feature-level docs.
+
+## Architecture & Feature Documentation
+
+- [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
+- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing, flag reordering, and project directory resolution from the executable path
+- [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with variable prepending for iteration context
+- [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming, graceful SIGTERM/SIGKILL termination, and output capture
+- [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
+- [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
+- [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Three-mode keyboard state machine (Normal/Error/QuitConfirm) and channel-based action dispatch
+- [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
+- [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with buffered I/O
+
+## Coding Standards
+
+- [`docs/coding-standards/api-design.md`](docs/coding-standards/api-design.md) — API design patterns including unused parameter documentation, bounds guards, precondition validation, and adapter types. Apply when designing or modifying public interfaces and exported functions.
+- [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, and non-blocking channel sends. Apply when working with goroutines, mutexes, channels, or any shared state.
+- [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, and scanner error checking. Apply to all error creation, wrapping, and propagation.
+- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including flag reordering, symlink-safe path resolution, and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
+- [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 
 ## Project Discovery
 
