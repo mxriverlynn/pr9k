@@ -116,6 +116,19 @@ func (h *KeyHandler) handleQuitConfirm(key string) {
 	}
 }
 
+// ForceQuit terminates the current subprocess and injects ActionQuit into the
+// Actions channel so the orchestration goroutine exits cleanly. Safe to call
+// from a signal handler goroutine.
+func (h *KeyHandler) ForceQuit() {
+	if h.cancel != nil {
+		h.cancel()
+	}
+	select {
+	case h.Actions <- ActionQuit:
+	default:
+	}
+}
+
 func (h *KeyHandler) updateShortcutLine() {
 	h.mu.Lock()
 	defer h.mu.Unlock()

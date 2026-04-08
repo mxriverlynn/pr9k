@@ -24,6 +24,15 @@ type ResolvedStep struct {
 // Returns ActionQuit if the user quit; ActionContinue when all steps complete.
 func Orchestrate(steps []ResolvedStep, runner StepRunner, header StepHeader, h *KeyHandler) StepAction {
 	for i, step := range steps {
+		// Check for a pending quit (e.g. injected by an OS signal) before starting each step.
+		select {
+		case action := <-h.Actions:
+			if action == ActionQuit {
+				return ActionQuit
+			}
+		default:
+		}
+
 		header.SetStepState(i, StepActive)
 		action := runStepWithErrorHandling(i, step, runner, header, h)
 		if action == ActionQuit {

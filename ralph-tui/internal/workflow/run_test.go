@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -925,6 +926,77 @@ func TestRun_SetFinalizationCalledWithStepNames(t *testing.T) {
 	for i, want := range wantNames {
 		if names[i] != want {
 			t.Errorf("name[%d]: want %q, got %q", i, want, names[i])
+		}
+	}
+}
+
+// --- Signal handling integration tests ---
+
+// TestRun_ForceQuit_ClosesExecutorAndReturns verifies that when ForceQuit is
+// called (simulating an OS signal), Run terminates cleanly and closes the
+// executor (flushing the log writer).
+func TestRun_ForceQuit_ClosesExecutorAndReturns(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		captureResults: oneIssueResults("testuser", "42", "abc123"),
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("step1", "step2"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	// Simulate OS signal arriving before Run processes any step.
+	kh.ForceQuit()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	select {
+	case <-done:
+		// Run returned cleanly after ForceQuit.
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return after ForceQuit")
+	}
+
+	if !executor.closed {
+		t.Error("expected executor.Close() to be called after ForceQuit")
+	}
+}
+
+// TestRun_ForceQuit_SkipsRemainingSteps verifies that when ForceQuit is called
+// (simulating an OS signal), iteration steps after the quit are not executed.
+func TestRun_ForceQuit_SkipsRemainingSteps(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		captureResults: oneIssueResults("testuser", "42", "abc123"),
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("step1", "step2", "step3"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	// ForceQuit before any step runs — all steps should be skipped.
+	kh.ForceQuit()
+	Run(executor, header, kh, cfg)
+
+	for _, call := range executor.runStepCalls {
+		if call.name == "step1" || call.name == "step2" || call.name == "step3" {
+			t.Errorf("expected no iteration steps to run after ForceQuit, but %q ran", call.name)
 		}
 	}
 }

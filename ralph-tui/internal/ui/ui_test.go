@@ -238,6 +238,56 @@ func TestQuitConfirm_Y_FromErrorMode_SendsActionQuit(t *testing.T) {
 	}
 }
 
+// --- ForceQuit ---
+
+// TestForceQuit_CallsCancelAndInjectsActionQuit verifies that ForceQuit calls
+// the cancel function and sends ActionQuit to the Actions channel.
+func TestForceQuit_CallsCancelAndInjectsActionQuit(t *testing.T) {
+	h, cancelCalled, actions := newTestHandler(t)
+
+	h.ForceQuit()
+
+	if !*cancelCalled {
+		t.Error("expected cancel to be called by ForceQuit")
+	}
+
+	select {
+	case action := <-actions:
+		if action != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", action)
+		}
+	default:
+		t.Error("expected ActionQuit to be in Actions channel after ForceQuit")
+	}
+}
+
+// TestForceQuit_NilCancel_NoPanic verifies that ForceQuit is safe when cancel is nil.
+func TestForceQuit_NilCancel_NoPanic(t *testing.T) {
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+
+	h.ForceQuit() // must not panic
+
+	select {
+	case action := <-actions:
+		if action != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", action)
+		}
+	default:
+		t.Error("expected ActionQuit in channel even when cancel is nil")
+	}
+}
+
+// TestForceQuit_FullChannel_NoPanic verifies that ForceQuit does not block or
+// panic when the Actions channel is already full.
+func TestForceQuit_FullChannel_NoPanic(t *testing.T) {
+	actions := make(chan StepAction, 1)
+	actions <- ActionContinue // fill the channel
+	h := NewKeyHandler(func() {}, actions)
+
+	h.ForceQuit() // must not block or panic
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {

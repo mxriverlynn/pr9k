@@ -29,6 +29,20 @@ func (s *stubRunner) RunStep(_ string, _ []string) error {
 func (s *stubRunner) WasTerminated() bool { return s.wasTerminated }
 func (s *stubRunner) WriteToLog(line string) { s.logLines = append(s.logLines, line) }
 
+// callbackStubRunner is a StepRunner whose RunStep behaviour is controlled by
+// a callback. Use this when you need precise timing control in tests.
+type callbackStubRunner struct {
+	onRunStep       func(name string) error
+	wasTerminatedFn func() bool
+	logLines        []string
+}
+
+func (c *callbackStubRunner) RunStep(name string, _ []string) error {
+	return c.onRunStep(name)
+}
+func (c *callbackStubRunner) WasTerminated() bool  { return c.wasTerminatedFn() }
+func (c *callbackStubRunner) WriteToLog(line string) { c.logLines = append(c.logLines, line) }
+
 type spyHeader struct {
 	mu    sync.Mutex
 	calls []struct {
@@ -421,6 +435,91 @@ func TestOrchestrate_Continue_RestoresModeToNormal(t *testing.T) {
 }
 
 // --- Quit ---
+
+// TestOrchestrate_PendingQuitBeforeFirstStep_ReturnsActionQuitImmediately
+// verifies that when ActionQuit is already in the channel before Orchestrate
+// starts, it returns ActionQuit without running any steps.
+func TestOrchestrate_PendingQuitBeforeFirstStep_ReturnsActionQuitImmediately(t *testing.T) {
+	stub := &stubRunner{results: []error{nil, nil}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	twoSteps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	// Pre-inject ActionQuit before Orchestrate starts (simulates OS signal arriving
+	// between iterations, before any step of the new iteration has begun).
+	h.Actions <- ActionQuit
+
+	done := runOrchestrate(twoSteps, stub, spy, h)
+
+	select {
+	case result := <-done:
+		if result != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after pre-injected ActionQuit")
+	}
+
+	if stub.callCount != 0 {
+		t.Errorf("expected no RunStep calls when quit was pending before first step, got %d", stub.callCount)
+	}
+}
+
+// TestOrchestrate_ForceQuitAfterStep_SkipsNextStep verifies that when
+// ActionQuit is injected after step0 completes (simulating ForceQuit called
+// during step0 which was terminated), step1 is not run.
+func TestOrchestrate_ForceQuitAfterStep_SkipsNextStep(t *testing.T) {
+	stepStarted := make(chan struct{})
+	stepUnblock := make(chan struct{})
+	callCount := 0
+
+	// Use a channel-based stub to control timing precisely.
+	cbRunner := &callbackStubRunner{
+		onRunStep: func(name string) error {
+			if name == "step0" {
+				close(stepStarted)
+				<-stepUnblock
+				callCount++
+				return errors.New("terminated")
+			}
+			callCount++
+			return nil
+		},
+		wasTerminatedFn: func() bool { return true },
+	}
+
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	twoSteps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	done := runOrchestrate(twoSteps, cbRunner, spy, h)
+
+	// Wait for step0 to start, then inject ActionQuit and unblock step0.
+	<-stepStarted
+	h.Actions <- ActionQuit
+	close(stepUnblock)
+
+	select {
+	case result := <-done:
+		if result != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after ForceQuit during step0")
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected only step0 to run, got callCount=%d", callCount)
+	}
+}
 
 // TestOrchestrate_Quit_ReturnsActionQuit passes through the quit action.
 func TestOrchestrate_Quit_ReturnsActionQuit(t *testing.T) {
