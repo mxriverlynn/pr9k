@@ -188,6 +188,106 @@ func TestCloseFlushesAndPreventsSubsequentWrites(t *testing.T) {
 	}
 }
 
+func TestCloseIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	if err := l.Log("step", "a line"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+
+	if err := l.Close(); err != nil {
+		t.Errorf("first Close: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+}
+
+func TestNewLoggerErrorOnUnwritableDirectory(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o444); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+
+	_, err := NewLogger(filepath.Join(parent, "sub"))
+	if err == nil {
+		t.Fatal("expected error from NewLogger on unwritable directory, got nil")
+	}
+	if !strings.Contains(err.Error(), "logger:") {
+		t.Errorf("error missing 'logger:' prefix: %v", err)
+	}
+}
+
+func TestLogFormatWithoutIterationContext(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+
+	if err := l.Log("MyStep", "content"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	lines := readLogLines(t, dir)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	line := lines[0]
+
+	// Must have exactly two bracket groups: [timestamp] [stepName]
+	twoGroupRe := regexp.MustCompile(`^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[MyStep\] `)
+	if !twoGroupRe.MatchString(line) {
+		t.Errorf("line does not match expected two-group format: %q", line)
+	}
+
+	// Must not have a third bracket group.
+	threeGroupRe := regexp.MustCompile(`^\[.*\] \[.*\] \[.*\]`)
+	if threeGroupRe.MatchString(line) {
+		t.Errorf("line has unexpected third bracket group: %q", line)
+	}
+}
+
+func TestSetContextSecondParameterIsUnused(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+
+	l.SetContext("Iter 1", "Feature work")
+	if err := l.Log("Code review", "line"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	lines := readLogLines(t, dir)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	line := lines[0]
+
+	if !strings.Contains(line, "[Code review]") {
+		t.Errorf("line missing step name from Log call: %q", line)
+	}
+	if strings.Contains(line, "[Feature work]") {
+		t.Errorf("line contains ignored SetContext second param: %q", line)
+	}
+}
+
 // readLogLines reads all non-empty lines from the single log file in dir/logs/.
 func readLogLines(t *testing.T, dir string) []string {
 	t.Helper()
