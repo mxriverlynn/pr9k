@@ -1,0 +1,60 @@
+# API Design
+
+## Document unused parameters with a comment
+
+If a parameter is intentionally unused (reserved for future use or part of an interface), add a doc comment that says so explicitly. Silent unused parameters are confusing to future callers and reviewers.
+
+```go
+// SetContext updates the iteration prefix for subsequent log lines.
+// The stepName parameter is reserved for future use and is currently ignored.
+func (l *Logger) SetContext(iteration int, stepName string) {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    l.prefix = fmt.Sprintf("[iter %d]", iteration)
+}
+```
+
+## Add bounds guards to all state-mutating array indexers
+
+Any method that uses a caller-supplied index to mutate an array field must guard against out-of-bounds access. Panic on invalid index is unacceptable in long-running TUI processes.
+
+```go
+func (h *StatusHeader) SetStepState(idx int, state StepState) {
+    if idx < 0 || idx >= 8 {
+        return
+    }
+    // ...
+}
+```
+
+## Validate preconditions at the function boundary
+
+Check invariants at the start of a function and return a clear error. Do not let invalid inputs propagate into deeper I/O or OS calls where the resulting error is harder to interpret.
+
+```go
+func BuildPrompt(projectDir string, step Step, issueID, sha string) (string, error) {
+    if step.PromptFile == "" {
+        return "", fmt.Errorf("steps: PromptFile must not be empty")
+    }
+    // ...
+}
+```
+
+## Use named constants for template placeholder strings
+
+Template placeholder strings shared between config JSON and Go code (e.g., `{{ISSUE_ID}}`) should be named constants. As the number of placeholders grows, scattered string literals become a maintenance hazard.
+
+```go
+const issueIDPlaceholder = "{{ISSUE_ID}}"
+```
+
+## Document platform-scoped assumptions
+
+If a function uses platform-specific behavior (e.g., `/` as the path separator to detect script paths vs. bare commands), document the assumption at the call site so future maintainers know it is intentional, not an oversight.
+
+```go
+// Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
+if strings.Contains(command[0], "/") {
+    command[0] = filepath.Join(projectDir, command[0])
+}
+```

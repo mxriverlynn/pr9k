@@ -100,6 +100,7 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - See [`docs/project-discovery.md`](docs/project-discovery.md) for full project discovery details including languages, frameworks, tooling, commands, test structure, documentation paths, and infrastructure for all projects in this repository.
 - Default branch: main
 - Docs: `docs/`
+- Coding standards: `docs/coding-standards/` — Go error handling, testing, concurrency, API design, and Go-specific patterns
 
 ### ralph-bash
 

@@ -12,7 +12,7 @@
 
 - Docs: `docs/`
 - Plans: `docs/plans/`
-- Coding standards: `docs/coding-standards/` (empty)
+- Coding standards: `docs/coding-standards/` (`error-handling.md`, `testing.md`, `concurrency.md`, `api-design.md`, `go-patterns.md`)
 - Prompts: `prompts/` (8 markdown prompt files consumed by both orchestrators)
 
 ## scripts
