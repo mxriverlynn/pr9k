@@ -53,10 +53,12 @@ ralph-tui/
       args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
       args_test.go
     workflow/
-      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; Terminate: sends SIGTERM to current subprocess, SIGKILL after 3s timeout; WasTerminated: reports whether the last RunStep was user-terminated (reset at start of each RunStep); ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir; WriteToLog: injects a line directly into the log pipe without running a subprocess
+      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; Terminate: sends SIGTERM to current subprocess, SIGKILL after 3s timeout; WasTerminated: reports whether the last RunStep was user-terminated (reset at start of each RunStep); ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir; WriteToLog: injects a line directly into the log pipe without running a subprocess; CaptureOutput: runs a command and returns trimmed stdout (used for get_next_issue, get_gh_user, git rev-parse HEAD)
+      run.go                  # Run: main orchestration goroutine — displays banner, fetches GitHub username, runs N iterations, runs finalization, writes completion summary; StepExecutor/RunHeader interfaces; RunConfig struct; buildIterationSteps/buildFinalizeSteps helpers; iterHeader/finalHeader adapters
       workflow_test.go
+      run_test.go
     ui/
-      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
+      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm); shortcutLine is mutex-protected; ShortcutLine() method is safe to call from any goroutine
       ui_test.go
       header.go               # StatusHeader: pointer-mutable TUI status display; StepState (Pending/Active/Done/Failed); SetIteration, SetStepState, SetFinalization, SetFinalizeStepState
       header_test.go
@@ -96,8 +98,12 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - `Runner.Terminate()` sends SIGTERM to the active subprocess; if not exited within 3 seconds, sends SIGKILL — safe to call when idle (no-op)
 - `Runner.WasTerminated()` reports whether the most recent `RunStep` was ended by a `Terminate()` call; the flag is reset at the start of each `RunStep` — used by `Orchestrate` to distinguish user-initiated termination from genuine failures
 - `Runner.WriteToLog(line)` injects a line directly into the log pipe under the mutex; used to write step separator lines between subprocess outputs without spawning a command
+- `Runner.CaptureOutput(command)` runs a command and returns trimmed stdout; stderr is discarded; used for single-value queries (get_next_issue, get_gh_user, git rev-parse HEAD)
 - `StepSeparator(name)` / `RetryStepSeparator(name)` in `ui/log.go` produce the formatted separator strings passed to `WriteToLog`
 - `Orchestrate(steps, runner, header, h)` in `ui/orchestrate.go` runs `ResolvedStep` slices in sequence; on non-terminated failure it sets the step to `StepFailed`, enters `ModeError`, and blocks on `h.Actions` — ActionContinue advances, ActionRetry re-runs the step with a separator, ActionQuit halts the loop
+- `Run(executor, header, keyHandler, cfg)` in `workflow/run.go` is the top-level orchestration goroutine: displays banner, resolves GitHub username, loops over N iterations (each calling `Orchestrate` for iteration steps), runs finalization phase, writes completion summary, closes executor
+- `StepExecutor` interface (in `run.go`) wraps `ui.StepRunner` + `CaptureOutput` + `Close`; `RunHeader` interface covers `SetIteration`, `SetStepState`, `SetFinalization`, `SetFinalizeStepState`
+- `KeyHandler.ShortcutLine()` is a mutex-protected getter for the shortcut bar text; use it instead of field access when reading from a goroutine other than the key handler
 
 ## Project Discovery
 
