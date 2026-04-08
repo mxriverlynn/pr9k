@@ -53,8 +53,12 @@ ralph-tui/
       args.go                 # ParseArgs: iterations + optional -project-dir flag
       args_test.go
     workflow/                 # (not yet implemented)
-    ui/                       # (not yet implemented)
-    steps/                    # (not yet implemented)
+    ui/
+      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
+      ui_test.go
+    steps/
+      steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs
+      steps_test.go
     logger/                   # (not yet implemented)
   configs/
     ralph-steps.json          # 8 iteration step definitions

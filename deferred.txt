@@ -1,2 +1,6 @@
 - Integration test (T7) for main.go binary: build and run with os/exec to verify stdout/stderr/exit codes match acceptance criteria — lower priority since main.go is a thin wrapper
 - Add `prependVars` field to the `step` struct in configs_test.go and validate that claude steps have it set correctly — ensures the orchestrator's variable prepend logic is covered by config validation tests
+- Refactor `projectRoot` test helper in steps_test.go to use `runtime.Caller(0)` instead of `os.Getwd()` for more robust path resolution independent of working directory
+- Add doc comment on `Step.Command` field noting that arguments may contain template placeholders (e.g., `{{ISSUE_ID}}`) that consumers must substitute
+- Add test for `BuildPrompt` with large multi-KB prompt file to confirm no size-related issues (T4 from issue #3 test plan — low priority, tests stdlib behavior)
+- Add test for `BuildPrompt` with subdirectory in `PromptFile` path (e.g., `"sub/feature.txt"`) to document that `filepath.Join` supports nested prompt organization (T5 from issue #3 test plan — low priority)

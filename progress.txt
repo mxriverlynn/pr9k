@@ -62,3 +62,88 @@ Tests in `ralph-tui/internal/ui/ui_test.go` cover all acceptance criteria (10 te
 - [x] `c` in error state sends `ActionContinue` on the channel
 - [x] `r` in error state sends `ActionRetry` on the channel
 - [x] Other keys during quit confirmation are ignored
+
+---
+
+## Test Planning (Issue #2 — Step definitions loading from JSON)
+
+Ran test planning against the new `ralph-tui/internal/steps/` package (steps.go, steps_test.go). Analyzed Step struct, LoadSteps, LoadFinalizeSteps, and loadStepsFile functions against the issue's acceptance criteria.
+
+### Findings
+- Existing test suite has 10 tests covering: step counts, ordering, claude/non-claude field population, missing optional fields, malformed JSON, and file-not-found errors
+- All 6 acceptance criteria have at least basic coverage
+- Identified 5 test gaps (1 high, 2 medium, 2 low priority):
+  - T1 (High): PrependVars field never validated — load-bearing for orchestrator variable prepending
+  - T2 (Medium): LoadFinalizeSteps malformed JSON path not tested (only LoadSteps path covered)
+  - T3 (Medium): Finalization step claude/non-claude fields not validated
+  - T4 (Low): Empty steps array behavior not explicitly tested
+  - T5 (Low): Command field values not verified (only checks non-empty)
+- Test plan written to test-plan.md
+
+---
+
+## Test Writing (Issue #2 — Step definitions loading from JSON)
+
+Added 7 new tests to `ralph-tui/internal/steps/steps_test.go` covering all 5 gaps identified in the test plan:
+
+- T1 (High): `TestLoadSteps_PrependVars` and `TestLoadFinalizeSteps_PrependVars` — validates `PrependVars=true` on iteration claude steps, `PrependVars=false` on Git push and Deferred work
+- T2 (Medium): `TestLoadFinalizeSteps_MalformedJSON` — confirms error message includes finalize config path
+- T3 (Medium): `TestLoadFinalizeSteps_ClaudeFieldsPopulated` and `TestLoadFinalizeSteps_NonClaudeFieldsPopulated` — validates Model/PromptFile on "Deferred work" and Command on "Final git push"
+- T4 (Low): `TestLoadSteps_EmptyArray` — confirms empty JSON array returns empty slice and nil error
+- T5 (Low): `TestLoadSteps_CommandValues` — verifies `["git", "push"]` on Git push and `close_gh_issue` presence on Close issue
+
+Note: Could not run tests or commit — `git add` and `go test` were blocked by the session's permission mode. Files are written to disk; manual `git add ralph-tui/internal/steps/ && git commit` needed.
+
+---
+
+## Code Review (Issue #2 — Step definitions loading from JSON)
+
+Ran code review on all changes since commit 4d0db8c (working tree). Reviewed: steps.go, steps_test.go, ralph-steps.json, ralph-finalize-steps.json.
+
+### Findings
+- 0 critical, 0 major issues
+- 2 minor findings: (1) `projectRoot` test helper uses `os.Getwd()` which is fragile — `runtime.Caller(0)` is more robust; (2) Close issue command contains `{{ISSUE_ID}}` template placeholder but no documentation indicates consumers must substitute it
+- 4 informational notes: Step struct matches issue spec exactly, error messages include file paths, test coverage is thorough (17 tests), package is appropriately scoped
+- Could not run `go test` or `go vet` due to permission restrictions — tests should be verified manually
+- Overall verdict: Approve. All 6 acceptance criteria met.
+
+---
+
+## Issue #3 — ralph-tui: Prompt building with variable prepending
+
+Implemented `BuildPrompt(projectDir string, step Step, issueID string, startingSHA string) (string, error)` in `ralph-tui/internal/steps/steps.go`.
+
+- Reads prompt file from `projectDir/prompts/<step.PromptFile>`
+- When `step.PrependVars` is true, prepends `ISSUENUMBER=<id>\nSTARTINGSHA=<sha>\n` (real newlines) before file content
+- When `step.PrependVars` is false, returns raw file content unchanged
+- Returns wrapped error if prompt file cannot be read
+
+Added 5 tests to `steps_test.go`:
+- `TestBuildPrompt_PrependVarsTrue` — verifies prepended output matches expected string exactly
+- `TestBuildPrompt_PrependVarsFalse` — verifies output equals raw file content
+- `TestBuildPrompt_FileNotFound` — verifies error returned for missing prompt file
+- `TestBuildPrompt_RealNewlines` — verifies real `\n` chars present, no literal `\n` sequences
+- `TestBuildPrompt_CorrectInterpolation` — verifies issue ID and SHA are correctly embedded
+
+### Acceptance criteria status
+- [x] Reads the prompt file from `projectDir/prompts/<promptFile>`
+- [x] When `prependVars` is true, output starts with `ISSUENUMBER=<id>\nSTARTINGSHA=<sha>\n` followed by file content
+- [x] When `prependVars` is false, output equals raw file content exactly
+- [x] Returns an error if the prompt file cannot be read
+- [x] Uses real newlines (not literal `\n` characters)
+
+---
+
+## Test Planning (Issue #3 — Prompt building with variable prepending)
+
+Ran test planning against the `BuildPrompt` function in `ralph-tui/internal/steps/steps.go` and its 5 existing tests in `steps_test.go`.
+
+### Findings
+- Existing test suite has 5 tests covering all 5 acceptance criteria from issue #3
+- Identified 5 test gaps (1 high, 2 medium, 2 low priority):
+  - T1 (High): Empty prompt file content — no test for 0-byte prompt file with PrependVars=true or false
+  - T2 (Medium): Special characters in issueID/startingSHA — documents the no-validation/no-escaping contract
+  - T3 (Medium): Prompt file without trailing newline — common real-world variation not tested
+  - T4 (Low): Large prompt file content — confidence test for multi-KB files
+  - T5 (Low): PromptFile with subdirectory path — documents implicit `filepath.Join` capability
+- Test plan written to test-plan.md
