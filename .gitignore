@@ -30,3 +30,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Ralph-loop files
+progress.txt
+deferred.txt
+test-plan.md
+code-review.md

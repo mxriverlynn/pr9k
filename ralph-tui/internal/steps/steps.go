@@ -35,6 +35,9 @@ func LoadFinalizeSteps(projectDir string) ([]Step, error) {
 // BuildPrompt reads the prompt file for the given step and returns its content.
 // When step.PrependVars is true, it prepends ISSUENUMBER and STARTINGSHA lines.
 func BuildPrompt(projectDir string, step Step, issueID string, startingSHA string) (string, error) {
+	if step.PromptFile == "" {
+		return "", fmt.Errorf("steps: PromptFile must not be empty")
+	}
 	promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
 	data, err := os.ReadFile(promptPath)
 	if err != nil {

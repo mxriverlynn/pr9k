@@ -1,6 +1,7 @@
 package steps_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -433,6 +434,58 @@ func TestBuildPrompt_NoTrailingNewline(t *testing.T) {
 	want := "ISSUENUMBER=42\nSTARTINGSHA=abc\nno trailing newline"
 	if result != want {
 		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+// T1 — BuildPrompt error message includes file path and wraps OS error
+func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
+	dir := t.TempDir()
+	// No prompts/ subdirectory — file will not exist
+	step := steps.Step{PromptFile: "missing.txt", PrependVars: false}
+
+	_, err := steps.BuildPrompt(dir, step, "1", "sha")
+	if err == nil {
+		t.Fatal("expected error for missing prompt file, got nil")
+	}
+
+	wantPath := filepath.Join(dir, "prompts", "missing.txt")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected errors.Is(err, os.ErrNotExist) to be true, got false; err=%v", err)
+	}
+}
+
+// T2 — BuildPrompt preserves multiline prompt file content
+func TestBuildPrompt_MultilineContent(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "multi.txt", "line one\nline two\nline three\n")
+	step := steps.Step{PromptFile: "multi.txt", PrependVars: true}
+
+	result, err := steps.BuildPrompt(dir, step, "5", "cafebabe")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "ISSUENUMBER=5\nSTARTINGSHA=cafebabe\nline one\nline two\nline three\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+// T3 — BuildPrompt with empty PromptFile field returns an error
+func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	promptsDir := filepath.Join(dir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	step := steps.Step{PromptFile: "", PrependVars: false}
+
+	_, err := steps.BuildPrompt(dir, step, "1", "sha")
+	if err == nil {
+		t.Fatal("expected error when PromptFile is empty, got nil")
 	}
 }
 
