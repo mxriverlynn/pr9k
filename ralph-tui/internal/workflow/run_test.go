@@ -1001,6 +1001,44 @@ func TestRun_ForceQuit_SkipsRemainingSteps(t *testing.T) {
 	}
 }
 
+// T5 — ForceQuit before finalization starts skips all finalize steps but still
+// closes the executor. ActionQuit is preserved through the skipped iteration
+// loop (no issue found) and consumed by the finalization Orchestrate's
+// pre-step drain.
+func TestRun_ForceQuit_DuringFinalization_SkipsAllFinalizeSteps(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: ""}, // no issue → iteration loop exits without calling Orchestrate
+		},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final1", "final2", "final3"),
+	}
+
+	// ActionQuit bypasses the iteration loop (no issue found, so no Orchestrate there)
+	// and is consumed by the finalization Orchestrate's pre-step drain.
+	kh.ForceQuit()
+	Run(executor, header, kh, cfg)
+
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" || call.name == "final2" || call.name == "final3" {
+			t.Errorf("expected no finalize steps to run after ForceQuit, but %q ran", call.name)
+		}
+	}
+	if !executor.closed {
+		t.Error("expected executor.Close() to be called after ForceQuit during finalization")
+	}
+}
+
 // TestRun_StepsPendingSetBeforeIteration verifies that all step indices are
 // set to StepPending before the first StepActive call in each iteration.
 func TestRun_StepsPendingSetBeforeIteration(t *testing.T) {

@@ -521,6 +521,85 @@ func TestOrchestrate_ForceQuitAfterStep_SkipsNextStep(t *testing.T) {
 	}
 }
 
+// T3 — A non-quit action (ActionContinue) pre-injected into the channel is
+// silently consumed by the pre-step drain; both steps run and Orchestrate
+// returns ActionContinue.
+func TestOrchestrate_PreStepDrain_ConsumesNonQuitAction_BothStepsRun(t *testing.T) {
+	stub := &stubRunner{results: []error{nil, nil}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	twoSteps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	// Pre-inject a stale ActionContinue — must not cause an early exit.
+	h.Actions <- ActionContinue
+
+	done := runOrchestrate(twoSteps, stub, spy, h)
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after consuming stale ActionContinue")
+	}
+
+	if stub.callCount != 2 {
+		t.Errorf("expected both steps to run (callCount=2), got %d", stub.callCount)
+	}
+}
+
+// T4 — ActionQuit injected after step0 succeeds skips step1 and returns ActionQuit.
+func TestOrchestrate_ForceQuitAfterSuccessfulStep_SkipsNextStep(t *testing.T) {
+	step0Done := make(chan struct{})
+	step0Unblock := make(chan struct{})
+	callCount := 0
+
+	cbRunner := &callbackStubRunner{
+		onRunStep: func(name string) error {
+			callCount++
+			if name == "step0" {
+				close(step0Done)
+				<-step0Unblock
+			}
+			return nil // both steps succeed
+		},
+		wasTerminatedFn: func() bool { return false },
+	}
+
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	twoSteps := []ResolvedStep{
+		{Name: "step0", Command: []string{"x"}},
+		{Name: "step1", Command: []string{"x"}},
+	}
+
+	done := runOrchestrate(twoSteps, cbRunner, spy, h)
+
+	// Wait for step0 to start, inject ActionQuit, then let step0 finish.
+	<-step0Done
+	h.Actions <- ActionQuit
+	close(step0Unblock)
+
+	select {
+	case result := <-done:
+		if result != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after ForceQuit between successful steps")
+	}
+
+	if callCount != 1 {
+		t.Errorf("expected only step0 to run, got callCount=%d", callCount)
+	}
+}
+
 // TestOrchestrate_Quit_ReturnsActionQuit passes through the quit action.
 func TestOrchestrate_Quit_ReturnsActionQuit(t *testing.T) {
 	stub, spy, h, steps := newOrchestrateTest(t, errors.New("exit 1"))

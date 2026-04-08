@@ -288,6 +288,61 @@ func TestForceQuit_FullChannel_NoPanic(t *testing.T) {
 	h.ForceQuit() // must not block or panic
 }
 
+// T1 — ForceQuit does not mutate mode from ModeNormal.
+func TestForceQuit_DoesNotAlterMode_WhenNormal(t *testing.T) {
+	h, _, actions := newTestHandler(t)
+
+	h.ForceQuit()
+	<-actions // drain so the channel is empty
+
+	if h.mode != ModeNormal {
+		t.Errorf("expected ModeNormal after ForceQuit, got %v", h.mode)
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after ForceQuit, got %q", h.ShortcutLine())
+	}
+}
+
+// T1 (cont.) — ForceQuit does not mutate mode from ModeError.
+func TestForceQuit_DoesNotAlterMode_WhenError(t *testing.T) {
+	h, _, actions := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.ForceQuit()
+	<-actions // drain so the channel is empty
+
+	if h.mode != ModeError {
+		t.Errorf("expected ModeError after ForceQuit, got %v", h.mode)
+	}
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts after ForceQuit, got %q", h.ShortcutLine())
+	}
+}
+
+// T2 — ForceQuit is idempotent: calling it twice does not panic, and the
+// second ActionQuit send is dropped because the channel already holds one.
+func TestForceQuit_Idempotent_CalledTwice(t *testing.T) {
+	cancelCount := 0
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(func() { cancelCount++ }, actions)
+
+	h.ForceQuit()
+	h.ForceQuit() // must not panic or block
+
+	if cancelCount != 2 {
+		t.Errorf("expected cancel called 2 times, got %d", cancelCount)
+	}
+
+	// Exactly one ActionQuit should be in the channel (second send dropped).
+	if len(actions) != 1 {
+		t.Errorf("expected exactly 1 ActionQuit in channel, got %d", len(actions))
+	}
+	action := <-actions
+	if action != ActionQuit {
+		t.Errorf("expected ActionQuit, got %v", action)
+	}
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {
