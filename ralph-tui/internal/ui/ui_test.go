@@ -32,8 +32,8 @@ func TestNormalMode_Q_ShowsQuitConfirmation(t *testing.T) {
 	if h.mode != ModeQuitConfirm {
 		t.Errorf("expected ModeQuitConfirm, got %v", h.mode)
 	}
-	if h.ShortcutLine != QuitConfirmPrompt {
-		t.Errorf("expected quit confirm prompt, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != QuitConfirmPrompt {
+		t.Errorf("expected quit confirm prompt, got %q", h.ShortcutLine())
 	}
 }
 
@@ -80,8 +80,8 @@ func TestQuitConfirm_N_RestoresNormalMode(t *testing.T) {
 	if h.mode != ModeNormal {
 		t.Errorf("expected ModeNormal after dismissing quit, got %v", h.mode)
 	}
-	if h.ShortcutLine != NormalShortcuts {
-		t.Errorf("expected normal shortcuts, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected normal shortcuts, got %q", h.ShortcutLine())
 	}
 }
 
@@ -106,8 +106,8 @@ func TestSetMode_Error_UpdatesShortcutLine(t *testing.T) {
 
 	h.SetMode(ModeError)
 
-	if h.ShortcutLine != ErrorShortcuts {
-		t.Errorf("expected error shortcuts, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected error shortcuts, got %q", h.ShortcutLine())
 	}
 }
 
@@ -152,8 +152,8 @@ func TestErrorMode_Q_ShowsQuitConfirmation(t *testing.T) {
 	if h.mode != ModeQuitConfirm {
 		t.Errorf("expected ModeQuitConfirm, got %v", h.mode)
 	}
-	if h.ShortcutLine != QuitConfirmPrompt {
-		t.Errorf("expected quit confirm prompt, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != QuitConfirmPrompt {
+		t.Errorf("expected quit confirm prompt, got %q", h.ShortcutLine())
 	}
 }
 
@@ -167,8 +167,8 @@ func TestQuitConfirm_N_FromErrorMode_RestoresErrorMode(t *testing.T) {
 	if h.mode != ModeError {
 		t.Errorf("expected ModeError to be restored, got %v", h.mode)
 	}
-	if h.ShortcutLine != ErrorShortcuts {
-		t.Errorf("expected error shortcuts to be restored, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected error shortcuts to be restored, got %q", h.ShortcutLine())
 	}
 }
 
@@ -178,8 +178,8 @@ func TestNewKeyHandler_InitialState(t *testing.T) {
 	actions := make(chan StepAction, 1)
 	h := NewKeyHandler(func() {}, actions)
 
-	if h.ShortcutLine != NormalShortcuts {
-		t.Errorf("expected NormalShortcuts, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts, got %q", h.ShortcutLine())
 	}
 	if h.Actions != actions {
 		t.Error("expected Actions to be the provided channel")
@@ -214,8 +214,8 @@ func TestErrorMode_OtherKeys_Ignored(t *testing.T) {
 	if h.mode != ModeError {
 		t.Errorf("mode should remain ModeError, got %v", h.mode)
 	}
-	if h.ShortcutLine != ErrorShortcuts {
-		t.Errorf("ShortcutLine should remain ErrorShortcuts, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("ShortcutLine should remain ErrorShortcuts, got %q", h.ShortcutLine())
 	}
 }
 

@@ -1,5 +1,7 @@
 package ui
 
+import "sync"
+
 // StepAction represents a user decision sent to the orchestration goroutine.
 type StepAction int
 
@@ -32,7 +34,8 @@ type KeyHandler struct {
 	prevMode     Mode
 	cancel       func() // cancels the current subprocess (used by n in normal mode)
 	Actions      chan StepAction
-	ShortcutLine string // Glyph reads this via pointer on each render cycle
+	mu           sync.Mutex
+	shortcutLine string // protected by mu; use ShortcutLine() to read from other goroutines
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -43,8 +46,16 @@ func NewKeyHandler(cancel func(), actions chan StepAction) *KeyHandler {
 		mode:         ModeNormal,
 		cancel:       cancel,
 		Actions:      actions,
-		ShortcutLine: NormalShortcuts,
+		shortcutLine: NormalShortcuts,
 	}
+}
+
+// ShortcutLine returns the current shortcut bar text.
+// Safe to call from any goroutine.
+func (h *KeyHandler) ShortcutLine() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.shortcutLine
 }
 
 // SetMode switches the handler to the given mode and updates ShortcutLine.
@@ -106,12 +117,14 @@ func (h *KeyHandler) handleQuitConfirm(key string) {
 }
 
 func (h *KeyHandler) updateShortcutLine() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	switch h.mode {
 	case ModeNormal:
-		h.ShortcutLine = NormalShortcuts
+		h.shortcutLine = NormalShortcuts
 	case ModeError:
-		h.ShortcutLine = ErrorShortcuts
+		h.shortcutLine = ErrorShortcuts
 	case ModeQuitConfirm:
-		h.ShortcutLine = QuitConfirmPrompt
+		h.shortcutLine = QuitConfirmPrompt
 	}
 }

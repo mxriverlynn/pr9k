@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -29,6 +30,7 @@ func (s *stubRunner) WasTerminated() bool { return s.wasTerminated }
 func (s *stubRunner) WriteToLog(line string) { s.logLines = append(s.logLines, line) }
 
 type spyHeader struct {
+	mu    sync.Mutex
 	calls []struct {
 		idx   int
 		state StepState
@@ -36,6 +38,8 @@ type spyHeader struct {
 }
 
 func (h *spyHeader) SetStepState(idx int, state StepState) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.calls = append(h.calls, struct {
 		idx   int
 		state StepState
@@ -43,6 +47,8 @@ func (h *spyHeader) SetStepState(idx int, state StepState) {
 }
 
 func (h *spyHeader) lastStateFor(idx int) (StepState, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for i := len(h.calls) - 1; i >= 0; i-- {
 		if h.calls[i].idx == idx {
 			return h.calls[i].state, true
@@ -97,8 +103,8 @@ func TestOrchestrate_NonZeroExit_SetsErrorShortcuts(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond) // let orchestration reach blocked state
 
-	if h.ShortcutLine != ErrorShortcuts {
-		t.Errorf("expected ErrorShortcuts, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts, got %q", h.ShortcutLine())
 	}
 
 	h.Actions <- ActionContinue
@@ -406,8 +412,8 @@ func TestOrchestrate_Continue_RestoresModeToNormal(t *testing.T) {
 		t.Fatal("Orchestrate did not return after ActionContinue")
 	}
 
-	if h.ShortcutLine != NormalShortcuts {
-		t.Errorf("expected NormalShortcuts after continue, got %q", h.ShortcutLine)
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after continue, got %q", h.ShortcutLine())
 	}
 	if h.mode != ModeNormal {
 		t.Errorf("expected ModeNormal after continue, got %v", h.mode)

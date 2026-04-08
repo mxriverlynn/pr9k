@@ -61,7 +61,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// 2. Get GitHub username.
 	userScript := filepath.Join(cfg.ProjectDir, "scripts", "get_gh_user")
-	username, _ := executor.CaptureOutput([]string{userScript})
+	username, err := executor.CaptureOutput([]string{userScript})
+	if err != nil {
+		executor.WriteToLog(fmt.Sprintf("Warning: could not get GitHub user: %v", err))
+	}
 
 	// 3. Iteration loop.
 	iterationsRun := 0
@@ -74,7 +77,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			break
 		}
 
-		sha, _ := executor.CaptureOutput([]string{"git", "rev-parse", "HEAD"})
+		sha, shaErr := executor.CaptureOutput([]string{"git", "rev-parse", "HEAD"})
+		if shaErr != nil {
+			executor.WriteToLog(fmt.Sprintf("Warning: could not get HEAD SHA: %v", shaErr))
+		}
 
 		header.SetIteration(i, cfg.Iterations, issueID, "")
 		for j := range cfg.Steps {
