@@ -43,6 +43,7 @@ func NewLogger(projectDir string) (*Logger, error) {
 
 // SetContext updates the iteration prefix used by subsequent Log calls.
 // iteration is a label like "Iteration 1/3".
+// The second parameter is reserved for future use (e.g. a step label) and is intentionally ignored.
 func (l *Logger) SetContext(iteration string, _ string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
