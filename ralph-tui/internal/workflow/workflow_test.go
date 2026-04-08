@@ -82,3 +82,38 @@ func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveCommand_EmptySlice(t *testing.T) {
+	got := ResolveCommand("/proj", []string{}, "42")
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %v", got)
+	}
+}
+
+func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
+	original := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
+	input := make([]string, len(original))
+	copy(input, original)
+	ResolveCommand("/proj", input, "42")
+	for i := range original {
+		if input[i] != original[i] {
+			t.Errorf("input[%d] mutated: got %q, want %q", i, input[i], original[i])
+		}
+	}
+}
+
+func TestResolveCommand_TemplateInExecutable(t *testing.T) {
+	cmd := []string{"scripts/issue-{{ISSUE_ID}}/run", "arg"}
+	got := ResolveCommand("/proj", cmd, "5")
+	wantExe := "/proj/scripts/issue-5/run"
+	if got[0] != wantExe {
+		t.Errorf("exe: got %q, want %q", got[0], wantExe)
+	}
+}
+
+func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
+	got := ResolveCommand("/proj", []string{"git"}, "1")
+	if got[0] != "git" {
+		t.Errorf("exe: got %q, want %q", got[0], "git")
+	}
+}
