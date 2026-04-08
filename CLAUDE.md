@@ -58,6 +58,8 @@ ralph-tui/
     ui/
       ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
       ui_test.go
+      header.go               # StatusHeader: pointer-mutable TUI status display; StepState (Pending/Active/Done/Failed); SetIteration, SetStepState, SetFinalization, SetFinalizeStepState
+      header_test.go
     steps/
       steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs; BuildPrompt with empty PromptFile validation
       steps_test.go
