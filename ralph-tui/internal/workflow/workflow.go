@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 )
@@ -21,6 +24,11 @@ type Runner struct {
 	mu         sync.Mutex
 	log        *logger.Logger
 	workingDir string
+
+	// processMu guards currentProc and procDone for concurrent Terminate calls.
+	processMu   sync.Mutex
+	currentProc *os.Process
+	procDone    chan struct{}
 }
 
 // NewRunner creates a Runner that streams subprocess output to log and through
@@ -39,6 +47,29 @@ func NewRunner(log *logger.Logger, workingDir string) *Runner {
 // for real-time display.
 func (r *Runner) LogReader() *io.PipeReader {
 	return r.logReader
+}
+
+// Terminate sends SIGTERM to the currently running subprocess. If the process
+// has not exited within 3 seconds, SIGKILL is sent. Safe to call when no
+// subprocess is running (it is a no-op in that case). Keyboard handlers use
+// this to skip a step or quit cleanly.
+func (r *Runner) Terminate() {
+	r.processMu.Lock()
+	proc := r.currentProc
+	done := r.procDone
+	r.processMu.Unlock()
+
+	if proc == nil {
+		return
+	}
+
+	_ = proc.Signal(syscall.SIGTERM)
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = proc.Kill()
+	}
 }
 
 // RunStep executes command as a subprocess and streams its stdout and stderr in
@@ -62,6 +93,18 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("workflow: start %q: %w", command[0], err)
 	}
+
+	done := make(chan struct{})
+	r.processMu.Lock()
+	r.currentProc = cmd.Process
+	r.procDone = done
+	r.processMu.Unlock()
+	defer func() {
+		close(done)
+		r.processMu.Lock()
+		r.currentProc = nil
+		r.processMu.Unlock()
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(2)

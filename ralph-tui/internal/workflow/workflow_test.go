@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 )
@@ -454,5 +455,145 @@ func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
 	got := ResolveCommand("/proj", []string{"git"}, "1")
 	if got[0] != "git" {
 		t.Errorf("exe: got %q, want %q", got[0], "git")
+	}
+}
+
+// Terminate unit tests
+
+// TestTerminate_RunStepReturnsWithinTimeout starts a long-running subprocess,
+// requests termination, and verifies RunStep returns within 5 seconds.
+func TestTerminate_RunStepReturnsWithinTimeout(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("long-step", []string{"sleep", "60"})
+	}()
+
+	// Give the process time to start before terminating.
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TestTerminate_ScannerGoroutinesExitAfterPipesClose verifies that after
+// termination the subprocess pipes are closed so scanner goroutines inside
+// RunStep exit naturally (evidenced by RunStep returning).
+func TestTerminate_ScannerGoroutinesExitAfterPipesClose(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan struct{})
+	go func() {
+		defer close(stepDone)
+		_ = r.RunStep("pipe-step", []string{"sh", "-c", "while true; do echo line; sleep 0.05; done"})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+		// scanner goroutines exited — RunStep returned
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return after Terminate; scanner goroutines may still be blocked")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TestTerminate_SIGTERMSentBeforeSIGKILL uses a subprocess that traps SIGTERM
+// and writes a marker line before exiting, confirming SIGTERM arrives first.
+func TestTerminate_SIGTERMSentBeforeSIGKILL(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	script := `trap 'echo received-sigterm; exit 0' TERM; while true; do sleep 0.05; done`
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("sigterm-step", []string{"sh", "-c", script})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = r.Close()
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "received-sigterm" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'received-sigterm' in output (SIGTERM sent first), got %v", lines)
+	}
+}
+
+// TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
+// and verifies the orchestration can proceed to the next step without hanging.
+func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- r.RunStep("long-step", []string{"sh", "-c", "while true; do echo streaming; sleep 0.05; done"})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-firstDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first step did not return after Terminate")
+	}
+
+	// Proceed to a subsequent step — must not hang.
+	nextDone := make(chan error, 1)
+	go func() {
+		nextDone <- r.RunStep("next-step", []string{"echo", "next step ran"})
+	}()
+
+	select {
+	case <-nextDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("next step did not return; orchestration is stuck after Terminate")
+	}
+
+	_ = r.Close()
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "next step ran" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'next step ran' in output after termination, got %v", lines)
 	}
 }
