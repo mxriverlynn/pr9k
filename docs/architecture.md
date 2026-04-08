@@ -10,40 +10,40 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           main.go                                   │
 │                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐ │
-│  │  CLI Parsing  │  │ Step Loading  │  │    OS Signal Handling     │ │
-│  │  (cli.Parse   │  │ (steps.Load   │  │  SIGINT/SIGTERM → chan   │ │
-│  │   Args)       │  │  Steps)       │  │  → KeyHandler.ForceQuit  │ │
-│  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────────┘ │
-│         │                 │                       │                  │
-│         ▼                 ▼                       ▼                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐  │
+│  │  CLI Parsing │  │ Step Loading │  │    OS Signal Handling     │  │
+│  │  (cli.Parse  │  │ (steps.Load  │  │  SIGINT/SIGTERM → chan    │  │
+│  │   Args)      │  │  Steps)      │  │  → KeyHandler.ForceQuit   │  │
+│  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────────┘  │
+│         │                 │                      │                  │
+│         ▼                 ▼                      ▼                  │
 │  ┌─────────────────────────────────────────────────────────────────┐│
-│  │                    workflow.Run (goroutine)                      ││
-│  │                                                                  ││
+│  │                    workflow.Run (goroutine)                     ││
+│  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
-│  │  │              Iteration Loop (1..N)                       │    ││
-│  │  │                                                          │    ││
-│  │  │  get_next_issue → git rev-parse HEAD → build steps       │    ││
-│  │  │       │                                                  │    ││
-│  │  │       ▼                                                  │    ││
-│  │  │  ┌──────────────────────────────────────────────────┐    │    ││
-│  │  │  │         ui.Orchestrate (step sequencer)          │    │    ││
-│  │  │  │                                                   │    │    ││
-│  │  │  │  for each step:                                   │    │    ││
-│  │  │  │    drain Actions channel (check for quit)         │    │    ││
-│  │  │  │    set step → Active                              │    │    ││
-│  │  │  │    runner.RunStep(name, command)                   │    │    ││
-│  │  │  │      ├─ success → step → Done                     │    │    ││
-│  │  │  │      ├─ terminated → step → Done (skip)           │    │    ││
-│  │  │  │      └─ failure → step → Failed                   │    │    ││
-│  │  │  │           enter ModeError                         │    │    ││
-│  │  │  │           wait on Actions:                        │    │    ││
-│  │  │  │             c → continue   r → retry   q → quit  │    │    ││
-│  │  │  └──────────────────────────────────────────────────┘    │    ││
+│  │  │              Iteration Loop (1..N)                      │    ││
+│  │  │                                                         │    ││
+│  │  │  get_next_issue → git rev-parse HEAD → build steps      │    ││
+│  │  │       │                                                 │    ││
+│  │  │       ▼                                                 │    ││
+│  │  │  ┌──────────────────────────────────────────────────┐   │    ││
+│  │  │  │         ui.Orchestrate (step sequencer)          │   │    ││
+│  │  │  │                                                  │   │    ││
+│  │  │  │  for each step:                                  │   │    ││
+│  │  │  │    drain Actions channel (check for quit)        │   │    ││
+│  │  │  │    set step → Active                             │   │    ││
+│  │  │  │    runner.RunStep(name, command)                 │   │    ││
+│  │  │  │      ├─ success → step → Done                    │   │    ││
+│  │  │  │      ├─ terminated → step → Done (skip)          │   │    ││
+│  │  │  │      └─ failure → step → Failed                  │   │    ││
+│  │  │  │           enter ModeError                        │   │    ││
+│  │  │  │           wait on Actions:                       │   │    ││
+│  │  │  │             c → continue   r → retry   q → quit  │   │    ││
+│  │  │  └──────────────────────────────────────────────────┘   │    ││
 │  │  └─────────────────────────────────────────────────────────┘    ││
-│  │                                                                  ││
+│  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
-│  │  │           Finalization Phase                             │    ││
+│  │  │           Finalization Phase                            │    ││
 │  │  │  Deferred work → Lessons learned → Final git push       │    ││
 │  │  │  (also runs through ui.Orchestrate)                     │    ││
 │  │  └─────────────────────────────────────────────────────────┘    ││
@@ -58,35 +58,35 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │  JSON Config │    │   Prompt Files   │    │   Helper Scripts    │
 │  (configs/)  │    │   (prompts/)     │    │   (scripts/)        │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
-       │                     │                          │
-       ▼                     ▼                          ▼
+       │                     │                         │
+       ▼                     ▼                         ▼
 ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │ steps.Load   │    │ steps.BuildPrompt│    │ runner.CaptureOutput│
 │ Steps()      │    │ (prepend vars)   │    │ (issue ID, user,    │
-│              │    │                  │    │  HEAD SHA)           │
+│              │    │                  │    │  HEAD SHA)          │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
-       │                     │                          │
-       └─────────┬───────────┘                          │
-                 ▼                                      │
-       ┌──────────────────┐                             │
-       │ buildIteration   │◄────────────────────────────┘
+       │                     │                         │
+       └─────────┬───────────┘                         │
+                 ▼                                     │
+       ┌──────────────────┐                            │
+       │ buildIteration   │◄───────────────────────────┘
        │ Steps()          │
        │ → ResolvedStep[] │
        └────────┬─────────┘
                 │
                 ▼
        ┌──────────────────┐     ┌────────────────┐
-       │ runner.RunStep()  │────▶│  Subprocess    │
-       │                   │     │  (claude/git/  │
-       │                   │     │   scripts)     │
-       │                   │     └───────┬────────┘
-       │                   │             │ stdout/stderr
-       │                   │             ▼
-       │                   │     ┌────────────────┐
-       │                   │     │ scanner        │
-       │                   │     │ goroutines (2) │
-       │                   │     └───┬────────┬───┘
-       │                   │         │        │
+       │ runner.RunStep() │────▶│  Subprocess    │
+       │                  │     │  (claude/git/  │
+       │                  │     │   scripts)     │
+       │                  │     └───────┬────────┘
+       │                  │             │ stdout/stderr
+       │                  │             ▼
+       │                  │     ┌────────────────┐
+       │                  │     │ scanner        │
+       │                  │     │ goroutines (2) │
+       │                  │     └───┬────────┬───┘
+       │                  │         │        │
        └──────────────────┘         │        │
                                     ▼        ▼
                             ┌────────┐  ┌─────────┐
