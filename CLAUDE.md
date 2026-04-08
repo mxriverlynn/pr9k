@@ -53,7 +53,7 @@ ralph-tui/
       args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
       args_test.go
     workflow/
-      workflow.go             # ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir
+      workflow.go             # Runner: streams subprocess stdout/stderr through io.Pipe with mutex-protected writes and WaitGroup drain; ResolveCommand: replaces {{ISSUE_ID}} template vars and resolves relative script paths against projectDir
       workflow_test.go
     ui/
       ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm)
