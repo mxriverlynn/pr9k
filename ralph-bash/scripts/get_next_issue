@@ -1,8 +1,0 @@
-#!/bin/bash
-set -e
-
-ralphlabel="ralph"
-username=$1
-issuenum=$(gh issue list -a "$username" -l "$ralphlabel" -s open --json number -q '.[].number' | sort | head -n 1)
-
-echo $issuenum
