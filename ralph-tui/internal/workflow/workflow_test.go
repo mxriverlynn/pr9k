@@ -606,6 +606,84 @@ func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
 	_ = log.Close()
 }
 
+// WasTerminated tests
+
+// TestWasTerminated_FalseBeforeTerminate verifies the flag is false when
+// Terminate has not been called.
+func TestWasTerminated_FalseBeforeTerminate(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	if err := r.RunStep("step", []string{"echo", "ok"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	if r.WasTerminated() {
+		t.Error("WasTerminated should be false for a step that exited normally")
+	}
+}
+
+// TestWasTerminated_TrueAfterTerminate verifies the flag is true when
+// Terminate() is called while a step is running.
+func TestWasTerminated_TrueAfterTerminate(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("long-step", []string{"sleep", "60"})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return after Terminate")
+	}
+
+	if !r.WasTerminated() {
+		t.Error("WasTerminated should be true after Terminate was called")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TestWasTerminated_ResetOnNextRunStep verifies the flag is reset when the
+// next RunStep begins.
+func TestWasTerminated_ResetOnNextRunStep(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("long-step", []string{"sleep", "60"})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+	<-stepDone
+
+	// Start a normal step — should reset the flag.
+	if err := r.RunStep("next-step", []string{"echo", "ok"}); err != nil {
+		t.Fatalf("RunStep next-step: %v", err)
+	}
+
+	if r.WasTerminated() {
+		t.Error("WasTerminated should be false after a normal step follows a terminated one")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
 // TestTerminate_AfterSubprocessAlreadyExited runs a fast command, waits for it
 // to finish, then calls Terminate() and verifies no panic and no hang.
 func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {

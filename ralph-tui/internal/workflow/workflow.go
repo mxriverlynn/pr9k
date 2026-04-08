@@ -25,10 +25,11 @@ type Runner struct {
 	log        *logger.Logger
 	workingDir string
 
-	// processMu guards currentProc and procDone for concurrent Terminate calls.
+	// processMu guards currentProc, procDone, and terminated.
 	processMu   sync.Mutex
 	currentProc *os.Process
 	procDone    chan struct{}
+	terminated  bool // set by Terminate(), reset at start of RunStep
 }
 
 // NewRunner creates a Runner that streams subprocess output to log and through
@@ -49,6 +50,15 @@ func (r *Runner) LogReader() *io.PipeReader {
 	return r.logReader
 }
 
+// WasTerminated reports whether the most recent RunStep was ended by a
+// Terminate() call (user-initiated skip). Returns false once the next
+// RunStep begins (the flag is reset at the start of each run).
+func (r *Runner) WasTerminated() bool {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	return r.terminated
+}
+
 // Terminate sends SIGTERM to the currently running subprocess. If the process
 // has not exited within 3 seconds, SIGKILL is sent. Safe to call when no
 // subprocess is running (it is a no-op in that case). Keyboard handlers use
@@ -57,6 +67,7 @@ func (r *Runner) Terminate() {
 	r.processMu.Lock()
 	proc := r.currentProc
 	done := r.procDone
+	r.terminated = true
 	r.processMu.Unlock()
 
 	if proc == nil {
@@ -78,6 +89,10 @@ func (r *Runner) Terminate() {
 // PipeWriter are mutex-protected because io.PipeWriter is not safe for
 // concurrent use.
 func (r *Runner) RunStep(stepName string, command []string) error {
+	r.processMu.Lock()
+	r.terminated = false
+	r.processMu.Unlock()
+
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.workingDir
 
