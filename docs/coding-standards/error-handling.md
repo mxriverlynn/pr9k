@@ -79,3 +79,15 @@ if err != nil {
 }
 // username may be empty — callers must tolerate that
 ```
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — System-level architecture and design principles
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Scanner error checking, goroutine write error tracking, and package-prefixed error messages
+- [Step Definitions & Prompt Building](../features/step-definitions.md) — Package-prefixed errors and file paths in I/O errors for step/prompt loading
+- [File Logging](../features/file-logging.md) — bufio.Writer error surfacing on close and package-prefixed logger errors
+- [CLI & Configuration](../features/cli-configuration.md) — Error messages for invalid arguments and project directory resolution failures
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Warning logs for discarded CaptureOutput failures (get_gh_user, get_next_issue)
+- [API Design](api-design.md) — Complementary standards for precondition validation
+- [Concurrency](concurrency.md) — Complementary standards for goroutine error handling
+- [Testing](testing.md) — Standards for testing all file I/O error paths

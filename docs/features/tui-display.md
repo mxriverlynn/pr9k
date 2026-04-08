@@ -158,8 +158,11 @@ These are passed to `Runner.WriteToLog()` by the orchestration loop.
 - `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader, SetIteration, SetStepState, SetFinalization, SetFinalizeStepState, bounds guards
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
-## Related Documentation
+## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how the header fits into the TUI
 - [Workflow Orchestration](workflow-orchestration.md) — How step state transitions are triggered during orchestration
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How the shortcut bar text changes with keyboard modes
+- [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log pipe
+- [Step Definitions & Prompt Building](step-definitions.md) — Where step names displayed in the header originate
+- [API Design](../coding-standards/api-design.md) — Coding standards for bounds guards on array indexers (used by SetStepState)

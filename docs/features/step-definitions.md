@@ -164,9 +164,12 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test file location, following the project's Go testing conventions.
 
-## Related Documentation
+## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of ralph-tui
+- [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir is resolved and passed to step loading
 - [Workflow Orchestration](workflow-orchestration.md) — How loaded steps are resolved and executed
+- [Subprocess Execution & Streaming](subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
+- [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
+- [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

@@ -64,3 +64,14 @@ const scanBufSize = 256 * 1024
 scanner := bufio.NewScanner(pipe)
 scanner.Buffer(make([]byte, scanBufSize), scanBufSize)
 ```
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — System-level architecture and design principles
+- [CLI & Configuration](../features/cli-configuration.md) — Flag reordering in ParseArgs and symlink-safe project directory resolution
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
+- [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
+- [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests
+- [API Design](api-design.md) — Complementary standards for platform-scoped assumptions
+- [Concurrency](concurrency.md) — Complementary concurrency patterns
+- [Error Handling](error-handling.md) — Complementary error handling conventions

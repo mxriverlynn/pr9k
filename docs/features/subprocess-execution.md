@@ -223,10 +223,15 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 - `ralph-tui/internal/workflow/workflow_test.go` — Tests for RunStep, Terminate, WasTerminated, WriteToLog, CaptureOutput, ResolveCommand, and Close
 
-## Related Documentation
+## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how streaming fits into the data flow
 - [Workflow Orchestration](workflow-orchestration.md) — How RunStep is called by the orchestration loop
+- [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built before execution
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How Terminate is triggered by keyboard input
 - [Signal Handling & Shutdown](signal-handling.md) — How Terminate is triggered by OS signals
 - [File Logging](file-logging.md) — The logger that receives forwarded subprocess output
+- [CLI & Configuration](cli-configuration.md) — How ProjectDir sets the working directory for all subprocesses
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected writes, WaitGroup drain, and io.Pipe streaming
+- [Error Handling](../coding-standards/error-handling.md) — Coding standards for scanner error checking and goroutine write error tracking
+- [Go Patterns](../coding-standards/go-patterns.md) — Coding standard for 256KB scanner buffer sizing

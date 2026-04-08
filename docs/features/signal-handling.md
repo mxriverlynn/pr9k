@@ -128,9 +128,10 @@ Signal handling is tested indirectly through:
 - `ralph-tui/internal/ui/ui_test.go` — Tests for `ForceQuit` behavior (cancel called, ActionQuit sent)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests for pre-step quit drain (ActionQuit injected before step starts)
 
-## Related Documentation
+## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level signal flow diagram
 - [Keyboard Input & Error Recovery](keyboard-input.md) — ForceQuit method and Actions channel
 - [Subprocess Execution & Streaming](subprocess-execution.md) — Terminate method (SIGTERM/SIGKILL)
 - [Workflow Orchestration](workflow-orchestration.md) — Pre-step drain in Orchestrate
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for non-blocking sends (critical for signal-safe ForceQuit)

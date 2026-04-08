@@ -217,10 +217,16 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) { a.h.SetFinaliz
 - `ralph-tui/internal/workflow/run_test.go` — Tests Run lifecycle with mock executor and header
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain
 
-## Related Documentation
+## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of the orchestration flow
+- [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
 - [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How RunStep executes subprocesses
+- [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How user decisions flow through the Actions channel
+- [Signal Handling & Shutdown](signal-handling.md) — How ForceQuit injects ActionQuit for clean shutdown
 - [TUI Status Header](tui-display.md) — How step state updates are rendered
+- [File Logging](file-logging.md) — How step separator lines are written to the log file
+- [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
+- [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters

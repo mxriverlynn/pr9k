@@ -200,9 +200,12 @@ ralph-tui <iterations> [-project-dir <path>]
 | `TestParseArgs_UnknownFlag` | Unknown flag returns error |
 | `TestParseArgs_LargeIterations` | `"1000"` is accepted |
 
-## Related Documentation
+## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of ralph-tui
+- [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
 - [Step Definitions & Prompt Building](step-definitions.md) — How ProjectDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
+- [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries ProjectDir and Iterations into the Run loop
+- [File Logging](file-logging.md) — How ProjectDir determines the log file location
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including CLI design decisions
+- [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for flag reordering and symlink-safe path resolution

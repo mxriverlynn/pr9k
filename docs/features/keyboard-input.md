@@ -174,9 +174,11 @@ The shortcut line is updated internally by `updateShortcutLine()` whenever the m
 
 - `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel, ForceQuit, ShortcutLine thread safety
 
-## Related Documentation
+## Additional Information
 
 - [Architecture Overview](../architecture.md) — Keyboard & mode state machine diagram
 - [Workflow Orchestration](workflow-orchestration.md) — How Actions channel drives the orchestration loop
 - [Signal Handling & Shutdown](signal-handling.md) — How ForceQuit is triggered by OS signals
+- [Subprocess Execution & Streaming](subprocess-execution.md) — How Terminate stops the active subprocess
 - [TUI Status Header](tui-display.md) — How the shortcut bar is displayed alongside the status header
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for non-blocking sends, channel dispatch, and mutex-protected getters

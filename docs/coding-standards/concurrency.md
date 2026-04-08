@@ -116,3 +116,15 @@ for _, step := range steps {
     // ... run step ...
 }
 ```
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Mutex-protected io.Pipe writes, WaitGroup drain, and snapshot-then-unlock in Terminate
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
+- [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Non-blocking drain before each orchestration step
+- [File Logging](../features/file-logging.md) — Mutex-protected concurrent writes from scanner goroutines
+- [API Design](api-design.md) — Complementary standards for unexported fields with protected getters
+- [Error Handling](error-handling.md) — Complementary standards for goroutine write error tracking
+- [Testing](testing.md) — Standards for test doubles with shared state needing mutexes

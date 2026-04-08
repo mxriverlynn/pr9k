@@ -78,3 +78,15 @@ if strings.Contains(command[0], "/") {
     command[0] = filepath.Join(projectDir, command[0])
 }
 ```
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — System-level architecture and design principles
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (iterHeader/finalHeader) applying the interface narrowing pattern
+- [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState and SetFinalizeStepState
+- [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand
+- [Error Handling](error-handling.md) — Complementary standards for error message formatting
+- [Concurrency](concurrency.md) — Complementary standards for mutex-protected getters (unexported fields)
+- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
+- [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths

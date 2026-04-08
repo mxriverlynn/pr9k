@@ -63,3 +63,12 @@
 
 - Step definitions: `ralph-tui/configs/ralph-steps.json`, `ralph-tui/configs/ralph-finalize-steps.json`
 - Claude Code settings: `.claude/settings.json`, `.claude/settings.local.json`
+
+## Additional Information
+
+- [Architecture Overview](architecture.md) — System-level architecture of ralph-tui with block diagrams and feature summaries
+- [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
+- [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
+- **Coding Standards** — Conventions governing Go code in ralph-tui:
+  - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md)
+- [ralph-tui Plan](plans/ralph-tui.md) — Original specification and design rationale

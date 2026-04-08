@@ -695,3 +695,12 @@ All 11 Glyph API assumptions verified against pkg.go.dev: `Log(r io.Reader) LogC
 - **Medium (2 fixed):** SIGTERM should be default over SIGKILL — updated subprocess termination to use SIGTERM-then-SIGKILL; scanner `ErrTooLong` silently lost — added error check after scan loop
 - **Low (1 fixed):** `ITERATIONS_RUN` tracking — clarified completion message uses actual count
 - **Acknowledged but not changed (4):** Continue-after-failure guardrails (added caution note, user takes responsibility); empty `ISSUE_ID` validation (covered by early-exit logic); `--verbose` flag output format (needs runtime verification); `go install` directory resolution (mitigated by `-project-dir` flag)
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — Current architecture with block diagrams, data flow, and feature summaries
+- **Feature Documentation** — Detailed docs for each feature specified in this plan:
+  - [CLI & Configuration](../features/cli-configuration.md), [Step Definitions](../features/step-definitions.md), [Subprocess Execution](../features/subprocess-execution.md), [Workflow Orchestration](../features/workflow-orchestration.md), [TUI Display](../features/tui-display.md), [Keyboard Input](../features/keyboard-input.md), [Signal Handling](../features/signal-handling.md), [File Logging](../features/file-logging.md)
+- [Project Discovery](../project-discovery.md) — Repository-level attributes and tooling
+- **Coding Standards** — Conventions codified from this project's implementation:
+  - [API Design](../coding-standards/api-design.md), [Concurrency](../coding-standards/concurrency.md), [Error Handling](../coding-standards/error-handling.md), [Go Patterns](../coding-standards/go-patterns.md), [Testing](../coding-standards/testing.md)

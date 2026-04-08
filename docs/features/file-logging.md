@@ -163,7 +163,12 @@ func (l *Logger) Close() error {
 
 - `ralph-tui/internal/logger/logger_test.go` — Tests for NewLogger, Log with/without context, Close idempotency, write-after-close error
 
-## Related Documentation
+## Additional Information
 
 - [Architecture Overview](../architecture.md) — Data flow showing logger alongside io.Pipe
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How scanner goroutines write to the logger
+- [CLI & Configuration](cli-configuration.md) — How ProjectDir determines the log file location
+- [Workflow Orchestration](workflow-orchestration.md) — Where log context (iteration number) is set during the run loop
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected shared writers
+- [Error Handling](../coding-standards/error-handling.md) — Coding standards for bufio.Writer error surfacing and package-prefixed errors
+- [Testing](../coding-standards/testing.md) — Coding standard for testing closeable types for idempotency (applies to Logger.Close)

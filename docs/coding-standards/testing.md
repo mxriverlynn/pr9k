@@ -99,3 +99,15 @@ func (s *spyHeader) getCalls() []string {
 ## Verify go vet before committing
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
+
+## Additional Information
+
+- [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle
+- [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
+- [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState and SetFinalizeStepState
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes)
+- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
+- [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify
+- [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests
+- [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage
