@@ -1,0 +1,134 @@
+#!/bin/bash
+set -e
+
+ITERATIONS=${1:-0}
+ITERATIONS_RUN=0
+
+RALPH_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+FEATURE_PROMPT_FILE="$RALPH_DIR/prompts/feature-work.md"
+TEST_PLAN_PROMPT_FILE="$RALPH_DIR/prompts/test-planning.md"
+TEST_WRITING_PROMPT_FILE="$RALPH_DIR/prompts/test-writing.md"
+CODE_REVIEW_PLAN_PROMPT_FILE="$RALPH_DIR/prompts/code-review-changes.md"
+CODE_REVIEW_FIXES_PROMPT_FILE="$RALPH_DIR/prompts/code-review-fixes.md"
+DEFERRED_WORK_PROMPT_FILE="$RALPH_DIR/prompts/deferred-work.md"
+LESSONS_LEARNED_PROMPT_FILE="$RALPH_DIR/prompts/lessons-learned.md"
+CLOSE_ISSUE_PROMPT_FILE="$RALPH_DIR/prompts/close-issue.md"
+DOCS_UPDATE_PROMPT_FILE="$RALPH_DIR/prompts/update-docs.md"
+
+if (( ITERATIONS <= 0 )); then
+  echo "Usage: $0 <iterations> [prompt-file]"
+  exit 1
+fi
+
+echo ""
+echo "# [$(date)]: Initializing Ralph."
+cat $RALPH_DIR/ralph-art.txt
+
+echo ""
+echo "## [Init:1/1, $(date)]: Ralph is finding your github username"
+USERNAME=$($RALPH_DIR/scripts/get_gh_user)
+$RALPH_DIR/scripts/box-text "User: $USERNAME"
+
+for ((i=1; i<=ITERATIONS; i++)); do
+  echo "---"
+  echo ""
+  echo "# [Iteration:$i/$ITERATIONS, $(date)]: Starting a new iteration"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is looking for the next issue to work"
+  ISSUE_ID=$($RALPH_DIR/scripts/get_next_issue $USERNAME)
+  $RALPH_DIR/scripts/box-text "Issue #$ISSUE_ID"
+
+  if [[ ! -n "$ISSUE_ID" ]]; then
+    echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph found nothing to work. Exiting loop."
+    exit 0
+  fi
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is finding the current git commit sha"
+  STARTING_SHA=$($RALPH_DIR/scripts/get_commit_sha)
+  $RALPH_DIR/scripts/box-text " - Starting git SHA for this iteration: $STARTING_SHA"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is working issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $FEATURE_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+  
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is planning tests for issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $TEST_PLAN_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model opus -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is writing tests for issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $TEST_WRITING_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is running a code review for issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $CODE_REVIEW_PLAN_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model opus -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is fixing the code review items for issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $CODE_REVIEW_FIXES_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is closing issue #$ISSUE_ID"
+  RESULT=$($RALPH_DIR/scripts/close_gh_issue $ISSUE_ID 2>&1)
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is updating docs from changes in issue #$ISSUE_ID"
+  PROMPT="ISSUENUMBER=$ISSUE_ID\n"
+  PROMPT+="STARTINGSHA=$STARTING_SHA\n"
+  PROMPT+=$(cat $DOCS_UPDATE_PROMPT_FILE)
+  RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  echo ""
+  echo "## [Iteration:$i/$ITERATIONS, $(date)]: Ralph is pushing changes to github for issue #$ISSUE_ID"
+  RESULT=$(git push 2>&1)
+  $RALPH_DIR/scripts/box-text "$RESULT"
+
+  ITERATIONS_RUN=$i
+done
+
+echo ""
+echo "## [Finalizing:1/3, $(date)]: Ralph is looking for deffered work and creating issue tickets for them"
+PROMPT=$(cat $DEFERRED_WORK_PROMPT_FILE)
+RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+$RALPH_DIR/scripts/box-text "$RESULT"
+
+echo ""
+echo "## [Finalizing:2/3, $(date)]: Ralph is looking for lessons learned and documenting them"
+PROMPT=$(cat $LESSONS_LEARNED_PROMPT_FILE)
+RESULT=$(claude --permission-mode acceptEdits --model sonnet -p "$PROMPT")
+$RALPH_DIR/scripts/box-text "$RESULT"
+
+echo ""
+echo "## [Finalizing:3/3, $(date)]: Ralph is doing a final push to github for issue #$ISSUE_ID"
+RESULT=$(git push 2>&1)
+$RALPH_DIR/scripts/box-text "$RESULT"
+
+echo ""
+echo "[Completed, $(date)]: Ralph completed after $ITERATIONS_RUN iteration(s) and 3 finalizing tasks."
+
+exit 0

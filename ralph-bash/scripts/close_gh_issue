@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# Configuration
+ISSUE_NUM=$1
+COMMENT_MSG=${2:-"Ralph closed the issue after working"}
+CLOSE_REASON="completed" # Options: completed, not planned
+
+# Close the issue
+gh issue close "$ISSUE_NUM" --comment "$COMMENT_MSG" --reason "$CLOSE_REASON"

@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+
+sha=$(git rev-parse HEAD)
+
+echo $sha

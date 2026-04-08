@@ -1,0 +1,7 @@
+#!/bin/bash
+
+RALPH_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROMPT_FILE="$RALPH_DIR/prompts/${1:-feature-work}.md"
+PROMPT=$(cat $PROMPT_FILE)
+
+claude --permission-mode acceptEdits "$PROMPT"

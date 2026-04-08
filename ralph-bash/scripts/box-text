@@ -1,0 +1,90 @@
+#!/bin/bash
+set -f
+
+# Check if input is provided
+if [ -z "$1" ]; then
+    echo "Usage: $0 \"text to box\""
+    exit 1
+fi
+
+# Store input
+TEXT="$1"
+
+# Define box characters
+TOP_L="┌"
+TOP_R="┐"
+BOT_L="└"
+BOT_R="┘"
+VERT="│"
+HORZ="─"
+
+# Get terminal width, default to 80
+TERM_WIDTH=${COLUMNS:-$(tput cols 2>/dev/null || echo 120)}
+
+# Box overhead: │ + space + content + space + │ = 4 chars
+MAX_WIDTH=$(( TERM_WIDTH - 4 ))
+
+# Word-wrap a single line to MAX_WIDTH
+wrap_line() {
+    local line="$1"
+    local width="$2"
+
+    # Empty line passes through
+    if [ -z "$line" ]; then
+        echo ""
+        return
+    fi
+
+    # Detect leading whitespace / bullet prefix to use as indent for continuation
+    local prefix=""
+    if [[ "$line" =~ ^([-*]+[[:space:]]+|[[:space:]]+[-*]+[[:space:]]+|[[:space:]]+) ]]; then
+        local match="${BASH_REMATCH[1]}"
+        prefix=$(printf '%*s' "${#match}" '')
+    fi
+
+    local current=""
+    local first=1
+    for word in $line; do
+        if [ -z "$current" ]; then
+            current="$word"
+        elif (( ${#current} + 1 + ${#word} <= width )); then
+            current="$current $word"
+        else
+            echo "$current"
+            if [ "$first" -eq 1 ]; then
+                first=0
+                width=$(( width - ${#prefix} ))
+            fi
+            current="${prefix}$word"
+        fi
+    done
+    [ -n "$current" ] && echo "$current"
+}
+
+# Split text into lines, word-wrap each, and find the longest
+WRAPPED=()
+MAX_LEN=0
+while IFS= read -r line; do
+    while IFS= read -r wrapped; do
+        WRAPPED+=("$wrapped")
+        (( ${#wrapped} > MAX_LEN )) && MAX_LEN=${#wrapped}
+    done < <(wrap_line "$line" "$MAX_WIDTH")
+done <<< "$TEXT"
+
+# Cap box width to the longest wrapped line (so short text doesn't fill the terminal)
+(( MAX_LEN > MAX_WIDTH )) && MAX_LEN=$MAX_WIDTH
+
+# Print top line
+echo "${TOP_L}$(printf '%*s' "$(( MAX_LEN + 2 ))" '' | tr ' ' "${HORZ}")${TOP_R}"
+
+# Print each text line, padded to max length
+for line in "${WRAPPED[@]}"; do
+    # Adjust for multi-byte characters: printf pads by bytes, not display columns
+    local_bytes=$(printf '%s' "$line" | wc -c | tr -d ' ')
+    local_chars=${#line}
+    pad_width=$(( MAX_LEN + local_bytes - local_chars ))
+    printf '%s %-*s %s\n' "${VERT}" "$pad_width" "$line" "${VERT}"
+done
+
+# Print bottom line
+echo "${BOT_L}$(printf '%*s' "$(( MAX_LEN + 2 ))" '' | tr ' ' "${HORZ}")${BOT_R}"
