@@ -168,6 +168,16 @@ func (r *Runner) Close() error {
 	return r.logWriter.Close()
 }
 
+// CaptureOutput runs command in workingDir and returns its trimmed stdout.
+// Stderr is discarded. Use this for commands that return a single value
+// (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
+func (r *Runner) CaptureOutput(command []string) (string, error) {
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = r.workingDir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
 // ResolveCommand replaces template variables in command and resolves relative
 // script paths against projectDir.
 //
