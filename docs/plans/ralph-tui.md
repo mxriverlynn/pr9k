@@ -151,7 +151,7 @@ After all iterations complete, the orchestration goroutine runs three finalizati
 
 During finalization, the status header switches to show `Finalizing 1/3`, `2/3`, `3/3` instead of an iteration number. The step tracker row is replaced with the three finalization step names.
 
-These finalization steps are defined separately from `ralph-steps.json` — either as a second JSON array (`ralph-finalize-steps.json`) or as a hardcoded list, since they are fixed and few.
+These finalization steps are defined separately from `ralph-steps.json` — either as a second JSON array (`configs/ralph-finalize-steps.json`) or as a hardcoded list, since they are fixed and few.
 
 ### Directory resolution
 
@@ -161,7 +161,7 @@ The `ralph-tui` executable lives at the repo root alongside `prompts/` and `ralp
 - Scripts: `projectDir/ralph-bash/scripts/<script>`
 - Logs: `projectDir/logs/`
 - Art: `projectDir/ralph-bash/ralph-art.txt`
-- Step definitions: `projectDir/ralph-tui/ralph-steps.json`
+- Step definitions: `projectDir/ralph-tui/configs/ralph-steps.json`
 
 ### Command template variables
 
@@ -252,7 +252,7 @@ The TUI must handle SIGINT and SIGTERM gracefully:
 
 ### Step definitions loaded from JSON
 
-Steps are loaded from a `ralph-steps.json` file located in the `ralph-tui/` directory. The executable finds `projectDir` (the repo root) at startup using `os.Executable()` (with `filepath.EvalSymlinks` to handle symlinked binaries). All paths — `prompts/`, `ralph-bash/scripts/`, `logs/`, and step definitions — are resolved relative to `projectDir`.
+Steps are loaded from `ralph-tui/configs/ralph-steps.json`. The executable finds `projectDir` (the repo root) at startup using `os.Executable()` (with `filepath.EvalSymlinks` to handle symlinked binaries). All paths — `prompts/`, `ralph-bash/scripts/`, `logs/`, and step definitions — are resolved relative to `projectDir`.
 
 ```go
 type Step struct {
@@ -268,9 +268,9 @@ func loadSteps(projectDir string) ([]Step, error) {
     // projectDir is the repo root, resolved at startup via os.Executable().
     // Note: os.Executable() returns a temp path when using `go run`.
     // During development, use `go build && ./ralph-tui` or pass a -project-dir flag.
-    data, err := os.ReadFile(filepath.Join(projectDir, "ralph-tui", "ralph-steps.json"))
+    data, err := os.ReadFile(filepath.Join(projectDir, "ralph-tui", "configs", "ralph-steps.json"))
     if err != nil {
-        return nil, fmt.Errorf("could not read ralph-steps.json: %w", err)
+        return nil, fmt.Errorf("could not read configs/ralph-steps.json: %w", err)
     }
     var steps []Step
     if err := json.Unmarshal(data, &steps); err != nil {
@@ -280,7 +280,7 @@ func loadSteps(projectDir string) ([]Step, error) {
 }
 ```
 
-**`ralph-steps.json`** (default, lives next to the executable):
+**`configs/ralph-steps.json`** (lives in `ralph-tui/configs/`):
 
 ```json
 [
@@ -342,38 +342,63 @@ Written via a simple `io.Writer` that timestamps and prefixes each line with the
 
 ## File Structure
 
+Follows the [golang-standards/project-layout](https://github.com/golang-standards/project-layout) convention.
+
 ```
-pr9k/                     # repo root (projectDir)
-  ralph-bash/             # existing bash scripts (fallback)
-    ralph-loop            # original orchestrator
-    ralph-art.txt         # startup banner art
-    scripts/              # helper scripts (get_next_issue, close_gh_issue, etc.)
-  ralph-tui/              # new Go module
-    main.go               # entry point, CLI arg parsing, app setup
-    workflow.go            # orchestration logic (the loop, step execution)
-    ui.go                  # Glyph view definitions, keyboard handlers
-    steps.go              # step loading from JSON and prompt building
-    logger.go             # log file writer
-    ralph-steps.json      # default step definitions
+pr9k/                               # repo root (projectDir)
+  ralph-bash/                       # existing bash scripts (fallback)
+    ralph-loop                      # original orchestrator
+    ralph-art.txt                   # startup banner art
+    scripts/                        # helper scripts (get_next_issue, close_gh_issue, etc.)
+  ralph-tui/                        # new Go module
+    cmd/
+      ralph-tui/
+        main.go                     # entry point, CLI arg parsing, app setup
+    internal/
+      workflow/
+        workflow.go                 # orchestration logic (the loop, step execution)
+        workflow_test.go
+      ui/
+        ui.go                       # Glyph view definitions, keyboard handlers
+        ui_test.go
+      steps/
+        steps.go                    # step loading from JSON and prompt building
+        steps_test.go
+      logger/
+        logger.go                   # log file writer
+        logger_test.go
+    configs/
+      ralph-steps.json              # default iteration step definitions
+      ralph-finalize-steps.json     # finalization step definitions
     go.mod
     go.sum
-  prompts/                # read by both ralph-bash and ralph-tui
-  logs/                   # written by ralph-tui (created at runtime)
-  docs/plans/             # this plan and others
+  prompts/                          # read by both ralph-bash and ralph-tui
+  logs/                             # written by ralph-tui (created at runtime)
+  docs/plans/                       # this plan and others
 ```
+
+### Directory purposes (per golang-standards/project-layout)
+
+- **`cmd/ralph-tui/`** — Main application entry point. Minimal code here; imports from `internal/` packages. The subdirectory name matches the desired executable name.
+- **`internal/`** — Private application code. The Go compiler enforces that nothing outside `ralph-tui/` can import these packages, keeping implementation details private.
+  - `internal/workflow/` — Orchestration loop, subprocess streaming, subprocess termination, command template variable replacement, signal handling.
+  - `internal/ui/` — Glyph component tree, keyboard handlers, status header, error state, quit confirmation.
+  - `internal/steps/` — Step definition loading from JSON, prompt building.
+  - `internal/logger/` — Timestamped log file writer with concurrent write safety.
+- **`configs/`** — Configuration files (step definitions). Not Go code — JSON consumed at runtime.
 
 ---
 
 ## Acceptance Criteria & Test Plans
 
-### Steps loading (`steps.go`)
+### Steps loading (`internal/steps/steps.go`)
 
 **Acceptance criteria:**
-- Loads and parses `ralph-steps.json` from the directory containing the executable
+- Loads and parses `configs/ralph-steps.json` from the project directory
 - Returns an error if the file is missing or contains invalid JSON
 - Each step has a `Name`; claude steps have `Model` and `PromptFile`; non-claude steps have `Command`
 - Resolves symlinked executable paths before determining the directory
-- Loads finalization steps from `ralph-finalize-steps.json` (or hardcoded list)
+- Loads finalization steps from `configs/ralph-finalize-steps.json` (or hardcoded list)
 
 **Unit tests:**
 - Parse valid JSON into `[]Step` and verify all fields are populated correctly
@@ -382,7 +407,7 @@ pr9k/                     # repo root (projectDir)
 - Return a descriptive error when file does not exist
 - Verify step count and ordering matches the JSON array order
 
-### Prompt building (`steps.go`)
+### Prompt building (`internal/steps/steps.go`)
 
 **Acceptance criteria:**
 - Reads the prompt file from `projectDir/prompts/<promptFile>`
@@ -396,7 +421,7 @@ pr9k/                     # repo root (projectDir)
 - Return error when prompt file path does not exist
 - Verify real newlines are used (not literal `\n` characters)
 
-### Command template variables (`workflow.go`)
+### Command template variables (`internal/workflow/workflow.go`)
 
 **Acceptance criteria:**
 - `{{ISSUE_ID}}` in non-claude step commands is replaced with the current issue number
@@ -409,7 +434,7 @@ pr9k/                     # repo root (projectDir)
 - Multiple occurrences of `{{ISSUE_ID}}` in a single command array are all replaced
 - Script path `ralph-bash/scripts/close_gh_issue` is resolved to `<projectDir>/ralph-bash/scripts/close_gh_issue`
 
-### Log file writer (`logger.go`)
+### Log file writer (`internal/logger/logger.go`)
 
 **Acceptance criteria:**
 - Creates `logs/ralph-YYYY-MM-DD-HHMMSS.log` at startup, creating the `logs/` directory if needed
@@ -424,7 +449,7 @@ pr9k/                     # repo root (projectDir)
 - Log file is created in the expected directory with the expected filename pattern
 - `logs/` directory is created if it doesn't exist
 
-### Subprocess streaming (`workflow.go`)
+### Subprocess streaming (`internal/workflow/workflow.go`)
 
 **Acceptance criteria:**
 - stdout and stderr from subprocesses are both forwarded to the shared `io.PipeWriter`
@@ -442,7 +467,7 @@ pr9k/                     # repo root (projectDir)
 **Integration tests:**
 - Run a real subprocess (e.g., `echo` or a small test script) end-to-end through the streaming pipeline and verify output appears in both the pipe and the log file
 
-### Subprocess termination (`workflow.go`)
+### Subprocess termination (`internal/workflow/workflow.go`)
 
 **Acceptance criteria:**
 - Calling `cancel()` on the step context terminates the running subprocess
@@ -457,7 +482,7 @@ pr9k/                     # repo root (projectDir)
 **Integration tests:**
 - Start a subprocess via the full streaming pipeline, cancel it mid-stream, verify the orchestration can proceed to the next step
 
-### Orchestration workflow (`workflow.go`)
+### Orchestration workflow (`internal/workflow/workflow.go`)
 
 **Acceptance criteria:**
 - Runs N iterations as specified by the CLI argument
@@ -479,7 +504,7 @@ pr9k/                     # repo root (projectDir)
 **Integration tests:**
 - Run the orchestration with a mock `gh` / `claude` that exits immediately, verify the full flow from start to completion summary
 
-### UI: Status header (`ui.go`)
+### UI: Status header (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
 - Displays current iteration number and total (e.g., `Iteration 1/3`)
@@ -494,7 +519,7 @@ pr9k/                     # repo root (projectDir)
 - Switch to finalization mode — verify header shows `Finalizing` and finalization step names
 - All 8 steps fit across two rows of 4
 
-### UI: Output log (`ui.go`)
+### UI: Output log (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
 - `Log` component receives the read end of the `io.Pipe`
@@ -508,7 +533,7 @@ pr9k/                     # repo root (projectDir)
 - Verify the separator line format matches `── <step name> ─────────────`
 - Verify retry separator includes `(retry)` suffix
 
-### UI: Error state (`ui.go`)
+### UI: Error state (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
 - When a step fails (non-zero exit), the step checkbox shows `[✗]`
@@ -523,7 +548,7 @@ pr9k/                     # repo root (projectDir)
 - Press `c` in error state — verify the workflow advances to the next step
 - Press `r` in error state — verify the step is re-executed and separator includes `(retry)`
 
-### UI: Quit confirmation (`ui.go`)
+### UI: Quit confirmation (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
 - Pressing `q` at any time shows `Quit ralph? (y/n)` in the shortcut bar area
@@ -537,7 +562,7 @@ pr9k/                     # repo root (projectDir)
 - Press `q` then `y` — verify quit is triggered
 - Press `q` then any other key — verify confirmation remains shown
 
-### UI: Keyboard shortcuts (`ui.go`)
+### UI: Keyboard shortcuts (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
 - `↑`/`k` scrolls log up, `↓`/`j` scrolls log down (handled by Glyph's `BindVimNav`)
@@ -549,7 +574,7 @@ pr9k/                     # repo root (projectDir)
 - Press `n` during a running step — verify subprocess cancellation is triggered and workflow advances
 - Verify keyboard handler dispatches correctly based on current state (normal vs error vs quit-confirm)
 
-### Signal handling (`workflow.go` / `main.go`)
+### Signal handling (`internal/workflow/workflow.go` / `cmd/ralph-tui/main.go`)
 
 **Acceptance criteria:**
 - SIGINT and SIGTERM cancel the current subprocess context
@@ -564,7 +589,7 @@ pr9k/                     # repo root (projectDir)
 
 ## Verification
 
-1. `cd ralph-tui && go build` — compiles
+1. `cd ralph-tui && go build -o ralph-tui ./cmd/ralph-tui` — compiles
 2. Run with `./ralph-tui 1` against a real repo with a "ralph" labeled issue
 3. Verify: output streams line-by-line in the log panel as claude runs
 4. Verify: step checkboxes update as steps complete
