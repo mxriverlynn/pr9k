@@ -408,8 +408,8 @@ pr9k/                               # repo root (projectDir)
 
 - **`cmd/ralph-tui/`** — Main application entry point. Minimal code here; imports from `internal/` packages. The subdirectory name matches the desired executable name.
 - **`internal/`** — Private application code. The Go compiler enforces that nothing outside `ralph-tui/` can import these packages, keeping implementation details private.
-  - `internal/workflow/` — Orchestration loop, subprocess streaming, subprocess termination, command template variable replacement, signal handling.
-  - `internal/ui/` — Glyph component tree, keyboard handlers, status header, error state, quit confirmation.
+  - `internal/workflow/` — Orchestration loop, subprocess streaming, subprocess termination, command template variable replacement.
+  - `internal/ui/` — Glyph component tree, keyboard handlers, status header, error state, quit confirmation. `KeyHandler.ForceQuit()` handles OS signal-driven shutdown (called from `cmd/ralph-tui/main.go`).
   - `internal/steps/` — Step definition loading from JSON, prompt building.
   - `internal/logger/` — Timestamped log file writer with concurrent write safety.
 - **`configs/`** — Configuration files (step definitions). Not Go code — JSON consumed at runtime.

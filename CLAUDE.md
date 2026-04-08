@@ -47,7 +47,7 @@ A Go TUI replacement for `ralph-loop` is being built in `ralph-tui/`, using [Gly
 ```
 ralph-tui/
   cmd/ralph-tui/
-    main.go                   # entry point: parses CLI args, prints parsed values
+    main.go                   # entry point: initializes logger, loads steps, creates Runner and KeyHandler, wires OS signal handling (SIGINT/SIGTERM → ForceQuit), launches Run goroutine, waits for completion, exits 0 on success or 1 if signaled
   internal/
     cli/
       args.go                 # ParseArgs: iterations + optional -project-dir flag; reorderArgs allows flags in any position
@@ -58,13 +58,13 @@ ralph-tui/
       workflow_test.go
       run_test.go
     ui/
-      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm); shortcutLine is mutex-protected; ShortcutLine() method is safe to call from any goroutine
+      ui.go                   # KeyHandler: mode-based keyboard dispatch (Normal/Error/QuitConfirm); shortcutLine is mutex-protected; ShortcutLine() method is safe to call from any goroutine; ForceQuit() cancels the current subprocess and non-blocking sends ActionQuit — safe to call from a signal handler goroutine
       ui_test.go
       header.go               # StatusHeader: pointer-mutable TUI status display; StepState (Pending/Active/Done/Failed); SetIteration, SetStepState, SetFinalization, SetFinalizeStepState
       header_test.go
       log.go                  # StepSeparator / RetryStepSeparator: returns visual separator strings for step transitions in the output log
       log_test.go
-      orchestrate.go          # Orchestrate: runs ResolvedSteps in sequence via StepRunner/StepHeader interfaces; on failure enters error mode and blocks on KeyHandler.Actions for continue/retry/quit
+      orchestrate.go          # Orchestrate: runs ResolvedSteps in sequence via StepRunner/StepHeader interfaces; drains h.Actions with a non-blocking select before each step (catches ActionQuit injected by ForceQuit); on non-terminated failure enters error mode and blocks on KeyHandler.Actions for continue/retry/quit
       orchestrate_test.go
     steps/
       steps.go                # LoadSteps / LoadFinalizeSteps: parse Step structs from JSON configs; BuildPrompt with empty PromptFile validation
@@ -100,7 +100,8 @@ Use `go build` — `go run` won't work because `projectDir` is resolved via `os.
 - `Runner.WriteToLog(line)` injects a line directly into the log pipe under the mutex; used to write step separator lines between subprocess outputs without spawning a command
 - `Runner.CaptureOutput(command)` runs a command and returns trimmed stdout; stderr is discarded; used for single-value queries (get_next_issue, get_gh_user, git rev-parse HEAD)
 - `StepSeparator(name)` / `RetryStepSeparator(name)` in `ui/log.go` produce the formatted separator strings passed to `WriteToLog`
-- `Orchestrate(steps, runner, header, h)` in `ui/orchestrate.go` runs `ResolvedStep` slices in sequence; on non-terminated failure it sets the step to `StepFailed`, enters `ModeError`, and blocks on `h.Actions` — ActionContinue advances, ActionRetry re-runs the step with a separator, ActionQuit halts the loop
+- `Orchestrate(steps, runner, header, h)` in `ui/orchestrate.go` runs `ResolvedStep` slices in sequence; before each step it performs a non-blocking drain of `h.Actions` to pick up any `ActionQuit` injected by `ForceQuit`; on non-terminated failure it sets the step to `StepFailed`, enters `ModeError`, and blocks on `h.Actions` — ActionContinue advances, ActionRetry re-runs the step with a separator, ActionQuit halts the loop
+- `KeyHandler.ForceQuit()` cancels the current subprocess (via the cancel func) and non-blocking sends `ActionQuit` to `h.Actions`; safe to call from a signal handler goroutine; used by `main.go` OS signal handling (SIGINT/SIGTERM) to trigger clean shutdown
 - `Run(executor, header, keyHandler, cfg)` in `workflow/run.go` is the top-level orchestration goroutine: displays banner, resolves GitHub username, loops over N iterations (each calling `Orchestrate` for iteration steps), runs finalization phase, writes completion summary, closes executor
 - `StepExecutor` interface (in `run.go`) wraps `ui.StepRunner` + `CaptureOutput` + `Close`; `RunHeader` interface covers `SetIteration`, `SetStepState`, `SetFinalization`, `SetFinalizeStepState`
 - `KeyHandler.ShortcutLine()` is a mutex-protected getter for the shortcut bar text; use it instead of field access when reading from a goroutine other than the key handler
