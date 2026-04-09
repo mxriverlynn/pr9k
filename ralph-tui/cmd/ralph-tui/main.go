@@ -26,14 +26,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	iterSteps, err := steps.LoadSteps(cfg.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		_ = log.Close()
-		os.Exit(1)
-	}
-
-	finalSteps, err := steps.LoadFinalizeSteps(cfg.ProjectDir)
+	workflowCfg, err := steps.LoadWorkflowConfig(cfg.ProjectDir, cfg.StepsFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		_ = log.Close()
@@ -45,11 +38,12 @@ func main() {
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
-	stepNames := make([]string, len(iterSteps))
-	for i, s := range iterSteps {
-		stepNames[i] = s.Name
+	// Initialize the header with loop step names for the initial display.
+	loopNames := make([]string, len(workflowCfg.Loop))
+	for i, s := range workflowCfg.Loop {
+		loopNames[i] = s.Name
 	}
-	header := ui.NewStatusHeader(stepNames)
+	header := ui.NewStatusHeader(loopNames)
 
 	// Set up OS signal handling for clean shutdown.
 	sigChan := make(chan os.Signal, 1)
@@ -62,10 +56,9 @@ func main() {
 	}()
 
 	runCfg := workflow.RunConfig{
-		ProjectDir:    cfg.ProjectDir,
-		Iterations:    cfg.Iterations,
-		Steps:         iterSteps,
-		FinalizeSteps: finalSteps,
+		ProjectDir: cfg.ProjectDir,
+		Iterations: cfg.Iterations,
+		Config:     workflowCfg,
 	}
 
 	done := make(chan struct{})

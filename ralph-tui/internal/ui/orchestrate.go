@@ -1,6 +1,6 @@
 package ui
 
-// StepRunner is the workflow execution interface required by Orchestrate.
+// StepRunner is the workflow execution interface required by Orchestrate and HandleStepError.
 type StepRunner interface {
 	RunStep(name string, command []string) error
 	WasTerminated() bool
@@ -18,54 +18,23 @@ type ResolvedStep struct {
 	Command []string
 }
 
-// Orchestrate runs steps in sequence. On step failure (non-zero exit, not
-// user-initiated), it enters error mode and blocks on h.Actions until the
-// user decides to continue, retry, or quit.
-// Returns ActionQuit if the user quit; ActionContinue when all steps complete.
-func Orchestrate(steps []ResolvedStep, runner StepRunner, header StepHeader, h *KeyHandler) StepAction {
-	for i, step := range steps {
-		// Check for a pending quit (e.g. injected by an OS signal) before starting each step.
-		select {
-		case action := <-h.Actions:
-			if action == ActionQuit {
-				return ActionQuit
-			}
-		default:
-		}
-
-		header.SetStepState(i, StepActive)
-		action := runStepWithErrorHandling(i, step, runner, header, h)
-		if action == ActionQuit {
-			return ActionQuit
-		}
+// HandleStepError is called after a step fails. If the step was user-terminated,
+// it marks the step done and returns ActionContinue immediately. Otherwise it
+// enters error mode, blocks on h.Actions until the user decides, restores
+// normal mode, and returns the chosen action (ActionContinue, ActionRetry, or
+// ActionQuit). The caller is responsible for writing a retry separator and
+// re-running the step when ActionRetry is returned.
+func HandleStepError(runner StepRunner, header StepHeader, h *KeyHandler, stepIdx int) StepAction {
+	if runner.WasTerminated() {
+		header.SetStepState(stepIdx, StepDone)
+		return ActionContinue
 	}
-	return ActionContinue
-}
 
-func runStepWithErrorHandling(idx int, step ResolvedStep, runner StepRunner, header StepHeader, h *KeyHandler) StepAction {
-	for {
-		err := runner.RunStep(step.Name, step.Command)
+	header.SetStepState(stepIdx, StepFailed)
+	h.SetMode(ModeError)
 
-		if err == nil || runner.WasTerminated() {
-			header.SetStepState(idx, StepDone)
-			return ActionContinue
-		}
+	action := <-h.Actions
+	h.SetMode(ModeNormal)
 
-		header.SetStepState(idx, StepFailed)
-		h.SetMode(ModeError)
-
-		action := <-h.Actions
-		h.SetMode(ModeNormal)
-
-		switch action {
-		case ActionContinue:
-			// Step stays [✗]; advance to next step.
-			return ActionContinue
-		case ActionRetry:
-			runner.WriteToLog(RetryStepSeparator(step.Name))
-			// Loop back to re-run the step.
-		case ActionQuit:
-			return ActionQuit
-		}
-	}
+	return action
 }

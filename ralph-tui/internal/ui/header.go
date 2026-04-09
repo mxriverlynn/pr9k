@@ -95,6 +95,23 @@ func (h *StatusHeader) SetFinalizeStepState(idx int, state StepState) {
 	}
 }
 
+// SetPhaseSteps switches the header to a new set of step names and resets all
+// steps to pending. label is set as the iteration line (e.g. "Pre-loop",
+// "Iteration 1/3", "Post-loop"). Call this at the start of each phase or
+// iteration to replace the displayed step names.
+func (h *StatusHeader) SetPhaseSteps(label string, names []string) {
+	h.IterationLine = label
+	copied := make([]string, len(names))
+	copy(copied, names)
+	h.stepNames = copied
+	rowSize := (len(copied) + 1) / 2
+	h.Row1 = make([]string, rowSize)
+	h.Row2 = make([]string, len(copied)-rowSize)
+	for i, name := range copied {
+		h.writeLabel(i, StepPending, name)
+	}
+}
+
 func (h *StatusHeader) writeLabel(idx int, state StepState, name string) {
 	label := checkboxLabel(state, name)
 	rowSize := (len(h.stepNames) + 1) / 2

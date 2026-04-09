@@ -3,7 +3,6 @@ package workflow
 import (
 	_ "embed"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -24,155 +23,174 @@ type StepExecutor interface {
 // RunHeader is the interface for updating the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
-	SetIteration(current, total int, issueID, issueTitle string)
+	SetPhaseSteps(label string, names []string)
 	SetStepState(idx int, state ui.StepState)
-	SetFinalization(current, total int, steps []string)
-	SetFinalizeStepState(idx int, state ui.StepState)
 }
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-	ProjectDir    string
-	Iterations    int
-	Steps         []steps.Step
-	FinalizeSteps []steps.Step
-}
-
-// iterHeader adapts RunHeader to ui.StepHeader for iteration steps.
-type iterHeader struct{ h RunHeader }
-
-func (a *iterHeader) SetStepState(idx int, state ui.StepState) { a.h.SetStepState(idx, state) }
-
-// finalHeader adapts RunHeader to ui.StepHeader for finalization steps.
-type finalHeader struct{ h RunHeader }
-
-func (a *finalHeader) SetStepState(idx int, state ui.StepState) {
-	a.h.SetFinalizeStepState(idx, state)
+	ProjectDir string
+	Iterations int
+	Config     *steps.WorkflowConfig
 }
 
 // Run is the main orchestration goroutine. It displays the startup banner,
-// fetches the GitHub username, runs N workflow iterations, executes the
-// finalization phase, writes the completion summary, and closes the executor.
+// executes the three-phase workflow (pre-loop, loop, post-loop) driven by the
+// config, writes the completion summary, and closes the executor.
+//
+// Pre-loop steps run once before any iteration. Loop steps run for each
+// iteration; a step with exitLoopIfEmpty that captures an empty string breaks
+// the iteration loop early. Post-loop always runs regardless of how the loop
+// exits. Variables captured by command steps with outputVariable are stored in
+// the pool and substituted just-in-time into subsequent steps.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
 	// 1. Display embedded banner.
 	for _, line := range strings.Split(bannerArt, "\n") {
 		executor.WriteToLog(line)
 	}
 
-	// 2. Get GitHub username.
-	userScript := filepath.Join(cfg.ProjectDir, "scripts", "get_gh_user")
-	username, err := executor.CaptureOutput([]string{userScript})
-	if err != nil {
-		executor.WriteToLog(fmt.Sprintf("Warning: could not get GitHub user: %v", err))
+	pool := NewVariablePool()
+	loopVarNames := LoopVariableNames(cfg.Config)
+
+	// 2. Phase 1: pre-loop.
+	header.SetPhaseSteps("Pre-loop", phaseStepNames(cfg.Config.PreLoop))
+	if quit := runPhase(executor, header, keyHandler, cfg.Config.PreLoop, cfg.ProjectDir, pool); quit {
+		_ = executor.Close()
+		return
 	}
 
-	// 3. Iteration loop.
+	// 3. Phase 2: loop.
+	loopNames := phaseStepNames(cfg.Config.Loop)
+	exitLoop := false
 	iterationsRun := 0
-	for i := 1; i <= cfg.Iterations; i++ {
-		issueScript := filepath.Join(cfg.ProjectDir, "scripts", "get_next_issue")
-		issueID, _ := executor.CaptureOutput([]string{issueScript, username})
+	for i := 1; i <= cfg.Iterations && !exitLoop; i++ {
+		pool.Clear(loopVarNames)
+		header.SetPhaseSteps(fmt.Sprintf("Iteration %d/%d", i, cfg.Iterations), loopNames)
 
-		if issueID == "" {
-			executor.WriteToLog(fmt.Sprintf("Iteration %d/%d — No issue found. Exiting loop.", i, cfg.Iterations))
-			break
+		for j, step := range cfg.Config.Loop {
+			// Pre-step quit drain: honour a pending quit (e.g. from an OS signal)
+			// before starting the next step.
+			select {
+			case action := <-keyHandler.Actions:
+				if action == ui.ActionQuit {
+					_ = executor.Close()
+					return
+				}
+			default:
+			}
+
+			shouldExitLoop, quit := executeStep(executor, header, keyHandler, j, step, cfg.ProjectDir, pool)
+			if quit {
+				_ = executor.Close()
+				return
+			}
+			if shouldExitLoop {
+				exitLoop = true
+				break
+			}
 		}
-
-		sha, shaErr := executor.CaptureOutput([]string{"git", "rev-parse", "HEAD"})
-		if shaErr != nil {
-			executor.WriteToLog(fmt.Sprintf("Warning: could not get HEAD SHA: %v", shaErr))
+		if !exitLoop {
+			iterationsRun++
 		}
-
-		header.SetIteration(i, cfg.Iterations, issueID, "")
-		for j := range cfg.Steps {
-			header.SetStepState(j, ui.StepPending)
-		}
-
-		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d/%d — Issue #%s", i, cfg.Iterations, issueID)))
-
-		resolvedSteps, err := buildIterationSteps(cfg.ProjectDir, cfg.Steps, issueID, sha)
-		if err != nil {
-			executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
-			break
-		}
-
-		action := ui.Orchestrate(resolvedSteps, executor, &iterHeader{header}, keyHandler)
-		if action == ui.ActionQuit {
-			_ = executor.Close()
-			return
-		}
-
-		iterationsRun++
 	}
 
-	// 4. Finalization phase (runs even after early loop exit).
-	finalizeNames := make([]string, len(cfg.FinalizeSteps))
-	for i, s := range cfg.FinalizeSteps {
-		finalizeNames[i] = s.Name
-	}
-	header.SetFinalization(1, len(cfg.FinalizeSteps), finalizeNames)
-
-	finalResolvedSteps, err := buildFinalizeSteps(cfg.ProjectDir, cfg.FinalizeSteps)
-	if err == nil {
-		action := ui.Orchestrate(finalResolvedSteps, executor, &finalHeader{header}, keyHandler)
-		if action == ui.ActionQuit {
-			_ = executor.Close()
-			return
-		}
+	// 4. Phase 3: post-loop (always runs).
+	header.SetPhaseSteps("Post-loop", phaseStepNames(cfg.Config.PostLoop))
+	if quit := runPhase(executor, header, keyHandler, cfg.Config.PostLoop, cfg.ProjectDir, pool); quit {
+		_ = executor.Close()
+		return
 	}
 
 	// 5. Completion summary.
-	executor.WriteToLog(fmt.Sprintf("Ralph completed after %d iteration(s) and %d finalizing tasks.",
-		iterationsRun, len(cfg.FinalizeSteps)))
+	executor.WriteToLog(fmt.Sprintf("Ralph completed after %d iteration(s).", iterationsRun))
 
 	// 6. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
 }
 
-func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {
-	vars := map[string]string{
-		"ISSUE_ID":    issueID,
-		"ISSUENUMBER": issueID,
-		"STARTINGSHA": sha,
-	}
-	result := make([]ui.ResolvedStep, len(stepsConfig))
-	for i, s := range stepsConfig {
-		if s.IsClaudeStep() {
-			prompt, err := steps.BuildPrompt(projectDir, s, vars)
-			if err != nil {
-				return nil, fmt.Errorf("step %q: %w", s.Name, err)
+// runPhase executes all steps in a slice sequentially. It returns true if the
+// user quit, false if all steps completed (possibly with errors the user continued
+// past). It also drains the quit channel before each step.
+func runPhase(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, phase []steps.Step, projectDir string, pool *VariablePool) (quit bool) {
+	for i, step := range phase {
+		select {
+		case action := <-keyHandler.Actions:
+			if action == ui.ActionQuit {
+				return true
 			}
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
-			}
-		} else {
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, vars),
-			}
+		default:
+		}
+
+		_, q := executeStep(executor, header, keyHandler, i, step, projectDir, pool)
+		if q {
+			return true
 		}
 	}
-	return result, nil
+	return false
 }
 
-func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.ResolvedStep, error) {
-	result := make([]ui.ResolvedStep, len(stepsConfig))
-	for i, s := range stepsConfig {
-		if s.IsClaudeStep() {
-			prompt, err := steps.BuildPrompt(projectDir, s, nil)
-			if err != nil {
-				return nil, fmt.Errorf("finalize step %q: %w", s.Name, err)
-			}
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
-			}
+// executeStep resolves and executes a single step. It returns (exitLoop, quit).
+// exitLoop is true when the step has exitLoopIfEmpty set and captured an empty
+// string. quit is true when the user chose to quit during error recovery.
+//
+// For command steps with outputVariable, stdout is captured silently and stored
+// in the pool. All other steps stream output to the TUI via RunStep.
+func executeStep(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, idx int, step steps.Step, projectDir string, pool *VariablePool) (exitLoop bool, quit bool) {
+	vars := pool.All()
+	var cmd []string
+	if step.IsClaudeStep() {
+		prompt, err := steps.BuildPrompt(projectDir, step, vars)
+		if err != nil {
+			executor.WriteToLog(fmt.Sprintf("workflow: step %q: could not build prompt: %v", step.Name, err))
+			return false, false
+		}
+		cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(), "--model", step.DefaultModel(), "-p", prompt}
+	} else {
+		cmd = ResolveCommand(projectDir, step.Command, vars)
+	}
+
+	for {
+		header.SetStepState(idx, ui.StepActive)
+
+		var err error
+		var captured string
+
+		if step.OutputVariable != "" {
+			captured, err = executor.CaptureOutput(cmd)
 		} else {
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, nil),
+			err = executor.RunStep(step.Name, cmd)
+		}
+
+		if err == nil {
+			header.SetStepState(idx, ui.StepDone)
+			if step.OutputVariable != "" {
+				pool.Set(step.OutputVariable, captured)
+				if step.ExitLoopIfEmpty && strings.TrimSpace(captured) == "" {
+					return true, false
+				}
 			}
+			return false, false
+		}
+
+		// Step failed — enter error recovery.
+		action := ui.HandleStepError(executor, header, keyHandler, idx)
+		switch action {
+		case ui.ActionQuit:
+			return false, true
+		case ui.ActionRetry:
+			executor.WriteToLog(ui.RetryStepSeparator(step.Name))
+			// loop back to retry
+		case ui.ActionContinue:
+			return false, false
 		}
 	}
-	return result, nil
+}
+
+// phaseStepNames extracts the Name field from each step in a phase.
+func phaseStepNames(phase []steps.Step) []string {
+	names := make([]string, len(phase))
+	for i, s := range phase {
+		names[i] = s.Name
+	}
+	return names
 }
