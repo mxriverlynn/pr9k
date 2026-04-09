@@ -126,9 +126,6 @@ func buildDeclMap(cfg *WorkflowConfig) map[string]varDecl {
 				// First declaration wins for shadowing detection.
 				if _, exists := decls[s.OutputVariable]; !exists {
 					decls[s.OutputVariable] = varDecl{phase: phase.name, stepName: s.Name, stepIdx: i}
-				} else if phase.name != phaseLoop {
-					// Only loop shadowing of pre-loop is checked as an error;
-					// for the decl map we keep the first occurrence.
 				}
 			}
 		}

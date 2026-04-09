@@ -998,6 +998,63 @@ func TestRun_JITRetry_ReReadsPromptFile(t *testing.T) {
 	}
 }
 
+// T37 — JIT failure with ActionQuit exits and closes executor.
+// When JIT validation fails and the user chooses ActionQuit, Run() must return
+// and call Close(). No step must execute.
+func TestRun_JITFailure_QuitClosesExecutor(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Prompt with undeclared variable → JIT fails.
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "broken.txt"), []byte("Use {{UNDECLARED}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stepRan := false
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			stepRan = true
+			return nil
+		},
+	}
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: dir,
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				{Name: "broken-step", PromptFile: "broken.txt", InjectVars: []string{}},
+			},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionQuit
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionQuit on JIT failure")
+	}
+
+	if !executor.wasClosed() {
+		t.Error("expected executor.Close() to be called after ActionQuit on JIT failure")
+	}
+	if stepRan {
+		t.Error("expected no step to execute after ActionQuit on JIT failure")
+	}
+}
+
 // --- Helpers ---
 
 func sliceContains[T comparable](slice []T, item T) bool {

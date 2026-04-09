@@ -470,6 +470,81 @@ func TestValidateStepJIT_ReReadsFromDisk(t *testing.T) {
 	}
 }
 
+// JIT8 (T38) — ValidateStepJIT collects multiple errors simultaneously.
+// Prompt has {{A}} and {{B}}, injectVars ["A", "C"], pool is empty:
+// - {{B}} in prompt not in injectVars
+// - "C" not found as {{C}} in prompt
+// - "A" has no pool value
+// - "C" has no pool value
+func TestValidateStepJIT_CollectsMultipleErrors(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Use {{A}} and {{B}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"A", "C"}}
+	vars := map[string]string{}
+
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("expected multiple errors, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "{{B}} in prompt file not listed in injectVariables") {
+		t.Errorf("missing {{B}} error in: %v", msg)
+	}
+	if !strings.Contains(msg, `injectVariables entry "C" not found as {{C}} in prompt file`) {
+		t.Errorf("missing C not in prompt error in: %v", msg)
+	}
+	if !strings.Contains(msg, `injectVariables entry "A" has no value in variable pool`) {
+		t.Errorf("missing A pool error in: %v", msg)
+	}
+	if !strings.Contains(msg, `injectVariables entry "C" has no value in variable pool`) {
+		t.Errorf("missing C pool error in: %v", msg)
+	}
+}
+
+// JIT9 (T40) — ValidateStepJIT passes with multiple valid variables.
+func TestValidateStepJIT_PassesWithMultipleVars(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{A}} and {{B}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"A", "B"}}
+	vars := map[string]string{"A": "alpha", "B": "beta"}
+	if err := steps.ValidateStepJIT(step, dir, vars); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// JIT10 (T41) — ValidateStepJIT with nil vars map does not panic.
+// A nil map returns false for all key lookups in Go, so missing pool entries
+// must still be reported as errors rather than causing a panic.
+func TestValidateStepJIT_NilVarsMap(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{X}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	err := steps.ValidateStepJIT(step, dir, nil)
+	if err == nil {
+		t.Fatal("expected error for missing pool value with nil vars, got nil")
+	}
+	if !strings.Contains(err.Error(), `injectVariables entry "X" has no value in variable pool`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// JIT11 (T43) — ValidateStepJIT with nil InjectVars slice passes cleanly.
+// range over a nil slice is a no-op in Go; this documents that nil and empty
+// InjectVars are handled identically.
+func TestValidateStepJIT_NilInjectVars(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "just plain text",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: nil}
+	vars := map[string]string{}
+	if err := steps.ValidateStepJIT(step, dir, vars); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
 // T11 — Multiple errors are all collected.
 func TestValidateVariables_MultipleErrorsCollected(t *testing.T) {
 	dir := makePromptDir(t, map[string]string{
