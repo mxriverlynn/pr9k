@@ -19,21 +19,28 @@ const (
 // Layout:
 //
 //	IterationLine  →  Text(&h.IterationLine)
-//	Row1[0..3]     →  HBox(Text(&h.Row1[0]), ..., Text(&h.Row1[3]))   // steps 1-4
-//	Row2[0..3]     →  HBox(Text(&h.Row2[0]), ..., Text(&h.Row2[3]))   // steps 5-8
+//	Row1           →  HBox(Text(&h.Row1[0]), ...)   // first half of steps
+//	Row2           →  HBox(Text(&h.Row2[0]), ...)   // second half of steps
 type StatusHeader struct {
-	IterationLine string    // e.g. "Iteration 1/3 — Issue #42: Add widget support"
-	Row1          [4]string // checkbox labels for steps 0-3
-	Row2          [4]string // checkbox labels for steps 4-7
-	stepNames     [8]string
+	IterationLine string   // e.g. "Iteration 1/3 — Issue #42: Add widget support"
+	Row1          []string // checkbox labels for first half of steps
+	Row2          []string // checkbox labels for second half of steps
+	stepNames     []string
 	finalizeNames []string
 }
 
-// NewStatusHeader creates a StatusHeader with all 8 iteration step names, each
-// initialised to pending state.
-func NewStatusHeader(stepNames [8]string) *StatusHeader {
-	h := &StatusHeader{stepNames: stepNames}
-	for i, name := range stepNames {
+// NewStatusHeader creates a StatusHeader with the given iteration step names, each
+// initialised to pending state. Row1 receives the first ceil(n/2) steps; Row2 the rest.
+func NewStatusHeader(stepNames []string) *StatusHeader {
+	names := make([]string, len(stepNames))
+	copy(names, stepNames)
+	rowSize := (len(names) + 1) / 2
+	h := &StatusHeader{
+		stepNames: names,
+		Row1:      make([]string, rowSize),
+		Row2:      make([]string, len(names)-rowSize),
+	}
+	for i, name := range names {
 		h.writeLabel(i, StepPending, name)
 	}
 	return h
@@ -45,9 +52,9 @@ func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle stri
 	h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
 }
 
-// SetStepState updates the checkbox label for iteration step idx (0-based, 0-7).
+// SetStepState updates the checkbox label for iteration step idx (0-based).
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
-	if idx < 0 || idx >= 8 {
+	if idx < 0 || idx >= len(h.stepNames) {
 		return
 	}
 	h.writeLabel(idx, state, h.stepNames[idx])
@@ -55,47 +62,44 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 
 // SetFinalization switches the header to finalization mode, showing
 // "Finalizing current/total" and replacing the step rows with finalization
-// step names (all initialised to pending). Supports up to 8 finalization steps
-// across two rows; extra slots are set to "".
+// step names (all initialised to pending). Row1 receives the first ceil(n/2)
+// steps; Row2 the rest.
 func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
 	h.IterationLine = fmt.Sprintf("Finalizing %d/%d", current, total)
 	h.finalizeNames = steps
-	for i := range 4 {
-		if i < len(steps) {
-			h.Row1[i] = checkboxLabel(StepPending, steps[i])
-		} else {
-			h.Row1[i] = ""
-		}
+	rowSize := (len(steps) + 1) / 2
+	h.Row1 = make([]string, rowSize)
+	h.Row2 = make([]string, len(steps)-rowSize)
+	for i := range rowSize {
+		h.Row1[i] = checkboxLabel(StepPending, steps[i])
 	}
-	for i := range 4 {
-		if idx := i + 4; idx < len(steps) {
-			h.Row2[i] = checkboxLabel(StepPending, steps[idx])
-		} else {
-			h.Row2[i] = ""
-		}
+	for i := range len(steps) - rowSize {
+		h.Row2[i] = checkboxLabel(StepPending, steps[rowSize+i])
 	}
 }
 
 // SetFinalizeStepState updates the state of finalization step idx (0-based).
 // Must be called after SetFinalization.
 func (h *StatusHeader) SetFinalizeStepState(idx int, state StepState) {
-	if h.finalizeNames == nil || idx < 0 || idx >= 8 || idx >= len(h.finalizeNames) {
+	if h.finalizeNames == nil || idx < 0 || idx >= len(h.finalizeNames) {
 		return
 	}
+	rowSize := (len(h.finalizeNames) + 1) / 2
 	label := checkboxLabel(state, h.finalizeNames[idx])
-	if idx < 4 {
+	if idx < rowSize {
 		h.Row1[idx] = label
 	} else {
-		h.Row2[idx-4] = label
+		h.Row2[idx-rowSize] = label
 	}
 }
 
 func (h *StatusHeader) writeLabel(idx int, state StepState, name string) {
 	label := checkboxLabel(state, name)
-	if idx < 4 {
+	rowSize := (len(h.stepNames) + 1) / 2
+	if idx < rowSize {
 		h.Row1[idx] = label
 	} else {
-		h.Row2[idx-4] = label
+		h.Row2[idx-rowSize] = label
 	}
 }
 

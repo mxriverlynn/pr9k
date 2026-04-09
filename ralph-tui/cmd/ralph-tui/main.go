@@ -45,11 +45,8 @@ func main() {
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
-	var stepNames [8]string
+	stepNames := make([]string, len(iterSteps))
 	for i, s := range iterSteps {
-		if i >= 8 {
-			break
-		}
 		stepNames[i] = s.Name
 	}
 	header := ui.NewStatusHeader(stepNames)
