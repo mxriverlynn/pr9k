@@ -4,6 +4,8 @@
 
 Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-started-with-ralph).
 
+<img src="images/power-ralph-9000.jpg">
+
 ## Getting Started
 
 ### Prerequisites
