@@ -824,6 +824,22 @@ func TestLoadWorkflowConfig_MalformedJSONErrorIncludesPath(t *testing.T) {
 	}
 }
 
+// T4 — BuildPrompt with nil vars when prompt contains template placeholders
+func TestBuildPrompt_NilVarsWithTemplatePlaceholder(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "tmpl.txt", "do {{SOMETHING}}")
+	step := steps.Step{PromptFile: "tmpl.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "do {{SOMETHING}}"
+	if result != want {
+		t.Errorf("got %q, want %q (placeholder should be left as literal with nil vars)", result, want)
+	}
+}
+
 // Gap 6: InjectVars JSON deserialization
 func TestLoadWorkflowConfig_InjectVarsDeserialized(t *testing.T) {
 	dir := t.TempDir()

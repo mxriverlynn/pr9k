@@ -498,6 +498,22 @@ func TestResolveCommand_UnrecognizedVarLeftAsLiteral(t *testing.T) {
 	}
 }
 
+// T3 — ResolveCommand with nil vars map (no substitution, no panic)
+func TestResolveCommand_NilVars(t *testing.T) {
+	got := ResolveCommand("/proj", []string{"git", "push"}, nil)
+	if len(got) != 2 || got[0] != "git" || got[1] != "push" {
+		t.Errorf("expected [git push], got %v", got)
+	}
+}
+
+// T7 — ResolveCommand with nil vars and template placeholders in arguments
+func TestResolveCommand_NilVarsWithTemplatePlaceholder(t *testing.T) {
+	got := ResolveCommand("/proj", []string{"echo", "{{UNKNOWN}}"}, nil)
+	if len(got) != 2 || got[1] != "{{UNKNOWN}}" {
+		t.Errorf("expected [echo {{UNKNOWN}}], got %v", got)
+	}
+}
+
 // Terminate unit tests
 
 // TestTerminate_RunStepReturnsWithinTimeout starts a long-running subprocess,

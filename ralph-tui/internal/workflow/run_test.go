@@ -1048,3 +1048,103 @@ func TestRun_StepsPendingSetBeforeIteration(t *testing.T) {
 		}
 	}
 }
+
+// T1 — buildIterationSteps: command step receives ISSUE_ID substitution via ResolveCommand.
+func TestBuildIterationSteps_CommandStepSubstitutesIssueID(t *testing.T) {
+	dir := t.TempDir()
+
+	step := steps.Step{
+		Name:    "close",
+		Command: []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"},
+	}
+
+	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved step, got %d", len(resolved))
+	}
+
+	cmd := resolved[0].Command
+	// The second argument should have ISSUE_ID substituted.
+	if len(cmd) < 2 || cmd[1] != "42" {
+		t.Errorf("expected ISSUE_ID substituted to %q in arg[1], got command %v", "42", cmd)
+	}
+	// The executable should be resolved relative to projectDir.
+	wantExe := filepath.Join(dir, "scripts/close_gh_issue")
+	if cmd[0] != wantExe {
+		t.Errorf("expected executable %q, got %q", wantExe, cmd[0])
+	}
+}
+
+// T5 — buildIterationSteps: vars map includes all three aliases (ISSUE_ID, ISSUENUMBER, STARTINGSHA).
+func TestBuildIterationSteps_AllThreeVarAliasesSubstituted(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	promptContent := "id={{ISSUE_ID}} num={{ISSUENUMBER}} sha={{STARTINGSHA}}"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "aliases.txt"), []byte(promptContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{
+		Name:       "alias-step",
+		Model:      "claude-sonnet-4-6",
+		PromptFile: "aliases.txt",
+	}
+
+	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	prompt := resolved[0].Command[6]
+	want := "id=42 num=42 sha=abc123"
+	if prompt != want {
+		t.Errorf("expected prompt %q, got %q", want, prompt)
+	}
+}
+
+// T2 — buildFinalizeSteps: command step receives nil vars (no substitution, no panic).
+func TestBuildFinalizeSteps_CommandStepPassthroughWithNilVars(t *testing.T) {
+	dir := t.TempDir()
+
+	step := steps.Step{
+		Name:    "push",
+		Command: []string{"git", "push"},
+	}
+
+	resolved, err := buildFinalizeSteps(dir, []steps.Step{step})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved step, got %d", len(resolved))
+	}
+
+	cmd := resolved[0].Command
+	if len(cmd) != 2 || cmd[0] != "git" || cmd[1] != "push" {
+		t.Errorf("expected [git push], got %v", cmd)
+	}
+}
+
+// T6 — buildFinalizeSteps: missing prompt file error wraps step name.
+func TestBuildFinalizeSteps_ClaudeStepMissingPromptFile(t *testing.T) {
+	dir := t.TempDir()
+
+	step := steps.Step{
+		Name:       "bad-final",
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	_, err := buildFinalizeSteps(dir, []steps.Step{step})
+	if err == nil {
+		t.Fatal("expected error for missing prompt file, got nil")
+	}
+	if !strings.Contains(err.Error(), "bad-final") {
+		t.Errorf("expected error to contain step name %q, got: %v", "bad-final", err)
+	}
+}
