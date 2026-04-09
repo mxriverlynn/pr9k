@@ -2,20 +2,21 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps)
-- Each step is either a Claude CLI invocation (with model, prompt file, and optional variable prepending) or a shell command (with template variable substitution)
-- `BuildPrompt` reads prompt files from `prompts/` and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` for iteration context
+- Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps) via `LoadSteps`/`LoadFinalizeSteps`
+- A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation
+- Each step is either a Claude CLI invocation (`promptFile` set) or a shell command (`command` set); helper methods `IsClaudeStep()` and `IsCommandStep()` distinguish the two
+- `BuildPrompt` reads prompt file content only — callers are responsible for prepending context variables like `ISSUENUMBER=` and `STARTINGSHA=`
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
-- `ralph-tui/internal/steps/steps.go` — Step struct, LoadSteps, LoadFinalizeSteps, BuildPrompt
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
+- `ralph-tui/internal/steps/steps.go` — Step struct, WorkflowConfig, LoadWorkflowConfig, LoadSteps, LoadFinalizeSteps, BuildPrompt
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading, prompt building, and validation
 - `ralph-tui/configs/ralph-steps.json` — 8 iteration step definitions
 - `ralph-tui/configs/ralph-finalize-steps.json` — 3 finalization step definitions
 
@@ -34,26 +35,30 @@ Key files:
    │ LoadSteps()  │         └──────────┬────────────┘
    │ LoadFinalize │                    │
    │  Steps()     │                    │
+   │              │                    │
+   │ LoadWorkflow │                    │
+   │  Config()    │                    │
    └──────┬───────┘                    │
           │                            │
           ▼                            ▼
    ┌──────────────┐         ┌──────────────────┐
-   │  []Step      │────────▶│  BuildPrompt()   │
-   │  (parsed     │         │  prepend vars    │
-   │   structs)   │         │  read file       │
+   │  []Step /    │────────▶│  BuildPrompt()   │
+   │  Workflow    │         │  read file only  │
+   │  Config      │         │  (no var inject) │
    └──────────────┘         └──────┬───────────┘
                                    │
                                    ▼
-                            prompt string
-                            (passed to claude -p)
+                            file content string
+                            (caller prepends vars,
+                             then passes to claude -p)
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/steps/steps.go` | Step struct, loading functions, prompt builder |
-| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
+| `ralph-tui/internal/steps/steps.go` | Step struct, WorkflowConfig, loading functions, prompt builder |
+| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, validation, and prompt building |
 | `ralph-tui/configs/ralph-steps.json` | Iteration step definitions (8 steps) |
 | `ralph-tui/configs/ralph-finalize-steps.json` | Finalization step definitions (3 steps) |
 | `ralph-tui/configs/configs_test.go` | Validates JSON structure of config files |
@@ -63,20 +68,41 @@ Key files:
 ```go
 // Step defines a single step in the ralph workflow.
 type Step struct {
-    Name        string   `json:"name"`
-    Model       string   `json:"model,omitempty"`       // Claude model (e.g., "sonnet", "opus")
-    PromptFile  string   `json:"promptFile,omitempty"`   // filename in prompts/ directory
-    IsClaude    bool     `json:"isClaude"`               // true = Claude CLI, false = shell command
-    Command     []string `json:"command,omitempty"`      // argv for non-Claude steps
-    PrependVars bool     `json:"prependVars,omitempty"`  // prepend ISSUENUMBER/STARTINGSHA
+    Name           string   `json:"name"`
+    Model          string   `json:"model,omitempty"`
+    PromptFile     string   `json:"promptFile,omitempty"`
+    PermissionMode string   `json:"permissionMode,omitempty"`
+    InjectVars     []string `json:"injectVariables,omitempty"`
+    // Command holds the argv for non-claude steps. Arguments may contain
+    // template placeholders (e.g. "{{ISSUE_ID}}") that callers must substitute
+    // before execution; the steps package does no expansion itself.
+    Command         []string `json:"command,omitempty"`
+    OutputVariable  string   `json:"outputVariable,omitempty"`
+    ExitLoopIfEmpty bool     `json:"exitLoopIfEmpty,omitempty"`
+}
+
+// WorkflowConfig holds the three-phase step configuration.
+type WorkflowConfig struct {
+    PreLoop  []Step `json:"pre-loop"`
+    Loop     []Step `json:"loop"`
+    PostLoop []Step `json:"post-loop"`
 }
 ```
+
+### Step Helper Methods
+
+| Method | Returns |
+|--------|---------|
+| `IsClaudeStep()` | `true` when `PromptFile` is set |
+| `IsCommandStep()` | `true` when `Command` is non-empty |
+| `DefaultModel()` | `Model` if set, otherwise `"sonnet"` |
+| `DefaultPermissionMode()` | `PermissionMode` if set, otherwise `"acceptEdits"` |
 
 ## Implementation Details
 
 ### Step Loading
 
-`LoadSteps` and `LoadFinalizeSteps` read JSON files relative to the project directory and unmarshal into `[]Step`:
+`LoadSteps` and `LoadFinalizeSteps` read flat JSON arrays relative to the project directory (backward-compatible with the existing `configs/` layout):
 
 ```go
 func LoadSteps(projectDir string) ([]Step, error) {
@@ -89,20 +115,58 @@ func loadStepsFile(path string) ([]Step, error) {
 }
 ```
 
+### Three-Phase WorkflowConfig
+
+`LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs structural validation before returning:
+
+```go
+func LoadWorkflowConfig(projectDir, stepsFile string) (*WorkflowConfig, error) {
+    path := filepath.Join(projectDir, stepsFile)
+    data, err := os.ReadFile(path)
+    // ...
+    var cfg WorkflowConfig
+    json.Unmarshal(data, &cfg)
+    validateStructure(&cfg)
+    return &cfg, nil
+}
+```
+
+### Structural Validation
+
+`validateStructure` checks every step in all three phases and collects all violations before returning a combined error. The 9 rules:
+
+| # | Rule |
+|---|------|
+| 1 | A step may not have both `promptFile` and `command` |
+| 2 | A step must have at least one of `promptFile` or `command` |
+| 3 | `model` requires `promptFile` |
+| 4 | `injectVariables` requires `promptFile` |
+| 5 | `permissionMode` requires `promptFile` |
+| 6 | `exitLoopIfEmpty` requires `outputVariable` |
+| 7 | `exitLoopIfEmpty` is only valid in the `loop` phase |
+| 8 | `command` array must not be empty if present |
+| 9 | `outputVariable` requires `command`, not `promptFile` |
+
+Errors are collected across all phases and returned as a single combined message:
+
+```
+steps: step "bad-pre": must have promptFile or command; step "bad-loop": must have promptFile or command
+```
+
 ### Iteration Steps
 
 The 8 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | Prepend Vars |
-|---|------|------|-------|--------------|
-| 1 | Feature work | Claude | sonnet | yes |
-| 2 | Test planning | Claude | opus | yes |
-| 3 | Test writing | Claude | sonnet | yes |
-| 4 | Code review | Claude | opus | yes |
-| 5 | Review fixes | Claude | sonnet | yes |
-| 6 | Close issue | Shell | — | — |
-| 7 | Update docs | Claude | sonnet | yes |
-| 8 | Git push | Shell | — | — |
+| # | Name | Type | Model |
+|---|------|------|-------|
+| 1 | Feature work | Claude | sonnet |
+| 2 | Test planning | Claude | opus |
+| 3 | Test writing | Claude | sonnet |
+| 4 | Code review | Claude | opus |
+| 5 | Review fixes | Claude | sonnet |
+| 6 | Close issue | Shell | — |
+| 7 | Update docs | Claude | sonnet |
+| 8 | Git push | Shell | — |
 
 Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
@@ -118,25 +182,25 @@ Three steps run once after all iterations complete:
 
 ### Prompt Building
 
-`BuildPrompt` reads the prompt file and optionally prepends iteration context variables:
+`BuildPrompt` reads and returns the prompt file content only. Callers are responsible for prepending any context variables before passing the prompt to the Claude CLI:
 
 ```go
-func BuildPrompt(projectDir string, step Step, issueID, startingSHA string) (string, error) {
-    if step.PromptFile == "" {
-        return "", fmt.Errorf("steps: PromptFile must not be empty")
-    }
+func BuildPrompt(projectDir string, step Step) (string, error) {
     promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
     data, err := os.ReadFile(promptPath)
     // ...
-    content := string(data)
-    if step.PrependVars {
-        content = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + startingSHA + "\n" + content
-    }
-    return content, nil
+    return string(data), nil
 }
 ```
 
-When `PrependVars` is true, the resulting prompt looks like:
+In `buildIterationSteps` (workflow package), the caller prepends variables:
+
+```go
+prompt, err := steps.BuildPrompt(projectDir, s)
+prompt = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + sha + "\n" + prompt
+```
+
+The resulting prompt passed to `claude -p` starts with:
 
 ```
 ISSUENUMBER=42
@@ -150,6 +214,7 @@ STARTINGSHA=abc123f
 |----------|---------------|----------|
 | Config file unreadable | `"steps: could not read {path}: ..."` | Returned to caller |
 | Malformed JSON | `"steps: malformed JSON in {path}: ..."` | Returned to caller |
+| Structural validation failure | `"steps: step {name}: {rule}; ..."` | All violations collected, returned as one error |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 
@@ -157,7 +222,7 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, BuildPrompt
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt, and all 9 validation rules
 - `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
 
 ### Test Patterns

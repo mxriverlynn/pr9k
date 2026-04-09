@@ -135,13 +135,17 @@ type ResolvedStep struct {
 
 ### Step Resolution
 
-`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command:
+`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command. It uses `IsClaudeStep()` to distinguish the two types. For Claude steps, it reads the prompt file via `BuildPrompt` (which returns raw file content) and then prepends context variables:
 
 ```go
-// Claude step → claude --permission-mode acceptEdits --model <model> -p <prompt>
-result[i] = ui.ResolvedStep{
-    Name:    s.Name,
-    Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
+// Claude step
+if s.IsClaudeStep() {
+    prompt, _ := steps.BuildPrompt(projectDir, s)
+    prompt = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + sha + "\n" + prompt
+    result[i] = ui.ResolvedStep{
+        Name:    s.Name,
+        Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
+    }
 }
 
 // Shell step → resolve template vars and script paths

@@ -62,7 +62,7 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
        ▼                     ▼                         ▼
 ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │ steps.Load   │    │ steps.BuildPrompt│    │ runner.CaptureOutput│
-│ Steps()      │    │ (prepend vars)   │    │ (issue ID, user,    │
+│ Steps()      │    │ (file content)   │    │ (issue ID, user,    │
 │              │    │                  │    │  HEAD SHA)          │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
        │                     │                         │
@@ -132,7 +132,7 @@ Parses command-line arguments (`<iterations>` and optional `-project-dir` flag) 
 
 ### [Step Definitions & Prompt Building](features/step-definitions.md)
 
-Loads workflow step definitions from JSON configuration files (`configs/ralph-steps.json`, `configs/ralph-finalize-steps.json`). Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` variables for iteration context.
+Loads workflow step definitions from JSON configuration files (`configs/ralph-steps.json`, `configs/ralph-finalize-steps.json`). A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`) loaded via `LoadWorkflowConfig` with 9-rule structural validation. Each step is identified as a Claude step or shell command via `IsClaudeStep()`/`IsCommandStep()` helpers. `BuildPrompt` returns raw file content; callers prepend `ISSUENUMBER=` and `STARTINGSHA=` before passing to the Claude CLI.
 
 **Package:** `internal/steps/`
 
