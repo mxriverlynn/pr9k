@@ -131,11 +131,12 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
-		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, issueID, sha)
+		if s.IsClaudeStep() {
+			prompt, err := steps.BuildPrompt(projectDir, s)
 			if err != nil {
 				return nil, fmt.Errorf("step %q: %w", s.Name, err)
 			}
+			prompt = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + sha + "\n" + prompt
 			result[i] = ui.ResolvedStep{
 				Name:    s.Name,
 				Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
@@ -153,8 +154,8 @@ func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, s
 func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.ResolvedStep, error) {
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
-		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, "", "")
+		if s.IsClaudeStep() {
+			prompt, err := steps.BuildPrompt(projectDir, s)
 			if err != nil {
 				return nil, fmt.Errorf("finalize step %q: %w", s.Name, err)
 			}

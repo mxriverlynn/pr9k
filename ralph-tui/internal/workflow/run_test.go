@@ -114,9 +114,8 @@ func nonClaudeSteps(names ...string) []steps.Step {
 	result := make([]steps.Step, len(names))
 	for i, name := range names {
 		result[i] = steps.Step{
-			Name:     name,
-			IsClaude: false,
-			Command:  []string{"echo", name},
+			Name:    name,
+			Command: []string{"echo", name},
 		}
 	}
 	return result
@@ -512,10 +511,10 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 
 	// Use non-claude steps so no prompt files or claude binary are needed.
 	iterSteps := []steps.Step{
-		{Name: "Echo iter", IsClaude: false, Command: []string{"echo", "iteration step done"}},
+		{Name: "Echo iter", Command: []string{"echo", "iteration step done"}},
 	}
 	finalSteps := []steps.Step{
-		{Name: "Echo final", IsClaude: false, Command: []string{"echo", "finalization done"}},
+		{Name: "Echo final", Command: []string{"echo", "finalization done"}},
 	}
 
 	cfg := RunConfig{
@@ -638,11 +637,9 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 	}
 
 	step := steps.Step{
-		Name:        "test-step",
-		IsClaude:    true,
-		Model:       "claude-opus-4-6",
-		PromptFile:  "test-prompt.txt",
-		PrependVars: true,
+		Name:       "test-step",
+		Model:      "claude-opus-4-6",
+		PromptFile: "test-prompt.txt",
 	}
 
 	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
@@ -685,7 +682,6 @@ func TestBuildIterationSteps_ClaudeStepMissingPromptFile(t *testing.T) {
 
 	step := steps.Step{
 		Name:       "bad-step",
-		IsClaude:   true,
 		Model:      "some-model",
 		PromptFile: "nonexistent.txt",
 	}
@@ -715,7 +711,6 @@ func TestRun_BuildIterationStepsErrorLogsAndContinuesToFinalization(t *testing.T
 
 	claudeStep := steps.Step{
 		Name:       "bad-claude",
-		IsClaude:   true,
 		Model:      "some-model",
 		PromptFile: "nonexistent.txt",
 	}
@@ -778,11 +773,9 @@ func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 	}
 
 	step := steps.Step{
-		Name:        "finalize-claude",
-		IsClaude:    true,
-		Model:       "claude-sonnet-4-6",
-		PromptFile:  "finalize-prompt.txt",
-		PrependVars: true,
+		Name:       "finalize-claude",
+		Model:      "claude-sonnet-4-6",
+		PromptFile: "finalize-prompt.txt",
 	}
 
 	resolved, err := buildFinalizeSteps(dir, []steps.Step{step})
@@ -804,8 +797,8 @@ func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 		t.Errorf("expected -p flag at index 5, got %q", rs.Command[5])
 	}
 	prompt := rs.Command[6]
-	if !strings.HasPrefix(prompt, "ISSUENUMBER=\nSTARTINGSHA=\n") {
-		t.Errorf("expected empty ISSUENUMBER and STARTINGSHA in prompt, got %q", prompt)
+	if prompt != "finalize this" {
+		t.Errorf("expected prompt to be file content %q, got %q", "finalize this", prompt)
 	}
 }
 
@@ -844,7 +837,6 @@ func TestRun_BuildFinalizeStepsErrorSkipsFinalizationButWritesSummary(t *testing
 
 	claudeFinalStep := steps.Step{
 		Name:       "bad-finalize",
-		IsClaude:   true,
 		Model:      "some-model",
 		PromptFile: "nonexistent.txt",
 	}
