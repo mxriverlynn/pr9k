@@ -56,14 +56,15 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 ```
 ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │  JSON Config │    │   Prompt Files   │    │   Helper Scripts    │
-│  (configs/)  │    │   (prompts/)     │    │   (scripts/)        │
+│ralph-steps.  │    │   (prompts/)     │    │   (scripts/)        │
+│json (root)   │    │                  │    │                     │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
        │                     │                         │
        ▼                     ▼                         ▼
 ┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │ steps.Load   │    │ steps.BuildPrompt│    │ runner.CaptureOutput│
-│ Steps()      │    │ (file content)   │    │ (issue ID, user,    │
-│              │    │                  │    │  HEAD SHA)          │
+│ WorkflowCfg()│    │ ({{VAR}} subst.) │    │ (issue, user, SHA)  │
+│              │    │                  │    │                     │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
        │                     │                         │
        └─────────┬───────────┘                         │
@@ -132,7 +133,7 @@ Parses command-line arguments (`<iterations>` and optional `-project-dir` and `-
 
 ### [Step Definitions & Prompt Building](features/step-definitions.md)
 
-Loads workflow step definitions from JSON configuration files (`configs/ralph-steps.json`, `configs/ralph-finalize-steps.json`). A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`) loaded via `LoadWorkflowConfig` with 9-rule structural validation. Each step is identified as a Claude step or shell command via `IsClaudeStep()`/`IsCommandStep()` helpers. `BuildPrompt` returns raw file content; callers prepend `ISSUENUMBER=` and `STARTINGSHA=` before passing to the Claude CLI.
+Loads workflow step definitions from `ralph-steps.json` at the project root (overridable via `-steps` flag) via `LoadWorkflowConfig`. `WorkflowConfig` supports a three-phase layout (`pre-loop`, `loop`, `post-loop`) with 9-rule structural validation followed by variable scoping validation. Each step is identified as a Claude step or shell command via `IsClaudeStep()`/`IsCommandStep()` helpers. Prompt files use `{{VAR}}` inline syntax; `BuildPrompt` applies single-pass substitution from the VariablePool before passing to the Claude CLI.
 
 **Package:** `internal/steps/`
 
@@ -144,7 +145,7 @@ The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in
 
 ### [Workflow Orchestration](features/workflow-orchestration.md)
 
-The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over N iterations (each fetching an issue and running the configured iteration steps through the step sequencer), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
+The top-level `Run` function drives the entire workflow from a `*WorkflowConfig`: displays a startup banner, runs the pre-loop phase once, loops N iterations through the loop phase (exiting early if a step with `exitLoopIfEmpty` captures an empty string), then runs the post-loop phase. `HandleStepError` in `ui/orchestrate.go` handles per-step error recovery by blocking on user input (continue / retry / quit).
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 

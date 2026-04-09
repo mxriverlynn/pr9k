@@ -2,14 +2,14 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-09 (updated for JIT validation)
+- **Last Updated:** 2026-04-09 (updated for {{VAR}} prompt migration and configs/ removal)
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps) via `LoadSteps`/`LoadFinalizeSteps`
-- A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation followed by variable scoping validation
+- Step definitions are loaded from `ralph-steps.json` at the project root (default; overridable via `-steps` flag) via `LoadWorkflowConfig`
+- `WorkflowConfig` supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation followed by variable scoping validation
 - Each step is either a Claude CLI invocation (`promptFile` set) or a shell command (`command` set); helper methods `IsClaudeStep()` and `IsCommandStep()` distinguish the two
 - `BuildPrompt` reads prompt file content and applies single-pass `{{KEY}}` substitution using a caller-supplied `vars` map; unknown placeholders are left as literal text
 - `BuildReplacer` is an exported helper that constructs a `strings.Replacer` from a `map[string]string`; substitution is single-pass (a value containing `{{OTHER}}` is never re-expanded)
@@ -17,29 +17,24 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
-- `ralph-tui/internal/steps/steps.go` — Step struct, WorkflowConfig, LoadWorkflowConfig, LoadSteps, LoadFinalizeSteps, BuildPrompt
+- `ralph-tui/internal/steps/steps.go` — Step struct, WorkflowConfig, LoadWorkflowConfig, BuildPrompt
 - `ralph-tui/internal/steps/validate.go` — ValidateVariables (startup), ValidateStepJIT (per-execution)
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading, prompt building, and validation
-- `ralph-tui/configs/ralph-steps.json` — 8 iteration step definitions
-- `ralph-tui/configs/ralph-finalize-steps.json` — 3 finalization step definitions
+- `ralph-steps.json` — Production three-phase workflow config (1 pre-loop, 10 loop, 3 post-loop steps)
 
 ## Architecture
 
 ```
 ┌─────────────────────┐     ┌──────────────────────┐
-│ configs/             │     │ prompts/              │
-│  ralph-steps.json    │     │  feature-work.md      │
-│  ralph-finalize-     │     │  test-planning.md     │
-│    steps.json        │     │  test-writing.md      │
+│ ralph-steps.json     │     │ prompts/              │
+│  (repo root)         │     │  feature-work.md      │
+│                      │     │  test-planning.md     │
+│                      │     │  test-writing.md      │
 └─────────┬───────────┘     │  code-review-*.md     │
           │                  │  update-docs.md       │
           ▼                  │  deferred-work.md     │
    ┌──────────────┐         │  lessons-learned.md   │
-   │ LoadSteps()  │         └──────────┬────────────┘
-   │ LoadFinalize │                    │
-   │  Steps()     │                    │
-   │              │                    │
-   │ LoadWorkflow │                    │
+   │ LoadWorkflow │         └──────────┬────────────┘
    │  Config()    │                    │
    └──────┬───────┘                    │
           │                            │
@@ -67,10 +62,8 @@ Key files:
 | `ralph-tui/internal/steps/steps.go` | Step struct, WorkflowConfig, loading functions, prompt builder |
 | `ralph-tui/internal/steps/validate.go` | ValidateVariables (startup), ValidateStepJIT (per-execution) |
 | `ralph-tui/internal/steps/validate_test.go` | Unit tests for variable validation and JIT validation |
-| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, structural validation, and prompt building |
-| `ralph-tui/configs/ralph-steps.json` | Iteration step definitions (8 steps) |
-| `ralph-tui/configs/ralph-finalize-steps.json` | Finalization step definitions (3 steps) |
-| `ralph-tui/configs/configs_test.go` | Validates JSON structure of config files |
+| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, structural validation, prompt building, and production config correctness |
+| `ralph-steps.json` | Production three-phase workflow config (pre-loop/loop/post-loop) |
 
 ## Core Types
 
@@ -109,22 +102,7 @@ type WorkflowConfig struct {
 
 ## Implementation Details
 
-### Step Loading
-
-`LoadSteps` and `LoadFinalizeSteps` read flat JSON arrays relative to the project directory (backward-compatible with the existing `configs/` layout):
-
-```go
-func LoadSteps(projectDir string) ([]Step, error) {
-    return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-steps.json"))
-}
-
-func loadStepsFile(path string) ([]Step, error) {
-    data, err := os.ReadFile(path)
-    // ... unmarshal JSON into []Step
-}
-```
-
-### Three-Phase WorkflowConfig
+### WorkflowConfig Loading
 
 `LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs both structural validation and variable validation before returning. The `stepsFile` argument comes from `cli.Config.StepsFile` (default: `"ralph-steps.json"`; overridable with the `-steps` flag):
 
@@ -198,26 +176,36 @@ For every step, `ValidateVariables` checks:
 
 `{{VAR}}` placeholders in prompt files and command args must match `[A-Z_][A-Z0-9_]*` (uppercase identifiers only). The regex is `\{\{([A-Z_][A-Z0-9_]*)\}\}`.
 
-### Iteration Steps
+### Pre-Loop Steps
 
-The 8 iteration steps run in sequence for each GitHub issue:
+One step runs once before iterations begin:
 
-| # | Name | Type | Model |
+| # | Name | Type | Notes |
 |---|------|------|-------|
-| 1 | Feature work | Claude | sonnet |
-| 2 | Test planning | Claude | opus |
-| 3 | Test writing | Claude | sonnet |
-| 4 | Code review | Claude | opus |
-| 5 | Review fixes | Claude | sonnet |
-| 6 | Close issue | Shell | — |
-| 7 | Update docs | Claude | sonnet |
-| 8 | Git push | Shell | — |
+| 1 | Get GitHub username | Shell | Captures `GH_USERNAME` |
 
-Shell command steps use template variables (e.g., `{{ISSUE_ID}}`, `{{ISSUENUMBER}}`, `{{STARTINGSHA}}`) that are substituted by `ResolveCommand` in the workflow package using a `vars` map.
+### Loop Steps
 
-### Finalization Steps
+The 10 loop steps run in sequence for each GitHub issue:
 
-Three steps run once after all iterations complete:
+| # | Name | Type | Model | Notes |
+|---|------|------|-------|-------|
+| 1 | Get next issue | Shell | — | Captures `ISSUE_NUMBER`; exits loop if empty |
+| 2 | Get starting SHA | Shell | — | Captures `STARTING_SHA` |
+| 3 | Feature work | Claude | sonnet | Injects `ISSUE_NUMBER` |
+| 4 | Test planning | Claude | opus | Injects `ISSUE_NUMBER`, `STARTING_SHA` |
+| 5 | Test writing | Claude | sonnet | Injects `ISSUE_NUMBER` |
+| 6 | Code review | Claude | opus | Injects `ISSUE_NUMBER`, `STARTING_SHA` |
+| 7 | Review fixes | Claude | sonnet | Injects `ISSUE_NUMBER` |
+| 8 | Close issue | Shell | — | Uses `{{ISSUE_NUMBER}}` |
+| 9 | Update docs | Claude | sonnet | Injects `ISSUE_NUMBER`, `STARTING_SHA` |
+| 10 | Git push | Shell | — | — |
+
+Shell command steps use template variables (e.g., `{{ISSUE_NUMBER}}`, `{{GH_USERNAME}}`) that are substituted by `ResolveCommand` in the workflow package using a `vars` map.
+
+### Post-Loop Steps (Finalization)
+
+Three post-loop steps run once after all iterations complete:
 
 | # | Name | Type | Model |
 |---|------|------|-------|
@@ -285,7 +273,7 @@ prompt, err := steps.BuildPrompt(projectDir, step, vars)
 cmd = ResolveCommand(projectDir, step.Command, vars)
 ```
 
-Prompt files and command args reference variables with `{{VAR}}` syntax (e.g. `{{ISSUE_ID}}`, `{{STARTINGSHA}}`). Variables are declared in the JSON config via `outputVariable` and captured at runtime by `CaptureOutput`.
+Prompt files and command args reference variables with `{{VAR}}` syntax (e.g. `{{ISSUE_NUMBER}}`, `{{STARTING_SHA}}`). Variables are declared in the JSON config via `outputVariable` and captured at runtime by `CaptureOutput`.
 
 ## Error Handling
 
@@ -311,9 +299,8 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, and all 9 structural validation rules
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, all 9 structural validation rules, and production config correctness (field values, variable wiring, prompt file existence)
 - `ralph-tui/internal/steps/validate_test.go` — Unit tests for ValidateVariables (scoping, shadowing, forward references, consistency) and ValidateStepJIT (disk re-read, multi-error, nil guards)
-- `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
 
 ### Test Patterns
 
