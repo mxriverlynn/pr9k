@@ -8,39 +8,35 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 
 ## Overview
 
-- Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps)
+- Step definitions are loaded from `ralph-steps.json`, which contains both iteration steps (8) and finalization steps (3)
 - Each step is either a Claude CLI invocation (with model, prompt file, and optional variable prepending) or a shell command (with template variable substitution)
 - `BuildPrompt` reads prompt files from `prompts/` and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` for iteration context
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
-- `ralph-tui/internal/steps/steps.go` — Step struct, LoadSteps, LoadFinalizeSteps, BuildPrompt
+- `ralph-tui/internal/steps/steps.go` — Step struct, StepFile struct, LoadSteps, BuildPrompt
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
-- `ralph-tui/configs/ralph-steps.json` — 8 iteration step definitions
-- `ralph-tui/configs/ralph-finalize-steps.json` — 3 finalization step definitions
+- `ralph-tui/ralph-steps.json` — All step definitions (iteration and finalization)
 
 ## Architecture
 
 ```
 ┌─────────────────────┐     ┌──────────────────────┐
-│ configs/             │     │ prompts/              │
-│  ralph-steps.json    │     │  feature-work.md      │
-│  ralph-finalize-     │     │  test-planning.md     │
-│    steps.json        │     │  test-writing.md      │
-└─────────┬───────────┘     │  code-review-*.md     │
-          │                  │  update-docs.md       │
-          ▼                  │  deferred-work.md     │
-   ┌──────────────┐         │  lessons-learned.md   │
-   │ LoadSteps()  │         └──────────┬────────────┘
-   │ LoadFinalize │                    │
-   │  Steps()     │                    │
-   └──────┬───────┘                    │
+│ ralph-steps.json     │     │ prompts/              │
+│  iteration: [...]    │     │  feature-work.md      │
+│  finalize:  [...]    │     │  test-planning.md     │
+└─────────┬───────────┘     │  test-writing.md      │
+          │                  │  code-review-*.md     │
+          ▼                  │  update-docs.md       │
+   ┌──────────────┐         │  deferred-work.md     │
+   │ LoadSteps()  │         │  lessons-learned.md   │
+   └──────┬───────┘         └──────────┬────────────┘
           │                            │
           ▼                            ▼
    ┌──────────────┐         ┌──────────────────┐
-   │  []Step      │────────▶│  BuildPrompt()   │
-   │  (parsed     │         │  prepend vars    │
-   │   structs)   │         │  read file       │
+   │  StepFile    │────────▶│  BuildPrompt()   │
+   │  .Iteration  │         │  prepend vars    │
+   │  .Finalize   │         │  read file       │
    └──────────────┘         └──────┬───────────┘
                                    │
                                    ▼
@@ -52,11 +48,9 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/steps/steps.go` | Step struct, loading functions, prompt builder |
+| `ralph-tui/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
 | `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
-| `ralph-tui/configs/ralph-steps.json` | Iteration step definitions (8 steps) |
-| `ralph-tui/configs/ralph-finalize-steps.json` | Finalization step definitions (3 steps) |
-| `ralph-tui/configs/configs_test.go` | Validates JSON structure of config files |
+| `ralph-tui/ralph-steps.json` | All step definitions (iteration and finalization) |
 
 ## Core Types
 
@@ -70,22 +64,25 @@ type Step struct {
     Command     []string `json:"command,omitempty"`      // argv for non-Claude steps
     PrependVars bool     `json:"prependVars,omitempty"`  // prepend ISSUENUMBER/STARTINGSHA
 }
+
+// StepFile holds the two groups of steps loaded from ralph-steps.json.
+type StepFile struct {
+    Iteration []Step `json:"iteration"`
+    Finalize  []Step `json:"finalize"`
+}
 ```
 
 ## Implementation Details
 
 ### Step Loading
 
-`LoadSteps` and `LoadFinalizeSteps` read JSON files relative to the project directory and unmarshal into `[]Step`:
+`LoadSteps` reads `ralph-steps.json` relative to the project directory and unmarshals into a `StepFile`:
 
 ```go
-func LoadSteps(projectDir string) ([]Step, error) {
-    return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-steps.json"))
-}
-
-func loadStepsFile(path string) ([]Step, error) {
+func LoadSteps(projectDir string) (StepFile, error) {
+    path := filepath.Join(projectDir, "ralph-steps.json")
     data, err := os.ReadFile(path)
-    // ... unmarshal JSON into []Step
+    // ... unmarshal JSON into StepFile
 }
 ```
 
@@ -157,8 +154,7 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, BuildPrompt
-- `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, BuildPrompt
 
 ### Test Patterns
 

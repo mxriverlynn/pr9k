@@ -20,16 +20,27 @@ type Step struct {
 	PrependVars bool     `json:"prependVars,omitempty"`
 }
 
-// LoadSteps loads the iteration step definitions from configs/ralph-steps.json,
-// resolved relative to projectDir.
-func LoadSteps(projectDir string) ([]Step, error) {
-	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-steps.json"))
+// StepFile holds the two groups of steps loaded from ralph-steps.json.
+type StepFile struct {
+	Iteration []Step `json:"iteration"`
+	Finalize  []Step `json:"finalize"`
 }
 
-// LoadFinalizeSteps loads the finalization step definitions from
-// configs/ralph-finalize-steps.json, resolved relative to projectDir.
-func LoadFinalizeSteps(projectDir string) ([]Step, error) {
-	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-finalize-steps.json"))
+// LoadSteps loads the step definitions from ralph-steps.json,
+// resolved relative to projectDir.
+func LoadSteps(projectDir string) (StepFile, error) {
+	path := filepath.Join(projectDir, "ralph-steps.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return StepFile{}, fmt.Errorf("steps: could not read %s: %w", path, err)
+	}
+
+	var sf StepFile
+	if err := json.Unmarshal(data, &sf); err != nil {
+		return StepFile{}, fmt.Errorf("steps: malformed JSON in %s: %w", path, err)
+	}
+
+	return sf, nil
 }
 
 // BuildPrompt reads the prompt file for the given step and returns its content.
@@ -49,18 +60,4 @@ func BuildPrompt(projectDir string, step Step, issueID string, startingSHA strin
 		content = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + startingSHA + "\n" + content
 	}
 	return content, nil
-}
-
-func loadStepsFile(path string) ([]Step, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("steps: could not read %s: %w", path, err)
-	}
-
-	var steps []Step
-	if err := json.Unmarshal(data, &steps); err != nil {
-		return nil, fmt.Errorf("steps: malformed JSON in %s: %w", path, err)
-	}
-
-	return steps, nil
 }

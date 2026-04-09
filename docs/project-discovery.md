@@ -50,7 +50,7 @@
 
 ### Configuration
 
-- Step definitions: `ralph-tui/configs/ralph-steps.json`, `ralph-tui/configs/ralph-finalize-steps.json`
+- Step definitions: `ralph-tui/ralph-steps.json`
 - Claude Code settings: `.claude/settings.json`, `.claude/settings.local.json`
 
 ## Additional Information

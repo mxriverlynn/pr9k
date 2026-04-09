@@ -26,14 +26,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	iterSteps, err := steps.LoadSteps(cfg.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		_ = log.Close()
-		os.Exit(1)
-	}
-
-	finalSteps, err := steps.LoadFinalizeSteps(cfg.ProjectDir)
+	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		_ = log.Close()
@@ -46,7 +39,7 @@ func main() {
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
 	var stepNames [8]string
-	for i, s := range iterSteps {
+	for i, s := range stepFile.Iteration {
 		if i >= 8 {
 			break
 		}
@@ -67,8 +60,8 @@ func main() {
 	runCfg := workflow.RunConfig{
 		ProjectDir:    cfg.ProjectDir,
 		Iterations:    cfg.Iterations,
-		Steps:         iterSteps,
-		FinalizeSteps: finalSteps,
+		Steps:         stepFile.Iteration,
+		FinalizeSteps: stepFile.Finalize,
 	}
 
 	done := make(chan struct{})

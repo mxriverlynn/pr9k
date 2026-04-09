@@ -132,7 +132,7 @@ Parses command-line arguments (`<iterations>` and optional `-project-dir` flag) 
 
 ### [Step Definitions & Prompt Building](features/step-definitions.md)
 
-Loads workflow step definitions from JSON configuration files (`configs/ralph-steps.json`, `configs/ralph-finalize-steps.json`). Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` variables for iteration context.
+Loads workflow step definitions from `ralph-steps.json`, which contains both iteration and finalization steps. Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` variables for iteration context.
 
 **Package:** `internal/steps/`
 

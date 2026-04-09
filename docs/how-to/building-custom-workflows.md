@@ -4,12 +4,12 @@ This guide explains how to create and modify workflow step sequences in ralph-tu
 
 ## Step Configuration Files
 
-Ralph-tui loads two JSON files from `configs/` (resolved relative to the project directory):
+Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the project directory). This file contains two groups:
 
-- **`configs/ralph-steps.json`** — Iteration steps, run once per issue
-- **`configs/ralph-finalize-steps.json`** — Finalization steps, run once after all iterations complete
+- **`iteration`** — Steps run once per issue
+- **`finalize`** — Steps run once after all iterations complete
 
-Each file contains a JSON array of step objects. Steps execute in the order they appear in the array.
+Steps execute in the order they appear in each array.
 
 ## Step Schema
 
@@ -58,9 +58,9 @@ Relative paths containing a `/` separator are resolved against the project direc
 
 ## Iteration vs. Finalization Steps
 
-**Iteration steps** (`ralph-steps.json`) run once per issue. They have access to the current issue number and starting SHA through variable injection (`prependVars: true` for Claude steps, `{{ISSUE_ID}}` for shell commands).
+**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to the current issue number and starting SHA through variable injection (`prependVars: true` for Claude steps, `{{ISSUE_ID}}` for shell commands).
 
-**Finalization steps** (`ralph-finalize-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). They do not have access to issue-specific variables — `prependVars` should be `false`, and `{{ISSUE_ID}}` will resolve to an empty string.
+**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). They do not have access to issue-specific variables — `prependVars` should be `false`, and `{{ISSUE_ID}}` will resolve to an empty string.
 
 ## The Default Workflow
 
@@ -89,14 +89,19 @@ Add markdown files to the `prompts/` directory. Each file contains the instructi
 
 ### 2. Define your steps in JSON
 
-Create or modify the JSON config files. For example, a minimal iteration workflow:
+Create or modify `ralph-steps.json`. For example, a minimal workflow:
 
 ```json
-[
-  {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true, "prependVars": true},
-  {"name": "Test", "model": "sonnet", "promptFile": "write-tests.md", "isClaude": true, "prependVars": true},
-  {"name": "Push", "isClaude": false, "command": ["git", "push"]}
-]
+{
+  "iteration": [
+    {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true, "prependVars": true},
+    {"name": "Test", "model": "sonnet", "promptFile": "write-tests.md", "isClaude": true, "prependVars": true},
+    {"name": "Push", "isClaude": false, "command": ["git", "push"]}
+  ],
+  "finalize": [
+    {"name": "Final push", "isClaude": false, "command": ["git", "push"]}
+  ]
+}
 ```
 
 ### 3. Add custom scripts

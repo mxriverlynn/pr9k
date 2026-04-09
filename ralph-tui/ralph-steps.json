@@ -1,0 +1,17 @@
+{
+  "iteration": [
+    {"name": "Feature work",  "model": "sonnet", "promptFile": "feature-work.md",       "isClaude": true, "prependVars": true},
+    {"name": "Test planning", "model": "opus",   "promptFile": "test-planning.md",       "isClaude": true, "prependVars": true},
+    {"name": "Test writing",  "model": "sonnet", "promptFile": "test-writing.md",        "isClaude": true, "prependVars": true},
+    {"name": "Code review",   "model": "opus",   "promptFile": "code-review-changes.md", "isClaude": true, "prependVars": true},
+    {"name": "Review fixes",  "model": "sonnet", "promptFile": "code-review-fixes.md",   "isClaude": true, "prependVars": true},
+    {"name": "Close issue",   "isClaude": false,  "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"]},
+    {"name": "Update docs",   "model": "sonnet", "promptFile": "update-docs.md",         "isClaude": true, "prependVars": true},
+    {"name": "Git push",      "isClaude": false,  "command": ["git", "push"]}
+  ],
+  "finalize": [
+    {"name": "Deferred work",   "model": "sonnet", "promptFile": "deferred-work.md",   "isClaude": true, "prependVars": false},
+    {"name": "Lessons learned", "model": "sonnet", "promptFile": "lessons-learned.md", "isClaude": true, "prependVars": false},
+    {"name": "Final git push",  "isClaude": false,  "command": ["git", "push"]}
+  ]
+}

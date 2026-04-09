@@ -145,8 +145,7 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 | Consumer | Path Resolved |
 |----------|---------------|
 | `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
-| `steps.LoadSteps(projectDir)` | `{projectDir}/configs/ralph-steps.json` |
-| `steps.LoadFinalizeSteps(projectDir)` | `{projectDir}/configs/ralph-finalize-steps.json` |
+| `steps.LoadSteps(projectDir)` | `{projectDir}/ralph-steps.json` |
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
 

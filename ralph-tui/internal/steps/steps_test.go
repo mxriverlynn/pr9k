@@ -23,27 +23,27 @@ func projectRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(filename), "..", "..")
 }
 
-func TestLoadSteps_Count(t *testing.T) {
+func TestLoadSteps_IterationCount(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got) != 8 {
-		t.Errorf("expected 8 steps, got %d", len(got))
+	if len(got.Iteration) != 8 {
+		t.Errorf("expected 8 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
-func TestLoadFinalizeSteps_Count(t *testing.T) {
-	got, err := steps.LoadFinalizeSteps(projectRoot(t))
+func TestLoadSteps_FinalizeCount(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
-		t.Fatalf("LoadFinalizeSteps returned error: %v", err)
+		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got) != 3 {
-		t.Errorf("expected 3 finalization steps, got %d", len(got))
+	if len(got.Finalize) != 3 {
+		t.Errorf("expected 3 finalization steps, got %d", len(got.Finalize))
 	}
 }
 
-func TestLoadSteps_Order(t *testing.T) {
+func TestLoadSteps_IterationOrder(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
@@ -60,34 +60,34 @@ func TestLoadSteps_Order(t *testing.T) {
 		"Git push",
 	}
 	for i, want := range wantNames {
-		if got[i].Name != want {
-			t.Errorf("step[%d]: expected name %q, got %q", i, want, got[i].Name)
+		if got.Iteration[i].Name != want {
+			t.Errorf("step[%d]: expected name %q, got %q", i, want, got.Iteration[i].Name)
 		}
 	}
 }
 
-func TestLoadFinalizeSteps_Order(t *testing.T) {
-	got, err := steps.LoadFinalizeSteps(projectRoot(t))
+func TestLoadSteps_FinalizeOrder(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
-		t.Fatalf("LoadFinalizeSteps returned error: %v", err)
+		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
 	wantNames := []string{"Deferred work", "Lessons learned", "Final git push"}
 	for i, want := range wantNames {
-		if got[i].Name != want {
-			t.Errorf("step[%d]: expected name %q, got %q", i, want, got[i].Name)
+		if got.Finalize[i].Name != want {
+			t.Errorf("step[%d]: expected name %q, got %q", i, want, got.Finalize[i].Name)
 		}
 	}
 }
 
-func TestLoadSteps_ClaudeFieldsPopulated(t *testing.T) {
+func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
 	// "Feature work" is a claude step
-	s := got[0]
+	s := got.Iteration[0]
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
 	}
@@ -99,14 +99,14 @@ func TestLoadSteps_ClaudeFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestLoadSteps_NonClaudeFieldsPopulated(t *testing.T) {
+func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
 	// "Git push" is a non-claude step
-	s := got[7]
+	s := got.Iteration[7]
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -121,122 +121,14 @@ func TestLoadSteps_NonClaudeFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestLoadSteps_MissingOptionalFieldsNoError(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	json := `[{"name":"Only Name","isClaude":false}]`
-	if err := os.WriteFile(filepath.Join(dir, "configs", "ralph-steps.json"), []byte(json), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := steps.LoadSteps(dir)
-	if err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 step, got %d", len(got))
-	}
-	s := got[0]
-	if s.Model != "" || s.PromptFile != "" || len(s.Command) != 0 {
-		t.Error("optional fields should be zero values when absent from JSON")
-	}
-}
-
-func TestLoadSteps_MalformedJSON(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "configs", "ralph-steps.json"), []byte(`not valid json`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := steps.LoadSteps(dir)
-	if err == nil {
-		t.Fatal("expected an error for malformed JSON, got nil")
-	}
-	// Error should include the file path
-	wantPath := filepath.Join(dir, "configs", "ralph-steps.json")
-	if !strings.Contains(err.Error(), wantPath) {
-		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
-	}
-}
-
-func TestLoadSteps_FileNotFound(t *testing.T) {
-	_, err := steps.LoadSteps("/nonexistent/path")
-	if err == nil {
-		t.Fatal("expected an error for missing file, got nil")
-	}
-}
-
-func TestLoadFinalizeSteps_FileNotFound(t *testing.T) {
-	_, err := steps.LoadFinalizeSteps("/nonexistent/path")
-	if err == nil {
-		t.Fatal("expected an error for missing file, got nil")
-	}
-}
-
-// T1 — PrependVars field validation
-func TestLoadSteps_PrependVars(t *testing.T) {
+func TestLoadSteps_FinalizeClaudeFieldsPopulated(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude iteration step — prependVars must be true
-	if !got[0].PrependVars {
-		t.Error("Feature work: expected PrependVars=true")
-	}
-
-	// "Git push" is a non-claude step — prependVars must be false
-	if got[7].PrependVars {
-		t.Error("Git push: expected PrependVars=false")
-	}
-}
-
-func TestLoadFinalizeSteps_PrependVars(t *testing.T) {
-	got, err := steps.LoadFinalizeSteps(projectRoot(t))
-	if err != nil {
-		t.Fatalf("LoadFinalizeSteps returned error: %v", err)
-	}
-
-	// "Deferred work" is a finalization claude step — prependVars must be false
-	if got[0].PrependVars {
-		t.Error("Deferred work: expected PrependVars=false")
-	}
-}
-
-// T2 — LoadFinalizeSteps malformed JSON
-func TestLoadFinalizeSteps_MalformedJSON(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "configs", "ralph-finalize-steps.json"), []byte(`not valid json`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := steps.LoadFinalizeSteps(dir)
-	if err == nil {
-		t.Fatal("expected an error for malformed JSON, got nil")
-	}
-	wantPath := filepath.Join(dir, "configs", "ralph-finalize-steps.json")
-	if !strings.Contains(err.Error(), wantPath) {
-		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
-	}
-}
-
-// T3 — Finalization step field validation
-func TestLoadFinalizeSteps_ClaudeFieldsPopulated(t *testing.T) {
-	got, err := steps.LoadFinalizeSteps(projectRoot(t))
-	if err != nil {
-		t.Fatalf("LoadFinalizeSteps returned error: %v", err)
-	}
-
 	// "Deferred work" is a finalization claude step
-	s := got[0]
+	s := got.Finalize[0]
 	if !s.IsClaude {
 		t.Error("Deferred work: expected IsClaude=true")
 	}
@@ -248,14 +140,14 @@ func TestLoadFinalizeSteps_ClaudeFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestLoadFinalizeSteps_NonClaudeFieldsPopulated(t *testing.T) {
-	got, err := steps.LoadFinalizeSteps(projectRoot(t))
+func TestLoadSteps_FinalizeNonClaudeFieldsPopulated(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
-		t.Fatalf("LoadFinalizeSteps returned error: %v", err)
+		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
 	// "Final git push" is a non-claude step
-	s := got[2]
+	s := got.Finalize[2]
 	if s.IsClaude {
 		t.Error("Final git push: expected IsClaude=false")
 	}
@@ -270,22 +162,120 @@ func TestLoadFinalizeSteps_NonClaudeFieldsPopulated(t *testing.T) {
 	}
 }
 
-// T4 — Empty steps array
-func TestLoadSteps_EmptyArray(t *testing.T) {
+func TestLoadSteps_MissingOptionalFieldsNoError(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "configs", "ralph-steps.json"), []byte(`[]`), 0644); err != nil {
+	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	got, err := steps.LoadSteps(dir)
 	if err != nil {
-		t.Fatalf("expected no error for empty array, got: %v", err)
+		t.Fatalf("expected no error, got: %v", err)
 	}
-	if len(got) != 0 {
-		t.Errorf("expected 0 steps, got %d", len(got))
+	if len(got.Iteration) != 1 {
+		t.Fatalf("expected 1 iteration step, got %d", len(got.Iteration))
+	}
+	s := got.Iteration[0]
+	if s.Model != "" || s.PromptFile != "" || len(s.Command) != 0 {
+		t.Error("optional fields should be zero values when absent from JSON")
+	}
+}
+
+func TestLoadSteps_MalformedJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`not valid json`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := steps.LoadSteps(dir)
+	if err == nil {
+		t.Fatal("expected an error for malformed JSON, got nil")
+	}
+	// Error should include the file path
+	wantPath := filepath.Join(dir, "ralph-steps.json")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
+	}
+}
+
+func TestLoadSteps_FileNotFound(t *testing.T) {
+	_, err := steps.LoadSteps("/nonexistent/path")
+	if err == nil {
+		t.Fatal("expected an error for missing file, got nil")
+	}
+}
+
+func TestLoadSteps_IterationPrependVars(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+
+	for i, s := range got.Iteration {
+		if s.IsClaude && !s.PrependVars {
+			t.Errorf("iteration step %d (%q): isClaude=true but prependVars is false; iteration steps require ISSUENUMBER and STARTINGSHA", i, s.Name)
+		}
+		if !s.IsClaude && s.PrependVars {
+			t.Errorf("iteration step %d (%q): isClaude=false but prependVars is true", i, s.Name)
+		}
+	}
+}
+
+func TestLoadSteps_FinalizePrependVars(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+
+	for i, s := range got.Finalize {
+		if s.PrependVars {
+			t.Errorf("finalize step %d (%q): prependVars is true; finalization steps must not prepend issue/SHA vars", i, s.Name)
+		}
+	}
+}
+
+func TestLoadSteps_EmptyArrays(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{"iteration":[],"finalize":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error for empty arrays, got: %v", err)
+	}
+	if len(got.Iteration) != 0 {
+		t.Errorf("expected 0 iteration steps, got %d", len(got.Iteration))
+	}
+	if len(got.Finalize) != 0 {
+		t.Errorf("expected 0 finalize steps, got %d", len(got.Finalize))
+	}
+}
+
+func TestLoadSteps_CommandValues(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+
+	// "Git push" command should be ["git", "push"]
+	gitPush := got.Iteration[7]
+	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
+		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
+	}
+
+	// "Close issue" command should contain "close_gh_issue"
+	closeIssue := got.Iteration[5]
+	found := false
+	for _, part := range closeIssue.Command {
+		if strings.Contains(part, "close_gh_issue") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Close issue: expected command to contain 'close_gh_issue', got %v", closeIssue.Command)
 	}
 }
 
@@ -437,7 +427,6 @@ func TestBuildPrompt_NoTrailingNewline(t *testing.T) {
 	}
 }
 
-// T1 — BuildPrompt error message includes file path and wraps OS error
 func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	dir := t.TempDir()
 	// No prompts/ subdirectory — file will not exist
@@ -458,7 +447,6 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	}
 }
 
-// T2 — BuildPrompt preserves multiline prompt file content
 func TestBuildPrompt_MultilineContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "multi.txt", "line one\nline two\nline three\n")
 	step := steps.Step{PromptFile: "multi.txt", PrependVars: true}
@@ -474,7 +462,6 @@ func TestBuildPrompt_MultilineContent(t *testing.T) {
 	}
 }
 
-// T3 — BuildPrompt with empty PromptFile field returns an error
 func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, "prompts")
@@ -486,32 +473,5 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 	_, err := steps.BuildPrompt(dir, step, "1", "sha")
 	if err == nil {
 		t.Fatal("expected error when PromptFile is empty, got nil")
-	}
-}
-
-// T5 — Command field values
-func TestLoadSteps_CommandValues(t *testing.T) {
-	got, err := steps.LoadSteps(projectRoot(t))
-	if err != nil {
-		t.Fatalf("LoadSteps returned error: %v", err)
-	}
-
-	// "Git push" command should be ["git", "push"]
-	gitPush := got[7]
-	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
-		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
-	}
-
-	// "Close issue" command should contain "close_gh_issue"
-	closeIssue := got[5]
-	found := false
-	for _, part := range closeIssue.Command {
-		if strings.Contains(part, "close_gh_issue") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("Close issue: expected command to contain 'close_gh_issue', got %v", closeIssue.Command)
 	}
 }

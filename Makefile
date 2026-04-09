@@ -6,8 +6,7 @@ build:
 	cd ralph-tui && go build -o ../bin/ralph-tui ./cmd/ralph-tui
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
-	mkdir -p bin/configs
-	cp ralph-tui/configs/*.json bin/configs/
+	cp ralph-tui/ralph-steps.json bin/
 
 test:
 	cd ralph-tui && go test -race -count=1 ./...
