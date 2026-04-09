@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -768,5 +769,238 @@ func TestOldConfigFiles_Deleted(t *testing.T) {
 		if _, err := os.Stat(path); err == nil {
 			t.Errorf("expected %s to be deleted, but it exists", path)
 		}
+	}
+}
+
+// T44 — Production config: Claude steps have non-empty model and promptFile;
+// command steps have non-empty command and no model or promptFile.
+func TestProductionConfig_ClaudeAndCommandFieldsPopulated(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	allSteps := append(append(cfg.PreLoop, cfg.Loop...), cfg.PostLoop...)
+	for _, s := range allSteps {
+		if s.IsClaudeStep() {
+			if s.PromptFile == "" {
+				t.Errorf("Claude step %q: promptFile is empty", s.Name)
+			}
+			if s.Model == "" {
+				t.Errorf("Claude step %q: model is empty", s.Name)
+			}
+		}
+		if s.IsCommandStep() {
+			if len(s.Command) == 0 {
+				t.Errorf("command step %q: command is empty", s.Name)
+			}
+			if s.Model != "" {
+				t.Errorf("command step %q: should not have model %q", s.Name, s.Model)
+			}
+			if s.PromptFile != "" {
+				t.Errorf("command step %q: should not have promptFile %q", s.Name, s.PromptFile)
+			}
+		}
+	}
+}
+
+// T45 — Production config: variable flow is correct across phases.
+func TestProductionConfig_VariableScopingAndFlow(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	// GH_USERNAME produced by pre-loop
+	if cfg.PreLoop[0].OutputVariable != "GH_USERNAME" {
+		t.Errorf("pre-loop[0] outputVariable: got %q, want %q", cfg.PreLoop[0].OutputVariable, "GH_USERNAME")
+	}
+
+	// Get next issue consumes GH_USERNAME and produces ISSUE_NUMBER
+	getNextIssue := cfg.Loop[0]
+	if getNextIssue.OutputVariable != "ISSUE_NUMBER" {
+		t.Errorf("loop[0] outputVariable: got %q, want %q", getNextIssue.OutputVariable, "ISSUE_NUMBER")
+	}
+	if !slices.Contains(getNextIssue.Command, "{{GH_USERNAME}}") {
+		t.Errorf("loop[0] command %v: expected {{GH_USERNAME}} arg", getNextIssue.Command)
+	}
+
+	// Get starting SHA produces STARTING_SHA
+	getStartingSHA := cfg.Loop[1]
+	if getStartingSHA.OutputVariable != "STARTING_SHA" {
+		t.Errorf("loop[1] outputVariable: got %q, want %q", getStartingSHA.OutputVariable, "STARTING_SHA")
+	}
+
+	// Downstream Claude steps inject ISSUE_NUMBER and/or STARTING_SHA
+	issueNumberUsers := []string{"Feature work", "Test planning", "Test writing", "Code review", "Review fixes", "Update docs"}
+	startingSHAUsers := []string{"Test planning", "Code review", "Update docs"}
+
+	byName := make(map[string]steps.Step)
+	for _, s := range cfg.Loop {
+		byName[s.Name] = s
+	}
+
+	for _, name := range issueNumberUsers {
+		s, ok := byName[name]
+		if !ok {
+			t.Errorf("step %q not found in loop", name)
+			continue
+		}
+		if !slices.Contains(s.InjectVars, "ISSUE_NUMBER") {
+			t.Errorf("step %q: expected ISSUE_NUMBER in injectVariables, got %v", name, s.InjectVars)
+		}
+	}
+
+	for _, name := range startingSHAUsers {
+		s, ok := byName[name]
+		if !ok {
+			t.Errorf("step %q not found in loop", name)
+			continue
+		}
+		if !slices.Contains(s.InjectVars, "STARTING_SHA") {
+			t.Errorf("step %q: expected STARTING_SHA in injectVariables, got %v", name, s.InjectVars)
+		}
+	}
+}
+
+// T46 — Production config: exitLoopIfEmpty wired only on Get next issue.
+func TestProductionConfig_ExitLoopIfEmptyWiring(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	getNextIssue := cfg.Loop[0]
+	if !getNextIssue.ExitLoopIfEmpty {
+		t.Errorf("loop[0] %q: expected exitLoopIfEmpty=true", getNextIssue.Name)
+	}
+	if getNextIssue.OutputVariable != "ISSUE_NUMBER" {
+		t.Errorf("loop[0] %q: expected outputVariable=ISSUE_NUMBER, got %q", getNextIssue.Name, getNextIssue.OutputVariable)
+	}
+
+	for _, s := range cfg.Loop[1:] {
+		if s.ExitLoopIfEmpty {
+			t.Errorf("step %q: unexpected exitLoopIfEmpty=true", s.Name)
+		}
+	}
+	for _, s := range cfg.PreLoop {
+		if s.ExitLoopIfEmpty {
+			t.Errorf("pre-loop step %q: unexpected exitLoopIfEmpty=true", s.Name)
+		}
+	}
+	for _, s := range cfg.PostLoop {
+		if s.ExitLoopIfEmpty {
+			t.Errorf("post-loop step %q: unexpected exitLoopIfEmpty=true", s.Name)
+		}
+	}
+}
+
+// T47 — Production config: command steps reference correct executables and args.
+func TestProductionConfig_CommandStepsUseCorrectScripts(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	tests := []struct {
+		phase string
+		step  steps.Step
+		want  []string
+	}{
+		{"pre-loop", cfg.PreLoop[0], []string{"scripts/get_gh_user"}},
+		{"loop[0]", cfg.Loop[0], []string{"scripts/get_next_issue", "{{GH_USERNAME}}"}},
+		{"loop[7]", cfg.Loop[7], []string{"scripts/close_gh_issue", "{{ISSUE_NUMBER}}"}},
+		{"loop[9]", cfg.Loop[9], []string{"git", "push"}},
+		{"post-loop[2]", cfg.PostLoop[2], []string{"git", "push"}},
+	}
+
+	for _, tc := range tests {
+		if len(tc.step.Command) != len(tc.want) {
+			t.Errorf("%s %q: command %v, want %v", tc.phase, tc.step.Name, tc.step.Command, tc.want)
+			continue
+		}
+		for i, arg := range tc.want {
+			if tc.step.Command[i] != arg {
+				t.Errorf("%s %q: command[%d]=%q, want %q", tc.phase, tc.step.Name, i, tc.step.Command[i], arg)
+			}
+		}
+	}
+}
+
+// T48 — Production config: every Claude step's promptFile exists on disk.
+func TestProductionConfig_PromptFilesExist(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	allSteps := append(append(cfg.PreLoop, cfg.Loop...), cfg.PostLoop...)
+	for _, s := range allSteps {
+		if !s.IsClaudeStep() {
+			continue
+		}
+		path := filepath.Join(root, "prompts", s.PromptFile)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("step %q: promptFile %q not found at %s", s.Name, s.PromptFile, path)
+		}
+	}
+}
+
+// T49 — Production config: specific steps use expected models.
+func TestProductionConfig_ModelAssignments(t *testing.T) {
+	root := projectRoot(t)
+	cfg, err := steps.LoadWorkflowConfig(root, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("LoadWorkflowConfig returned error: %v", err)
+	}
+
+	byName := make(map[string]steps.Step)
+	allSteps := append(append(cfg.PreLoop, cfg.Loop...), cfg.PostLoop...)
+	for _, s := range allSteps {
+		byName[s.Name] = s
+	}
+
+	wantModels := map[string]string{
+		"Feature work":   "sonnet",
+		"Test planning":  "opus",
+		"Test writing":   "sonnet",
+		"Code review":    "opus",
+		"Review fixes":   "sonnet",
+		"Update docs":    "sonnet",
+		"Deferred work":  "sonnet",
+		"Lessons learned": "sonnet",
+	}
+
+	for name, wantModel := range wantModels {
+		s, ok := byName[name]
+		if !ok {
+			t.Errorf("step %q not found in config", name)
+			continue
+		}
+		if s.Model != wantModel {
+			t.Errorf("step %q: model=%q, want %q", name, s.Model, wantModel)
+		}
+	}
+}
+
+// T50 — projectRoot resolves to a directory containing ralph-steps.json and prompts/.
+func TestProjectRoot_ContainsExpectedArtifacts(t *testing.T) {
+	root := projectRoot(t)
+
+	stepsPath := filepath.Join(root, "ralph-steps.json")
+	if _, err := os.Stat(stepsPath); err != nil {
+		t.Errorf("projectRoot %q: ralph-steps.json not found: %v", root, err)
+	}
+
+	promptsPath := filepath.Join(root, "prompts")
+	if info, err := os.Stat(promptsPath); err != nil {
+		t.Errorf("projectRoot %q: prompts/ not found: %v", root, err)
+	} else if !info.IsDir() {
+		t.Errorf("projectRoot %q: prompts is not a directory", root)
 	}
 }
