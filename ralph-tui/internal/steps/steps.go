@@ -9,14 +9,14 @@ import (
 
 // Step defines a single step in the ralph workflow.
 type Step struct {
-	Name        string   `json:"name"`
-	Model       string   `json:"model,omitempty"`
-	PromptFile  string   `json:"promptFile,omitempty"`
-	IsClaude    bool     `json:"isClaude"`
+	Name       string `json:"name"`
+	Model      string `json:"model,omitempty"`
+	PromptFile string `json:"promptFile,omitempty"`
+	IsClaude   bool   `json:"isClaude"`
 	// Command holds the argv for non-claude steps. Arguments may contain
 	// template placeholders (e.g. "{{ISSUE_ID}}") that callers must substitute
 	// before execution; the steps package does no expansion itself.
-	Command []string `json:"command,omitempty"`
+	Command     []string `json:"command,omitempty"`
 	PrependVars bool     `json:"prependVars,omitempty"`
 }
 

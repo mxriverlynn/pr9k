@@ -215,7 +215,7 @@ func TestNewLoggerErrorOnUnwritableDirectory(t *testing.T) {
 	if err := os.Chmod(parent, 0o444); err != nil {
 		t.Fatalf("Chmod: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
 
 	_, err := NewLogger(filepath.Join(parent, "sub"))
 	if err == nil {
@@ -303,7 +303,7 @@ func readLogLines(t *testing.T, dir string) []string {
 	if err != nil {
 		t.Fatalf("Open log: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	scanner := bufio.NewScanner(f)

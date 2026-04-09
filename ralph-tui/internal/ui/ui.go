@@ -112,7 +112,7 @@ func (h *KeyHandler) handleQuitConfirm(key string) {
 	case "n":
 		h.mode = h.prevMode
 		h.updateShortcutLine()
-	// all other keys are ignored
+		// all other keys are ignored
 	}
 }
 
