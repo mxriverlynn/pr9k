@@ -1,6 +1,6 @@
 package ui
 
-// StepRunner is the workflow execution interface required by Orchestrate and HandleStepError.
+// StepRunner is the workflow execution interface required by the workflow execution loop and HandleStepError.
 type StepRunner interface {
 	RunStep(name string, command []string) error
 	WasTerminated() bool

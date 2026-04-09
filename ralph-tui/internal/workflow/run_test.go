@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -60,6 +62,7 @@ func (f *fakeExecutor) Close() error {
 // precise timing control.
 type callbackFakeExecutor struct {
 	runStepFn func(name string, cmd []string) error
+	mu        sync.Mutex
 	logLines  []string
 	closed    bool
 }
@@ -71,17 +74,39 @@ func (f *callbackFakeExecutor) RunStep(name string, cmd []string) error {
 	return nil
 }
 
-func (f *callbackFakeExecutor) WasTerminated() bool    { return false }
-func (f *callbackFakeExecutor) WriteToLog(line string) { f.logLines = append(f.logLines, line) }
+func (f *callbackFakeExecutor) WasTerminated() bool { return false }
+
+func (f *callbackFakeExecutor) WriteToLog(line string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.logLines = append(f.logLines, line)
+}
+
 func (f *callbackFakeExecutor) CaptureOutput(_ []string) (string, error) {
 	return "", nil
 }
+
 func (f *callbackFakeExecutor) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.closed = true
 	return nil
 }
 
+func (f *callbackFakeExecutor) getLogLines() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.logLines)
+}
+
+func (f *callbackFakeExecutor) wasClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
 type fakeRunHeader struct {
+	mu             sync.Mutex
 	phaseStepCalls []phaseStepCall
 	stepStateCalls []stepStateCall
 }
@@ -97,11 +122,27 @@ type stepStateCall struct {
 }
 
 func (h *fakeRunHeader) SetPhaseSteps(label string, names []string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.phaseStepCalls = append(h.phaseStepCalls, phaseStepCall{label, names})
 }
 
 func (h *fakeRunHeader) SetStepState(idx int, state ui.StepState) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.stepStateCalls = append(h.stepStateCalls, stepStateCall{idx, state})
+}
+
+func (h *fakeRunHeader) getPhaseStepCalls() []phaseStepCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.phaseStepCalls)
+}
+
+func (h *fakeRunHeader) getStepStateCalls() []stepStateCall {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.stepStateCalls)
 }
 
 // newTestKeyHandler creates a KeyHandler suitable for tests where all steps succeed.
@@ -485,24 +526,26 @@ func TestRun_ExecuteStep_RetryReExecutesStep(t *testing.T) {
 		t.Errorf("expected RunStep called twice (initial + retry), got %d", callCount)
 	}
 
+	logLines := executor.getLogLines()
 	found := false
-	for _, line := range executor.logLines {
+	for _, line := range logLines {
 		if strings.Contains(line, "(retry)") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected retry separator in log, got: %v", executor.logLines)
+		t.Errorf("expected retry separator in log, got: %v", logLines)
 	}
 
+	stepStateCalls := header.getStepStateCalls()
 	lastDone := false
-	for _, call := range header.stepStateCalls {
+	for _, call := range stepStateCalls {
 		if call.idx == 0 && call.state == ui.StepDone {
 			lastDone = true
 		}
 	}
 	if !lastDone {
-		t.Errorf("expected step to be marked done after retry, state calls: %v", header.stepStateCalls)
+		t.Errorf("expected step to be marked done after retry, state calls: %v", stepStateCalls)
 	}
 }
 
@@ -548,7 +591,7 @@ func TestRun_ExecuteStep_QuitClosesExecutor(t *testing.T) {
 		t.Fatal("Run did not return after ActionQuit")
 	}
 
-	if !executor.closed {
+	if !executor.wasClosed() {
 		t.Error("expected executor.Close() to be called after ActionQuit")
 	}
 	if callCount != 1 {
@@ -723,8 +766,9 @@ func TestRun_SetPhaseSteps_CalledWithCorrectLabels(t *testing.T) {
 
 	Run(executor, header, kh, cfg)
 
-	labels := make([]string, len(header.phaseStepCalls))
-	for i, call := range header.phaseStepCalls {
+	phaseStepCalls := header.getPhaseStepCalls()
+	labels := make([]string, len(phaseStepCalls))
+	for i, call := range phaseStepCalls {
 		labels[i] = call.label
 	}
 
