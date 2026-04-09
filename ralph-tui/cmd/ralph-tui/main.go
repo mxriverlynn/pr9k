@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
@@ -47,14 +49,14 @@ func main() {
 	}
 	header := ui.NewStatusHeader(stepNames)
 
-	// Set up OS signal handling for clean shutdown.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	signaled := make(chan struct{})
+	// Drain the log pipe to stdout until EOF.
 	go func() {
-		<-sigChan
-		close(signaled)
-		keyHandler.ForceQuit()
+		scanner := bufio.NewScanner(runner.LogReader())
+		buf := make([]byte, 256*1024)
+		scanner.Buffer(buf, 256*1024)
+		for scanner.Scan() {
+			fmt.Println(scanner.Text())
+		}
 	}()
 
 	runCfg := workflow.RunConfig{
@@ -65,6 +67,22 @@ func main() {
 	}
 
 	done := make(chan struct{})
+
+	// Set up OS signal handling for clean shutdown.
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signaled := make(chan struct{})
+	go func() {
+		<-sigChan
+		close(signaled)
+		keyHandler.ForceQuit()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		os.Exit(1)
+	}()
+
 	go func() {
 		defer close(done)
 		workflow.Run(runner, header, keyHandler, runCfg)
