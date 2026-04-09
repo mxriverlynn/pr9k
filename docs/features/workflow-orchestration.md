@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-09
+- **Last Updated:** 2026-04-09 (updated for single-pass {{VAR}} substitution)
 - **Authors:**
   - River Bailey
 
@@ -147,25 +147,34 @@ func (vp *VariablePool) Clear(names []string)         // silently ignores absent
 
 ### Step Resolution
 
-`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command. It uses `IsClaudeStep()` to distinguish the two types. For Claude steps, it reads the prompt file via `BuildPrompt` (which returns raw file content) and then prepends context variables:
+`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command. It uses `IsClaudeStep()` to distinguish the two types. Both paths share a single `vars` map containing the iteration context, which is passed to `BuildPrompt` (for Claude steps) and `ResolveCommand` (for shell steps):
 
 ```go
-// Claude step
+vars := map[string]string{
+    "ISSUE_ID":    issueID,
+    "ISSUENUMBER": issueID,
+    "STARTINGSHA": sha,
+}
+
+// Claude step — BuildPrompt performs single-pass {{KEY}} substitution
 if s.IsClaudeStep() {
-    prompt, _ := steps.BuildPrompt(projectDir, s)
-    prompt = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + sha + "\n" + prompt
+    prompt, _ := steps.BuildPrompt(projectDir, s, vars)
     result[i] = ui.ResolvedStep{
         Name:    s.Name,
         Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
     }
 }
 
-// Shell step → resolve template vars and script paths
+// Shell step — ResolveCommand performs single-pass {{KEY}} substitution and resolves script paths
 result[i] = ui.ResolvedStep{
     Name:    s.Name,
-    Command: ResolveCommand(projectDir, s.Command, issueID),
+    Command: ResolveCommand(projectDir, s.Command, vars),
 }
 ```
+
+Finalization steps pass `nil` vars to both `BuildPrompt` and `ResolveCommand` (no substitution needed).
+
+`ResolveCommand` uses `steps.BuildReplacer(vars)` to apply the same single-pass substitution logic to each command element, then resolves the executable against `projectDir` if it is a relative script path.
 
 ### The Orchestrate State Machine
 

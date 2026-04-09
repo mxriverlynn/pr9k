@@ -2,7 +2,7 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-09
+- **Last Updated:** 2026-04-09 (updated for single-pass {{VAR}} substitution)
 - **Authors:**
   - River Bailey
 
@@ -11,7 +11,8 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 - Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps) via `LoadSteps`/`LoadFinalizeSteps`
 - A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation
 - Each step is either a Claude CLI invocation (`promptFile` set) or a shell command (`command` set); helper methods `IsClaudeStep()` and `IsCommandStep()` distinguish the two
-- `BuildPrompt` reads prompt file content only — callers are responsible for prepending context variables like `ISSUENUMBER=` and `STARTINGSHA=`
+- `BuildPrompt` reads prompt file content and applies single-pass `{{KEY}}` substitution using a caller-supplied `vars` map; unknown placeholders are left as literal text
+- `BuildReplacer` is an exported helper that constructs a `strings.Replacer` from a `map[string]string`; substitution is single-pass (a value containing `{{OTHER}}` is never re-expanded)
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
@@ -41,16 +42,20 @@ Key files:
    └──────┬───────┘                    │
           │                            │
           ▼                            ▼
-   ┌──────────────┐         ┌──────────────────┐
-   │  []Step /    │────────▶│  BuildPrompt()   │
-   │  Workflow    │         │  read file only  │
-   │  Config      │         │  (no var inject) │
-   └──────────────┘         └──────┬───────────┘
-                                   │
-                                   ▼
-                            file content string
-                            (caller prepends vars,
-                             then passes to claude -p)
+   ┌──────────────┐         ┌──────────────────────┐
+   │  []Step /    │────────▶│  BuildPrompt()       │
+   │  Workflow    │         │  read file +         │
+   │  Config      │         │  {{KEY}} substitution│
+   └──────────────┘         └──────────┬───────────┘
+                                        │
+                            ┌───────────▼──────────┐
+                            │  BuildReplacer(vars) │
+                            │  single-pass replace │
+                            └───────────┬──────────┘
+                                        │
+                                        ▼
+                              substituted prompt string
+                              (passed to claude -p)
 ```
 
 ## Key Files
@@ -74,8 +79,8 @@ type Step struct {
     PermissionMode string   `json:"permissionMode,omitempty"`
     InjectVars     []string `json:"injectVariables,omitempty"`
     // Command holds the argv for non-claude steps. Arguments may contain
-    // template placeholders (e.g. "{{ISSUE_ID}}") that callers must substitute
-    // before execution; the steps package does no expansion itself.
+    // template placeholders (e.g. "{{ISSUE_ID}}") that are substituted by
+    // ResolveCommand in the workflow package using a vars map.
     Command         []string `json:"command,omitempty"`
     OutputVariable  string   `json:"outputVariable,omitempty"`
     ExitLoopIfEmpty bool     `json:"exitLoopIfEmpty,omitempty"`
@@ -168,7 +173,7 @@ The 8 iteration steps run in sequence for each GitHub issue:
 | 7 | Update docs | Claude | sonnet |
 | 8 | Git push | Shell | — |
 
-Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+Shell command steps use template variables (e.g., `{{ISSUE_ID}}`, `{{ISSUENUMBER}}`, `{{STARTINGSHA}}`) that are substituted by `ResolveCommand` in the workflow package using a `vars` map.
 
 ### Finalization Steps
 
@@ -182,31 +187,41 @@ Three steps run once after all iterations complete:
 
 ### Prompt Building
 
-`BuildPrompt` reads and returns the prompt file content only. Callers are responsible for prepending any context variables before passing the prompt to the Claude CLI:
+`BuildPrompt` reads the prompt file and applies single-pass `{{KEY}}` substitution using the provided `vars` map. Unknown placeholders are left as literal text. Substitution is single-pass, so a value containing `{{OTHER}}` is never re-expanded (template injection safe):
 
 ```go
-func BuildPrompt(projectDir string, step Step) (string, error) {
+func BuildPrompt(projectDir string, step Step, vars map[string]string) (string, error) {
     promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
     data, err := os.ReadFile(promptPath)
     // ...
-    return string(data), nil
+    return BuildReplacer(vars).Replace(string(data)), nil
 }
 ```
 
-In `buildIterationSteps` (workflow package), the caller prepends variables:
+`BuildReplacer` constructs the `strings.Replacer` from the vars map:
 
 ```go
-prompt, err := steps.BuildPrompt(projectDir, s)
-prompt = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + sha + "\n" + prompt
+func BuildReplacer(vars map[string]string) *strings.Replacer {
+    pairs := make([]string, 0, len(vars)*2)
+    for k, v := range vars {
+        pairs = append(pairs, "{{"+k+"}}", v)
+    }
+    return strings.NewReplacer(pairs...)
+}
 ```
 
-The resulting prompt passed to `claude -p` starts with:
+In `buildIterationSteps` (workflow package), the vars map includes `ISSUE_ID`, `ISSUENUMBER`, and `STARTINGSHA`:
 
+```go
+vars := map[string]string{
+    "ISSUE_ID":    issueID,
+    "ISSUENUMBER": issueID,
+    "STARTINGSHA": sha,
+}
+prompt, err := steps.BuildPrompt(projectDir, s, vars)
 ```
-ISSUENUMBER=42
-STARTINGSHA=abc123f
-<original prompt file content>
-```
+
+Prompt files reference variables with `{{ISSUENUMBER}}` or `{{STARTINGSHA}}` syntax. The same `vars` map is passed to `ResolveCommand` for shell command steps. Finalization steps receive `nil` vars (no substitution needed).
 
 ## Error Handling
 
@@ -222,7 +237,7 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt, and all 9 validation rules
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, and all 9 validation rules
 - `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
 
 ### Test Patterns
