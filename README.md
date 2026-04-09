@@ -30,27 +30,35 @@ make build
 From the **target repo** (the repo where you want Ralph to work):
 
 ```bash
-# Run 3 iterations
-path/to/pr9k/bin/ralph-tui 3
+# Run until no issues remain (until-done mode)
+path/to/pr9k/bin/ralph-tui
+
+# Or cap at 3 iterations
+path/to/pr9k/bin/ralph-tui -n 3
 ```
 
-Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue.
+Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue. When run without `-n`, Ralph keeps going until `get_next_issue` finds no more issues.
 
 ## How To
 
 ### Run the orchestrator
 
 ```bash
-# From your target repo:
-path/to/pr9k/bin/ralph-tui <iterations>
+# From your target repo — run until no issues remain:
+path/to/pr9k/bin/ralph-tui
 
-# Or specify the project directory explicitly:
-path/to/pr9k/bin/ralph-tui <iterations> -project-dir path/to/pr9k
+# Cap at N iterations:
+path/to/pr9k/bin/ralph-tui -n <iterations>
 
-# Or build and run directly (without make):
+# Specify the project directory explicitly:
+path/to/pr9k/bin/ralph-tui -p path/to/pr9k
+
+# Build and run directly (without make):
 cd path/to/pr9k/ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
-path/to/pr9k/ralph-tui <iterations>
+path/to/pr9k/ralph-tui -n <iterations>
 ```
+
+Omitting `-n` (or passing `-n 0`) runs Ralph in until-done mode: it keeps picking up issues until `get_next_issue` finds none. Passing `-n N` caps the run at N iterations.
 
 Use `go build` — `go run` won't work because the project directory is resolved from the executable path.
 

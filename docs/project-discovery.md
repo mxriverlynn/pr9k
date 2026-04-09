@@ -39,7 +39,7 @@
 ### Commands and Tests
 
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
-- Run: `./bin/ralph-tui <iterations>` or `./ralph-tui <iterations> [-project-dir <path>]`
+- Run: `./bin/ralph-tui [-n <iterations>] [-p <project-dir>]` (omit `-n` for until-done mode)
 - Test: `make test` or `cd ralph-tui && go test -race ./...`
 - Lint: `make lint` (requires golangci-lint)
 - Format check: `make format`

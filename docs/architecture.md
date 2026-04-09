@@ -205,5 +205,5 @@ cmd/ralph-tui/main.go
   - [Concurrency](coding-standards/concurrency.md) — Mutex patterns, WaitGroup drain, channel dispatch, non-blocking sends
   - [Error Handling](coding-standards/error-handling.md) — Package-prefixed errors, file paths in I/O errors, scanner error checking
   - [API Design](coding-standards/api-design.md) — Bounds guards, precondition validation, adapter types, platform assumptions
-  - [Go Patterns](coding-standards/go-patterns.md) — Flag reordering, symlink-safe paths, slice immutability, scanner buffers
+  - [Go Patterns](coding-standards/go-patterns.md) — Symlink-safe paths, slice immutability, scanner buffers
   - [Testing](coding-standards/testing.md) — Race detector, idempotent close, bounds testing, test doubles with mutexes

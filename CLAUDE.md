@@ -45,11 +45,11 @@ The Go TUI orchestrator lives in `ralph-tui/`, using [Glyph](https://useglyph.sh
 ```bash
 # Using make (recommended):
 make build
-./bin/ralph-tui <iterations>
+./bin/ralph-tui [-n <iterations>] [-p <project-dir>]
 
 # Or build directly:
 cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
-./ralph-tui <iterations> [-project-dir <path>]
+./ralph-tui [-n <iterations>] [-p <project-dir>]
 ```
 
 Use `go build` — `go run` won't work because `projectDir` is resolved via `os.Executable()`.
@@ -59,7 +59,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 ## Architecture & Feature Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
-- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing, flag reordering, and project directory resolution from the executable path
+- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`) and project directory resolution from the executable path
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with variable prepending for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming, graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
@@ -77,7 +77,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/coding-standards/api-design.md`](docs/coding-standards/api-design.md) — API design patterns including unused parameter documentation, bounds guards, precondition validation, and adapter types. Apply when designing or modifying public interfaces and exported functions.
 - [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, and non-blocking channel sends. Apply when working with goroutines, mutexes, channels, or any shared state.
 - [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, and scanner error checking. Apply to all error creation, wrapping, and propagation.
-- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including flag reordering, symlink-safe path resolution, and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
+- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 
 ## How-To Guides

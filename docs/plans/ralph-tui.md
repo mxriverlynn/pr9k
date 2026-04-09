@@ -429,13 +429,13 @@ pr9k/                               # repo root (projectDir)
 ## CLI Arguments
 
 ```
-ralph-tui <iterations> [-project-dir <path>]
+ralph-tui [-n <iterations>] [-p <project-dir>]
 ```
 
-- **`<iterations>`** (required) — Number of iterations to run. Must be > 0.
-- **`-project-dir <path>`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
+- **`--iterations` / `-n`** (optional) — Number of iterations to run. Defaults to `0`, which means run until `get_next_issue` finds no more issues (until-done mode). Pass a positive integer to cap the run.
+- **`--project-dir` / `-p`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
 
-Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -project-dir /tmp` and `ralph-tui -project-dir /tmp 3` are valid). This is handled by `reorderArgs` in `internal/cli/args.go`, which moves flag args before positionals prior to parsing, working around Go's `flag` package stopping at the first non-flag argument.
+Both flags use POSIX-style parsing via [spf13/cobra](https://github.com/spf13/cobra). Positional arguments are rejected (`cobra.NoArgs`). No custom reordering is needed.
 
 ---
 
@@ -645,7 +645,7 @@ Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -
 ## Verification
 
 1. `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui` — compiles and places binary at repo root (required for `os.Executable()` directory resolution)
-2. From the target repo, run with `path/to/pr9k/ralph-tui 1`
+2. From the target repo, run with `path/to/pr9k/ralph-tui -n 1`
 3. Verify: output streams line-by-line in the log panel as claude runs
 4. Verify: step checkboxes update as steps complete
 5. Verify: `j`/`k`/arrows scroll the log, auto-scroll resumes at bottom
