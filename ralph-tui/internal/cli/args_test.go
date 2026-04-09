@@ -108,3 +108,49 @@ func TestParseArgs_LargeIterations(t *testing.T) {
 		t.Errorf("expected iterations=1000, got %d", cfg.Iterations)
 	}
 }
+
+func TestParseArgs_DefaultStepsFile(t *testing.T) {
+	cfg, err := ParseArgs([]string{"5"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StepsFile != "ralph-steps.json" {
+		t.Errorf("expected StepsFile=%q, got %q", "ralph-steps.json", cfg.StepsFile)
+	}
+}
+
+func TestParseArgs_ExplicitStepsFlag(t *testing.T) {
+	cfg, err := ParseArgs([]string{"--steps", "custom.json", "5"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StepsFile != "custom.json" {
+		t.Errorf("expected StepsFile=%q, got %q", "custom.json", cfg.StepsFile)
+	}
+}
+
+func TestParseArgs_StepsFlagAfterPositional(t *testing.T) {
+	cfg, err := ParseArgs([]string{"5", "-steps", "custom.json"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.StepsFile != "custom.json" {
+		t.Errorf("expected StepsFile=%q, got %q", "custom.json", cfg.StepsFile)
+	}
+	if cfg.Iterations != 5 {
+		t.Errorf("expected iterations=5, got %d", cfg.Iterations)
+	}
+}
+
+func TestParseArgs_StepsFlagWithProjectDir(t *testing.T) {
+	cfg, err := ParseArgs([]string{"-project-dir", "/tmp", "-steps", "my-steps.json", "3"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ProjectDir != "/tmp" {
+		t.Errorf("expected ProjectDir=%q, got %q", "/tmp", cfg.ProjectDir)
+	}
+	if cfg.StepsFile != "my-steps.json" {
+		t.Errorf("expected StepsFile=%q, got %q", "my-steps.json", cfg.StepsFile)
+	}
+}

@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Iterations int
 	ProjectDir string
+	StepsFile  string
 }
 
 // ParseArgs parses the command-line arguments (os.Args[1:]).
@@ -21,6 +22,7 @@ type Config struct {
 func ParseArgs(args []string) (*Config, error) {
 	fs := flag.NewFlagSet("ralph-tui", flag.ContinueOnError)
 	projectDir := fs.String("project-dir", "", "path to the project directory (default: resolved from executable)")
+	stepsFile := fs.String("steps", "ralph-steps.json", "steps configuration filename")
 
 	// Reorder args so flags appear before positionals; Go's flag package stops
 	// parsing at the first non-flag argument, so "3 -project-dir /tmp" would
@@ -53,6 +55,7 @@ func ParseArgs(args []string) (*Config, error) {
 	return &Config{
 		Iterations: iterations,
 		ProjectDir: dir,
+		StepsFile:  *stepsFile,
 	}, nil
 }
 
