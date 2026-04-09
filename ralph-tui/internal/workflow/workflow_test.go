@@ -933,3 +933,54 @@ func TestCaptureOutput_UsesSpecifiedDir(t *testing.T) {
 		t.Errorf("expected pwd %q, got %q", wantResolved, gotResolved)
 	}
 }
+
+// T1 — Runner.CaptureOutput delegates to standalone CaptureOutput using workingDir
+func TestRunnerCaptureOutput_UsesWorkingDir(t *testing.T) {
+	r, log := newTestRunner(t)
+	defer func() { _ = log.Close() }()
+
+	out, err := r.CaptureOutput([]string{"pwd"})
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+
+	wantResolved, _ := filepath.EvalSymlinks(r.workingDir)
+	gotResolved, _ := filepath.EvalSymlinks(out)
+	if gotResolved != wantResolved {
+		t.Errorf("expected pwd %q, got %q", wantResolved, gotResolved)
+	}
+}
+
+// T2 — CaptureOutput includes stderr in error message on non-zero exit
+func TestCaptureOutput_StderrInErrorMessage(t *testing.T) {
+	_, err := CaptureOutput(context.Background(), []string{"sh", "-c", "echo 'debug info' >&2; exit 1"}, t.TempDir())
+	if err == nil {
+		t.Fatal("expected error from non-zero exit, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow: capture") {
+		t.Errorf("expected error to contain 'workflow: capture', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "debug info") {
+		t.Errorf("expected error to contain 'debug info' (stderr content), got %q", err.Error())
+	}
+}
+
+// T3 — CaptureOutput respects context cancellation
+func TestCaptureOutput_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	out, err := CaptureOutput(ctx, []string{"sleep", "60"}, t.TempDir())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from context cancellation, got nil")
+	}
+	if out != "" {
+		t.Errorf("expected empty output on cancellation, got %q", out)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("CaptureOutput did not return promptly after context cancellation; took %v", elapsed)
+	}
+}
