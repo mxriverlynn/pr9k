@@ -302,17 +302,10 @@ func TestRun_FinalizationRunsWhenNoIssueFound(t *testing.T) {
 	}
 }
 
-// TestRun_BannerWrittenToLog verifies the banner from ralph-art.txt is written
+// TestRun_BannerWrittenToLog verifies the embedded banner is written
 // to the log at startup.
 func TestRun_BannerWrittenToLog(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "ralph-bash"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "ralph-bash", "ralph-art.txt"),
-		[]byte("banner line 1\nbanner line 2\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	executor := &fakeExecutor{
 		captureResults: []captureResult{
@@ -332,14 +325,15 @@ func TestRun_BannerWrittenToLog(t *testing.T) {
 
 	Run(executor, header, kh, cfg)
 
+	// The embedded banner should appear in the log lines.
 	found := false
 	for _, line := range executor.logLines {
-		if line == "banner line 1" {
+		if strings.Contains(line, "Power-Raph.9000") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected banner content in log lines, got %v", executor.logLines)
+		t.Errorf("expected embedded banner content in log lines, got %v", executor.logLines)
 	}
 }
 
@@ -494,15 +488,6 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 		t.Skipf("git commit failed, skipping: %v", err)
 	}
 
-	// Create banner.
-	if err := os.MkdirAll(filepath.Join(projectDir, "ralph-bash"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "ralph-bash", "ralph-art.txt"),
-		[]byte("Test Banner\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
 	// Create fake scripts.
 	scriptsDir := filepath.Join(projectDir, "scripts")
 	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
@@ -550,7 +535,7 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 		desc    string
 		contain string
 	}{
-		{"banner", "Test Banner"},
+		{"banner", "Power-Raph.9000"},
 		{"iteration step output", "iteration step done"},
 		{"finalization step output", "finalization done"},
 		{"completion summary", "Ralph completed"},

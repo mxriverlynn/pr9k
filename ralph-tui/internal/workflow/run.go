@@ -1,14 +1,17 @@
 package workflow
 
 import (
+	_ "embed"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 )
+
+//go:embed ralph-art.txt
+var bannerArt string
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
 // *Runner satisfies this interface.
@@ -51,12 +54,9 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) {
 // fetches the GitHub username, runs N workflow iterations, executes the
 // finalization phase, writes the completion summary, and closes the executor.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
-	// 1. Display banner from ralph-bash/ralph-art.txt.
-	bannerPath := filepath.Join(cfg.ProjectDir, "ralph-bash", "ralph-art.txt")
-	if bannerData, err := os.ReadFile(bannerPath); err == nil {
-		for _, line := range strings.Split(string(bannerData), "\n") {
-			executor.WriteToLog(line)
-		}
+	// 1. Display embedded banner.
+	for _, line := range strings.Split(bannerArt, "\n") {
+		executor.WriteToLog(line)
 	}
 
 	// 2. Get GitHub username.
