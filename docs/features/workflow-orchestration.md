@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-09 (updated for single-pass {{VAR}} substitution)
+- **Last Updated:** 2026-04-09 (updated for variable scoping and LoopVariableNames)
 - **Authors:**
   - River Bailey
 
@@ -120,6 +120,10 @@ func (vp *VariablePool) Set(name, value string)
 func (vp *VariablePool) Get(name string) (string, bool)
 func (vp *VariablePool) All() map[string]string       // shallow copy; mutations don't affect pool
 func (vp *VariablePool) Clear(names []string)         // silently ignores absent keys
+
+// LoopVariableNames returns the outputVariable names declared by loop-phase steps.
+// Used by Run() to clear loop-scoped variables between iterations.
+func LoopVariableNames(cfg *steps.WorkflowConfig) []string
 ```
 
 ## Implementation Details
@@ -137,6 +141,7 @@ func (vp *VariablePool) Clear(names []string)         // silently ignores absent
    - Updates the status header
    - Builds resolved steps via `buildIterationSteps`
    - Runs steps through `Orchestrate()`
+   - After each iteration, clears loop-scoped variables from the `VariablePool` via `LoopVariableNames` + `Clear` so they don't leak into the next iteration
    - If `Orchestrate` returns `ActionQuit`, closes and returns immediately
 4. **Finalization** — runs even after early loop exit:
    - Switches the header to finalization mode

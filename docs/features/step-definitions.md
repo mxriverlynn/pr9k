@@ -2,14 +2,14 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-09 (updated for single-pass {{VAR}} substitution)
+- **Last Updated:** 2026-04-09 (updated for variable scoping validation)
 - **Authors:**
   - River Bailey
 
 ## Overview
 
 - Step definitions are loaded from `configs/ralph-steps.json` (8 iteration steps) and `configs/ralph-finalize-steps.json` (3 finalization steps) via `LoadSteps`/`LoadFinalizeSteps`
-- A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation
+- A new `WorkflowConfig` struct supports a three-phase layout (`pre-loop`, `loop`, `post-loop`), loaded via `LoadWorkflowConfig` with 9-rule structural validation followed by variable scoping validation
 - Each step is either a Claude CLI invocation (`promptFile` set) or a shell command (`command` set); helper methods `IsClaudeStep()` and `IsCommandStep()` distinguish the two
 - `BuildPrompt` reads prompt file content and applies single-pass `{{KEY}}` substitution using a caller-supplied `vars` map; unknown placeholders are left as literal text
 - `BuildReplacer` is an exported helper that constructs a `strings.Replacer` from a `map[string]string`; substitution is single-pass (a value containing `{{OTHER}}` is never re-expanded)
@@ -17,6 +17,7 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 
 Key files:
 - `ralph-tui/internal/steps/steps.go` — Step struct, WorkflowConfig, LoadWorkflowConfig, LoadSteps, LoadFinalizeSteps, BuildPrompt
+- `ralph-tui/internal/steps/validate.go` — ValidateVariables: startup variable scoping and prompt consistency checks
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading, prompt building, and validation
 - `ralph-tui/configs/ralph-steps.json` — 8 iteration step definitions
 - `ralph-tui/configs/ralph-finalize-steps.json` — 3 finalization step definitions
@@ -63,7 +64,9 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `ralph-tui/internal/steps/steps.go` | Step struct, WorkflowConfig, loading functions, prompt builder |
-| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, validation, and prompt building |
+| `ralph-tui/internal/steps/validate.go` | ValidateVariables: variable scoping and prompt consistency checks |
+| `ralph-tui/internal/steps/validate_test.go` | Unit tests for variable validation |
+| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, structural validation, and prompt building |
 | `ralph-tui/configs/ralph-steps.json` | Iteration step definitions (8 steps) |
 | `ralph-tui/configs/ralph-finalize-steps.json` | Finalization step definitions (3 steps) |
 | `ralph-tui/configs/configs_test.go` | Validates JSON structure of config files |
@@ -122,7 +125,7 @@ func loadStepsFile(path string) ([]Step, error) {
 
 ### Three-Phase WorkflowConfig
 
-`LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs structural validation before returning. The `stepsFile` argument comes from `cli.Config.StepsFile` (default: `"ralph-steps.json"`; overridable with the `-steps` flag):
+`LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs both structural validation and variable validation before returning. The `stepsFile` argument comes from `cli.Config.StepsFile` (default: `"ralph-steps.json"`; overridable with the `-steps` flag):
 
 ```go
 func LoadWorkflowConfig(projectDir, stepsFile string) (*WorkflowConfig, error) {
@@ -132,9 +135,12 @@ func LoadWorkflowConfig(projectDir, stepsFile string) (*WorkflowConfig, error) {
     var cfg WorkflowConfig
     json.Unmarshal(data, &cfg)
     validateStructure(&cfg)
+    ValidateVariables(&cfg, projectDir)
     return &cfg, nil
 }
 ```
+
+Structural validation runs first; if it fails, `LoadWorkflowConfig` returns immediately without running variable validation.
 
 ### Structural Validation
 
@@ -157,6 +163,39 @@ Errors are collected across all phases and returned as a single combined message
 ```
 steps: step "bad-pre": must have promptFile or command; step "bad-loop": must have promptFile or command
 ```
+
+### Variable Validation
+
+`ValidateVariables` (in `validate.go`) runs at startup after structural validation, before any step executes. It reads prompt files from disk and validates variable scoping across all three phases. All errors are collected and returned as a single combined error.
+
+#### Scoping Rules
+
+Variables are declared by `outputVariable` fields on steps. Their scope depends on which phase declared them:
+
+| Declared in | Available in |
+|-------------|-------------|
+| `pre-loop` | pre-loop (steps after the declaring step), loop, post-loop |
+| `loop` | loop only (steps after the declaring step within the same iteration) |
+| `post-loop` | post-loop (steps after the declaring step) |
+
+Loop-scoped variables are **not** available in post-loop. Pre-loop variables cannot be shadowed by loop `outputVariable` declarations.
+
+#### Checks Performed
+
+For every step, `ValidateVariables` checks:
+
+1. **Shadowing** — a loop-phase `outputVariable` must not duplicate a pre-loop `outputVariable`
+2. **Prompt/injectVariables consistency** (Claude steps only):
+   - Every entry in `injectVariables` must appear as `{{VAR}}` in the prompt file
+   - Every `{{VAR}}` in the prompt file must be listed in `injectVariables`
+3. **Reachability** (Claude steps and command steps):
+   - Every variable referenced (via `injectVariables` or `{{VAR}}` in command args) must be declared somewhere in the config
+   - Referenced variables must be reachable at the current step position per the scoping rules above
+   - Forward references within the same phase are rejected
+
+#### Variable Pattern
+
+`{{VAR}}` placeholders in prompt files and command args must match `[A-Z_][A-Z0-9_]*` (uppercase identifiers only). The regex is `\{\{([A-Z_][A-Z0-9_]*)\}\}`.
 
 ### Iteration Steps
 
@@ -232,12 +271,19 @@ Prompt files reference variables with `{{ISSUENUMBER}}` or `{{STARTINGSHA}}` syn
 | Structural validation failure | `"steps: step {name}: {rule}; ..."` | All violations collected, returned as one error |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
+| Loop var shadows pre-loop var | `'steps: step "{name}": outputVariable "{var}" shadows pre-loop variable; ...'` | All violations collected |
+| injectVariables entry not in prompt | `'steps: step "{name}": injectVariables entry "{var}" not found as {{VAR}} in prompt file; ...'` | All violations collected |
+| `{{VAR}}` in prompt not in injectVariables | `'steps: step "{name}": {{VAR}} in prompt file not listed in injectVariables; ...'` | All violations collected |
+| Undefined variable reference | `'steps: step "{name}": {{VAR}} references undefined variable; ...'` | All violations collected |
+| Forward reference within same phase | `'steps: step "{name}": references variable "{var}" declared by later step "{step}"; ...'` | All violations collected |
+| Loop var referenced from post-loop | `'steps: step "{name}": references loop-scoped variable "{var}" from post-loop; ...'` | All violations collected |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, and all 9 validation rules
+- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, and all 9 structural validation rules
+- `ralph-tui/internal/steps/validate_test.go` — Unit tests for ValidateVariables: scoping rules, shadowing, forward references, prompt/injectVariables consistency, and edge cases
 - `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
 
 ### Test Patterns
