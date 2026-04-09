@@ -1,91 +1,112 @@
 # Workflow Orchestration
 
-Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
+Drives the entire ralph-tui workflow: executing a three-phase config-driven loop, sequencing steps with error recovery, and managing the VariablePool for just-in-time variable substitution.
 
-- **Last Updated:** 2026-04-09 (updated for variable scoping and LoopVariableNames)
+- **Last Updated:** 2026-04-09 (updated for three-phase config-driven Run() refactor)
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `Run()` is the top-level orchestration goroutine that manages the full lifecycle: banner display, GitHub user lookup, N iteration loops, finalization phase, and completion summary
-- `Orchestrate()` sequences resolved steps, manages step state transitions (pending → active → done/failed), and handles interactive error recovery
-- Iteration steps are resolved per-iteration with the current issue ID and commit SHA; finalization steps are resolved once
-- The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
+- `Run()` is the top-level orchestration goroutine that drives three phases — pre-loop, loop, post-loop — entirely from a `*steps.WorkflowConfig`; no paths or step lists are hardcoded
+- `executeStep()` is the core step executor: it resolves the command (via `BuildPrompt` or `ResolveCommand`), runs it (via `CaptureOutput` or `RunStep`), stores captured output in the `VariablePool`, and drives error recovery via `HandleStepError`
+- `runPhase()` sequences a slice of steps by calling `executeStep()` for each, draining the quit channel before each step
+- `HandleStepError()` (in `ui/orchestrate.go`) handles the error case after a step fails — it blocks on the Actions channel and returns the user's chosen action (continue, retry, quit)
+- Variables captured by `outputVariable` steps are stored in the `VariablePool` and substituted just-in-time into subsequent steps via `pool.All()`
+- Loop-scoped variables are cleared between iterations via `LoopVariableNames` + `pool.Clear`
 
 Key files:
-- `ralph-tui/internal/workflow/run.go` — Run function, RunConfig, buildIterationSteps, buildFinalizeSteps
+- `ralph-tui/internal/workflow/run.go` — Run, runPhase, executeStep, phaseStepNames, RunConfig, RunHeader
 - `ralph-tui/internal/workflow/variables.go` — VariablePool: in-memory key-value store for workflow variables
-- `ralph-tui/internal/ui/orchestrate.go` — Orchestrate function, ResolvedStep, error handling loop
+- `ralph-tui/internal/ui/orchestrate.go` — HandleStepError, StepHeader, ResolvedStep
 - `ralph-tui/internal/workflow/run_test.go` — Unit tests for the Run orchestration loop
-- `ralph-tui/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
+- `ralph-tui/internal/ui/orchestrate_test.go` — Unit tests for HandleStepError behavior
 
 ## Architecture
 
 ```
-                         Run()
-                           │
-              ┌────────────┼────────────────┐
-              │            │                │
-              ▼            ▼                ▼
-         Display      Get GitHub      Iteration Loop
-         Banner       Username         (1..N)
-                                          │
-                           ┌──────────────┼──────────────┐
-                           │              │              │
-                           ▼              ▼              ▼
-                     get_next_issue  git rev-parse   buildIteration
-                                       HEAD           Steps()
-                                                        │
-                                                        ▼
-                                              ┌──────────────────┐
-                                              │   Orchestrate()  │
-                                              │                  │
-                                              │  for each step:  │
-                                              │   drain Actions  │
-                                              │   set Active     │
-                                              │   RunStep()      │
-                                              │   handle result  │
-                                              └────────┬─────────┘
-                                                       │
-                              ┌─────────────┬──────────┼──────────┐
-                              │             │          │          │
-                              ▼             ▼          ▼          ▼
-                           success     terminated    failure     quit
-                           → Done      → Done       → Failed    → return
-                                       (skip)       → ModeError
-                                                    → wait on
-                                                      Actions:
-                                                      c/r/q
+                        Run()
+                          │
+              ┌───────────┼────────────────┐
+              │           │                │
+              ▼           ▼                ▼
+          Display      Phase 1:         Phase 2:
+          Banner       pre-loop         loop (1..N)
+                       runPhase()          │
+                           │     ┌─────────┴──────────┐
+                           │     │                    │
+                           │     ▼                    ▼
+                           │  pool.Clear(        executeStep()
+                           │  loopVarNames)      for each step
+                           │  SetPhaseSteps(          │
+                           │  "Iter i/N", ...)         │
+                           │                     exitLoopIfEmpty?
+                           │                     → break
                            │
                            ▼
-                    Finalization Phase
-                    (Orchestrate again)
+                        Phase 3:
+                        post-loop
+                        runPhase()
                            │
                            ▼
                     Completion Summary
                     → Close executor
+
+
+              executeStep()
+                    │
+          ┌─────────┴──────────────┐
+          │                        │
+     IsClaudeStep?           IsCommandStep?
+     BuildPrompt()           ResolveCommand()
+     claude CLI cmd          shell cmd argv
+          │                        │
+          └──────────┬─────────────┘
+                     │
+              ┌──────▼──────┐
+              │ retry loop  │
+              │             │
+              │ SetActive   │
+              │             │
+        ┌─────┴─────┐       │
+        │outputVar? │       │
+        │           │       │
+      yes           no      │
+        │           │       │
+  CaptureOutput  RunStep    │
+  pool.Set()     (stream)   │
+        │           │       │
+        └────┬──────┘       │
+             │              │
+           success        failure
+           SetDone     HandleStepError
+           return         │
+                    ┌─────┴──────┐
+                    │            │
+                  Quit        Continue
+                  return      return
+                           ActionRetry
+                           → retry loop
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/run.go` | Run loop, RunConfig, step resolution, header adapters |
+| `ralph-tui/internal/workflow/run.go` | Run, runPhase, executeStep, phaseStepNames, RunConfig, RunHeader |
 | `ralph-tui/internal/workflow/variables.go` | VariablePool: in-memory key-value store for workflow variables |
-| `ralph-tui/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
+| `ralph-tui/internal/ui/orchestrate.go` | HandleStepError, error recovery state machine |
 | `ralph-tui/internal/workflow/run_test.go` | Tests for Run lifecycle |
-| `ralph-tui/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
+| `ralph-tui/internal/ui/orchestrate_test.go` | Tests for HandleStepError behavior |
 
 ## Core Types
 
 ```go
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-    ProjectDir    string
-    Iterations    int
-    Steps         []steps.Step
-    FinalizeSteps []steps.Step
+    ProjectDir string
+    Iterations int
+    Config     *steps.WorkflowConfig  // three-phase step config (pre-loop/loop/post-loop)
 }
 
 // StepExecutor wraps StepRunner + CaptureOutput + Close.
@@ -99,16 +120,8 @@ type StepExecutor interface {
 // RunHeader updates the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
-    SetIteration(current, total int, issueID, issueTitle string)
+    SetPhaseSteps(label string, names []string)  // switch to a new phase's step names
     SetStepState(idx int, state ui.StepState)
-    SetFinalization(current, total int, steps []string)
-    SetFinalizeStepState(idx int, state ui.StepState)
-}
-
-// ResolvedStep holds a step's name and its fully-resolved command argv.
-type ResolvedStep struct {
-    Name    string
-    Command []string
 }
 
 // VariablePool is a simple in-memory key-value store for workflow variables.
@@ -130,122 +143,118 @@ func LoopVariableNames(cfg *steps.WorkflowConfig) []string
 
 ### The Run Loop
 
-`Run()` executes the full workflow lifecycle:
+`Run()` executes the full three-phase workflow lifecycle:
 
 1. **Banner** — reads and displays `ralph-bash/ralph-art.txt`
-2. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
-3. **Iteration loop** — for each iteration (1..N):
-   - Fetches the next issue via `scripts/get_next_issue`
-   - If no issue found, exits the loop early
-   - Captures the current HEAD SHA
-   - Updates the status header
-   - Builds resolved steps via `buildIterationSteps`
-   - Runs steps through `Orchestrate()`
-   - After each iteration, clears loop-scoped variables from the `VariablePool` via `LoopVariableNames` + `Clear` so they don't leak into the next iteration
-   - If `Orchestrate` returns `ActionQuit`, closes and returns immediately
-4. **Finalization** — runs even after early loop exit:
-   - Switches the header to finalization mode
-   - Builds resolved steps via `buildFinalizeSteps`
-   - Runs through `Orchestrate()` with a `finalHeader` adapter
-5. **Completion summary** — logs iteration count and finalization task count
+2. **Phase 1: pre-loop** — calls `runPhase` for `cfg.Config.PreLoop`; these steps run once before any iteration
+3. **Phase 2: loop** — for each iteration (1..N):
+   - Clears loop-scoped variables from the pool via `LoopVariableNames` + `Clear`
+   - Updates the header via `SetPhaseSteps("Iteration i/N", loopNames)`
+   - Calls `executeStep` for each step in `cfg.Config.Loop`
+   - If any step sets `exitLoopIfEmpty` and captures an empty string, the loop exits early
+   - A completed iteration (no early exit) increments `iterationsRun`
+4. **Phase 3: post-loop** — calls `runPhase` for `cfg.Config.PostLoop`; runs regardless of how the loop exited
+5. **Completion summary** — logs the iteration count
 6. **Close** — sends EOF to the log pipe
 
-### Step Resolution
+At every phase boundary and before every step, Run drains the Actions channel for a pending quit (injected by OS signals or keyboard) before proceeding.
 
-`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command. It uses `IsClaudeStep()` to distinguish the two types. Both paths share a single `vars` map containing the iteration context, which is passed to `BuildPrompt` (for Claude steps) and `ResolveCommand` (for shell steps):
+### executeStep
+
+`executeStep` is the single-step executor shared by all three phases. It resolves the command once before the retry loop, then executes it repeatedly until success or quit:
 
 ```go
-vars := map[string]string{
-    "ISSUE_ID":    issueID,
-    "ISSUENUMBER": issueID,
-    "STARTINGSHA": sha,
-}
+func executeStep(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler,
+    idx int, step steps.Step, projectDir string, pool *VariablePool) (exitLoop bool, quit bool) {
 
-// Claude step — BuildPrompt performs single-pass {{KEY}} substitution
-if s.IsClaudeStep() {
-    prompt, _ := steps.BuildPrompt(projectDir, s, vars)
-    result[i] = ui.ResolvedStep{
-        Name:    s.Name,
-        Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
+    vars := pool.All()
+    // Command resolution (once, before retry loop):
+    if step.IsClaudeStep() {
+        prompt, _ := steps.BuildPrompt(projectDir, step, vars)
+        cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(),
+            "--model", step.DefaultModel(), "-p", prompt}
+    } else {
+        cmd = ResolveCommand(projectDir, step.Command, vars)
     }
-}
 
-// Shell step — ResolveCommand performs single-pass {{KEY}} substitution and resolves script paths
-result[i] = ui.ResolvedStep{
-    Name:    s.Name,
-    Command: ResolveCommand(projectDir, s.Command, vars),
+    for {
+        header.SetStepState(idx, ui.StepActive)
+
+        if step.OutputVariable != "" {
+            captured, err = executor.CaptureOutput(cmd)  // silent capture → pool
+        } else {
+            err = executor.RunStep(step.Name, cmd)        // streaming to TUI
+        }
+
+        if err == nil {
+            header.SetStepState(idx, ui.StepDone)
+            if step.OutputVariable != "" {
+                pool.Set(step.OutputVariable, captured)
+                if step.ExitLoopIfEmpty && strings.TrimSpace(captured) == "" {
+                    return true, false  // exit the iteration loop
+                }
+            }
+            return false, false
+        }
+
+        // Step failed — enter error recovery.
+        action := ui.HandleStepError(executor, header, keyHandler, idx)
+        switch action {
+        case ui.ActionQuit:    return false, true
+        case ui.ActionRetry:   executor.WriteToLog(ui.RetryStepSeparator(step.Name))
+        case ui.ActionContinue: return false, false
+        }
+    }
 }
 ```
 
-Finalization steps pass `nil` vars to both `BuildPrompt` and `ResolveCommand` (no substitution needed).
+### runPhase
 
-`ResolveCommand` uses `steps.BuildReplacer(vars)` to apply the same single-pass substitution logic to each command element, then resolves the executable against `projectDir` if it is a relative script path.
-
-### The Orchestrate State Machine
-
-`Orchestrate()` runs resolved steps in sequence with error recovery:
+`runPhase` sequences all steps in a phase slice, draining the quit channel before each step:
 
 ```go
-func Orchestrate(steps []ResolvedStep, runner StepRunner, header StepHeader, h *KeyHandler) StepAction {
-    for i, step := range steps {
-        // Non-blocking drain: catch ActionQuit from ForceQuit before starting
+func runPhase(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler,
+    phase []steps.Step, projectDir string, pool *VariablePool) (quit bool) {
+
+    for i, step := range phase {
         select {
-        case action := <-h.Actions:
-            if action == ActionQuit { return ActionQuit }
+        case action := <-keyHandler.Actions:
+            if action == ui.ActionQuit { return true }
         default:
         }
-
-        header.SetStepState(i, StepActive)
-        action := runStepWithErrorHandling(i, step, runner, header, h)
-        if action == ActionQuit { return ActionQuit }
+        _, q := executeStep(executor, header, keyHandler, i, step, projectDir, pool)
+        if q { return true }
     }
-    return ActionContinue
+    return false
 }
 ```
 
-On step failure (non-zero exit, not user-terminated), `runStepWithErrorHandling` enters error mode and blocks on user input:
+### HandleStepError
+
+`HandleStepError` (in `ui/orchestrate.go`) handles the error case after a step fails. If the step was user-terminated (WasTerminated), it marks the step done and returns `ActionContinue` immediately. Otherwise it enters error mode, blocks on the Actions channel, restores normal mode, and returns the action:
 
 ```go
-func runStepWithErrorHandling(...) StepAction {
-    for {
-        err := runner.RunStep(step.Name, step.Command)
-
-        if err == nil || runner.WasTerminated() {
-            header.SetStepState(idx, StepDone)
-            return ActionContinue
-        }
-
-        header.SetStepState(idx, StepFailed)
-        h.SetMode(ModeError)
-
-        action := <-h.Actions  // blocks until user decides
-        h.SetMode(ModeNormal)
-
-        switch action {
-        case ActionContinue: return ActionContinue  // step stays [✗], advance
-        case ActionRetry:    // loop back to re-run
-        case ActionQuit:     return ActionQuit
-        }
+func HandleStepError(runner StepRunner, header StepHeader, h *KeyHandler, stepIdx int) StepAction {
+    if runner.WasTerminated() {
+        header.SetStepState(stepIdx, StepDone)
+        return ActionContinue
     }
+
+    header.SetStepState(stepIdx, StepFailed)
+    h.SetMode(ModeError)
+
+    action := <-h.Actions  // blocks until user decides: c / r / q
+    h.SetMode(ModeNormal)
+    return action
 }
 ```
 
-### Header Adapters
-
-`iterHeader` and `finalHeader` adapt `RunHeader` to `StepHeader` so `Orchestrate` can update the correct row (iteration steps vs. finalization steps) without knowing which phase it's in:
-
-```go
-type iterHeader struct{ h RunHeader }
-func (a *iterHeader) SetStepState(idx int, state ui.StepState) { a.h.SetStepState(idx, state) }
-
-type finalHeader struct{ h RunHeader }
-func (a *finalHeader) SetStepState(idx int, state ui.StepState) { a.h.SetFinalizeStepState(idx, state) }
-```
+The retry separator (`── step-name (retry) ─────────────`) is written by the caller (`executeStep`) before looping back, keeping `HandleStepError` focused on the error state machine.
 
 ## Testing
 
-- `ralph-tui/internal/workflow/run_test.go` — Tests Run lifecycle with mock executor and header
-- `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain
+- `ralph-tui/internal/workflow/run_test.go` — Tests Run lifecycle with mock executor and header: phase sequencing, exitLoopIfEmpty, variable pool scoping, quit propagation
+- `ralph-tui/internal/ui/orchestrate_test.go` — Tests HandleStepError: terminated step, error mode with continue/retry/quit actions
 
 ## Additional Information
 
@@ -255,8 +264,8 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) { a.h.SetFinaliz
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How user decisions flow through the Actions channel
 - [Signal Handling & Shutdown](signal-handling.md) — How ForceQuit injects ActionQuit for clean shutdown
-- [TUI Status Header](tui-display.md) — How step state updates are rendered
+- [TUI Status Header](tui-display.md) — How SetPhaseSteps and SetStepState update the header
 - [File Logging](file-logging.md) — How step separator lines are written to the log file
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
-- [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters
+- [API Design](../coding-standards/api-design.md) — Coding standards for interface design and adapter types

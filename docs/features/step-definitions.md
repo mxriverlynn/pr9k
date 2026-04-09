@@ -249,18 +249,19 @@ func BuildReplacer(vars map[string]string) *strings.Replacer {
 }
 ```
 
-In `buildIterationSteps` (workflow package), the vars map includes `ISSUE_ID`, `ISSUENUMBER`, and `STARTINGSHA`:
+In `executeStep` (workflow package), the vars map is obtained from `pool.All()` just before each step runs. The pool is populated by prior steps' `outputVariable` captures (e.g. an issue-ID step storing `ISSUE_ID`). Both `BuildPrompt` (for Claude steps) and `ResolveCommand` (for shell steps) receive the same snapshot:
 
 ```go
-vars := map[string]string{
-    "ISSUE_ID":    issueID,
-    "ISSUENUMBER": issueID,
-    "STARTINGSHA": sha,
-}
-prompt, err := steps.BuildPrompt(projectDir, s, vars)
+vars := pool.All()  // snapshot: includes all captured outputVariable values so far
+
+// Claude step
+prompt, err := steps.BuildPrompt(projectDir, step, vars)
+
+// Shell step
+cmd = ResolveCommand(projectDir, step.Command, vars)
 ```
 
-Prompt files reference variables with `{{ISSUENUMBER}}` or `{{STARTINGSHA}}` syntax. The same `vars` map is passed to `ResolveCommand` for shell command steps. Finalization steps receive `nil` vars (no substitution needed).
+Prompt files and command args reference variables with `{{VAR}}` syntax (e.g. `{{ISSUE_ID}}`, `{{STARTINGSHA}}`). Variables are declared in the JSON config via `outputVariable` and captured at runtime by `CaptureOutput`.
 
 ## Error Handling
 

@@ -56,10 +56,10 @@ Key files:
                       │ StepsFile   │
                       └──────┬──────┘
                              │
-           ┌─────────┬──────┼──────┬──────────┐
-           ▼         ▼      ▼      ▼          ▼
-        Logger    LoadSteps  LoadFinalize  Runner  RunConfig
-                             Steps
+           ┌─────────┬──────┼──────────────┐
+           ▼         ▼      ▼              ▼
+        Logger    LoadWorkflow           Runner  RunConfig
+                   Config()
 ```
 
 ## Key Files
@@ -150,17 +150,14 @@ After parsing, `Config.ProjectDir` and `Config.StepsFile` are distributed to con
 | Consumer | Path Resolved |
 |----------|---------------|
 | `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
-| `steps.LoadSteps(projectDir)` | `{projectDir}/configs/ralph-steps.json` |
-| `steps.LoadFinalizeSteps(projectDir)` | `{projectDir}/configs/ralph-finalize-steps.json` |
 | `steps.LoadWorkflowConfig(projectDir, stepsFile)` | `{projectDir}/{stepsFile}` |
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
-| `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
+| `workflow.RunConfig.ProjectDir` | Banner, prompt files, command resolution |
 
 Within `workflow.Run`, `ProjectDir` resolves additional paths:
 - `{projectDir}/ralph-bash/ralph-art.txt` — startup banner
-- `{projectDir}/scripts/get_gh_user` — GitHub username script
-- `{projectDir}/scripts/get_next_issue` — issue fetch script
 - `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt`
+- Script paths declared in the workflow config's `command` arrays (e.g. `scripts/get_next_issue`) are resolved by `ResolveCommand` in the workflow package
 
 ## Error Handling
 
