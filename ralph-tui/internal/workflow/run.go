@@ -133,23 +133,44 @@ func runPhase(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler
 // exitLoop is true when the step has exitLoopIfEmpty set and captured an empty
 // string. quit is true when the user chose to quit during error recovery.
 //
+// For Claude steps, JIT validation is performed on every attempt (including
+// retries) so that prompt file edits made while ralph is running are picked up.
+// JIT failure enters the same error recovery mode as a step execution failure.
+//
 // For command steps with outputVariable, stdout is captured silently and stored
 // in the pool. All other steps stream output to the TUI via RunStep.
 func executeStep(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, idx int, step steps.Step, projectDir string, pool *VariablePool) (exitLoop bool, quit bool) {
-	vars := pool.All()
-	var cmd []string
-	if step.IsClaudeStep() {
-		prompt, err := steps.BuildPrompt(projectDir, step, vars)
-		if err != nil {
-			executor.WriteToLog(fmt.Sprintf("workflow: step %q: could not build prompt: %v", step.Name, err))
-			return false, false
-		}
-		cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(), "--model", step.DefaultModel(), "-p", prompt}
-	} else {
-		cmd = ResolveCommand(projectDir, step.Command, vars)
-	}
-
 	for {
+		vars := pool.All()
+
+		if step.IsClaudeStep() {
+			if err := steps.ValidateStepJIT(step, projectDir, vars); err != nil {
+				executor.WriteToLog(fmt.Sprintf("workflow: step %q: JIT validation failed: %v", step.Name, err))
+				action := ui.HandleStepError(executor, header, keyHandler, idx)
+				switch action {
+				case ui.ActionQuit:
+					return false, true
+				case ui.ActionRetry:
+					executor.WriteToLog(ui.RetryStepSeparator(step.Name))
+					continue
+				case ui.ActionContinue:
+					return false, false
+				}
+			}
+		}
+
+		var cmd []string
+		if step.IsClaudeStep() {
+			prompt, err := steps.BuildPrompt(projectDir, step, vars)
+			if err != nil {
+				executor.WriteToLog(fmt.Sprintf("workflow: step %q: could not build prompt: %v", step.Name, err))
+				return false, false
+			}
+			cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(), "--model", step.DefaultModel(), "-p", prompt}
+		} else {
+			cmd = ResolveCommand(projectDir, step.Command, vars)
+		}
+
 		header.SetStepState(idx, ui.StepActive)
 
 		var err error

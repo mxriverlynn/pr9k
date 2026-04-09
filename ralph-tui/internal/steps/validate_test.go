@@ -353,6 +353,123 @@ func TestValidateVariables_MultipleVarsInSingleArg(t *testing.T) {
 	}
 }
 
+// --- ValidateStepJIT tests ---
+
+// JIT1 — Valid prompt and injectVariables with matching pool entry.
+func TestValidateStepJIT_PassesForValidPrompt(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{X}} now",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	vars := map[string]string{"X": "value"}
+	if err := steps.ValidateStepJIT(step, dir, vars); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// JIT2 — {{Y}} was added to the prompt but not declared in injectVariables.
+func TestValidateStepJIT_FailsWhenNewVarAddedToPrompt(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{X}} and also {{Y}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	vars := map[string]string{"X": "value"}
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("expected error for undeclared {{Y}}, got nil")
+	}
+	if !strings.Contains(err.Error(), "{{Y}} in prompt file not listed in injectVariables") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// JIT3 — {{X}} was removed from the prompt but injectVariables still lists X.
+func TestValidateStepJIT_FailsWhenVarRemovedFromPrompt(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "plain work with no placeholders",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	vars := map[string]string{"X": "value"}
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("expected error for missing {{X}} in prompt, got nil")
+	}
+	if !strings.Contains(err.Error(), `injectVariables entry "X" not found as {{X}} in prompt file`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// JIT4 — injectVariables has X and prompt has {{X}}, but the pool has no value for X.
+func TestValidateStepJIT_FailsWhenVarNotInPool(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{X}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	vars := map[string]string{} // no X in pool
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("expected error for missing pool value, got nil")
+	}
+	if !strings.Contains(err.Error(), `injectVariables entry "X" has no value in variable pool`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// JIT5 — No injectVariables and no {{VAR}} placeholders in prompt.
+func TestValidateStepJIT_PassesWithNoVars(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "just plain text",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{}}
+	vars := map[string]string{}
+	if err := steps.ValidateStepJIT(step, dir, vars); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// JIT6 — Prompt file was deleted after startup.
+func TestValidateStepJIT_FailsWhenPromptFileMissing(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	step := steps.Step{Name: "Work", PromptFile: "gone.txt", InjectVars: []string{}}
+	vars := map[string]string{}
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("expected error for missing prompt file, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not read prompt file") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// JIT7 — JIT re-reads from disk: modifying the file between calls changes the result.
+func TestValidateStepJIT_ReReadsFromDisk(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"work.txt": "Work on {{X}}",
+	})
+	step := steps.Step{Name: "Work", PromptFile: "work.txt", InjectVars: []string{"X"}}
+	vars := map[string]string{"X": "value"}
+
+	// First call: valid — passes.
+	if err := steps.ValidateStepJIT(step, dir, vars); err != nil {
+		t.Fatalf("first call: expected no error, got: %v", err)
+	}
+
+	// Overwrite with content that introduces an undeclared {{NEW}} placeholder.
+	promptPath := dir + "/prompts/work.txt"
+	if err := os.WriteFile(promptPath, []byte("Work on {{X}} and {{NEW}}"), 0o644); err != nil {
+		t.Fatalf("overwrite prompt: %v", err)
+	}
+
+	// Second call: must see the new content and fail.
+	err := steps.ValidateStepJIT(step, dir, vars)
+	if err == nil {
+		t.Fatal("second call: expected error for {{NEW}}, got nil")
+	}
+	if !strings.Contains(err.Error(), "{{NEW}} in prompt file not listed in injectVariables") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // T11 — Multiple errors are all collected.
 func TestValidateVariables_MultipleErrorsCollected(t *testing.T) {
 	dir := makePromptDir(t, map[string]string{

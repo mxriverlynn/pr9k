@@ -651,13 +651,22 @@ func TestRun_ExecuteStep_ContinueSkipsToNextStep(t *testing.T) {
 	}
 }
 
-// T27 — BuildPrompt failure logs error and continues.
-// When a Claude step's prompt file is missing, executeStep must log an error
-// and return without entering error recovery. The next step must still run.
-func TestRun_BuildPromptFailure_LogsErrorAndContinues(t *testing.T) {
-	executor := &fakeExecutor{}
+// T27 — JIT validation failure for missing prompt file enters error mode, and
+// ActionContinue skips to the next step.
+func TestRun_JITMissingPromptFile_EntersErrorModeAndContinues(t *testing.T) {
+	step2Ran := false
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			if name == "next-step" {
+				step2Ran = true
+			}
+			return nil
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
 	header := &fakeRunHeader{}
-	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
 		ProjectDir: t.TempDir(),
@@ -670,23 +679,35 @@ func TestRun_BuildPromptFailure_LogsErrorAndContinues(t *testing.T) {
 		},
 	}
 
-	Run(executor, header, kh, cfg)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
 
+	// Give Run time to hit the JIT failure and enter error mode.
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionContinue on JIT failure")
+	}
+
+	logLines := executor.getLogLines()
 	found := false
-	for _, line := range executor.logLines {
-		if strings.Contains(line, "missing-step") && strings.Contains(line, "could not build prompt") {
+	for _, line := range logLines {
+		if strings.Contains(line, "missing-step") && strings.Contains(line, "JIT validation failed") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected error log for missing prompt, got: %v", executor.logLines)
+		t.Errorf("expected JIT validation failed log for missing-step, got: %v", logLines)
 	}
 
-	if len(executor.runStepCalls) == 0 {
-		t.Fatal("expected next-step to run after BuildPrompt failure")
-	}
-	if executor.runStepCalls[0].name != "next-step" {
-		t.Errorf("expected next-step to run after BuildPrompt failure, got %q", executor.runStepCalls[0].name)
+	if !step2Ran {
+		t.Error("expected next-step to run after ActionContinue on JIT failure")
 	}
 }
 
@@ -858,6 +879,122 @@ func TestRun_ExitLoopIfEmpty_WhitespaceOnlyTreatedAsEmpty(t *testing.T) {
 
 	if executor.captureIdx != 1 {
 		t.Errorf("expected 1 CaptureOutput call (loop exited on whitespace-only), got %d", executor.captureIdx)
+	}
+}
+
+// T35 — JIT failure enters error mode.
+// A Claude step whose prompt file contains an undeclared {{VAR}} must log a JIT
+// validation failure and enter error mode. ActionContinue skips the step.
+func TestRun_JITFailure_EntersErrorMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Prompt has {{UNDECLARED}} but InjectVars is empty → JIT must fail.
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "broken.txt"), []byte("Use {{UNDECLARED}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &callbackFakeExecutor{}
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: dir,
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				{Name: "broken-step", PromptFile: "broken.txt", InjectVars: []string{}},
+			},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionContinue on JIT failure")
+	}
+
+	logLines := executor.getLogLines()
+	found := false
+	for _, line := range logLines {
+		if strings.Contains(line, "broken-step") && strings.Contains(line, "JIT validation failed") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected JIT validation failure log, got: %v", logLines)
+	}
+}
+
+// T36 — JIT retry re-reads the prompt file.
+// When JIT fails, fixing the prompt file and sending ActionRetry must cause JIT
+// to re-read the updated file and allow the step to execute successfully.
+func TestRun_JITRetry_ReReadsPromptFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	promptPath := filepath.Join(dir, "prompts", "step.txt")
+	// Initial prompt: has {{UNDECLARED}} → JIT fails.
+	if err := os.WriteFile(promptPath, []byte("Use {{UNDECLARED}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stepRan := false
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			if name == "jit-step" {
+				stepRan = true
+			}
+			return nil
+		},
+	}
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: dir,
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				{Name: "jit-step", PromptFile: "step.txt", InjectVars: []string{}},
+			},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Wait for JIT to fail, fix the prompt file, then retry.
+	time.Sleep(50 * time.Millisecond)
+	if err := os.WriteFile(promptPath, []byte("plain text, no placeholders"), 0o644); err != nil {
+		t.Fatalf("could not fix prompt file: %v", err)
+	}
+	actions <- ui.ActionRetry
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionRetry following JIT fix")
+	}
+
+	if !stepRan {
+		t.Error("expected step to run after JIT retry with fixed prompt file")
 	}
 }
 

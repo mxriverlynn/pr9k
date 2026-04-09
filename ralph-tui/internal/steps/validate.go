@@ -194,6 +194,60 @@ func checkVarReachable(stepName, varName string, decls map[string]varDecl, reach
 	return nil
 }
 
+// ValidateStepJIT re-reads the prompt file from disk and validates {{VAR}}
+// consistency immediately before a Claude step executes. It is called on every
+// execution attempt, including retries, so a user can edit a prompt file while
+// a ralph run is in progress.
+//
+// It checks three things:
+//   - every {{VAR}} in the prompt is listed in step.InjectVars
+//   - every entry in step.InjectVars appears as {{VAR}} in the prompt
+//   - every entry in step.InjectVars has a value in vars
+//
+// Only call this for Claude steps (steps with a prompt file).
+func ValidateStepJIT(step Step, projectDir string, vars map[string]string) error {
+	promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		return fmt.Errorf("steps: step %q: could not read prompt file %s: %v", step.Name, promptPath, err)
+	}
+	promptText := string(data)
+	promptVars := scanVars(promptText)
+
+	injectSet := make(map[string]bool, len(step.InjectVars))
+	for _, v := range step.InjectVars {
+		injectSet[v] = true
+	}
+
+	var errs []string
+
+	// injectVariables entry not found in prompt.
+	for _, v := range step.InjectVars {
+		if !promptVars[v] {
+			errs = append(errs, fmt.Sprintf("injectVariables entry %q not found as {{%s}} in prompt file", v, v))
+		}
+	}
+
+	// {{VAR}} in prompt not listed in injectVariables.
+	for v := range promptVars {
+		if !injectSet[v] {
+			errs = append(errs, fmt.Sprintf("{{%s}} in prompt file not listed in injectVariables", v))
+		}
+	}
+
+	// All injectVariables entries must have values in the pool.
+	for _, v := range step.InjectVars {
+		if _, ok := vars[v]; !ok {
+			errs = append(errs, fmt.Sprintf("injectVariables entry %q has no value in variable pool", v))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("steps: step %q: %s", step.Name, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 // scanVars returns the set of {{VAR}} names found in text.
 func scanVars(text string) map[string]bool {
 	matches := varPattern.FindAllStringSubmatch(text, -1)
