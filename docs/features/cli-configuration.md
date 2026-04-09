@@ -169,7 +169,7 @@ Within `workflow.Run`, `ProjectDir` resolves additional paths:
 | Positional argument given | cobra error (`"unknown command"` / `"accepts 0 arg(s)"`) | Exit 1 |
 | Cannot resolve executable | `"cli: could not resolve project dir: ..."` | Exit 1 |
 
-All errors are written to stderr and cause `os.Exit(1)`.
+All errors are written to stderr followed by a `Run 'ralph-tui --help' for usage.` hint, and cause `os.Exit(1)`.
 
 ## Configuration
 
