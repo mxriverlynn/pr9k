@@ -1,6 +1,6 @@
 # Plan: Integrate Cobra for CLI Option Parsing
 
-**Status:** ready
+**Status:** done
 **ADR:** [20260409135303-cobra-cli-framework.md](../adr/20260409135303-cobra-cli-framework.md)
 
 ## Goal

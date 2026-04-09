@@ -1187,9 +1187,9 @@ func TestRun_BoundedModeCapLimitsIterations(t *testing.T) {
 	executor := &fakeExecutor{
 		captureResults: []captureResult{
 			{output: "testuser"},
-			{output: "10"},  // iteration 1
+			{output: "10"}, // iteration 1
 			{output: "sha1"},
-			{output: "20"},  // iteration 2
+			{output: "20"}, // iteration 2
 			{output: "sha2"},
 			// 3rd issue is available but should never be fetched
 			{output: "30"},

@@ -299,7 +299,7 @@ type StepFile struct {
 func loadSteps(projectDir string) (StepFile, error) {
     // projectDir is the repo root, resolved at startup via os.Executable().
     // Note: os.Executable() returns a temp path when using `go run`.
-    // During development, use `go build` or pass the -project-dir flag (see CLI args below).
+    // During development, use `go build` or pass the --project-dir flag (see CLI args below).
     data, err := os.ReadFile(filepath.Join(projectDir, "ralph-steps.json"))
     if err != nil {
         return StepFile{}, fmt.Errorf("could not read ralph-steps.json: %w", err)

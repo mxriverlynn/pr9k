@@ -54,7 +54,7 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 **Negative:**
 
-- More boilerplate than kong or urfave/cli — requires `cmd/` package structure with `init()` functions per subcommand
+- More boilerplate than kong or urfave/cli — cobra's typical pattern uses a `cmd/` package with `init()` functions per subcommand, though this project used a single-file `internal/cli/args.go` approach instead
 - Positional arguments are received as `[]string` and require manual type conversion and validation
 - Adds 4 transitive dependencies (pflag, mousetrap, go-md2man, yaml.v3)
 
