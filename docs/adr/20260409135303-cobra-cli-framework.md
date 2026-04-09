@@ -1,8 +1,8 @@
 # Use Cobra for CLI Argument Parsing
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date Created:** 2026-04-09 13:53
-- **Last Updated:** 2026-04-09 13:53
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey (mxriverlynn, river.bailey@testdouble.com)
 - **Reviewers:**

@@ -1,6 +1,6 @@
 # Project Discovery
 
-- **Last Updated:** 2026-04-08
+- **Last Updated:** 2026-04-09
 
 ## Repository
 
@@ -28,10 +28,11 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- No external dependencies (Glyph TUI framework planned but not yet in go.mod)
+- External dependencies: `github.com/spf13/cobra` v1.10.2 (and transitive deps: pflag v1.0.9, mousetrap v1.1.0)
 
 ### Frameworks and Tooling
 
+- CLI: spf13/cobra v1.10.2 (ADR: [20260409135303-cobra-cli-framework](adr/20260409135303-cobra-cli-framework.md))
 - TUI: Glyph (planned, not yet in go.mod)
 - Task runner: Make (`Makefile` at repo root)
 
