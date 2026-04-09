@@ -68,12 +68,12 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// 3. Iteration loop.
 	iterationsRun := 0
-	for i := 1; i <= cfg.Iterations; i++ {
+	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		issueScript := filepath.Join(cfg.ProjectDir, "scripts", "get_next_issue")
 		issueID, _ := executor.CaptureOutput([]string{issueScript, username})
 
 		if issueID == "" {
-			executor.WriteToLog(fmt.Sprintf("Iteration %d/%d — No issue found. Exiting loop.", i, cfg.Iterations))
+			executor.WriteToLog(fmt.Sprintf("%s — No issue found. Exiting loop.", iterationLabel(i, cfg.Iterations)))
 			break
 		}
 
@@ -87,7 +87,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			header.SetStepState(j, ui.StepPending)
 		}
 
-		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d/%d — Issue #%s", i, cfg.Iterations, issueID)))
+		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("%s — Issue #%s", iterationLabel(i, cfg.Iterations), issueID)))
 
 		resolvedSteps, err := buildIterationSteps(cfg.ProjectDir, cfg.Steps, issueID, sha)
 		if err != nil {
@@ -126,6 +126,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// 6. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
+}
+
+// iterationLabel returns "Iteration N/M" for bounded mode or "Iteration N" for unbounded (total == 0).
+func iterationLabel(i, total int) string {
+	if total > 0 {
+		return fmt.Sprintf("Iteration %d/%d", i, total)
+	}
+	return fmt.Sprintf("Iteration %d", i)
 }
 
 func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {

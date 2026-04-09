@@ -1024,6 +1024,201 @@ func TestRun_ForceQuit_DuringFinalization_SkipsAllFinalizeSteps(t *testing.T) {
 	}
 }
 
+// --- Unbounded mode tests ---
+
+// TestRun_UnboundedLoopRunsUntilNoIssue verifies that when Iterations == 0,
+// the loop runs until get_next_issue returns empty, then exits.
+func TestRun_UnboundedLoopRunsUntilNoIssue(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"}, // get_gh_user
+			{output: "10"},       // iteration 1: get_next_issue
+			{output: "sha1"},     // iteration 1: git rev-parse HEAD
+			{output: "20"},       // iteration 2: get_next_issue
+			{output: "sha2"},     // iteration 2: git rev-parse HEAD
+			{output: ""},         // iteration 3: no issue → exit
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    0,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// step1 should have run exactly twice (once per issue), final1 once
+	iterCount := 0
+	for _, call := range executor.runStepCalls {
+		if call.name == "step1" {
+			iterCount++
+		}
+	}
+	if iterCount != 2 {
+		t.Errorf("expected step1 to run 2 times, got %d", iterCount)
+	}
+}
+
+// TestRun_UnboundedLoopRunsFinalizationAfterExhausted verifies finalization
+// runs after the unbounded loop exits when no more issues are found.
+func TestRun_UnboundedLoopRunsFinalizationAfterExhausted(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: "10"},
+			{output: "sha1"},
+			{output: "20"},
+			{output: "sha2"},
+			{output: ""},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    0,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	found := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected finalization to run after unbounded loop exhausted issues")
+	}
+}
+
+// TestRun_UnboundedLoopSetIterationPassesTotalZero verifies that SetIteration
+// is called with total == 0 in unbounded mode.
+func TestRun_UnboundedLoopSetIterationPassesTotalZero(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: "10"},
+			{output: "sha1"},
+			{output: ""},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    0,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.iterationCalls) == 0 {
+		t.Fatal("expected at least one SetIteration call")
+	}
+	for _, call := range header.iterationCalls {
+		if call.total != 0 {
+			t.Errorf("expected SetIteration total == 0 in unbounded mode, got %d", call.total)
+		}
+	}
+}
+
+// TestRun_UnboundedLoopLogLinesHaveNoTotal verifies log lines use "Iteration N —"
+// format (no "/M") in unbounded mode.
+func TestRun_UnboundedLoopLogLinesHaveNoTotal(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: "10"},
+			{output: "sha1"},
+			{output: "20"},
+			{output: "sha2"},
+			{output: ""},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    0,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Iteration 1/") || strings.Contains(line, "Iteration 2/") {
+			t.Errorf("unbounded log line should not contain total, got: %q", line)
+		}
+	}
+
+	found1 := false
+	found2 := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Iteration 1 —") {
+			found1 = true
+		}
+		if strings.Contains(line, "Iteration 2 —") {
+			found2 = true
+		}
+	}
+	if !found1 {
+		t.Error("expected log line containing 'Iteration 1 —'")
+	}
+	if !found2 {
+		t.Error("expected log line containing 'Iteration 2 —'")
+	}
+}
+
+// TestRun_BoundedModeCapLimitsIterations verifies that when more issues are
+// available than Iterations, the loop stops at the cap.
+func TestRun_BoundedModeCapLimitsIterations(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "testuser"},
+			{output: "10"},  // iteration 1
+			{output: "sha1"},
+			{output: "20"},  // iteration 2
+			{output: "sha2"},
+			// 3rd issue is available but should never be fetched
+			{output: "30"},
+			{output: "sha3"},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    2,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	iterCount := 0
+	for _, call := range executor.runStepCalls {
+		if call.name == "step1" {
+			iterCount++
+		}
+	}
+	if iterCount != 2 {
+		t.Errorf("expected exactly 2 iterations with bounded cap, got %d", iterCount)
+	}
+}
+
 // TestRun_StepsPendingSetBeforeIteration verifies that all step indices are
 // set to StepPending before the first StepActive call in each iteration.
 func TestRun_StepsPendingSetBeforeIteration(t *testing.T) {
