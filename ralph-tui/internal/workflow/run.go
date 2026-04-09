@@ -97,7 +97,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 		action := ui.Orchestrate(resolvedSteps, executor, &iterHeader{header}, keyHandler)
 		if action == ui.ActionQuit {
-			executor.Close()
+			_ = executor.Close()
 			return
 		}
 
@@ -115,7 +115,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	if err == nil {
 		action := ui.Orchestrate(finalResolvedSteps, executor, &finalHeader{header}, keyHandler)
 		if action == ui.ActionQuit {
-			executor.Close()
+			_ = executor.Close()
 			return
 		}
 	}
@@ -125,7 +125,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		iterationsRun, len(cfg.FinalizeSteps)))
 
 	// 6. Close executor (sends EOF to log pipe).
-	executor.Close()
+	_ = executor.Close()
 }
 
 func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {

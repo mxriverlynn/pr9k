@@ -447,10 +447,10 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, workingDir)
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 
 	out, err := runner.CaptureOutput([]string{"sh", "-c", "pwd"})
 	if err != nil {
