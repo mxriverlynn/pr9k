@@ -117,7 +117,7 @@ func loadStepsFile(path string) ([]Step, error) {
 
 ### Three-Phase WorkflowConfig
 
-`LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs structural validation before returning:
+`LoadWorkflowConfig` reads a JSON file with three top-level keys (`pre-loop`, `loop`, `post-loop`), unmarshals into `WorkflowConfig`, and runs structural validation before returning. The `stepsFile` argument comes from `cli.Config.StepsFile` (default: `"ralph-steps.json"`; overridable with the `-steps` flag):
 
 ```go
 func LoadWorkflowConfig(projectDir, stepsFile string) (*WorkflowConfig, error) {

@@ -126,7 +126,7 @@ Each feature is documented in detail in its own file under [`docs/features/`](fe
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line arguments (`<iterations>` and optional `-project-dir` flag) and resolves the project directory. Uses a `reorderArgs` workaround to allow flags in any position despite Go's `flag` package stopping at the first positional argument. Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks`.
+Parses command-line arguments (`<iterations>` and optional `-project-dir` and `-steps` flags) and resolves the project directory. Uses a `reorderArgs` workaround to allow flags in any position despite Go's `flag` package stopping at the first positional argument. Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks`. The `-steps` flag selects the steps config filename (default: `"ralph-steps.json"`).
 
 **Package:** `internal/cli/`
 

@@ -2,20 +2,22 @@
 
 Parses command-line arguments and resolves the project directory that anchors all relative path resolution throughout ralph-tui.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- ralph-tui accepts a required `<iterations>` positional argument and an optional `-project-dir` flag
+- ralph-tui accepts a required `<iterations>` positional argument and optional `-project-dir` and `-steps` flags
 - The `reorderArgs` function works around Go's `flag` package limitation of stopping at the first positional argument, allowing flags in any position
 - When `-project-dir` is not provided, the project directory is resolved from the executable's real path via `os.Executable()` + `filepath.EvalSymlinks` (symlink-safe)
+- When `-steps` is not provided, the steps config filename defaults to `"ralph-steps.json"`
 - `ProjectDir` fans out to every subsystem: logger, step loader, prompt builder, command resolver, and the workflow runner
+- `StepsFile` is passed to `steps.LoadWorkflowConfig` to select which steps config file to load
 
 Key files:
 - `ralph-tui/internal/cli/args.go` — ParseArgs, Config, reorderArgs, resolveProjectDir
-- `ralph-tui/internal/cli/args_test.go` — 10 test cases covering all argument parsing branches
+- `ralph-tui/internal/cli/args_test.go` — 15 test cases covering all argument parsing branches
 - `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls ParseArgs and distributes Config
 
 ## Architecture
@@ -30,7 +32,7 @@ Key files:
                              │
                              ▼
                       ┌─────────────┐
-                      │  flag.Parse  │  extract -project-dir
+                      │  flag.Parse  │  extract -project-dir, -steps
                       └──────┬──────┘
                              │
                   ┌──────────┴──────────┐
@@ -51,6 +53,7 @@ Key files:
                       │   Config    │
                       │ Iterations  │
                       │ ProjectDir  │
+                      │ StepsFile   │
                       └──────┬──────┘
                              │
            ┌─────────┬──────┼──────┬──────────┐
@@ -74,6 +77,7 @@ Key files:
 type Config struct {
     Iterations int    // number of workflow iterations to run (must be > 0)
     ProjectDir string // root directory for all relative path resolution
+    StepsFile  string // steps config filename (default: "ralph-steps.json")
 }
 ```
 
@@ -81,12 +85,13 @@ type Config struct {
 
 ### Argument Parsing
 
-`ParseArgs` creates an isolated `flag.FlagSet` with `flag.ContinueOnError` (returns errors instead of calling `os.Exit`). It defines one flag (`-project-dir`) and validates the positional `iterations` argument:
+`ParseArgs` creates an isolated `flag.FlagSet` with `flag.ContinueOnError` (returns errors instead of calling `os.Exit`). It defines two flags (`-project-dir` and `-steps`) and validates the positional `iterations` argument:
 
 ```go
 func ParseArgs(args []string) (*Config, error) {
     fs := flag.NewFlagSet("ralph-tui", flag.ContinueOnError)
     projectDir := fs.String("project-dir", "", "path to the project directory")
+    stepsFile := fs.String("steps", "ralph-steps.json", "steps configuration filename")
 
     // Reorder so flags work in any position
     if err := fs.Parse(reorderArgs(args)); err != nil {
@@ -140,13 +145,14 @@ This is why `go run` does not work — it places the binary in a temporary direc
 
 ### ProjectDir Fan-Out
 
-After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`:
+After parsing, `Config.ProjectDir` and `Config.StepsFile` are distributed to consumers in `main.go`:
 
 | Consumer | Path Resolved |
 |----------|---------------|
 | `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
 | `steps.LoadSteps(projectDir)` | `{projectDir}/configs/ralph-steps.json` |
 | `steps.LoadFinalizeSteps(projectDir)` | `{projectDir}/configs/ralph-finalize-steps.json` |
+| `steps.LoadWorkflowConfig(projectDir, stepsFile)` | `{projectDir}/{stepsFile}` |
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
 
@@ -173,16 +179,17 @@ All errors are written to stderr and cause `os.Exit(1)`.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-project-dir` | Path to the project root directory | Resolved from executable location |
+| `-steps` | Steps configuration filename | `ralph-steps.json` |
 
 **Usage:**
 
 ```
-ralph-tui <iterations> [-project-dir <path>]
+ralph-tui <iterations> [-project-dir <path>] [-steps <filename>]
 ```
 
 ## Testing
 
-- `ralph-tui/internal/cli/args_test.go` — 10 test cases covering all ParseArgs branches
+- `ralph-tui/internal/cli/args_test.go` — 15 test cases covering all ParseArgs branches
 
 ### Test Cases
 
@@ -199,6 +206,10 @@ ralph-tui <iterations> [-project-dir <path>]
 | `TestParseArgs_FlagBeforePositional` | Confirms `reorderArgs` works |
 | `TestParseArgs_UnknownFlag` | Unknown flag returns error |
 | `TestParseArgs_LargeIterations` | `"1000"` is accepted |
+| `TestParseArgs_StepsFileDefault` | Without `-steps`, `StepsFile` is `"ralph-steps.json"` |
+| `TestParseArgs_StepsFileExplicit` | `-steps` value is used directly |
+| `TestParseArgs_StepsFileReordered` | `-steps` after positional arg is handled by `reorderArgs` |
+| `TestParseArgs_StepsFileAndProjectDir` | Both flags work together |
 
 ## Additional Information
 
