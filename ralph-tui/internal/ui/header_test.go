@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -362,6 +363,67 @@ func TestStatusHeader_SetFinalization_DynamicCount(t *testing.T) {
 	}
 	if h.Row2[0] != "[✓] Phase C" {
 		t.Errorf("Row2[0] = %q, want %q", h.Row2[0], "[✓] Phase C")
+	}
+}
+
+// SetFinalization input slice isolation: mutating original slice after SetFinalization must not affect header
+func TestStatusHeader_SetFinalization_InputSliceIsolation(t *testing.T) {
+	h := NewStatusHeader(testStepNames)
+	steps := []string{"Phase A", "Phase B", "Phase C"}
+	h.SetFinalization(1, 3, steps)
+
+	steps[0] = "MUTATED"
+
+	h.SetFinalizeStepState(0, StepDone)
+	if h.Row1[0] != "[✓] Phase A" {
+		t.Errorf("Row1[0] = %q after mutating input slice, want %q", h.Row1[0], "[✓] Phase A")
+	}
+}
+
+// Dynamic step count: 2 steps → rowSize=(2+1)/2=1 → Row1=[1], Row2=[1]
+func TestStatusHeader_DynamicStepCount_Two(t *testing.T) {
+	names := []string{"Step A", "Step B"}
+	h := NewStatusHeader(names)
+
+	if len(h.Row1) != 1 {
+		t.Errorf("Row1 len = %d, want 1", len(h.Row1))
+	}
+	if len(h.Row2) != 1 {
+		t.Errorf("Row2 len = %d, want 1", len(h.Row2))
+	}
+	if h.Row1[0] != "[ ] Step A" {
+		t.Errorf("Row1[0] = %q, want %q", h.Row1[0], "[ ] Step A")
+	}
+	if h.Row2[0] != "[ ] Step B" {
+		t.Errorf("Row2[0] = %q, want %q", h.Row2[0], "[ ] Step B")
+	}
+}
+
+// Dynamic step count: 15 steps → rowSize=(15+1)/2=8 → Row1=[8], Row2=[7]
+func TestStatusHeader_DynamicStepCount_Large(t *testing.T) {
+	names := make([]string, 15)
+	for i := range 15 {
+		names[i] = fmt.Sprintf("Step %d", i)
+	}
+	h := NewStatusHeader(names)
+
+	if len(h.Row1) != 8 {
+		t.Errorf("Row1 len = %d, want 8", len(h.Row1))
+	}
+	if len(h.Row2) != 7 {
+		t.Errorf("Row2 len = %d, want 7", len(h.Row2))
+	}
+
+	// first step → Row1[0]
+	h.SetStepState(0, StepDone)
+	if h.Row1[0] != "[✓] Step 0" {
+		t.Errorf("Row1[0] = %q, want %q", h.Row1[0], "[✓] Step 0")
+	}
+
+	// last step idx=14 → Row2[14-8=6]
+	h.SetStepState(14, StepActive)
+	if h.Row2[6] != "[▸] Step 14" {
+		t.Errorf("Row2[6] = %q, want %q", h.Row2[6], "[▸] Step 14")
 	}
 }
 

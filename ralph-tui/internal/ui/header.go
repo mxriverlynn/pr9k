@@ -66,7 +66,9 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 // steps; Row2 the rest.
 func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
 	h.IterationLine = fmt.Sprintf("Finalizing %d/%d", current, total)
-	h.finalizeNames = steps
+	names := make([]string, len(steps))
+	copy(names, steps)
+	h.finalizeNames = names
 	rowSize := (len(steps) + 1) / 2
 	h.Row1 = make([]string, rowSize)
 	h.Row2 = make([]string, len(steps)-rowSize)
