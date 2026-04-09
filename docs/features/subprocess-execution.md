@@ -2,7 +2,7 @@
 
 Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
@@ -14,7 +14,7 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 - `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
 
 Key files:
-- `ralph-tui/internal/workflow/workflow.go` — Runner struct, RunStep, Terminate, CaptureOutput, ResolveCommand
+- `ralph-tui/internal/workflow/workflow.go` — Runner struct, RunStep, Terminate, CaptureOutput, ResolveCommand; package-level CaptureOutput
 - `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution and command resolution
 
 ## Architecture
@@ -59,7 +59,7 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/workflow.go` | Runner struct, RunStep, Terminate, WriteToLog, CaptureOutput, ResolveCommand |
+| `ralph-tui/internal/workflow/workflow.go` | Runner struct, RunStep, Terminate, WriteToLog, CaptureOutput, ResolveCommand; package-level CaptureOutput |
 | `ralph-tui/internal/workflow/workflow_test.go` | Unit tests for all Runner methods and ResolveCommand |
 
 ## Core Types
@@ -164,14 +164,31 @@ func (r *Runner) WriteToLog(line string) {
 
 ### Output Capture (CaptureOutput)
 
-`CaptureOutput` runs a command and returns trimmed stdout as a string. Stderr is discarded. Used for single-value queries that don't need streaming:
+`CaptureOutput` runs a command and returns trimmed stdout as a string. Stderr is captured and included in the error message on non-zero exit but is never returned as output. Used for single-value queries that don't need streaming.
+
+There are two forms:
+
+**Package-level function** — accepts a context and working directory; used when no `Runner` is available or when context cancellation is needed:
+
+```go
+func CaptureOutput(ctx context.Context, command []string, dir string) (string, error) {
+    cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+    cmd.Dir = dir
+    var stdout, stderr bytes.Buffer
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    if err := cmd.Run(); err != nil {
+        return "", fmt.Errorf("workflow: capture %q: %w\nstderr: %s", command[0], err, stderr.String())
+    }
+    return strings.TrimSpace(stdout.String()), nil
+}
+```
+
+**`Runner` method** — delegates to the package-level function using `context.Background()` and the runner's working directory:
 
 ```go
 func (r *Runner) CaptureOutput(command []string) (string, error) {
-    cmd := exec.Command(command[0], command[1:]...)
-    cmd.Dir = r.workingDir
-    out, err := cmd.Output()
-    return strings.TrimSpace(string(out)), err
+    return CaptureOutput(context.Background(), command, r.workingDir)
 }
 ```
 
@@ -218,10 +235,12 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 | Command start fails | `"workflow: start %q: ..."` | Returned to caller |
 | Scanner error during streaming | logged as `"scanner error: ..."` | Warning only; does not fail the step |
 | Logger write error during streaming | logged as `"logger error: ..."` | First error logged, subsequent writes skipped |
+| CaptureOutput non-zero exit | `"workflow: capture %q: ...\nstderr: ..."` | Returned to caller; stderr appended to message |
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for RunStep, Terminate, WasTerminated, WriteToLog, CaptureOutput, ResolveCommand, and Close
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for RunStep, Terminate, WasTerminated, WriteToLog, CaptureOutput (delegation, stderr in error, context cancellation), ResolveCommand, and Close
+- `ralph-tui/internal/workflow/variables_test.go` — Tests for VariablePool (Set/Get, All copy isolation, Clear)
 
 ## Additional Information
 

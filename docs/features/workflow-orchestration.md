@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
@@ -15,6 +15,7 @@ Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing s
 
 Key files:
 - `ralph-tui/internal/workflow/run.go` — Run function, RunConfig, buildIterationSteps, buildFinalizeSteps
+- `ralph-tui/internal/workflow/variables.go` — VariablePool: in-memory key-value store for workflow variables
 - `ralph-tui/internal/ui/orchestrate.go` — Orchestrate function, ResolvedStep, error handling loop
 - `ralph-tui/internal/workflow/run_test.go` — Unit tests for the Run orchestration loop
 - `ralph-tui/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
@@ -71,6 +72,7 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `ralph-tui/internal/workflow/run.go` | Run loop, RunConfig, step resolution, header adapters |
+| `ralph-tui/internal/workflow/variables.go` | VariablePool: in-memory key-value store for workflow variables |
 | `ralph-tui/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
 | `ralph-tui/internal/workflow/run_test.go` | Tests for Run lifecycle |
 | `ralph-tui/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
@@ -108,6 +110,16 @@ type ResolvedStep struct {
     Name    string
     Command []string
 }
+
+// VariablePool is a simple in-memory key-value store for workflow variables.
+// Accessed only from Run()'s step loop (single goroutine) — no mutex needed.
+type VariablePool struct { /* unexported */ }
+
+func NewVariablePool() *VariablePool
+func (vp *VariablePool) Set(name, value string)
+func (vp *VariablePool) Get(name string) (string, bool)
+func (vp *VariablePool) All() map[string]string       // shallow copy; mutations don't affect pool
+func (vp *VariablePool) Clear(names []string)         // silently ignores absent keys
 ```
 
 ## Implementation Details
