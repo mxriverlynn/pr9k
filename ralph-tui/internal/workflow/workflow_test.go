@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -869,5 +870,66 @@ func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected 'next step ran' in output after termination, got %v", lines)
+	}
+}
+
+// CaptureOutput tests
+
+// T7 — capture stdout returns trimmed output
+func TestCaptureOutput_CapturesStdout(t *testing.T) {
+	out, err := CaptureOutput(context.Background(), []string{"echo", "hello"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("expected %q, got %q", "hello", out)
+	}
+}
+
+// T8 — capture trims whitespace (trailing newlines etc.)
+func TestCaptureOutput_TrimsWhitespace(t *testing.T) {
+	out, err := CaptureOutput(context.Background(), []string{"sh", "-c", "printf 'hello\\n\\n'"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("expected %q after trimming, got %q", "hello", out)
+	}
+}
+
+// T9 — non-zero exit returns error and empty output
+func TestCaptureOutput_NonZeroExitReturnsError(t *testing.T) {
+	out, err := CaptureOutput(context.Background(), []string{"false"}, t.TempDir())
+	if err == nil {
+		t.Fatal("expected error from non-zero exit, got nil")
+	}
+	if out != "" {
+		t.Errorf("expected empty output on error, got %q", out)
+	}
+}
+
+// T10 — empty output from command returns "" with no error
+func TestCaptureOutput_EmptyOutputNoError(t *testing.T) {
+	out, err := CaptureOutput(context.Background(), []string{"true"}, t.TempDir())
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "" {
+		t.Errorf("expected empty string, got %q", out)
+	}
+}
+
+// T11 — command runs in the specified directory
+func TestCaptureOutput_UsesSpecifiedDir(t *testing.T) {
+	dir := t.TempDir()
+	out, err := CaptureOutput(context.Background(), []string{"pwd"}, dir)
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	// t.TempDir() may return a symlink; resolve both sides for comparison.
+	wantResolved, _ := filepath.EvalSymlinks(dir)
+	gotResolved, _ := filepath.EvalSymlinks(out)
+	if gotResolved != wantResolved {
+		t.Errorf("expected pwd %q, got %q", wantResolved, gotResolved)
 	}
 }

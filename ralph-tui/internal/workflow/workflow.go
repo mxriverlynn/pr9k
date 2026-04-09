@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -168,14 +170,27 @@ func (r *Runner) Close() error {
 	return r.logWriter.Close()
 }
 
-// CaptureOutput runs command in workingDir and returns its trimmed stdout.
-// Stderr is discarded. Use this for commands that return a single value
-// (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
+// CaptureOutput runs command in dir and returns its trimmed stdout. Stderr is
+// captured and included in the error message on non-zero exit, but is never
+// returned as output. This function does not stream to the TUI.
+func CaptureOutput(ctx context.Context, command []string, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("workflow: capture %q: %w\nstderr: %s", command[0], err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// CaptureOutput runs command in Runner's workingDir and returns its trimmed
+// stdout. It delegates to the package-level CaptureOutput with a background
+// context. Use this for commands that return a single value (e.g.,
+// get_next_issue, get_gh_user, git rev-parse HEAD).
 func (r *Runner) CaptureOutput(command []string) (string, error) {
-	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = r.workingDir
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err
+	return CaptureOutput(context.Background(), command, r.workingDir)
 }
 
 // ResolveCommand replaces template variables in command and resolves relative
