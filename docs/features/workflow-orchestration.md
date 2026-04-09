@@ -2,14 +2,14 @@
 
 Drives the entire ralph-tui workflow: executing a three-phase config-driven loop, sequencing steps with error recovery, and managing the VariablePool for just-in-time variable substitution.
 
-- **Last Updated:** 2026-04-09 (updated for three-phase config-driven Run() refactor)
+- **Last Updated:** 2026-04-09 (updated for JIT validation in executeStep)
 - **Authors:**
   - River Bailey
 
 ## Overview
 
 - `Run()` is the top-level orchestration goroutine that drives three phases — pre-loop, loop, post-loop — entirely from a `*steps.WorkflowConfig`; no paths or step lists are hardcoded
-- `executeStep()` is the core step executor: it resolves the command (via `BuildPrompt` or `ResolveCommand`), runs it (via `CaptureOutput` or `RunStep`), stores captured output in the `VariablePool`, and drives error recovery via `HandleStepError`
+- `executeStep()` is the core step executor: for Claude steps, it runs `ValidateStepJIT` before each attempt (including retries); it resolves the command (via `BuildPrompt` or `ResolveCommand`), runs it (via `CaptureOutput` or `RunStep`), stores captured output in the `VariablePool`, and drives error recovery via `HandleStepError`
 - `runPhase()` sequences a slice of steps by calling `executeStep()` for each, draining the quit channel before each step
 - `HandleStepError()` (in `ui/orchestrate.go`) handles the error case after a step fails — it blocks on the Actions channel and returns the user's chosen action (continue, retry, quit)
 - Variables captured by `outputVariable` steps are stored in the `VariablePool` and substituted just-in-time into subsequent steps via `pool.All()`
@@ -55,38 +55,46 @@ Key files:
 
               executeStep()
                     │
-          ┌─────────┴──────────────┐
-          │                        │
-     IsClaudeStep?           IsCommandStep?
-     BuildPrompt()           ResolveCommand()
-     claude CLI cmd          shell cmd argv
-          │                        │
-          └──────────┬─────────────┘
-                     │
-              ┌──────▼──────┐
-              │ retry loop  │
-              │             │
-              │ SetActive   │
-              │             │
-        ┌─────┴─────┐       │
-        │outputVar? │       │
-        │           │       │
-      yes           no      │
-        │           │       │
-  CaptureOutput  RunStep    │
-  pool.Set()     (stream)   │
-        │           │       │
-        └────┬──────┘       │
-             │              │
-           success        failure
-           SetDone     HandleStepError
-           return         │
-                    ┌─────┴──────┐
-                    │            │
-                  Quit        Continue
-                  return      return
-                           ActionRetry
-                           → retry loop
+              ┌─────▼─────────┐
+              │  retry loop   │
+              │               │
+              │ vars=pool.All │
+              │               │
+         IsClaudeStep?        │
+         ValidateStepJIT()    │
+              │               │
+          JIT fail?───────────┤
+          HandleStepError     │
+          Quit/Retry/Continue │
+              │               │
+          ┌───▼──────────────┐│
+          │IsClaudeStep?     ││
+          │BuildPrompt()     ││
+          │IsCommandStep?    ││
+          │ResolveCommand()  ││
+          └───┬──────────────┘│
+              │               │
+              │ SetActive     │
+              │               │
+        ┌─────┴─────┐         │
+        │outputVar? │         │
+        │           │         │
+      yes           no        │
+        │           │         │
+  CaptureOutput  RunStep      │
+  pool.Set()     (stream)     │
+        │           │         │
+        └────┬──────┘         │
+             │                │
+           success          failure
+           SetDone      HandleStepError
+           return            │
+                      ┌──────┴──────┐
+                      │             │
+                    Quit         Continue
+                    return       return
+                             ActionRetry
+                             → retry loop
 ```
 
 ## Key Files
@@ -161,23 +169,37 @@ At every phase boundary and before every step, Run drains the Actions channel fo
 
 ### executeStep
 
-`executeStep` is the single-step executor shared by all three phases. It resolves the command once before the retry loop, then executes it repeatedly until success or quit:
+`executeStep` is the single-step executor shared by all three phases. Each iteration of the retry loop re-snapshots the variable pool and, for Claude steps, runs JIT validation before building the prompt. This ensures prompt file edits made while ralph is running are picked up on each attempt:
 
 ```go
 func executeStep(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler,
     idx int, step steps.Step, projectDir string, pool *VariablePool) (exitLoop bool, quit bool) {
 
-    vars := pool.All()
-    // Command resolution (once, before retry loop):
-    if step.IsClaudeStep() {
-        prompt, _ := steps.BuildPrompt(projectDir, step, vars)
-        cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(),
-            "--model", step.DefaultModel(), "-p", prompt}
-    } else {
-        cmd = ResolveCommand(projectDir, step.Command, vars)
-    }
-
     for {
+        vars := pool.All()  // re-snapshot on every attempt
+
+        // JIT validation: re-read prompt file and check {{VAR}} consistency.
+        if step.IsClaudeStep() {
+            if err := steps.ValidateStepJIT(step, projectDir, vars); err != nil {
+                executor.WriteToLog(...)
+                action := ui.HandleStepError(executor, header, keyHandler, idx)
+                switch action {
+                case ui.ActionQuit:    return false, true
+                case ui.ActionRetry:   executor.WriteToLog(ui.RetryStepSeparator(step.Name)); continue
+                case ui.ActionContinue: return false, false
+                }
+            }
+        }
+
+        // Command resolution (inside retry loop, after JIT passes):
+        if step.IsClaudeStep() {
+            prompt, _ := steps.BuildPrompt(projectDir, step, vars)
+            cmd = []string{"claude", "--permission-mode", step.DefaultPermissionMode(),
+                "--model", step.DefaultModel(), "-p", prompt}
+        } else {
+            cmd = ResolveCommand(projectDir, step.Command, vars)
+        }
+
         header.SetStepState(idx, ui.StepActive)
 
         if step.OutputVariable != "" {
@@ -200,8 +222,8 @@ func executeStep(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHand
         // Step failed — enter error recovery.
         action := ui.HandleStepError(executor, header, keyHandler, idx)
         switch action {
-        case ui.ActionQuit:    return false, true
-        case ui.ActionRetry:   executor.WriteToLog(ui.RetryStepSeparator(step.Name))
+        case ui.ActionQuit:     return false, true
+        case ui.ActionRetry:    executor.WriteToLog(ui.RetryStepSeparator(step.Name))
         case ui.ActionContinue: return false, false
         }
     }
@@ -253,7 +275,7 @@ The retry separator (`── step-name (retry) ───────────
 
 ## Testing
 
-- `ralph-tui/internal/workflow/run_test.go` — Tests Run lifecycle with mock executor and header: phase sequencing, exitLoopIfEmpty, variable pool scoping, quit propagation
+- `ralph-tui/internal/workflow/run_test.go` — Tests Run lifecycle with mock executor and header: phase sequencing, exitLoopIfEmpty, variable pool scoping, quit propagation, JIT validation failure recovery (continue/retry/quit)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests HandleStepError: terminated step, error mode with continue/retry/quit actions
 
 ## Additional Information

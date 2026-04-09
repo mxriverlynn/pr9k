@@ -2,7 +2,7 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-09 (updated for variable scoping validation)
+- **Last Updated:** 2026-04-09 (updated for JIT validation)
 - **Authors:**
   - River Bailey
 
@@ -13,11 +13,12 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 - Each step is either a Claude CLI invocation (`promptFile` set) or a shell command (`command` set); helper methods `IsClaudeStep()` and `IsCommandStep()` distinguish the two
 - `BuildPrompt` reads prompt file content and applies single-pass `{{KEY}}` substitution using a caller-supplied `vars` map; unknown placeholders are left as literal text
 - `BuildReplacer` is an exported helper that constructs a `strings.Replacer` from a `map[string]string`; substitution is single-pass (a value containing `{{OTHER}}` is never re-expanded)
+- `ValidateStepJIT` re-reads the prompt file from disk and validates `{{VAR}}` consistency immediately before each Claude step executes (including retries), so that prompt file edits made while ralph is running are detected
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
 - `ralph-tui/internal/steps/steps.go` — Step struct, WorkflowConfig, LoadWorkflowConfig, LoadSteps, LoadFinalizeSteps, BuildPrompt
-- `ralph-tui/internal/steps/validate.go` — ValidateVariables: startup variable scoping and prompt consistency checks
+- `ralph-tui/internal/steps/validate.go` — ValidateVariables (startup), ValidateStepJIT (per-execution)
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading, prompt building, and validation
 - `ralph-tui/configs/ralph-steps.json` — 8 iteration step definitions
 - `ralph-tui/configs/ralph-finalize-steps.json` — 3 finalization step definitions
@@ -64,8 +65,8 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `ralph-tui/internal/steps/steps.go` | Step struct, WorkflowConfig, loading functions, prompt builder |
-| `ralph-tui/internal/steps/validate.go` | ValidateVariables: variable scoping and prompt consistency checks |
-| `ralph-tui/internal/steps/validate_test.go` | Unit tests for variable validation |
+| `ralph-tui/internal/steps/validate.go` | ValidateVariables (startup), ValidateStepJIT (per-execution) |
+| `ralph-tui/internal/steps/validate_test.go` | Unit tests for variable validation and JIT validation |
 | `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading, structural validation, and prompt building |
 | `ralph-tui/configs/ralph-steps.json` | Iteration step definitions (8 steps) |
 | `ralph-tui/configs/ralph-finalize-steps.json` | Finalization step definitions (3 steps) |
@@ -224,6 +225,29 @@ Three steps run once after all iterations complete:
 | 2 | Lessons learned | Claude | sonnet |
 | 3 | Final git push | Shell | — |
 
+### JIT Validation
+
+`ValidateStepJIT` is called by `executeStep` in the workflow package immediately before each Claude step executes — including on every retry. It re-reads the prompt file from disk on every call, so edits made to a prompt file while a ralph run is in progress are picked up before the next attempt.
+
+It checks three things:
+
+1. Every entry in `step.InjectVars` appears as `{{VAR}}` in the prompt file
+2. Every `{{VAR}}` in the prompt file is listed in `step.InjectVars`
+3. Every entry in `step.InjectVars` has a value in the caller-supplied `vars` map
+
+All errors are collected and returned as a single message. JIT failure enters the same error recovery mode (continue / retry / quit) as a step execution failure.
+
+```go
+func ValidateStepJIT(step Step, projectDir string, vars map[string]string) error {
+    promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+    data, err := os.ReadFile(promptPath)
+    // ...
+    // collect all mismatches between prompt {{VAR}}s, InjectVars, and pool
+}
+```
+
+JIT validation is complementary to startup `ValidateVariables`: startup validation catches structural mismatches at load time, JIT validation catches drift between the config and the prompt file at execution time.
+
 ### Prompt Building
 
 `BuildPrompt` reads the prompt file and applies single-pass `{{KEY}}` substitution using the provided `vars` map. Unknown placeholders are left as literal text. Substitution is single-pass, so a value containing `{{OTHER}}` is never re-expanded (template injection safe):
@@ -278,13 +302,17 @@ Prompt files and command args reference variables with `{{VAR}}` syntax (e.g. `{
 | Undefined variable reference | `'steps: step "{name}": {{VAR}} references undefined variable; ...'` | All violations collected |
 | Forward reference within same phase | `'steps: step "{name}": references variable "{var}" declared by later step "{step}"; ...'` | All violations collected |
 | Loop var referenced from post-loop | `'steps: step "{name}": references loop-scoped variable "{var}" from post-loop; ...'` | All violations collected |
+| JIT: injectVariables entry not in prompt | `'steps: step "{name}": injectVariables entry "{var}" not found as {{VAR}} in prompt file'` | All JIT errors collected |
+| JIT: `{{VAR}}` in prompt not in injectVariables | `'steps: step "{name}": {{VAR}} in prompt file not listed in injectVariables'` | All JIT errors collected |
+| JIT: injectVariables entry has no pool value | `'steps: step "{name}": injectVariables entry "{var}" has no value in variable pool'` | All JIT errors collected |
+| JIT: prompt file unreadable | `'steps: step "{name}": could not read prompt file {path}: ...'` | Returned immediately |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, LoadFinalizeSteps, LoadWorkflowConfig, BuildPrompt (including `{{VAR}}` substitution), BuildReplacer, and all 9 structural validation rules
-- `ralph-tui/internal/steps/validate_test.go` — Unit tests for ValidateVariables: scoping rules, shadowing, forward references, prompt/injectVariables consistency, and edge cases
+- `ralph-tui/internal/steps/validate_test.go` — Unit tests for ValidateVariables (scoping, shadowing, forward references, consistency) and ValidateStepJIT (disk re-read, multi-error, nil guards)
 - `ralph-tui/configs/configs_test.go` — Validates that JSON config files parse correctly
 
 ### Test Patterns
