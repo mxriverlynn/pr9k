@@ -150,7 +150,7 @@ The top-level `Run` function drives the entire workflow: displays a startup bann
 
 ### [TUI Status Header](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line and step progress as two rows of 4 checkboxes each (8 steps total). Each step displays as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
+A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as two rows of 4 checkboxes each (8 steps total), where each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
 
 **Package:** `internal/ui/` (`header.go`, `log.go`)
 
