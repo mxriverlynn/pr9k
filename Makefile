@@ -25,7 +25,9 @@ vulncheck:
 
 mod-tidy:
 	@cd ralph-tui && go mod tidy && \
-	if ! git diff --exit-code go.mod go.sum; then \
+	files="go.mod"; \
+	if [ -f go.sum ]; then files="$$files go.sum"; fi; \
+	if ! git diff --exit-code $$files; then \
 		echo "go.mod or go.sum is not tidy — run 'go mod tidy' and commit"; \
 		exit 1; \
 	fi

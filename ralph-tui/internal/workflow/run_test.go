@@ -73,7 +73,7 @@ type fakeRunHeader struct {
 }
 
 type iterCall struct {
-	current, total  int
+	current, total int
 	issueID, title string
 }
 

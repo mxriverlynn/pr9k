@@ -11,10 +11,10 @@ import (
 // --- Test doubles ---
 
 type stubRunner struct {
-	results    []error // one per RunStep call; nil = success
-	callCount  int
+	results       []error // one per RunStep call; nil = success
+	callCount     int
 	wasTerminated bool
-	logLines   []string
+	logLines      []string
 }
 
 func (s *stubRunner) RunStep(_ string, _ []string) error {
@@ -26,7 +26,7 @@ func (s *stubRunner) RunStep(_ string, _ []string) error {
 	return err
 }
 
-func (s *stubRunner) WasTerminated() bool { return s.wasTerminated }
+func (s *stubRunner) WasTerminated() bool    { return s.wasTerminated }
 func (s *stubRunner) WriteToLog(line string) { s.logLines = append(s.logLines, line) }
 
 // callbackStubRunner is a StepRunner whose RunStep behaviour is controlled by
@@ -40,7 +40,7 @@ type callbackStubRunner struct {
 func (c *callbackStubRunner) RunStep(name string, _ []string) error {
 	return c.onRunStep(name)
 }
-func (c *callbackStubRunner) WasTerminated() bool  { return c.wasTerminatedFn() }
+func (c *callbackStubRunner) WasTerminated() bool    { return c.wasTerminatedFn() }
 func (c *callbackStubRunner) WriteToLog(line string) { c.logLines = append(c.logLines, line) }
 
 type spyHeader struct {
