@@ -144,13 +144,13 @@ The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in
 
 ### [Workflow Orchestration](features/workflow-orchestration.md)
 
-The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over N iterations (each fetching an issue and running 8 steps through the step sequencer), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
+The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over N iterations (each fetching an issue and running the configured iteration steps through the step sequencer), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 
 ### [TUI Status Header](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line and step progress as two rows of 4 checkboxes each (8 steps total). Each step displays as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
+A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line and step progress as two rows of checkboxes, split dynamically by step count. Each step displays as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
 
 **Package:** `internal/ui/` (`header.go`, `log.go`)
 

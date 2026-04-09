@@ -2,14 +2,14 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
 - `StatusHeader` is a pointer-mutable struct that Glyph reads on each render cycle — callers update state by mutating fields directly
-- Displays the current iteration/issue on one line and step progress as two rows of 4 checkboxes (8 steps total)
+- Displays the current iteration/issue on one line and step progress as two rows of checkboxes, split dynamically based on step count
 - Each step shows one of four states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed
 - Switches between iteration mode and finalization mode with different step names
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
@@ -31,11 +31,11 @@ Key files:
   │                                              │
   │  IterationLine: "Iteration 1/3 — Issue #42" │
   │                                              │
-  │  Row1: [▸] Feature work  [✓] Test planning   │
-  │        [ ] Test writing   [ ] Code review     │
+  │  Row1: [▸] Feature work   [✓] Test planning  │
+  │        [ ] Test writing   [ ] Code review    │
   │                                              │
-  │  Row2: [ ] Review fixes   [ ] Close issue     │
-  │        [ ] Update docs    [ ] Git push        │
+  │  Row2: [ ] Review fixes   [ ] Close issue    │
+  │        [ ] Update docs    [ ] Git push       │
   └─────────────────────────────────────────────┘
 
   After iteration loop completes:
@@ -75,10 +75,10 @@ const (
 // StatusHeader manages pointer-mutable string state for the TUI.
 // Glyph reads exported fields via pointer on each render cycle.
 type StatusHeader struct {
-    IterationLine string    // e.g., "Iteration 1/3 — Issue #42: Add widget support"
-    Row1          [4]string // checkbox labels for steps 0-3
-    Row2          [4]string // checkbox labels for steps 4-7
-    stepNames     [8]string
+    IterationLine string   // e.g., "Iteration 1/3 — Issue #42: Add widget support"
+    Row1          []string // checkbox labels for first half of steps
+    Row2          []string // checkbox labels for second half of steps
+    stepNames     []string
     finalizeNames []string
 }
 ```
@@ -87,19 +87,26 @@ type StatusHeader struct {
 
 ### Iteration Mode
 
-`NewStatusHeader` takes an array of 8 step names and initializes all checkboxes to pending:
+`NewStatusHeader` takes a slice of step names (any length) and initializes all checkboxes to pending. It makes a defensive copy of the input slice. Row1 receives the first `ceil(n/2)` steps; Row2 receives the rest:
 
 ```go
-func NewStatusHeader(stepNames [8]string) *StatusHeader {
-    h := &StatusHeader{stepNames: stepNames}
-    for i, name := range stepNames {
+func NewStatusHeader(stepNames []string) *StatusHeader {
+    names := make([]string, len(stepNames))
+    copy(names, stepNames)
+    rowSize := (len(names) + 1) / 2
+    h := &StatusHeader{
+        stepNames: names,
+        Row1:      make([]string, rowSize),
+        Row2:      make([]string, len(names)-rowSize),
+    }
+    for i, name := range names {
         h.writeLabel(i, StepPending, name)
     }
     return h
 }
 ```
 
-`SetIteration` updates the iteration line. `SetStepState` updates individual step checkboxes (0-indexed, mapped to Row1[0-3] and Row2[0-3]):
+`SetIteration` updates the iteration line. `SetStepState` updates individual step checkboxes (0-indexed, bounds-guarded by `len(stepNames)`):
 
 ```go
 func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
@@ -107,20 +114,25 @@ func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle stri
 }
 
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
-    if idx < 0 || idx >= 8 { return }  // bounds guard
+    if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
     h.writeLabel(idx, state, h.stepNames[idx])
 }
 ```
 
 ### Finalization Mode
 
-`SetFinalization` switches the header to finalization mode, replacing iteration step names with finalization step names. Supports up to 8 finalization steps across two rows; unused slots are set to empty string:
+`SetFinalization` switches the header to finalization mode, replacing iteration step names with finalization step names. Supports any number of finalization steps; Row1 and Row2 are resized dynamically using the same `ceil(n/2)` split:
 
 ```go
 func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
     h.IterationLine = fmt.Sprintf("Finalizing %d/%d", current, total)
-    h.finalizeNames = steps
-    // Fill Row1[0-3] and Row2[0-3] with finalization step names or ""
+    names := make([]string, len(steps))
+    copy(names, steps)
+    h.finalizeNames = names
+    rowSize := (len(steps) + 1) / 2
+    h.Row1 = make([]string, rowSize)
+    h.Row2 = make([]string, len(steps)-rowSize)
+    // Fill Row1 and Row2 with pending checkboxes
 }
 ```
 
