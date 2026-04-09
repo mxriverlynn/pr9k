@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 )
 
 // Runner executes workflow steps and streams subprocess output through an io.Pipe.
@@ -193,18 +194,6 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 	return CaptureOutput(context.Background(), command, r.workingDir)
 }
 
-// buildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
-// corresponding value for each entry in vars. Substitution is single-pass, so
-// a variable value that itself contains "{{OTHER}}" is never re-expanded
-// (template injection safe).
-func buildReplacer(vars map[string]string) *strings.Replacer {
-	pairs := make([]string, 0, len(vars)*2)
-	for k, v := range vars {
-		pairs = append(pairs, "{{"+k+"}}", v)
-	}
-	return strings.NewReplacer(pairs...)
-}
-
 // ResolveCommand replaces template variables in command and resolves relative
 // script paths against projectDir.
 //
@@ -220,7 +209,7 @@ func ResolveCommand(projectDir string, command []string, vars map[string]string)
 		return command
 	}
 
-	replacer := buildReplacer(vars)
+	replacer := steps.BuildReplacer(vars)
 	result := make([]string, len(command))
 	for i, arg := range command {
 		result[i] = replacer.Replace(arg)

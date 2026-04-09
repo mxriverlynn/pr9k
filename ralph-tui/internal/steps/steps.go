@@ -146,11 +146,11 @@ func LoadFinalizeSteps(projectDir string) ([]Step, error) {
 	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-finalize-steps.json"))
 }
 
-// buildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
+// BuildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
 // corresponding value for each entry in vars. Substitution is single-pass, so
 // a variable value that itself contains "{{OTHER}}" is never re-expanded
 // (template injection safe).
-func buildReplacer(vars map[string]string) *strings.Replacer {
+func BuildReplacer(vars map[string]string) *strings.Replacer {
 	pairs := make([]string, 0, len(vars)*2)
 	for k, v := range vars {
 		pairs = append(pairs, "{{"+k+"}}", v)
@@ -173,7 +173,7 @@ func BuildPrompt(projectDir string, step Step, vars map[string]string) (string, 
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
 	}
 
-	return buildReplacer(vars).Replace(string(data)), nil
+	return BuildReplacer(vars).Replace(string(data)), nil
 }
 
 func loadStepsFile(path string) ([]Step, error) {
