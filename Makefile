@@ -1,2 +1,33 @@
+.PHONY: build test lint format vet vulncheck mod-tidy ci
+
 build:
 	cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
+
+test:
+	cd ralph-tui && go test -race -count=1 ./...
+
+lint:
+	cd ralph-tui && golangci-lint run
+
+format:
+	@cd ralph-tui && unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Files not formatted:"; \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
+
+vet:
+	cd ralph-tui && go vet ./...
+
+vulncheck:
+	cd ralph-tui && govulncheck ./...
+
+mod-tidy:
+	@cd ralph-tui && go mod tidy && \
+	if ! git diff --exit-code go.mod go.sum; then \
+		echo "go.mod or go.sum is not tidy — run 'go mod tidy' and commit"; \
+		exit 1; \
+	fi
+
+ci: test lint format vet vulncheck mod-tidy build
