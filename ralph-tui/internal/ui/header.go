@@ -41,8 +41,13 @@ func NewStatusHeader(stepNames [8]string) *StatusHeader {
 
 // SetIteration updates the iteration line string.
 // issueID is the bare number (e.g. "42"); issueTitle is the issue's full title.
+// When total == 0, the iteration line omits the total (unbounded mode).
 func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
-	h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+	if total > 0 {
+		h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+	} else {
+		h.IterationLine = fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)
+	}
 }
 
 // SetStepState updates the checkbox label for iteration step idx (0-based, 0-7).

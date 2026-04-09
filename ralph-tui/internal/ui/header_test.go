@@ -26,6 +26,16 @@ func TestStatusHeader_IterationLine(t *testing.T) {
 	}
 }
 
+func TestStatusHeader_IterationLine_Unbounded(t *testing.T) {
+	h := NewStatusHeader(testStepNames)
+	h.SetIteration(3, 0, "42", "Add widget support")
+
+	want := "Iteration 3 — Issue #42: Add widget support"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
 func TestStatusHeader_StepCheckboxStates(t *testing.T) {
 	h := NewStatusHeader(testStepNames)
 
