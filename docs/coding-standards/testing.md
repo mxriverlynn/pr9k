@@ -96,6 +96,22 @@ func (s *spyHeader) getCalls() []string {
 }
 ```
 
+## Test names must match actual test scope
+
+Name tests by what they actually exercise. A test named `TestFoo_BoundedMode` that also covers the unbounded path misleads reviewers and future maintainers about what is and isn't tested.
+
+- If a test covers a single path, name it for that path: `TestIterationLabel_Bounded`, `TestIterationLabel_Unbounded`.
+- If a test covers multiple paths in one table, name it for the function: `TestIterationLabel` or `TestIterationLabel_Modes`.
+- Never let the name claim narrower coverage than the test body provides — that gap is how blind spots form.
+
+```go
+// Bad: name implies bounded-only, but the table includes unbounded rows
+func TestIterationLabel_BoundedMode(t *testing.T) { ... }
+
+// Good: name matches actual scope
+func TestIterationLabel(t *testing.T) { ... }
+```
+
 ## Verify go vet before committing
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
@@ -103,6 +119,7 @@ Run `go vet ./...` before every commit. Vet catches correctness issues that the 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle
+- [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded)
 - [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
 - [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState and SetFinalizeStepState
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand
