@@ -427,6 +427,67 @@ func TestStatusHeader_DynamicStepCount_Large(t *testing.T) {
 	}
 }
 
+// T26 — SetPhaseSteps sets label, resets steps to pending, splits rows correctly.
+// Verifies that SetPhaseSteps updates IterationLine, replaces stepNames, resets
+// all steps to pending, and splits rows using ceil(n/2).
+func TestStatusHeader_SetPhaseSteps_SetsLabelResetsStepsSplitsRows(t *testing.T) {
+	h := NewStatusHeader(testStepNames) // 8 steps
+	h.SetStepState(0, StepDone)
+	h.SetStepState(1, StepDone)
+
+	// 3 new names → rowSize=(3+1)/2=2 → Row1=[2], Row2=[1]
+	h.SetPhaseSteps("Pre-loop", []string{"Pre A", "Pre B", "Pre C"})
+
+	if h.IterationLine != "Pre-loop" {
+		t.Errorf("IterationLine = %q, want %q", h.IterationLine, "Pre-loop")
+	}
+	if len(h.Row1) != 2 {
+		t.Errorf("Row1 len = %d, want 2", len(h.Row1))
+	}
+	if len(h.Row2) != 1 {
+		t.Errorf("Row2 len = %d, want 1", len(h.Row2))
+	}
+	if h.Row1[0] != "[ ] Pre A" {
+		t.Errorf("Row1[0] = %q, want %q", h.Row1[0], "[ ] Pre A")
+	}
+	if h.Row1[1] != "[ ] Pre B" {
+		t.Errorf("Row1[1] = %q, want %q", h.Row1[1], "[ ] Pre B")
+	}
+	if h.Row2[0] != "[ ] Pre C" {
+		t.Errorf("Row2[0] = %q, want %q", h.Row2[0], "[ ] Pre C")
+	}
+}
+
+// T30 — SetPhaseSteps defensive copy.
+// Mutating the input slice after SetPhaseSteps must not affect the header state.
+func TestStatusHeader_SetPhaseSteps_DefensiveCopy(t *testing.T) {
+	h := NewStatusHeader(testStepNames)
+	names := []string{"Phase A", "Phase B", "Phase C"}
+	h.SetPhaseSteps("Pre-loop", names)
+
+	names[0] = "MUTATED"
+
+	h.SetStepState(0, StepDone)
+	if h.Row1[0] != "[✓] Phase A" {
+		t.Errorf("Row1[0] = %q after mutating input slice, want %q", h.Row1[0], "[✓] Phase A")
+	}
+}
+
+// T31 — SetStepState after SetPhaseSteps uses new names.
+// After SetPhaseSteps replaces stepNames, SetStepState must use the new names
+// for checkbox labels.
+func TestStatusHeader_SetStepState_AfterSetPhaseSteps_UsesNewNames(t *testing.T) {
+	h := NewStatusHeader([]string{"A", "B"})
+	// 3 new names → rowSize=2 → Row1=[X,Y], Row2=[Z]
+	h.SetPhaseSteps("Test phase", []string{"X", "Y", "Z"})
+
+	h.SetStepState(1, StepDone)
+
+	if h.Row1[1] != "[✓] Y" {
+		t.Errorf("Row1[1] = %q, want %q", h.Row1[1], "[✓] Y")
+	}
+}
+
 // Input slice isolation: mutating the original slice after NewStatusHeader must not affect the header
 func TestStatusHeader_InputSliceIsolation(t *testing.T) {
 	names := []string{"Step A", "Step B", "Step C", "Step D"}

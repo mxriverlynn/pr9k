@@ -1,8 +1,10 @@
 package workflow
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -433,6 +435,385 @@ func TestRun_QuitDrain_StopsExecutionBeforeNextStep(t *testing.T) {
 
 	if callCount != 1 {
 		t.Errorf("expected only step1 to run, got %d RunStep calls", callCount)
+	}
+}
+
+// T23 — executeStep error recovery: retry re-executes the step.
+// When a step fails and HandleStepError returns ActionRetry, the step must be
+// re-executed. The retry separator must be logged. On success the second time,
+// the step is marked done.
+func TestRun_ExecuteStep_RetryReExecutesStep(t *testing.T) {
+	callCount := 0
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			callCount++
+			if callCount == 1 {
+				return errors.New("step failed")
+			}
+			return nil
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{commandStep("step1", "echo", "one")},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionRetry
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionRetry")
+	}
+
+	if callCount != 2 {
+		t.Errorf("expected RunStep called twice (initial + retry), got %d", callCount)
+	}
+
+	found := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "(retry)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected retry separator in log, got: %v", executor.logLines)
+	}
+
+	lastDone := false
+	for _, call := range header.stepStateCalls {
+		if call.idx == 0 && call.state == ui.StepDone {
+			lastDone = true
+		}
+	}
+	if !lastDone {
+		t.Errorf("expected step to be marked done after retry, state calls: %v", header.stepStateCalls)
+	}
+}
+
+// T24 — executeStep error recovery: quit propagates quit and closes executor.
+// When a step fails and the user chooses ActionQuit, Run() must return and
+// call Close().
+func TestRun_ExecuteStep_QuitClosesExecutor(t *testing.T) {
+	callCount := 0
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			callCount++
+			return errors.New("always fails")
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				commandStep("step1", "echo", "one"),
+				commandStep("step2", "echo", "two"),
+			},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionQuit
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionQuit")
+	}
+
+	if !executor.closed {
+		t.Error("expected executor.Close() to be called after ActionQuit")
+	}
+	if callCount != 1 {
+		t.Errorf("expected only step1 to be attempted, got %d RunStep calls", callCount)
+	}
+}
+
+// T25 — executeStep error recovery: continue skips to next step.
+// When a step fails and the user chooses ActionContinue, the failed step is
+// skipped and the next step runs.
+func TestRun_ExecuteStep_ContinueSkipsToNextStep(t *testing.T) {
+	step2Ran := false
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			if name == "step1" {
+				return errors.New("step1 fails")
+			}
+			if name == "step2" {
+				step2Ran = true
+			}
+			return nil
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				commandStep("step1", "echo", "one"),
+				commandStep("step2", "echo", "two"),
+			},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionContinue")
+	}
+
+	if !step2Ran {
+		t.Error("expected step2 to run after ActionContinue on step1 failure")
+	}
+}
+
+// T27 — BuildPrompt failure logs error and continues.
+// When a Claude step's prompt file is missing, executeStep must log an error
+// and return without entering error recovery. The next step must still run.
+func TestRun_BuildPromptFailure_LogsErrorAndContinues(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{
+				{Name: "missing-step", PromptFile: "nonexistent.txt"},
+				commandStep("next-step", "echo", "ran"),
+			},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	found := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "missing-step") && strings.Contains(line, "could not build prompt") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected error log for missing prompt, got: %v", executor.logLines)
+	}
+
+	if len(executor.runStepCalls) == 0 {
+		t.Fatal("expected next-step to run after BuildPrompt failure")
+	}
+	if executor.runStepCalls[0].name != "next-step" {
+		t.Errorf("expected next-step to run after BuildPrompt failure, got %q", executor.runStepCalls[0].name)
+	}
+}
+
+// T28 — Completion summary reports correct iteration count.
+// iterationsRun is not incremented when exitLoopIfEmpty fires mid-iteration.
+// The completion message must reflect only fully-completed iterations.
+func TestRun_CompletionSummary_ReportsCorrectIterationCount(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{
+			{output: "42"}, // iteration 1: non-empty → continue
+			{output: ""},   // iteration 2: empty → exit loop
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 3,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{exitLoopStep("check-issue", "ISSUE_ID", "scripts/get_next_issue")},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	found := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "completed after 1 iteration(s)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected completion message with 1 iteration, got log: %v", executor.logLines)
+	}
+}
+
+// T29 — executor.Close() called on normal completion.
+// After all phases complete normally, executor.Close() must be called exactly once.
+func TestRun_ExecutorClose_CalledOnNormalCompletion(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{commandStep("do-work", "echo", "work")},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if !executor.closed {
+		t.Error("expected executor.Close() to be called after normal completion")
+	}
+}
+
+// T32 — Run calls SetPhaseSteps with correct phase labels.
+// Run must call SetPhaseSteps with "Pre-loop", "Iteration 1/N", ..., "Post-loop"
+// labels in order.
+func TestRun_SetPhaseSteps_CalledWithCorrectLabels(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 2,
+		Config: &steps.WorkflowConfig{
+			PreLoop:  []steps.Step{commandStep("pre-step", "echo", "pre")},
+			Loop:     []steps.Step{commandStep("loop-step", "echo", "loop")},
+			PostLoop: []steps.Step{commandStep("post-step", "echo", "post")},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	labels := make([]string, len(header.phaseStepCalls))
+	for i, call := range header.phaseStepCalls {
+		labels[i] = call.label
+	}
+
+	want := []string{"Pre-loop", "Iteration 1/2", "Iteration 2/2", "Post-loop"}
+	if !equalStringSlices(labels, want) {
+		t.Errorf("SetPhaseSteps labels:\n  got  %v\n  want %v", labels, want)
+	}
+}
+
+// T33 — Pre-loop quit prevents loop and post-loop.
+// If ActionQuit arrives while a pre-loop step is running, loop and post-loop
+// phases must not execute.
+func TestRun_PreLoopQuit_PreventsLoopAndPostLoop(t *testing.T) {
+	preStepStarted := make(chan struct{})
+	preStepUnblock := make(chan struct{})
+	var ranSteps []string
+
+	executor := &callbackFakeExecutor{
+		runStepFn: func(name string, cmd []string) error {
+			ranSteps = append(ranSteps, name)
+			if name == "pre-step" {
+				close(preStepStarted)
+				<-preStepUnblock
+			}
+			return nil
+		},
+	}
+
+	actions := make(chan ui.StepAction, 1)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Config: &steps.WorkflowConfig{
+			PreLoop:  []steps.Step{commandStep("pre-step", "echo", "pre")},
+			Loop:     []steps.Step{commandStep("loop-step", "echo", "loop")},
+			PostLoop: []steps.Step{commandStep("post-step", "echo", "post")},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	<-preStepStarted
+	actions <- ui.ActionQuit
+	close(preStepUnblock)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after ActionQuit during pre-loop")
+	}
+
+	for _, name := range ranSteps {
+		if name == "loop-step" {
+			t.Errorf("loop-step should not have run after pre-loop quit")
+		}
+		if name == "post-step" {
+			t.Errorf("post-step should not have run after pre-loop quit")
+		}
+	}
+}
+
+// T34 — exitLoopIfEmpty treats whitespace-only output as empty.
+// strings.TrimSpace means "\n  \n" is treated the same as "" for loop exit.
+func TestRun_ExitLoopIfEmpty_WhitespaceOnlyTreatedAsEmpty(t *testing.T) {
+	executor := &fakeExecutor{
+		captureResults: []captureResult{{output: "  \n  "}},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 3,
+		Config: &steps.WorkflowConfig{
+			Loop: []steps.Step{exitLoopStep("check-issue", "ISSUE_ID", "scripts/get_next_issue")},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if executor.captureIdx != 1 {
+		t.Errorf("expected 1 CaptureOutput call (loop exited on whitespace-only), got %d", executor.captureIdx)
 	}
 }
 
