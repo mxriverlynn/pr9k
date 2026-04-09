@@ -151,7 +151,7 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 | `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
 
 Within `workflow.Run`, `ProjectDir` resolves additional paths:
-- `{projectDir}/ralph-bash/ralph-art.txt` — startup banner
+- `ralph-art.txt` — startup banner (embedded in the binary via `//go:embed`)
 - `{projectDir}/scripts/get_gh_user` — GitHub username script
 - `{projectDir}/scripts/get_next_issue` — issue fetch script
 - `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt`
@@ -203,6 +203,7 @@ ralph-tui <iterations> [-project-dir <path>]
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
+- [Building Custom Workflows](../how-to/building-custom-workflows.md) — How ProjectDir affects config and prompt file resolution
 - [Step Definitions & Prompt Building](step-definitions.md) — How ProjectDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
 - [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries ProjectDir and Iterations into the Run loop

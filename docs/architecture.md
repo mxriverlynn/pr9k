@@ -196,6 +196,9 @@ cmd/ralph-tui/main.go
 
 ## Additional Information
 
+- **How-To Guides:**
+  - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
+  - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
 - [ralph-tui Plan](plans/ralph-tui.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration
 - **Coding Standards** — Conventions that govern ralph-tui implementation:

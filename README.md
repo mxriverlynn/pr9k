@@ -21,8 +21,8 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 git clone https://github.com/mxriverlynn/pr9k.git
 cd pr9k
 
-# Build the TUI orchestrator
-cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
+# Build the orchestrator
+make build
 ```
 
 ### Quick Start
@@ -30,41 +30,29 @@ cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
 From the **target repo** (the repo where you want Ralph to work):
 
 ```bash
-# Run 3 iterations using the bash orchestrator
-path/to/pr9k/ralph-loop 3
-
-# Or use the TUI orchestrator
-path/to/pr9k/ralph-tui 3
+# Run 3 iterations
+path/to/pr9k/bin/ralph-tui 3
 ```
 
 Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue.
 
 ## How To
 
-### Run the bash orchestrator
+### Run the orchestrator
 
 ```bash
 # From your target repo:
-path/to/pr9k/ralph-loop <iterations>
-```
-
-### Run the TUI orchestrator
-
-```bash
-# From your target repo:
-path/to/pr9k/ralph-tui <iterations>
+path/to/pr9k/bin/ralph-tui <iterations>
 
 # Or specify the project directory explicitly:
-path/to/pr9k/ralph-tui <iterations> -project-dir path/to/pr9k
+path/to/pr9k/bin/ralph-tui <iterations> -project-dir path/to/pr9k
+
+# Or build and run directly (without make):
+cd path/to/pr9k/ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
+path/to/pr9k/ralph-tui <iterations>
 ```
 
 Use `go build` — `go run` won't work because the project directory is resolved from the executable path.
-
-### Run a single prompt interactively (human-in-the-loop)
-
-```bash
-path/to/pr9k/ralph-hitl [prompt-name]
-```
 
 ### Keyboard controls (TUI)
 
@@ -89,6 +77,9 @@ When a step fails:
   - [Keyboard Input & Error Recovery](docs/features/keyboard-input.md) — Keyboard state machine
   - [Signal Handling & Shutdown](docs/features/signal-handling.md) — Clean shutdown on SIGINT/SIGTERM
   - [File Logging](docs/features/file-logging.md) — Timestamped log file output
+- **How-To Guides** (in [`docs/how-to/`](docs/how-to/)):
+  - [Building Custom Workflows](docs/how-to/building-custom-workflows.md) — Creating custom step sequences and prompts
+  - [Variable Output & Injection](docs/how-to/variable-output-and-injection.md) — Variable injection and file-based data passing between steps
 - [Coding Standards](docs/coding-standards/) — Go error handling, testing, concurrency, API design, and Go-specific patterns
 - [ralph-tui Plan](docs/plans/ralph-tui.md) — Original specification and design decisions
 

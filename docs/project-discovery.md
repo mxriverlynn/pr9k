@@ -19,23 +19,7 @@
 
 - Root: `scripts/`
 - Language: Bash
-- Helper scripts shared by both orchestrators: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`
-
-## ralph-bash
-
-- Root: `ralph-bash/`
-- Language: Bash
-- Runtime dependencies: `claude` CLI, `gh` CLI, `git`
-
-### Commands and Tests
-
-- Run: `path/to/ralph-loop <iterations>` (from target repo)
-- HITL: `path/to/ralph-hitl [prompt-name]` (from target repo)
-- No tests, linter, formatter, or build step
-
-### Configuration
-
-- Claude Code settings: `ralph-bash/.claude/settings.local.json`
+- Helper scripts used by the orchestrator: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`
 
 ## ralph-tui
 
@@ -44,18 +28,23 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- No external dependencies declared yet (Glyph TUI framework planned)
+- No external dependencies (Glyph TUI framework planned but not yet in go.mod)
 
 ### Frameworks and Tooling
 
 - TUI: Glyph (planned, not yet in go.mod)
-- Task runner: none (bare `go` commands)
+- Task runner: Make (`Makefile` at repo root)
 
 ### Commands and Tests
 
-- Build: `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
-- Run: `./ralph-tui <iterations> [-project-dir <path>]`
-- Test: `cd ralph-tui && go test ./...`
+- Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
+- Run: `./bin/ralph-tui <iterations>` or `./ralph-tui <iterations> [-project-dir <path>]`
+- Test: `make test` or `cd ralph-tui && go test -race ./...`
+- Lint: `make lint` (requires golangci-lint)
+- Format check: `make format`
+- Vet: `make vet`
+- Vulnerability check: `make vulncheck` (requires govulncheck)
+- CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
 - Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `configs/`
 
@@ -69,6 +58,9 @@
 - [Architecture Overview](architecture.md) — System-level architecture of ralph-tui with block diagrams and feature summaries
 - [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
 - [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
+- **How-To Guides:**
+  - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
+  - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
 - **Coding Standards** — Conventions governing Go code in ralph-tui:
   - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md)
 - [ralph-tui Plan](plans/ralph-tui.md) — Original specification and design rationale

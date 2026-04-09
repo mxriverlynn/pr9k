@@ -190,7 +190,7 @@ func ResolveCommand(projectDir string, command []string, issueID string) []strin
     for i, arg := range command {
         result[i] = strings.ReplaceAll(arg, "{{ISSUE_ID}}", issueID)
     }
-    // Resolve relative script paths (e.g., "ralph-bash/scripts/close_gh_issue")
+    // Resolve relative script paths (e.g., "scripts/close_gh_issue")
     exe := result[0]
     if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
         result[0] = filepath.Join(projectDir, exe)
@@ -226,6 +226,8 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how streaming fits into the data flow
+- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How `ResolveCommand` and `CaptureOutput` fit into the variable injection system
+- [Building Custom Workflows](../how-to/building-custom-workflows.md) — How shell command steps use ResolveCommand for path resolution
 - [Workflow Orchestration](workflow-orchestration.md) — How RunStep is called by the orchestration loop
 - [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built before execution
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How Terminate is triggered by keyboard input

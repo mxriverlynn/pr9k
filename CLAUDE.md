@@ -10,13 +10,11 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ## Repository Structure
 
-- `ralph-bash/` — Original bash implementation
-  - `ralph-loop` — Main orchestrator script. Run from the **target repo**, not from this repo: `path/to/ralph-loop <iterations>`
-  - `ralph-hitl` — Human-in-the-loop single-prompt runner: `path/to/ralph-hitl [prompt-name]`
+- `ralph-tui/` — Go TUI orchestrator. See "ralph-tui" section below.
 - `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
-- `ralph-tui/` — Go TUI replacement (in progress). See "In Progress: ralph-tui" section below.
-- `prompts/` — Prompt files consumed by both bash and TUI orchestrators. Each prompt is passed to `claude -p`. Iteration prompts get `ISSUENUMBER=` and `STARTINGSHA=` prepended.
-- `docs/plans/` — Implementation plans (e.g., `ralph-tui.md` for the Go/Glyph TUI replacement)
+- `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Iteration prompts get `ISSUENUMBER=` and `STARTINGSHA=` prepended.
+- `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
+- `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans
 
 ## Workflow: The Ralph Loop
 
@@ -34,17 +32,22 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 ## Key Design Decisions
 
 - Ralph is invoked **from the target repo** — all subprocesses inherit that cwd
-- `ralph-loop` resolves its own directory via `$(dirname "$0")` to find prompts and scripts regardless of where it's called from
+- The project directory is resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`
 - The `get_next_issue` script sorts open issues and picks the lowest number
-- Non-claude steps (`close_gh_issue`, `git push`) capture stderr with `2>&1`
+- Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
-## In Progress: ralph-tui (Go/Glyph)
+## ralph-tui (Go/Glyph)
 
-A Go TUI replacement for `ralph-loop` is being built in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+The Go TUI orchestrator lives in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
 
 ### Build and run
 
 ```bash
+# Using make (recommended):
+make build
+./bin/ralph-tui <iterations>
+
+# Or build directly:
 cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
 ./ralph-tui <iterations> [-project-dir <path>]
 ```
@@ -73,20 +76,23 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including flag reordering, symlink-safe path resolution, and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 
+## How-To Guides
+
+- [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
+- [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
+
 ## Project Discovery
 
-- See [`docs/project-discovery.md`](docs/project-discovery.md) for full project discovery details including languages, frameworks, tooling, commands, test structure, documentation paths, and infrastructure for all projects in this repository.
+- See [`docs/project-discovery.md`](docs/project-discovery.md) for full project discovery details including languages, frameworks, tooling, commands, test structure, documentation paths, and infrastructure.
 - Default branch: main
 - Docs: `docs/`
 - Coding standards: `docs/coding-standards/` — Go error handling, testing, concurrency, API design, and Go-specific patterns
 
-### ralph-bash
-
-- Language: Bash
-- No build, test, or lint commands
-
 ### ralph-tui
 
 - Language: Go 1.23
-- Test: `cd ralph-tui && go test ./...`
-- Build: `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
+- Test: `cd ralph-tui && go test -race ./...` or `make test`
+- Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
+- Lint: `make lint` (requires golangci-lint)
+- Vet: `make vet`
+- CI: `make ci` (runs test, lint, format, vet, vulncheck, mod-tidy, build)

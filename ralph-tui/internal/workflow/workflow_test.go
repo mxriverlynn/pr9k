@@ -346,9 +346,9 @@ func TestClose_IsIdempotent(t *testing.T) {
 
 func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 	projectDir := "/home/user/project"
-	cmd := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
+	cmd := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
 	got := ResolveCommand(projectDir, cmd, "42")
-	want := []string{"/home/user/project/ralph-bash/scripts/close_gh_issue", "42"}
+	want := []string{"/home/user/project/scripts/close_gh_issue", "42"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
 	}
@@ -376,9 +376,9 @@ func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 
 func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 	projectDir := "/proj"
-	cmd := []string{"ralph-bash/scripts/foo", "{{ISSUE_ID}}", "--label={{ISSUE_ID}}"}
+	cmd := []string{"scripts/foo", "{{ISSUE_ID}}", "--label={{ISSUE_ID}}"}
 	got := ResolveCommand(projectDir, cmd, "7")
-	want := []string{"/proj/ralph-bash/scripts/foo", "7", "--label=7"}
+	want := []string{"/proj/scripts/foo", "7", "--label=7"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
 	}
@@ -391,9 +391,9 @@ func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 
 func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 	projectDir := "/base"
-	cmd := []string{"ralph-bash/scripts/foo", "arg"}
+	cmd := []string{"scripts/foo", "arg"}
 	got := ResolveCommand(projectDir, cmd, "1")
-	wantExe := "/base/ralph-bash/scripts/foo"
+	wantExe := "/base/scripts/foo"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
 	}
@@ -431,7 +431,7 @@ func TestResolveCommand_EmptySlice(t *testing.T) {
 }
 
 func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
-	original := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
+	original := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
 	input := make([]string, len(original))
 	copy(input, original)
 	ResolveCommand("/proj", input, "42")

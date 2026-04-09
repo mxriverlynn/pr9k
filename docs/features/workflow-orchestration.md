@@ -116,7 +116,7 @@ type ResolvedStep struct {
 
 `Run()` executes the full workflow lifecycle:
 
-1. **Banner** — reads and displays `ralph-bash/ralph-art.txt`
+1. **Banner** — displays the embedded `ralph-art.txt` banner (compiled into the binary via `//go:embed`)
 2. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
 3. **Iteration loop** — for each iteration (1..N):
    - Fetches the next issue via `scripts/get_next_issue`
@@ -220,6 +220,8 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) { a.h.SetFinaliz
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
+- [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create and modify workflow step sequences
+- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How iteration variables are captured and injected into steps
 - [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How RunStep executes subprocesses
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig
