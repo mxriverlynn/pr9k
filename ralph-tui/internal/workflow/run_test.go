@@ -673,6 +673,11 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 	if !strings.Contains(prompt, "STARTINGSHA=abc123") {
 		t.Errorf("expected STARTINGSHA=abc123 in prompt, got %q", prompt)
 	}
+	// Gap 4: vars must be prepended (before file content), not appended.
+	wantPrefix := "ISSUENUMBER=42\nSTARTINGSHA=abc123\n"
+	if !strings.HasPrefix(prompt, wantPrefix) {
+		t.Errorf("expected prompt to start with %q, got %q", wantPrefix, prompt)
+	}
 }
 
 // TestBuildIterationSteps_ClaudeStepMissingPromptFile verifies that a claude

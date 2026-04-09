@@ -662,3 +662,96 @@ func TestLoadWorkflowConfig_EmptyPhasesValid(t *testing.T) {
 		t.Error("expected all phases to be empty")
 	}
 }
+
+// Gap 1: DefaultModel/DefaultPermissionMode with explicit values
+func TestLoadWorkflowConfig_ClaudeStepDefaultsExplicitValues(t *testing.T) {
+	s := steps.Step{Name: "x", PromptFile: "work.md", Model: "opus", PermissionMode: "bypassPermissions"}
+	if s.DefaultModel() != "opus" {
+		t.Errorf("DefaultModel: got %q, want %q", s.DefaultModel(), "opus")
+	}
+	if s.DefaultPermissionMode() != "bypassPermissions" {
+		t.Errorf("DefaultPermissionMode: got %q, want %q", s.DefaultPermissionMode(), "bypassPermissions")
+	}
+}
+
+// Gap 2: Cross-phase error collection
+func TestLoadWorkflowConfig_MultipleErrorsAcrossPhases(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkflowConfig(t, dir, `{
+		"pre-loop":[{"name":"bad-pre"}],
+		"loop":[{"name":"bad-loop"}],
+		"post-loop":[]
+	}`)
+	_, err := steps.LoadWorkflowConfig(dir, "ralph-steps.json")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), `"bad-pre"`) {
+		t.Errorf("expected error about 'bad-pre' step, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"bad-loop"`) {
+		t.Errorf("expected error about 'bad-loop' step, got: %v", err)
+	}
+}
+
+// Gap 3: exitLoopIfEmpty valid in loop phase
+func TestLoadWorkflowConfig_ExitLoopIfEmptyValidInLoopPhase(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkflowConfig(t, dir, `{
+		"pre-loop":[],
+		"loop":[{"name":"capture","command":["echo"],"exitLoopIfEmpty":true,"outputVariable":"ISSUE"}],
+		"post-loop":[]
+	}`)
+	_, err := steps.LoadWorkflowConfig(dir, "ralph-steps.json")
+	if err != nil {
+		t.Errorf("expected no error for valid exitLoopIfEmpty in loop phase, got: %v", err)
+	}
+}
+
+// Gap 5: Error messages include file path
+func TestLoadWorkflowConfig_MissingFileErrorIncludesPath(t *testing.T) {
+	_, err := steps.LoadWorkflowConfig("/nonexistent", "ralph-steps.json")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+	wantPath := filepath.Join("/nonexistent", "ralph-steps.json")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
+	}
+}
+
+func TestLoadWorkflowConfig_MalformedJSONErrorIncludesPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`not json`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := steps.LoadWorkflowConfig(dir, "ralph-steps.json")
+	if err == nil {
+		t.Fatal("expected error for malformed JSON, got nil")
+	}
+	wantPath := filepath.Join(dir, "ralph-steps.json")
+	if !strings.Contains(err.Error(), wantPath) {
+		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
+	}
+}
+
+// Gap 6: InjectVars JSON deserialization
+func TestLoadWorkflowConfig_InjectVarsDeserialized(t *testing.T) {
+	dir := t.TempDir()
+	writeWorkflowConfig(t, dir, `{
+		"pre-loop":[],
+		"loop":[{"name":"inject","promptFile":"work.md","injectVariables":["ISSUE","SHA"]}],
+		"post-loop":[]
+	}`)
+	cfg, err := steps.LoadWorkflowConfig(dir, "ralph-steps.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s := cfg.Loop[0]
+	if len(s.InjectVars) != 2 {
+		t.Fatalf("expected 2 InjectVars, got %d: %v", len(s.InjectVars), s.InjectVars)
+	}
+	if s.InjectVars[0] != "ISSUE" || s.InjectVars[1] != "SHA" {
+		t.Errorf("expected InjectVars=[ISSUE SHA], got %v", s.InjectVars)
+	}
+}
