@@ -205,6 +205,154 @@ func TestValidateVariables_LoopVarAvailableToLaterLoopStep(t *testing.T) {
 	}
 }
 
+// T13 — Post-loop command referencing loop-scoped variable.
+func TestValidateVariables_PostLoopCommandRefLoopVar(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		Loop: []steps.Step{
+			{Name: "GetIssue", Command: []string{"get-issue"}, OutputVariable: "ISSUE_NUMBER"},
+		},
+		PostLoop: []steps.Step{
+			{Name: "Finalize", Command: []string{"finalize", "{{ISSUE_NUMBER}}"}},
+		},
+	}
+	err := steps.ValidateVariables(cfg, dir)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), `references loop-scoped variable "ISSUE_NUMBER" from post-loop`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// T14 — Self-referencing outputVariable in command (forward reference to own output).
+func TestValidateVariables_SelfReferencingOutputVariable(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		Loop: []steps.Step{
+			{Name: "SelfRef", Command: []string{"use", "{{A}}"}, OutputVariable: "A"},
+		},
+	}
+	err := steps.ValidateVariables(cfg, dir)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), `references variable "A" declared by later step`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// T15 — Prompt file read failure during validation.
+func TestValidateVariables_PromptFileReadFailure(t *testing.T) {
+	dir := makePromptDir(t, nil) // prompts dir exists but file does not
+	cfg := &steps.WorkflowConfig{
+		Loop: []steps.Step{
+			{Name: "Missing", PromptFile: "nonexistent.txt"},
+		},
+	}
+	err := steps.ValidateVariables(cfg, dir)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not read prompt file") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// T17 — Empty config (nil phases) passes validation.
+func TestValidateVariables_EmptyConfig(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{}
+	if err := steps.ValidateVariables(cfg, dir); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// T18 — Duplicate outputVariable within same phase: first-declaration-wins.
+func TestValidateVariables_DuplicateOutputVariableSamePhase(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		PreLoop: []steps.Step{
+			{Name: "SetX1", Command: []string{"set-x"}, OutputVariable: "X"},
+			{Name: "SetX2", Command: []string{"set-x-again"}, OutputVariable: "X"},
+		},
+		Loop: []steps.Step{
+			{Name: "UseX", Command: []string{"use", "{{X}}"}},
+		},
+	}
+	if err := steps.ValidateVariables(cfg, dir); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// T19 — Post-loop forward reference within phase.
+func TestValidateVariables_PostLoopForwardReference(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		PostLoop: []steps.Step{
+			{Name: "UseB", Command: []string{"use", "{{B}}"}},
+			{Name: "DefB", Command: []string{"def-b"}, OutputVariable: "B"},
+		},
+	}
+	err := steps.ValidateVariables(cfg, dir)
+	if err == nil {
+		t.Fatal("expected forward reference error, got nil")
+	}
+	if !strings.Contains(err.Error(), `references variable "B" declared by later step`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// T20 — Pre-loop forward reference within phase.
+func TestValidateVariables_PreLoopForwardReference(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		PreLoop: []steps.Step{
+			{Name: "UseB", Command: []string{"use", "{{B}}"}},
+			{Name: "DefB", Command: []string{"def-b"}, OutputVariable: "B"},
+		},
+	}
+	err := steps.ValidateVariables(cfg, dir)
+	if err == nil {
+		t.Fatal("expected forward reference error, got nil")
+	}
+	if !strings.Contains(err.Error(), `references variable "B" declared by later step`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// T21 — scanVars returns empty: prompt with no placeholders passes cleanly.
+func TestValidateVariables_PromptWithNoPlaceholders(t *testing.T) {
+	dir := makePromptDir(t, map[string]string{
+		"plain.txt": "just plain text, no placeholders here",
+	})
+	cfg := &steps.WorkflowConfig{
+		Loop: []steps.Step{
+			{Name: "Plain", PromptFile: "plain.txt", InjectVars: []string{}},
+		},
+	}
+	if err := steps.ValidateVariables(cfg, dir); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+// T22 — Multiple {{VAR}} references in a single command argument, both reachable.
+func TestValidateVariables_MultipleVarsInSingleArg(t *testing.T) {
+	dir := makePromptDir(t, nil)
+	cfg := &steps.WorkflowConfig{
+		PreLoop: []steps.Step{
+			{Name: "SetA", Command: []string{"set-a"}, OutputVariable: "A"},
+			{Name: "SetB", Command: []string{"set-b"}, OutputVariable: "B"},
+		},
+		Loop: []steps.Step{
+			{Name: "UseAB", Command: []string{"cmd", "{{A}}-{{B}}"}},
+		},
+	}
+	if err := steps.ValidateVariables(cfg, dir); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
 // T11 — Multiple errors are all collected.
 func TestValidateVariables_MultipleErrorsCollected(t *testing.T) {
 	dir := makePromptDir(t, map[string]string{

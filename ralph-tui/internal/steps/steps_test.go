@@ -840,6 +840,29 @@ func TestBuildPrompt_NilVarsWithTemplatePlaceholder(t *testing.T) {
 	}
 }
 
+// T16 — LoadWorkflowConfig surfaces variable validation errors.
+func TestLoadWorkflowConfig_VariableValidationError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkflowConfig(t, dir, `{
+		"pre-loop":[],
+		"loop":[{"name":"BadCmd","command":["use","{{UNDEFINED}}"]}],
+		"post-loop":[]
+	}`)
+	cfg, err := steps.LoadWorkflowConfig(dir, "ralph-steps.json")
+	if err == nil {
+		t.Fatal("expected variable validation error, got nil")
+	}
+	if cfg != nil {
+		t.Errorf("expected nil config on error, got %+v", cfg)
+	}
+	if !strings.Contains(err.Error(), "references undefined variable") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // Gap 6: InjectVars JSON deserialization
 func TestLoadWorkflowConfig_InjectVarsDeserialized(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "work.md", "Issue: {{ISSUE}} SHA: {{SHA}}")
