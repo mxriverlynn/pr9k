@@ -79,6 +79,40 @@ if strings.Contains(command[0], "/") {
 }
 ```
 
+## Export shared utilities from the owning package — never copy
+
+When two packages need the same utility function, export it from the package that owns the concept and have the consumer import it. Copy-pasting silently diverges: the copies start identical and drift apart as each is maintained independently. Code review is the typical moment this is caught — treat the discovery as an immediate refactor signal, not a deferred note.
+
+```go
+// steps/steps.go — owns variable substitution
+func BuildReplacer(vars map[string]string) *strings.Replacer { ... }
+
+// workflow/workflow.go — imports and reuses it
+func ResolveCommand(projectDir string, command []string, vars map[string]string) []string {
+    r := steps.BuildReplacer(vars)
+    // ...
+}
+```
+
+## Do not cache user-editable inputs in long-running processes
+
+In a long-running process where the user can edit config files between iterations, read config inputs fresh on every use rather than caching them at startup. Caching means the user must restart the process to pick up their edits; re-reading on each use lets them edit and retry without stopping.
+
+Apply this when:
+- A step is retried interactively (the user may have fixed a prompt file between attempts)
+- A loop runs many iterations (config changes should take effect in the next iteration)
+
+```go
+// Good — re-read prompt file on every attempt, including retries
+func ValidateStepJIT(step Step, projectDir string, vars map[string]string) error {
+    data, err := os.ReadFile(filepath.Join(projectDir, "prompts", step.PromptFile))
+    // ...
+}
+
+// Bad — read once at startup, cache for all retries
+type runner struct { promptCache map[string]string }
+```
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles

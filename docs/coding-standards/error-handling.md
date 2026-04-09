@@ -80,6 +80,28 @@ if err != nil {
 // username may be empty — callers must tolerate that
 ```
 
+## Collect all errors before returning
+
+Validation functions must collect every error before returning — never return on the first failure. Callers need the complete picture to fix their config or code in a single pass. Accumulate errors in a `[]string` slice, then join and wrap at the end.
+
+```go
+var errs []string
+
+for _, step := range steps {
+    if err := checkStep(step); err != nil {
+        errs = append(errs, err.Error())
+        continue  // keep checking remaining steps
+    }
+}
+
+if len(errs) > 0 {
+    return fmt.Errorf("steps: %s", strings.Join(errs, "; "))
+}
+return nil
+```
+
+Use `continue` to skip dependent sub-checks for a step that already failed (e.g., skip prompt body checks when the prompt file cannot be read), but never `return` early from the outer validation loop.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles

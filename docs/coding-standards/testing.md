@@ -100,6 +100,34 @@ func (s *spyHeader) getCalls() []string {
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
 
+## Non-existence assertions must verify the correct path
+
+A test that asserts a file or directory does NOT exist passes trivially if the path was never correct. Before writing a non-existence assertion, confirm the path is right — check a sibling that should still exist, or inspect git history to verify the path was present before deletion.
+
+```go
+// Bad — passes trivially if root/configs/ never existed
+_, err := os.Stat(filepath.Join(root, "configs"))
+require.True(t, os.IsNotExist(err))
+
+// Good — confirm the sibling that should exist is there (proves the root is correct),
+// then assert the deleted directory is gone
+_, err = os.Stat(filepath.Join(root, "ralph-tui", "configs"))
+require.True(t, os.IsNotExist(err), "ralph-tui/configs/ should have been deleted")
+```
+
+## Test the production config, not just synthetic fixtures
+
+For any config-driven system, include at least one test that loads and validates the actual production config file. Synthetic test configs exercise the parser; only a production config test catches breakage from real config edits. Place this test in the package that owns config loading so it runs as part of `go test ./...`.
+
+```go
+func TestProductionConfig_LoadsAndValidates(t *testing.T) {
+    root := projectRoot(t)
+    cfg, err := steps.LoadWorkflowConfig(filepath.Join(root, "ralph-steps.json"), root)
+    require.NoError(t, err)
+    require.NotEmpty(t, cfg.Loop)
+}
+```
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle
