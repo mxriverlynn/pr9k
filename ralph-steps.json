@@ -1,0 +1,82 @@
+{
+  "pre-loop": [
+    {
+      "name": "Get GitHub username",
+      "command": ["scripts/get_gh_user"],
+      "outputVariable": "GH_USERNAME"
+    }
+  ],
+  "loop": [
+    {
+      "name": "Get next issue",
+      "command": ["scripts/get_next_issue", "{{GH_USERNAME}}"],
+      "outputVariable": "ISSUE_NUMBER",
+      "exitLoopIfEmpty": true
+    },
+    {
+      "name": "Get starting SHA",
+      "command": ["git", "rev-parse", "HEAD"],
+      "outputVariable": "STARTING_SHA"
+    },
+    {
+      "name": "Feature work",
+      "model": "sonnet",
+      "promptFile": "feature-work.md",
+      "injectVariables": ["ISSUE_NUMBER"]
+    },
+    {
+      "name": "Test planning",
+      "model": "opus",
+      "promptFile": "test-planning.md",
+      "injectVariables": ["ISSUE_NUMBER", "STARTING_SHA"]
+    },
+    {
+      "name": "Test writing",
+      "model": "sonnet",
+      "promptFile": "test-writing.md",
+      "injectVariables": ["ISSUE_NUMBER"]
+    },
+    {
+      "name": "Code review",
+      "model": "opus",
+      "promptFile": "code-review-changes.md",
+      "injectVariables": ["ISSUE_NUMBER", "STARTING_SHA"]
+    },
+    {
+      "name": "Review fixes",
+      "model": "sonnet",
+      "promptFile": "code-review-fixes.md",
+      "injectVariables": ["ISSUE_NUMBER"]
+    },
+    {
+      "name": "Close issue",
+      "command": ["scripts/close_gh_issue", "{{ISSUE_NUMBER}}"]
+    },
+    {
+      "name": "Update docs",
+      "model": "sonnet",
+      "promptFile": "update-docs.md",
+      "injectVariables": ["ISSUE_NUMBER", "STARTING_SHA"]
+    },
+    {
+      "name": "Git push",
+      "command": ["git", "push"]
+    }
+  ],
+  "post-loop": [
+    {
+      "name": "Deferred work",
+      "model": "sonnet",
+      "promptFile": "deferred-work.md"
+    },
+    {
+      "name": "Lessons learned",
+      "model": "sonnet",
+      "promptFile": "lessons-learned.md"
+    },
+    {
+      "name": "Final git push",
+      "command": ["git", "push"]
+    }
+  ]
+}

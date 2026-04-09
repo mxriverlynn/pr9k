@@ -138,18 +138,6 @@ func validateStructure(cfg *WorkflowConfig) error {
 	return nil
 }
 
-// LoadSteps loads the iteration step definitions from configs/ralph-steps.json,
-// resolved relative to projectDir.
-func LoadSteps(projectDir string) ([]Step, error) {
-	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-steps.json"))
-}
-
-// LoadFinalizeSteps loads the finalization step definitions from
-// configs/ralph-finalize-steps.json, resolved relative to projectDir.
-func LoadFinalizeSteps(projectDir string) ([]Step, error) {
-	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-finalize-steps.json"))
-}
-
 // BuildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
 // corresponding value for each entry in vars. Substitution is single-pass, so
 // a variable value that itself contains "{{OTHER}}" is never re-expanded
@@ -178,18 +166,4 @@ func BuildPrompt(projectDir string, step Step, vars map[string]string) (string, 
 	}
 
 	return BuildReplacer(vars).Replace(string(data)), nil
-}
-
-func loadStepsFile(path string) ([]Step, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("steps: could not read %s: %w", path, err)
-	}
-
-	var steps []Step
-	if err := json.Unmarshal(data, &steps); err != nil {
-		return nil, fmt.Errorf("steps: malformed JSON in %s: %w", path, err)
-	}
-
-	return steps, nil
 }
