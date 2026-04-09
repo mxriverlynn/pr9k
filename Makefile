@@ -1,7 +1,7 @@
 .PHONY: build test lint format vet vulncheck mod-tidy ci
 
 build:
-	cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
+	cd ralph-tui && go build -o ../bin/ralph-tui ./cmd/ralph-tui
 
 test:
 	cd ralph-tui && go test -race -count=1 ./...
