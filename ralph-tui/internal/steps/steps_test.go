@@ -524,7 +524,7 @@ func writeWorkflowConfig(t *testing.T, dir, content string) {
 }
 
 func TestLoadWorkflowConfig_ValidThreePhase(t *testing.T) {
-	dir := t.TempDir()
+	dir := makeTempProjectWithPrompt(t, "work.md", "do the work")
 	writeWorkflowConfig(t, dir, `{
 		"pre-loop":  [{"name":"Pre step",  "command":["echo","pre"]}],
 		"loop":      [{"name":"Loop step", "promptFile":"work.md","model":"opus"}],
@@ -842,9 +842,12 @@ func TestBuildPrompt_NilVarsWithTemplatePlaceholder(t *testing.T) {
 
 // Gap 6: InjectVars JSON deserialization
 func TestLoadWorkflowConfig_InjectVarsDeserialized(t *testing.T) {
-	dir := t.TempDir()
+	dir := makeTempProjectWithPrompt(t, "work.md", "Issue: {{ISSUE}} SHA: {{SHA}}")
 	writeWorkflowConfig(t, dir, `{
-		"pre-loop":[],
+		"pre-loop":[
+			{"name":"get-issue","command":["get-issue"],"outputVariable":"ISSUE"},
+			{"name":"get-sha","command":["get-sha"],"outputVariable":"SHA"}
+		],
 		"loop":[{"name":"inject","promptFile":"work.md","injectVariables":["ISSUE","SHA"]}],
 		"post-loop":[]
 	}`)

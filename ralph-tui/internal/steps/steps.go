@@ -70,6 +70,10 @@ func LoadWorkflowConfig(projectDir, stepsFile string) (*WorkflowConfig, error) {
 		return nil, err
 	}
 
+	if err := ValidateVariables(&cfg, projectDir); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
 }
 

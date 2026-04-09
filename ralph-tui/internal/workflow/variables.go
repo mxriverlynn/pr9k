@@ -1,5 +1,7 @@
 package workflow
 
+import "github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+
 // VariablePool is a simple in-memory key-value store for workflow variables.
 // It is only accessed sequentially from Run()'s step loop (single goroutine),
 // so no mutex is needed.
@@ -40,4 +42,16 @@ func (vp *VariablePool) Clear(names []string) {
 	for _, name := range names {
 		delete(vp.vars, name)
 	}
+}
+
+// LoopVariableNames returns the outputVariable names declared by loop-phase steps
+// in cfg. Steps with an empty outputVariable are skipped.
+func LoopVariableNames(cfg *steps.WorkflowConfig) []string {
+	var names []string
+	for _, s := range cfg.Loop {
+		if s.OutputVariable != "" {
+			names = append(names, s.OutputVariable)
+		}
+	}
+	return names
 }

@@ -1,6 +1,10 @@
 package workflow
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+)
 
 // T1 — Set and Get
 func TestVariablePool_SetAndGet(t *testing.T) {
@@ -86,5 +90,33 @@ func TestVariablePool_ClearNonexistentKeys(t *testing.T) {
 
 	if v, ok := pool.Get("PRESENT"); !ok || v != "value" {
 		t.Errorf("expected PRESENT to remain, got ok=%v v=%q", ok, v)
+	}
+}
+
+// T12 — LoopVariableNames returns all outputVariable names from loop steps.
+func TestLoopVariableNames(t *testing.T) {
+	cfg := &steps.WorkflowConfig{
+		PreLoop: []steps.Step{
+			{Name: "SetPre", Command: []string{"set-pre"}, OutputVariable: "PRE_VAR"},
+		},
+		Loop: []steps.Step{
+			{Name: "Step1", Command: []string{"step1"}, OutputVariable: "LOOP_A"},
+			{Name: "Step2", Command: []string{"step2"}},
+			{Name: "Step3", Command: []string{"step3"}, OutputVariable: "LOOP_B"},
+		},
+		PostLoop: []steps.Step{
+			{Name: "PostStep", Command: []string{"post"}, OutputVariable: "POST_VAR"},
+		},
+	}
+
+	got := LoopVariableNames(cfg)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 loop variable names, got %d: %v", len(got), got)
+	}
+	if got[0] != "LOOP_A" {
+		t.Errorf("expected got[0] == %q, got %q", "LOOP_A", got[0])
+	}
+	if got[1] != "LOOP_B" {
+		t.Errorf("expected got[1] == %q, got %q", "LOOP_B", got[1])
 	}
 }
