@@ -966,13 +966,13 @@ func TestProductionConfig_ModelAssignments(t *testing.T) {
 	}
 
 	wantModels := map[string]string{
-		"Feature work":   "sonnet",
-		"Test planning":  "opus",
-		"Test writing":   "sonnet",
-		"Code review":    "opus",
-		"Review fixes":   "sonnet",
-		"Update docs":    "sonnet",
-		"Deferred work":  "sonnet",
+		"Feature work":    "sonnet",
+		"Test planning":   "opus",
+		"Test writing":    "sonnet",
+		"Code review":     "opus",
+		"Review fixes":    "sonnet",
+		"Update docs":     "sonnet",
+		"Deferred work":   "sonnet",
 		"Lessons learned": "sonnet",
 	}
 
