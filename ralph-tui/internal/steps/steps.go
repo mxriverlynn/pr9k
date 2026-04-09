@@ -146,8 +146,24 @@ func LoadFinalizeSteps(projectDir string) ([]Step, error) {
 	return loadStepsFile(filepath.Join(projectDir, "configs", "ralph-finalize-steps.json"))
 }
 
-// BuildPrompt reads the prompt file for the given step and returns its content.
-func BuildPrompt(projectDir string, step Step) (string, error) {
+// buildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
+// corresponding value for each entry in vars. Substitution is single-pass, so
+// a variable value that itself contains "{{OTHER}}" is never re-expanded
+// (template injection safe).
+func buildReplacer(vars map[string]string) *strings.Replacer {
+	pairs := make([]string, 0, len(vars)*2)
+	for k, v := range vars {
+		pairs = append(pairs, "{{"+k+"}}", v)
+	}
+	return strings.NewReplacer(pairs...)
+}
+
+// BuildPrompt reads the prompt file for the given step, applies single-pass
+// "{{KEY}}" substitution from vars, and returns the result.
+// Unrecognized "{{...}}" patterns are left as literal text.
+// Substitution is single-pass, so a variable value containing "{{OTHER}}" is
+// never re-expanded (template injection safe).
+func BuildPrompt(projectDir string, step Step, vars map[string]string) (string, error) {
 	if step.PromptFile == "" {
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
@@ -157,7 +173,7 @@ func BuildPrompt(projectDir string, step Step) (string, error) {
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
 	}
 
-	return string(data), nil
+	return buildReplacer(vars).Replace(string(data)), nil
 }
 
 func loadStepsFile(path string) ([]Step, error) {

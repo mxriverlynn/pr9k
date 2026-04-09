@@ -278,7 +278,7 @@ func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "do the thing\n")
 	step := steps.Step{PromptFile: "feature.txt"}
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestBuildPrompt_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	step := steps.Step{PromptFile: "missing.txt"}
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, nil)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
@@ -303,7 +303,7 @@ func TestBuildPrompt_RealNewlines(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "nl.txt", "line one\nline two\n")
 	step := steps.Step{PromptFile: "nl.txt"}
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestBuildPrompt_EmptyFile(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "empty.txt", "")
 	step := steps.Step{PromptFile: "empty.txt"}
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestBuildPrompt_NoTrailingNewline(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "notail.txt", "no trailing newline")
 	step := steps.Step{PromptFile: "notail.txt"}
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -352,7 +352,7 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	// No prompts/ subdirectory — file will not exist
 	step := steps.Step{PromptFile: "missing.txt"}
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, nil)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
@@ -372,7 +372,7 @@ func TestBuildPrompt_MultilineContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "multi.txt", "line one\nline two\nline three\n")
 	step := steps.Step{PromptFile: "multi.txt"}
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -392,9 +392,98 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 	}
 	step := steps.Step{PromptFile: ""}
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, nil)
 	if err == nil {
 		t.Fatal("expected error when PromptFile is empty, got nil")
+	}
+}
+
+// New tests per issue #22
+
+// Test: substitute single variable in prompt
+func TestBuildPrompt_SubstituteSingleVariable(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "issue.txt", "Issue: {{ISSUE_NUMBER}}\n")
+	step := steps.Step{PromptFile: "issue.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, map[string]string{"ISSUE_NUMBER": "42"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "Issue: 42\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+// Test: substitute multiple variables in prompt
+func TestBuildPrompt_SubstituteMultipleVariables(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "multi-var.txt", "Issue: {{ISSUE_NUMBER}} SHA: {{STARTING_SHA}}\n")
+	step := steps.Step{PromptFile: "multi-var.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, map[string]string{
+		"ISSUE_NUMBER": "42",
+		"STARTING_SHA": "abc123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "Issue: 42 SHA: abc123\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+// Test: no variables in prompt — content unchanged
+func TestBuildPrompt_NoVariables_Passthrough(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "plain.txt", "no templates here\n")
+	step := steps.Step{PromptFile: "plain.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, map[string]string{"X": "y"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "no templates here\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+// Test: single-pass prevents injection — var value containing "{{OTHER}}" must NOT expand
+func TestBuildPrompt_SinglePassPreventsInjection(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "inject.txt", "{{CAPTURED}}")
+	step := steps.Step{PromptFile: "inject.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, map[string]string{
+		"CAPTURED": "{{OTHER}}",
+		"OTHER":    "injected",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Single-pass: "{{CAPTURED}}" becomes "{{OTHER}}" literally; not re-expanded.
+	want := "{{OTHER}}"
+	if result != want {
+		t.Errorf("got %q, want %q (injection should be prevented)", result, want)
+	}
+}
+
+// Test: unrecognized variable left as literal text
+func TestBuildPrompt_UnrecognizedVarLeftAsLiteral(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "unknown.txt", "{{UNKNOWN_VAR}}")
+	step := steps.Step{PromptFile: "unknown.txt"}
+
+	result, err := steps.BuildPrompt(dir, step, map[string]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "{{UNKNOWN_VAR}}"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
 	}
 }
 

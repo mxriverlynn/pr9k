@@ -626,13 +626,15 @@ func TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary(t *testing.T) {
 }
 
 // TestBuildIterationSteps_ClaudeStep verifies that a claude step produces the
-// correct CLI command with the expected flags and prompt content.
+// correct CLI command with the expected flags and prompt content, including
+// variable substitution for ISSUENUMBER and STARTINGSHA.
 func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "prompts", "test-prompt.txt"), []byte("do something"), 0644); err != nil {
+	promptContent := "issue={{ISSUENUMBER}} sha={{STARTINGSHA}}"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "test-prompt.txt"), []byte(promptContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -667,16 +669,9 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 		t.Errorf("expected -p flag, got %q", rs.Command[5])
 	}
 	prompt := rs.Command[6]
-	if !strings.Contains(prompt, "ISSUENUMBER=42") {
-		t.Errorf("expected ISSUENUMBER=42 in prompt, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "STARTINGSHA=abc123") {
-		t.Errorf("expected STARTINGSHA=abc123 in prompt, got %q", prompt)
-	}
-	// Gap 4: vars must be prepended (before file content), not appended.
-	wantPrefix := "ISSUENUMBER=42\nSTARTINGSHA=abc123\n"
-	if !strings.HasPrefix(prompt, wantPrefix) {
-		t.Errorf("expected prompt to start with %q, got %q", wantPrefix, prompt)
+	wantPrompt := "issue=42 sha=abc123"
+	if prompt != wantPrompt {
+		t.Errorf("expected prompt %q, got %q", wantPrompt, prompt)
 	}
 }
 

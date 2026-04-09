@@ -348,7 +348,7 @@ func TestClose_IsIdempotent(t *testing.T) {
 func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 	projectDir := "/home/user/project"
 	cmd := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "42")
+	got := ResolveCommand(projectDir, cmd, map[string]string{"ISSUE_ID": "42"})
 	want := []string{"/home/user/project/ralph-bash/scripts/close_gh_issue", "42"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -363,7 +363,7 @@ func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 	projectDir := "/home/user/project"
 	cmd := []string{"git", "push"}
-	got := ResolveCommand(projectDir, cmd, "99")
+	got := ResolveCommand(projectDir, cmd, map[string]string{})
 	want := []string{"git", "push"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -378,7 +378,7 @@ func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"ralph-bash/scripts/foo", "{{ISSUE_ID}}", "--label={{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "7")
+	got := ResolveCommand(projectDir, cmd, map[string]string{"ISSUE_ID": "7"})
 	want := []string{"/proj/ralph-bash/scripts/foo", "7", "--label=7"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -393,7 +393,7 @@ func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 	projectDir := "/base"
 	cmd := []string{"ralph-bash/scripts/foo", "arg"}
-	got := ResolveCommand(projectDir, cmd, "1")
+	got := ResolveCommand(projectDir, cmd, map[string]string{})
 	wantExe := "/base/ralph-bash/scripts/foo"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
@@ -403,7 +403,7 @@ func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"/usr/bin/env", "{{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "3")
+	got := ResolveCommand(projectDir, cmd, map[string]string{"ISSUE_ID": "3"})
 	if got[0] != "/usr/bin/env" {
 		t.Errorf("exe: got %q, want /usr/bin/env", got[0])
 	}
@@ -415,7 +415,7 @@ func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
 func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"git", "commit", "-m", "fix things"}
-	got := ResolveCommand(projectDir, cmd, "10")
+	got := ResolveCommand(projectDir, cmd, map[string]string{})
 	want := []string{"git", "commit", "-m", "fix things"}
 	for i := range want {
 		if got[i] != want[i] {
@@ -425,7 +425,7 @@ func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 }
 
 func TestResolveCommand_EmptySlice(t *testing.T) {
-	got := ResolveCommand("/proj", []string{}, "42")
+	got := ResolveCommand("/proj", []string{}, map[string]string{})
 	if len(got) != 0 {
 		t.Errorf("expected empty slice, got %v", got)
 	}
@@ -435,7 +435,7 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 	original := []string{"ralph-bash/scripts/close_gh_issue", "{{ISSUE_ID}}"}
 	input := make([]string, len(original))
 	copy(input, original)
-	ResolveCommand("/proj", input, "42")
+	ResolveCommand("/proj", input, map[string]string{"ISSUE_ID": "42"})
 	for i := range original {
 		if input[i] != original[i] {
 			t.Errorf("input[%d] mutated: got %q, want %q", i, input[i], original[i])
@@ -445,7 +445,7 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 
 func TestResolveCommand_TemplateInExecutable(t *testing.T) {
 	cmd := []string{"scripts/issue-{{ISSUE_ID}}/run", "arg"}
-	got := ResolveCommand("/proj", cmd, "5")
+	got := ResolveCommand("/proj", cmd, map[string]string{"ISSUE_ID": "5"})
 	wantExe := "/proj/scripts/issue-5/run"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
@@ -453,9 +453,48 @@ func TestResolveCommand_TemplateInExecutable(t *testing.T) {
 }
 
 func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
-	got := ResolveCommand("/proj", []string{"git"}, "1")
+	got := ResolveCommand("/proj", []string{"git"}, map[string]string{})
 	if got[0] != "git" {
 		t.Errorf("exe: got %q, want %q", got[0], "git")
+	}
+}
+
+// New tests per issue #22
+
+// Test: substitute single variable in command
+func TestResolveCommand_SubstituteSingleVariable(t *testing.T) {
+	cmd := []string{"scripts/get_next_issue", "{{GH_USERNAME}}"}
+	got := ResolveCommand("/proj", cmd, map[string]string{"GH_USERNAME": "octocat"})
+	if got[1] != "octocat" {
+		t.Errorf("arg: got %q, want %q", got[1], "octocat")
+	}
+}
+
+// Test: substitute multiple variables
+func TestResolveCommand_SubstituteMultipleVariables(t *testing.T) {
+	cmd := []string{"echo", "{{A}}-{{B}}"}
+	got := ResolveCommand("/proj", cmd, map[string]string{"A": "hello", "B": "world"})
+	if got[1] != "hello-world" {
+		t.Errorf("arg: got %q, want %q", got[1], "hello-world")
+	}
+}
+
+// Test: single-pass prevents injection — a var value containing "{{EVIL}}" must NOT expand
+func TestResolveCommand_SinglePassPreventsInjection(t *testing.T) {
+	cmd := []string{"echo", "{{USER}}"}
+	got := ResolveCommand("/proj", cmd, map[string]string{"USER": "{{EVIL}}", "EVIL": "injected"})
+	// Single-pass: "{{USER}}" becomes "{{EVIL}}" literally; "{{EVIL}}" is not re-expanded.
+	if got[1] != "{{EVIL}}" {
+		t.Errorf("arg: got %q, want %q (injection should be prevented)", got[1], "{{EVIL}}")
+	}
+}
+
+// Test: unrecognized variable left as literal text
+func TestResolveCommand_UnrecognizedVarLeftAsLiteral(t *testing.T) {
+	cmd := []string{"echo", "{{UNKNOWN}}"}
+	got := ResolveCommand("/proj", cmd, map[string]string{})
+	if got[1] != "{{UNKNOWN}}" {
+		t.Errorf("arg: got %q, want %q", got[1], "{{UNKNOWN}}")
 	}
 }
 

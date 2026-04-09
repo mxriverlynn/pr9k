@@ -193,22 +193,37 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 	return CaptureOutput(context.Background(), command, r.workingDir)
 }
 
+// buildReplacer creates a strings.Replacer that maps "{{KEY}}" to the
+// corresponding value for each entry in vars. Substitution is single-pass, so
+// a variable value that itself contains "{{OTHER}}" is never re-expanded
+// (template injection safe).
+func buildReplacer(vars map[string]string) *strings.Replacer {
+	pairs := make([]string, 0, len(vars)*2)
+	for k, v := range vars {
+		pairs = append(pairs, "{{"+k+"}}", v)
+	}
+	return strings.NewReplacer(pairs...)
+}
+
 // ResolveCommand replaces template variables in command and resolves relative
 // script paths against projectDir.
 //
-// For each element:
-//   - All occurrences of "{{ISSUE_ID}}" are replaced with issueID.
-//   - The first element (the executable) is resolved relative to projectDir if
-//     it is a relative path containing a path separator (i.e. not a bare
-//     command like "git").
-func ResolveCommand(projectDir string, command []string, issueID string) []string {
+// For each element, all "{{KEY}}" occurrences are replaced with the
+// corresponding value from vars. The first element (the executable) is
+// additionally resolved relative to projectDir if it is a relative path
+// containing a path separator (i.e. not a bare command like "git").
+// Substitution is single-pass, so a variable value containing "{{OTHER}}" is
+// treated as literal text and never expanded.
+// Unrecognized "{{...}}" patterns are left as literal text.
+func ResolveCommand(projectDir string, command []string, vars map[string]string) []string {
 	if len(command) == 0 {
 		return command
 	}
 
+	replacer := buildReplacer(vars)
 	result := make([]string, len(command))
 	for i, arg := range command {
-		result[i] = strings.ReplaceAll(arg, "{{ISSUE_ID}}", issueID)
+		result[i] = replacer.Replace(arg)
 	}
 
 	// Resolve the executable if it looks like a relative script path.
