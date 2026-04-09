@@ -75,6 +75,8 @@ None — all design decisions resolved.
   - `SilenceErrors: true`, `SilenceUsage: true` — prevents cobra from printing its own error/usage output, since `main.go` already handles error formatting
   - Flags: `--iterations` / `-n` (int, default 0), `--project-dir` / `-p` (string, default "")
   - `RunE`: validate `--iterations >= 0`, resolve project-dir if empty, populate `Config`
+  - Error messages from `RunE` must use `cli:` package prefix per coding standard (e.g., `"cli: --iterations must be a non-negative integer"`, `"cli: could not resolve project dir: %w"`)
+  - Note: pflag-generated errors (e.g., `--iterations abc` failing int parse, or unknown flags) bypass `RunE` entirely and will not carry the `cli:` prefix. This is acceptable — pflag errors are self-describing and include the flag name. Wrapping them would require a custom `FlagErrorFunc` for marginal benefit.
 - Add `Execute() (*Config, error)`:
   - Creates `&Config{}`, calls `NewCommand(cfg)`, runs `cmd.Execute()`, returns the config
   - **Guard against `--help`/no-`RunE` path:** Track whether `RunE` actually executed (e.g., a `bool` set inside `RunE`). If `cmd.Execute()` returns nil but `RunE` never ran (help was printed), return `nil, nil` — `main.go` checks for `cfg == nil` and exits cleanly without starting the workflow
@@ -92,11 +94,17 @@ None — all design decisions resolved.
   - Positional args rejected (cobra.NoArgs)
   - Unknown flags rejected
   - `--help` → Execute() returns nil config, nil error (no workflow started)
+  - `--iterations=3` (equals syntax) → iterations=3 (pflag handles natively)
+  - `--iterations` with no value → error from pflag
+  - `-n` with no value → error from pflag
+  - `-- extraarg` → error from cobra.NoArgs (args after `--` are still positional)
+  - `-n 0` (explicit zero) → iterations=0, equivalent to omitting (until-done mode)
   - Large iteration counts accepted
 
 ### Step 4: Update `cmd/ralph-tui/main.go`
 - Replace `cfg, err := cli.ParseArgs(os.Args[1:])` with `cfg, err := cli.Execute()`
 - Add nil check: if `cfg == nil && err == nil`, exit 0 (help was printed, no work to do)
+- Update error output to include a help hint: `fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)` — compensates for `SilenceUsage: true` which prevents cobra from printing usage on flag errors
 - Rest of main.go unchanged — it already consumes `cfg.Iterations` and `cfg.ProjectDir`
 
 ### Step 5: Update loop in `workflow/run.go`
@@ -109,23 +117,34 @@ None — all design decisions resolved.
   - "No issue found" log (line 76): bounded → `"Iteration 3/5 — No issue found."`, unbounded → `"Iteration 3 — No issue found."`
   - Use a helper or inline conditional to format `iterationLabel(i, total)` for both messages
 - Pass `cfg.Iterations` (which is 0 for unbounded) to `header.SetIteration(i, cfg.Iterations, ...)`
+- Completion summary (line 124) is intentionally unchanged — it uses `iterationsRun` (actual count), not `cfg.Iterations`, so it works correctly for both bounded and unbounded modes
 
 ### Step 6: Update header formatting in UI
 - In `SetIteration` implementation, use conditional formatting:
   - `total > 0`: `fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)`
   - `total == 0`: `fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)`
+- Add test in `header_test.go` for the `total == 0` (unbounded) path:
+  - `h.SetIteration(3, 0, "42", "Add widget support")` → `"Iteration 3 — Issue #42: Add widget support"` (no total shown)
 
 ### Step 7: Update workflow tests
-- Add/update tests in `workflow/run_test.go` (if exists) to cover unbounded loop behavior
-- Verify bounded loop still works as before
+- `workflow/run_test.go` exists and has test infrastructure (fakeExecutor, fakeRunHeader, helper functions)
+- Add tests for unbounded loop (`Iterations: 0`):
+  - Unbounded loop runs until `get_next_issue` returns empty — set up captureResults with 2 issues then empty, assert 2 iteration steps ran
+  - Unbounded loop still runs finalization after exhausting issues
+  - Unbounded loop's `SetIteration` calls pass `total=0`
+  - Format strings in log lines use `"Iteration N"` (no total) for unbounded, `"Iteration N/M"` for bounded
+- Add bounded-mode regression test: 3 issues available but `Iterations: 2`, verify only 2 iterations run and the third issue is not fetched — guards against regression in the new conditional loop construct
+- Verify existing bounded loop tests still pass as before (existing tests use `Iterations: 1`, `Iterations: 2`, `Iterations: 3` — all remain valid)
 
 ### Step 8: Update documentation
 - Update all files that reference the old `ralph-tui <iterations>` positional syntax:
-  - `CLAUDE.md` (lines 48, 52) — change to `ralph-tui [-n <iterations>] [-p <project-dir>]`
+  - `README.md` (lines 34, 45, 48, 52) — change to `ralph-tui [-n <iterations>] [-p <project-dir>]`
+  - `CLAUDE.md` (lines 48, 52) — same
   - `docs/project-discovery.md` (line 41) — same
   - `docs/features/cli-configuration.md` — rewrite to reflect cobra flags, remove `reorderArgs` documentation
   - `docs/plans/ralph-tui.md` (lines 432, 438, 648) — update examples
-  - `docs/architecture.md` — update if it references CLI syntax
+  - `docs/architecture.md` (line 129) — update CLI description to reflect cobra flags; remove `reorderArgs` reference
+  - `docs/coding-standards/go-patterns.md` — remove or replace the "Reorder args to work around Go flag package limitations" section; cobra/pflag eliminates this pattern entirely
 - Document the new "until done" mode (omitting `--iterations` runs until no issues remain)
 
 ### Step 9: Verify and clean up
@@ -137,20 +156,23 @@ None — all design decisions resolved.
 
 ## Review Summary
 
-**Iterations completed:** 3 (stopped at iteration 3 — below 80% chance of structural improvement)
+**Iterations completed:** 3 (stopped at iteration 3 — below 80% chance of structural improvement), plus full agent validation
 
-**Assumptions challenged:** 13 primary and secondary assumptions evaluated across iterations:
-- 10 verified against codebase evidence
-- 2 revealed gaps that required plan changes (A9: SilenceErrors, A12: NewCommand signature)
-- 1 uncertain, clarified (A11: loop construct)
+**Assumptions challenged:** 18 primary and secondary assumptions evaluated across 3 iterations:
+- 15 verified against codebase evidence
+- 3 revealed gaps that required plan changes:
+  - A12: Step 8 missing documentation files (architecture.md, go-patterns.md) — added
+  - A11: header_test.go missing test for `total == 0` — added to Step 6
+  - A13: Error messages should use package prefix per coding standard — added to Step 2
 
-**Agent validation findings incorporated:**
-- Evidence-based investigator: confirmed 5/6 assumptions, found 1 missing loop exit path (`buildIterationSteps` error break) — added to Step 5
-- Adversarial validator: found 3 actionable gaps:
-  - V1: `--help` returns unpopulated config — added `RunE`-executed guard to `Execute()` and nil-config check to `main.go`
-  - V3: 5+ documentation files reference old CLI syntax — added Step 8 (documentation update)
-  - V4: `SetIteration` format variants not explicit — specified both in Step 6
-  - V2: unbounded loop infinite-loop risk — documented as accepted risk with rationale
+**Agent validation findings incorporated (round 2):**
+- Evidence-based investigator: confirmed 8/9 assumptions. Finding on `SetFinalization` format string was evaluated as false positive — finalization always has a known step count, unaffected by iteration mode.
+- Adversarial validator: found 4 actionable gaps:
+  - V3: `README.md` (4 lines) missing from Step 8 documentation update list — added
+  - V5: pflag-generated errors bypass `RunE` and lack `cli:` prefix — documented as acceptable exception in Step 2
+  - V6: `SilenceUsage: true` removes help guidance on flag errors — added help hint to Step 4 error output
+  - V7: Missing bounded-mode regression test (more issues available than iterations cap) — added to Step 7
+- Confirmed safe: `--help` guard pattern (V1), `cobra.NoArgs` with `--` separator (V2), integer overflow in unbounded loop (V4)
 
 **Consolidations:** None needed (no internal or external overlap detected)
 
