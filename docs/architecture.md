@@ -21,7 +21,7 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │  │                    workflow.Run (goroutine)                     ││
 │  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
-│  │  │              Iteration Loop (1..N)                      │    ││
+│  │  │     Iteration Loop (1..N, or until no issue found)      │    ││
 │  │  │                                                         │    ││
 │  │  │  get_next_issue → git rev-parse HEAD → build steps      │    ││
 │  │  │       │                                                 │    ││
@@ -144,7 +144,7 @@ The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in
 
 ### [Workflow Orchestration](features/workflow-orchestration.md)
 
-The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over N iterations (each fetching an issue and running 8 steps through the step sequencer), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
+The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over iterations (bounded to N when `--iterations N > 0`, or running until no issue is found when `--iterations 0`), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 

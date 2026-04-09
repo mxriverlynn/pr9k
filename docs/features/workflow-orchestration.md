@@ -2,13 +2,14 @@
 
 Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `Run()` is the top-level orchestration goroutine that manages the full lifecycle: banner display, GitHub user lookup, N iteration loops, finalization phase, and completion summary
+- `Run()` is the top-level orchestration goroutine that manages the full lifecycle: banner display, GitHub user lookup, iteration loop, finalization phase, and completion summary
+- The iteration loop runs for exactly N iterations when `Iterations > 0`, or until no issue is found when `Iterations == 0` (unbounded / run-until-done mode)
 - `Orchestrate()` sequences resolved steps, manages step state transitions (pending → active → done/failed), and handles interactive error recovery
 - Iteration steps are resolved per-iteration with the current issue ID and commit SHA; finalization steps are resolved once
 - The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
@@ -118,9 +119,9 @@ type ResolvedStep struct {
 
 1. **Banner** — displays the embedded `ralph-art.txt` banner (compiled into the binary via `//go:embed`)
 2. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
-3. **Iteration loop** — for each iteration (1..N):
+3. **Iteration loop** — runs from i=1 upward, stopping when `i > Iterations` (bounded) or when no issue is found (unbounded, `Iterations == 0`):
    - Fetches the next issue via `scripts/get_next_issue`
-   - If no issue found, exits the loop early
+   - If no issue found, exits the loop early (the only exit condition in unbounded mode)
    - Captures the current HEAD SHA
    - Updates the status header
    - Builds resolved steps via `buildIterationSteps`
@@ -199,6 +200,21 @@ func runStepWithErrorHandling(...) StepAction {
     }
 }
 ```
+
+### Iteration Label Formatting
+
+`iterationLabel` centralizes the progress display for both bounded and unbounded modes so the format is consistent across log messages and step separators:
+
+```go
+func iterationLabel(i, total int) string {
+    if total > 0 {
+        return fmt.Sprintf("Iteration %d/%d", i, total)
+    }
+    return fmt.Sprintf("Iteration %d", i)
+}
+```
+
+It is called wherever an iteration identifier appears in log output: the "no issue found" early-exit message and the `StepSeparator` line written before each iteration's steps.
 
 ### Header Adapters
 
