@@ -60,8 +60,8 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 **Neutral:**
 
-- The existing `cli.Config` struct and `args_test.go` test suite will need to be rewritten to use cobra's patterns
-- The `reorderArgs()` function and its tests can be deleted entirely
+- The `cli.Config` struct was preserved; `args_test.go` was rewritten with 16 cobra-based test cases
+- The `reorderArgs()` function and its tests were deleted entirely
 
 ## Notes
 
@@ -69,9 +69,9 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/cli/args.go` | Current CLI parsing logic to be replaced |
-| `ralph-tui/internal/cli/args_test.go` | Current test suite (11 cases) to be rewritten |
-| `ralph-tui/cmd/ralph-tui/main.go` | Entry point that calls `cli.ParseArgs()` and wires config into the app |
+| `ralph-tui/internal/cli/args.go` | CLI parsing via cobra: `Execute`, `NewCommand`, `Config`, `resolveProjectDir` |
+| `ralph-tui/internal/cli/args_test.go` | 16 test cases covering all cobra parsing branches |
+| `ralph-tui/cmd/ralph-tui/main.go` | Entry point that calls `cli.Execute()` and wires config into the app |
 | `ralph-tui/internal/workflow/run.go` | Downstream consumer of `cli.Config` via `workflow.RunConfig` |
 
 ### Related Docs

@@ -1,22 +1,22 @@
 # CLI & Configuration
 
-Parses command-line arguments and resolves the project directory that anchors all relative path resolution throughout ralph-tui.
+Parses command-line flags and resolves the project directory that anchors all relative path resolution throughout ralph-tui.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- ralph-tui accepts a required `<iterations>` positional argument and an optional `-project-dir` flag
-- The `reorderArgs` function works around Go's `flag` package limitation of stopping at the first positional argument, allowing flags in any position
-- When `-project-dir` is not provided, the project directory is resolved from the executable's real path via `os.Executable()` + `filepath.EvalSymlinks` (symlink-safe)
+- ralph-tui accepts an optional `--iterations` / `-n` flag (default 0 = run until done) and an optional `--project-dir` / `-p` flag
+- Built on [spf13/cobra](https://github.com/spf13/cobra), which handles POSIX-style flags in any position — no custom reordering needed
+- When `--project-dir` is not provided, the project directory is resolved from the executable's real path via `os.Executable()` + `filepath.EvalSymlinks` (symlink-safe)
 - `ProjectDir` fans out to every subsystem: logger, step loader, prompt builder, command resolver, and the workflow runner
 
 Key files:
-- `ralph-tui/internal/cli/args.go` — ParseArgs, Config, reorderArgs, resolveProjectDir
-- `ralph-tui/internal/cli/args_test.go` — 10 test cases covering all argument parsing branches
-- `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls ParseArgs and distributes Config
+- `ralph-tui/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveProjectDir`
+- `ralph-tui/internal/cli/args_test.go` — 16 test cases covering all argument parsing branches
+- `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
 
 ## Architecture
 
@@ -25,17 +25,13 @@ Key files:
                              │
                              ▼
                       ┌─────────────┐
-                      │ reorderArgs │  move flags before positionals
-                      └──────┬──────┘
-                             │
-                             ▼
-                      ┌─────────────┐
-                      │  flag.Parse  │  extract -project-dir
+                      │    cobra    │  parse --iterations, --project-dir
+                      │  (pflag)    │
                       └──────┬──────┘
                              │
                   ┌──────────┴──────────┐
                   │                     │
-           -project-dir given     not given
+           --project-dir given     not given
                   │                     │
                   │              ┌──────▼──────────┐
                   │              │resolveProjectDir │
@@ -63,68 +59,77 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/cli/args.go` | ParseArgs, Config struct, reorderArgs, resolveProjectDir |
+| `ralph-tui/internal/cli/args.go` | `Execute`, `NewCommand`, `Config` struct, `resolveProjectDir` |
 | `ralph-tui/internal/cli/args_test.go` | Unit tests for all argument parsing branches |
-| `ralph-tui/cmd/ralph-tui/main.go` | Entry point — calls ParseArgs, distributes Config to subsystems |
+| `ralph-tui/cmd/ralph-tui/main.go` | Entry point — calls `Execute`, distributes `Config` to subsystems |
 
 ## Core Types
 
 ```go
 // Config holds parsed CLI arguments.
 type Config struct {
-    Iterations int    // number of workflow iterations to run (must be > 0)
+    Iterations int    // number of workflow iterations to run (0 = run until done)
     ProjectDir string // root directory for all relative path resolution
 }
 ```
 
 ## Implementation Details
 
-### Argument Parsing
+### Entry Point
 
-`ParseArgs` creates an isolated `flag.FlagSet` with `flag.ContinueOnError` (returns errors instead of calling `os.Exit`). It defines one flag (`-project-dir`) and validates the positional `iterations` argument:
+`Execute` creates a `Config`, builds a cobra command via `newCommandImpl`, and runs it against `os.Args`. It uses a `ranE` sentinel to distinguish `--help` (RunE not invoked) from a successful parse:
 
 ```go
-func ParseArgs(args []string) (*Config, error) {
-    fs := flag.NewFlagSet("ralph-tui", flag.ContinueOnError)
-    projectDir := fs.String("project-dir", "", "path to the project directory")
-
-    // Reorder so flags work in any position
-    if err := fs.Parse(reorderArgs(args)); err != nil {
+func Execute() (*Config, error) {
+    cfg := &Config{}
+    var ranE bool
+    cmd := newCommandImpl(cfg, &ranE)
+    if err := cmd.Execute(); err != nil {
         return nil, err
     }
-
-    positional := fs.Args()
-    if len(positional) == 0 {
-        return nil, errors.New("missing required argument: iterations")
+    if !ranE {
+        return nil, nil // --help was requested
     }
-
-    iterations, err := strconv.Atoi(positional[0])
-    // ... validates iterations > 0, resolves projectDir if empty
+    return cfg, nil
 }
 ```
 
-### Flag Reordering
+Return values:
+- `(cfg, nil)` — successful parse, workflow should start
+- `(nil, nil)` — `--help` requested, exit cleanly
+- `(nil, err)` — flag parsing or validation failed, exit 1
 
-Go's `flag` package stops parsing at the first non-flag token. Without `reorderArgs`, `ralph-tui 3 -project-dir /tmp` would leave `-project-dir` unprocessed. The function splits args into flag and positional slices, then returns flags first:
+### Argument Parsing
+
+`newCommandImpl` builds the cobra command with `cobra.NoArgs` (positional arguments are rejected) and defines two flags:
 
 ```go
-func reorderArgs(args []string) []string {
-    var flagArgs, positionalArgs []string
-    // Walk args: tokens starting with "-" are flags (with their values),
-    // "--" terminates flag scanning, everything else is positional.
-    return append(flagArgs, positionalArgs...)
-}
+cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
+cmd.Flags().StringVarP(&cfg.ProjectDir, "project-dir", "p", "", "path to the project directory (default: resolved from executable)")
 ```
 
-This enables both argument orders:
-- `ralph-tui -project-dir /tmp 3`
-- `ralph-tui 3 -project-dir /tmp`
+RunE validates and resolves:
 
-Edge case: a negative number like `-1` is treated as a flag by `reorderArgs`. Use `--` to force it as positional: `ralph-tui -- -1` (which then fails validation since iterations must be > 0).
+```go
+RunE: func(cmd *cobra.Command, args []string) error {
+    *ranE = true
+    if cfg.Iterations < 0 {
+        return errors.New("cli: --iterations must be a non-negative integer")
+    }
+    if cfg.ProjectDir == "" {
+        dir, err := resolveProjectDir()
+        if err != nil {
+            return fmt.Errorf("cli: could not resolve project dir: %w", err)
+        }
+        cfg.ProjectDir = dir
+    }
+    return nil
+},
+```
 
 ### Project Directory Resolution
 
-When `-project-dir` is not provided, the project directory is inferred from the compiled binary's location:
+When `--project-dir` is not provided, the project directory is inferred from the compiled binary's location:
 
 ```go
 func resolveProjectDir() (string, error) {
@@ -136,7 +141,7 @@ func resolveProjectDir() (string, error) {
 
 `filepath.EvalSymlinks` is critical: without it, a symlinked binary (e.g., installed in `~/bin/`) would resolve to the symlink's directory rather than where `configs/`, `prompts/`, and `scripts/` actually live.
 
-This is why `go run` does not work — it places the binary in a temporary directory. Use `go build` and run the compiled binary, or pass `-project-dir` explicitly.
+This is why `go run` does not work — it places the binary in a temporary directory. Use `go build` and run the compiled binary, or pass `--project-dir` explicitly.
 
 ### ProjectDir Fan-Out
 
@@ -159,53 +164,59 @@ Within `workflow.Run`, `ProjectDir` resolves additional paths:
 
 | Scenario | Error Message | Behavior |
 |----------|---------------|----------|
-| No arguments | `"missing required argument: iterations"` | Exit 1 |
-| Non-integer iterations | `"iterations must be an integer, got %q"` | Exit 1 |
-| Zero or negative iterations | `"iterations must be > 0"` | Exit 1 |
-| Unknown flag | flag package error (e.g., `"flag provided but not defined: -foo"`) | Exit 1 |
-| Cannot resolve executable | `"could not resolve project dir: ..."` | Exit 1 |
+| Negative iterations | `"cli: --iterations must be a non-negative integer"` | Exit 1 |
+| Unknown flag | pflag error (e.g., `"unknown flag: --foo"`) | Exit 1 |
+| Positional argument given | cobra error (`"unknown command"` / `"accepts 0 arg(s)"`) | Exit 1 |
+| Cannot resolve executable | `"cli: could not resolve project dir: ..."` | Exit 1 |
 
 All errors are written to stderr and cause `os.Exit(1)`.
 
 ## Configuration
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-project-dir` | Path to the project root directory | Resolved from executable location |
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--iterations` | `-n` | Number of iterations to run (0 = run until done) | `0` |
+| `--project-dir` | `-p` | Path to the project root directory | Resolved from executable location |
 
 **Usage:**
 
 ```
-ralph-tui <iterations> [-project-dir <path>]
+ralph-tui [--iterations <n>] [--project-dir <path>]
 ```
 
 ## Testing
 
-- `ralph-tui/internal/cli/args_test.go` — 10 test cases covering all ParseArgs branches
+- `ralph-tui/internal/cli/args_test.go` — 16 test cases covering all `NewCommand` and `Execute` branches
 
 ### Test Cases
 
 | Test | What It Validates |
 |------|-------------------|
-| `TestParseArgs_ValidIterations` | Happy path with `-project-dir` flag |
-| `TestParseArgs_MissingIterations` | Empty args returns error |
-| `TestParseArgs_ZeroIterations` | `"0"` is rejected |
-| `TestParseArgs_ProjectDirOverride` | `-project-dir` value is used directly |
-| `TestParseArgs_DefaultProjectDir` | Without flag, `ProjectDir` is non-empty (from executable) |
-| `TestParseArgs_NonIntegerIterations` | `"abc"` returns error |
-| `TestParseArgs_NegativeIterationsViaFlag` | `-1` treated as unknown flag |
-| `TestParseArgs_NegativeIterationsViaSeparator` | `-- -1` reaches integer validator |
-| `TestParseArgs_FlagBeforePositional` | Confirms `reorderArgs` works |
-| `TestParseArgs_UnknownFlag` | Unknown flag returns error |
-| `TestParseArgs_LargeIterations` | `"1000"` is accepted |
+| `TestNewCommand_NoFlags` | No flags → iterations=0, project-dir resolved from executable (non-empty) |
+| `TestNewCommand_LongIterationsFlag` | `--iterations 3` → iterations=3 |
+| `TestNewCommand_ShortIterationsFlag` | `-n 3` → iterations=3 |
+| `TestNewCommand_NegativeIterations` | `--iterations -1` → error containing expected message |
+| `TestNewCommand_LongProjectDirFlag` | `--project-dir /tmp/foo` → project-dir=/tmp/foo |
+| `TestNewCommand_ShortProjectDirFlag` | `-p /tmp/foo` → project-dir=/tmp/foo |
+| `TestNewCommand_BothFlags` | `-n 3 -p /tmp/foo` → both fields set |
+| `TestNewCommand_PositionalArgRejected` | `["somearg"]` → error from cobra.NoArgs |
+| `TestNewCommand_UnknownFlag` | `["--unknown"]` → error |
+| `TestExecute_HelpReturnsNilNil` | `--help` → RunE not invoked (ranE=false) |
+| `TestNewCommand_EqualsSyntax` | `--iterations=3` → iterations=3 |
+| `TestNewCommand_IterationsNoValue` | `--iterations` with no value → error |
+| `TestNewCommand_ShortIterationsNoValue` | `-n` with no value → error |
+| `TestNewCommand_ArgsAfterSeparatorRejected` | `-- extraarg` → error from cobra.NoArgs |
+| `TestNewCommand_ExplicitZeroIterations` | `-n 0` → iterations=0 (until-done mode) |
+| `TestNewCommand_LargeIterations` | `-n 1000` → accepted |
 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
+- [ADR: Use Cobra for CLI Argument Parsing](../adr/20260409135303-cobra-cli-framework.md) — Decision rationale for replacing stdlib `flag` with cobra
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How ProjectDir affects config and prompt file resolution
 - [Step Definitions & Prompt Building](step-definitions.md) — How ProjectDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
 - [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries ProjectDir and Iterations into the Run loop
 - [File Logging](file-logging.md) — How ProjectDir determines the log file location
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including CLI design decisions
-- [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for flag reordering and symlink-safe path resolution
+- [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for symlink-safe path resolution

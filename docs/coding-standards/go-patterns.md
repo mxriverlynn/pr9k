@@ -1,24 +1,5 @@
 # Go Patterns
 
-## Reorder args to work around Go flag package limitations
-
-Go's `flag` package stops parsing at the first non-flag argument. If flags can appear after positional arguments on the command line, use a `reorderArgs` helper to partition the args slice into flags-first, positionals-last before calling `fs.Parse`.
-
-```go
-// reorderArgs moves all -flag and --flag entries before positional args.
-func reorderArgs(args []string) []string {
-    var flags, positionals []string
-    for _, a := range args {
-        if strings.HasPrefix(a, "-") {
-            flags = append(flags, a)
-        } else {
-            positionals = append(positionals, a)
-        }
-    }
-    return append(flags, positionals...)
-}
-```
-
 ## Resolve binary path with os.Executable + filepath.EvalSymlinks
 
 When a binary needs to locate sibling files (e.g., configs, scripts) relative to itself, use `os.Executable()` followed by `filepath.EvalSymlinks` to get the real path. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink.
@@ -68,7 +49,7 @@ scanner.Buffer(make([]byte, scanBufSize), scanBufSize)
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
-- [CLI & Configuration](../features/cli-configuration.md) — Flag reordering in ParseArgs and symlink-safe project directory resolution
+- [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
 - [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests

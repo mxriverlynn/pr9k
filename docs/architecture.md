@@ -12,8 +12,8 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │                                                                     │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐  │
 │  │  CLI Parsing │  │ Step Loading │  │    OS Signal Handling     │  │
-│  │  (cli.Parse  │  │ (steps.Load  │  │  SIGINT/SIGTERM → chan    │  │
-│  │   Args)      │  │  Steps)      │  │  → KeyHandler.ForceQuit   │  │
+│  │  (cli.       │  │ (steps.Load  │  │  SIGINT/SIGTERM → chan    │  │
+│  │   Execute)   │  │  Steps)      │  │  → KeyHandler.ForceQuit   │  │
 │  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────────┘  │
 │         │                 │                      │                  │
 │         ▼                 ▼                      ▼                  │
@@ -126,7 +126,7 @@ Each feature is documented in detail in its own file under [`docs/features/`](fe
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line arguments (`<iterations>` and optional `-project-dir` flag) and resolves the project directory. Uses a `reorderArgs` workaround to allow flags in any position despite Go's `flag` package stopping at the first positional argument. Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks`.
+Parses command-line flags (`--iterations`/`-n` and `--project-dir`/`-p`) using [spf13/cobra](https://github.com/spf13/cobra) and resolves the project directory. Iterations defaults to 0 (run until done). Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when `--project-dir` is not given.
 
 **Package:** `internal/cli/`
 
