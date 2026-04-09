@@ -18,7 +18,7 @@ import (
 func main() {
 	cfg, err := cli.Execute()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
 		os.Exit(1)
 	}
 	if cfg == nil {
