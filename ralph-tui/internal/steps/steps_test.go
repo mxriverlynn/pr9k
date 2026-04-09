@@ -761,9 +761,9 @@ func TestPromptFiles_NoOldVariableFormat(t *testing.T) {
 func TestOldConfigFiles_Deleted(t *testing.T) {
 	root := projectRoot(t)
 	oldFiles := []string{
-		filepath.Join(root, "configs", "ralph-steps.json"),
-		filepath.Join(root, "configs", "ralph-finalize-steps.json"),
-		filepath.Join(root, "configs"),
+		filepath.Join(root, "ralph-tui", "configs", "ralph-steps.json"),
+		filepath.Join(root, "ralph-tui", "configs", "ralph-finalize-steps.json"),
+		filepath.Join(root, "ralph-tui", "configs"),
 	}
 	for _, path := range oldFiles {
 		if _, err := os.Stat(path); err == nil {
