@@ -16,10 +16,13 @@ import (
 )
 
 func main() {
-	cfg, err := cli.ParseArgs(os.Args[1:])
+	cfg, err := cli.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
+	}
+	if cfg == nil {
+		os.Exit(0)
 	}
 
 	log, err := logger.NewLogger(cfg.ProjectDir)
