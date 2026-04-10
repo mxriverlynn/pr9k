@@ -188,6 +188,30 @@ func (h *KeyHandler) ShortcutLinePtr() *string {
 
 Document which accessor is appropriate for which caller. This pattern should be attempted only after verifying that the exported-field approach (Option P) produces a real data race under `go test -race`.
 
+## Prime the channel before entering a blocking receive
+
+When a goroutine transitions to a mode where it blocks on a channel receive (`<-ch`), ensure the channel is either buffered with a pending send already in it, or that a concurrent sender has been started before the blocking call. Entering a blocking receive with an empty channel and no ready sender is a deadlock.
+
+The completion sequence in `Run()` demonstrates the correct pattern: the channel is buffered, and any action the caller needs to send can be placed into it before or during `SetMode`. The completion handoff relies on the caller sending `ActionQuit` when the user presses a key — but if the key event had already fired before the blocking receive, the buffered channel absorbs it.
+
+```go
+// Good — channel is buffered; a pending send can't be lost if it arrives
+// before the blocking receive. SetMode transitions to ModeDone; any key
+// event that fires at that moment is safely queued.
+header.RenderCompletionLine(iterationsRun, len(cfg.FinalizeSteps))
+keyHandler.SetMode(ui.ModeDone)
+<-keyHandler.Actions  // blocks until user presses a key
+
+// Bad — unbuffered channel; a send that arrives before the receive is lost
+actions := make(chan StepAction) // unbuffered — race between sender and receiver
+<-actions
+```
+
+When adding any new blocking receive to orchestration code:
+1. Verify the channel is buffered (capacity ≥ 1) or that a goroutine is already blocked on the send.
+2. Document which goroutine is responsible for sending to unblock the receive.
+3. Update tests to inject the required signal (see [Testing — Inject an additional signal for each new blocking receive](testing.md)).
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -199,4 +223,5 @@ Document which accessor is appropriate for which caller. This pattern should be 
 - [File Logging](../features/file-logging.md) — Mutex-protected concurrent writes from scanner goroutines
 - [API Design](api-design.md) — Complementary standards for unexported fields with protected getters
 - [Error Handling](error-handling.md) — Complementary standards for goroutine write error tracking
-- [Testing](testing.md) — Standards for test doubles with shared state needing mutexes
+- [Testing](testing.md) — Standards for test doubles with shared state needing mutexes; injecting signals for blocking receives
+- [TUI Display & Glyph Wiring](../features/tui-display.md) — ModeDone completion handoff as the canonical channel-priming example

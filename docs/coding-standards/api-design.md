@@ -71,6 +71,33 @@ func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
 }
 ```
 
+## Split phase-specific render methods rather than one conditional setter
+
+When a render or display method handles distinct phases (e.g., initialize, iterate, finalize) each with its own format, split it into one method per phase rather than a single method with a phase parameter or internal conditional branching. Phase-specific methods:
+
+- Name their intent at the call site (`RenderInitializeLine` vs. `SetHeader(PhaseInit, ...)`)
+- Accept only the parameters relevant to that phase — no unused arguments padded with zero values
+- Can be added or changed independently without risk of breaking the other phases
+
+```go
+// Bad — monolithic setter with internal conditionals; callers pass phase-dependent zeros
+func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
+    if issueID == "" {
+        h.IterationLine = fmt.Sprintf("Iteration %d/%d", current, total)
+    } else {
+        h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+    }
+}
+
+// Good — one method per phase, parameters scoped to that phase only
+func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string)
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string)
+func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string)
+func (h *StatusHeader) RenderCompletionLine(iterationsRun, finalizeCount int)
+```
+
+Apply this when an existing method starts accumulating conditional branches keyed on which lifecycle phase is active. That branching belongs in the method name, not the method body.
+
 ## Remove unused methods from interfaces
 
 When a method is removed from an interface's concrete callers, remove it from the interface too. A method that exists only on the concrete type — not consumed through the interface anywhere — is dead weight. It forces all test doubles to implement a no-op, misleads readers about what the interface contract covers, and signals that the abstraction boundary is drifting.
@@ -107,7 +134,7 @@ if strings.Contains(command[0], "/") {
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup; RunHeader phase-specific render methods as the canonical phase-splitting example
 - [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState; SetPhaseSteps panic-on-overflow as the appropriate choice for programming errors
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand
