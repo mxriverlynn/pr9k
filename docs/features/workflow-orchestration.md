@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-10 (issue #52)
+- **Last Updated:** 2026-04-10 (issue #53)
 - **Authors:**
   - River Bailey
 
@@ -152,18 +152,19 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 **Phase 1 — Initialize:** runs each `InitializeSteps` step once before the loop:
 - Sets VarTable phase to `vars.Initialize`
-- Calls `buildStep` and `ui.Orchestrate` with a `noopHeader{}` (no TUI checkbox updates during init)
+- Calls `header.RenderInitializeLine(j+1, len(InitializeSteps), s.Name)` to update `IterationLine` before each step runs — so the header shows `"Initializing N/M: <step name>"` while that step executes
+- Calls `buildStep` and `ui.Orchestrate` with a `noopHeader{}` — step checkboxes are not updated during the initialize phase (no `SetPhaseSteps` call, no checkbox rendering); only `IterationLine` is updated via `RenderInitializeLine`
 - After each step, if `s.CaptureAs != ""`, calls `executor.LastCapture()` and binds the value into the persistent VarTable scope via `vt.Bind(vars.Initialize, s.CaptureAs, ...)`
 - Bound values (e.g. `GITHUB_USER`, `ISSUE_ID`) are available in all subsequent phases via VarTable resolution
 - If `Orchestrate` returns `ActionQuit`, closes executor and returns immediately
-- If `buildStep` fails (e.g. missing prompt file), logs `"Error preparing initialize step: ..."` and continues to the next init step
+- If `buildStep` fails (e.g. missing prompt file), logs `"Error preparing initialize step: ..."` and skips `RenderInitializeLine` for that step, then continues to the next init step
 
 **Phase 2 — Iteration loop:** runs `Steps` repeatedly:
 - Runs from `i=1` upward; exits when `i > Iterations` (bounded) or when `BreakLoopIfEmpty` fires (unbounded when `Iterations == 0`)
 - Resets the iteration table (`ResetIteration`), sets `ITER`, switches phase to `Iteration`
 - Updates the status header for each iteration
 - Builds resolved steps via `buildStep` (uses VarTable for `{{VAR}}` substitution)
-- After each step, if `s.CaptureAs != ""`, binds captured output into the iteration-scoped VarTable
+- After each step, if `s.CaptureAs != ""`, binds captured output into the iteration-scoped VarTable, then re-calls `header.RenderIterationLine(i, cfg.Iterations, issueID)` — looking up `ISSUE_ID` from the iteration VarTable to update the header with the newly bound issue ID (empty string if `ISSUE_ID` was not the captured variable)
 - If `s.BreakLoopIfEmpty` is set, `executor.LastCapture()` is empty, **and the step completed as `StepDone`**, exits the loop (finalization still runs); if the step failed (non-zero exit), the check is skipped so normal error-mode handling takes effect instead
 - If `buildStep` fails, logs `"Error preparing steps: ..."` and breaks the inner loop (finalization still runs)
 - If `Orchestrate` returns `ActionQuit`, closes executor and returns without finalization
@@ -171,7 +172,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 **Phase 3 — Finalization:** runs even after an early loop exit:
 - Calls `header.SetPhaseSteps(finalizeNames)` to switch the header to finalization step names
 - Switches the VarTable phase to `Finalize`
-- Builds resolved steps via `buildStep`
+- For each finalize step: calls `header.RenderFinalizeLine(j+1, len(FinalizeSteps), s.Name)` to update `IterationLine` before the step runs — so the header shows `"Finalizing N/M: <step name>"` while that step executes
+- Builds resolved steps via `buildStep`; if `buildStep` fails, logs `"Error preparing finalize step: ..."` and skips `RenderFinalizeLine` for that step, then continues to the next
 - Runs through `Orchestrate()` with a `trackingOffsetIterHeader` adapter (same adapter as the iteration phase, reused since both phases use `SetStepState`)
 
 ### Step Resolution
@@ -253,8 +255,11 @@ func runStepWithErrorHandling(...) StepAction {
 Two adapter types route `SetStepState` calls to the correct TUI checkbox position depending on the workflow phase:
 
 ```go
-// noopHeader satisfies ui.StepHeader with no-op methods. Used for the
-// initialize phase, which does not update the TUI step-checkbox display.
+// noopHeader satisfies ui.StepHeader with no-op methods. Passed to
+// Orchestrate during the initialize phase to suppress step-checkbox updates
+// — the initialize phase has no checkbox grid. Note: IterationLine IS still
+// updated during initialize, but via header.RenderInitializeLine called
+// directly from Run, not through Orchestrate.
 type noopHeader struct{}
 func (noopHeader) SetStepState(int, ui.StepState) {}
 
@@ -288,8 +293,20 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_QuitFromInitializeOrchestrateClosesEarly` — verifies `ActionQuit` during init closes the executor and skips iteration and finalization
   - `TestRun_BreakLoopIfEmptyCapture` / `TestRun_BreakLoopIfEmptyNonEmptyCapture` — verify early-exit loop semantics
   - `TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization` — verifies a missing prompt file for an iteration step logs `"Error preparing steps"` and skips to finalization
-  - `TestRunResult_IterationsRun_NormalCompletion` — verifies `RunResult.IterationsRun` equals the configured `Iterations` count after a normal bounded run
-  - `TestRunResult_IterationsRun_QuitPath` — verifies `RunResult.IterationsRun` reflects the in-progress iteration index when `ActionQuit` fires mid-loop
+  - `TestRun_IterationsRunOnNormalCompletion` — verifies `RunResult.IterationsRun` equals the configured `Iterations` count after a normal bounded run
+  - `TestRun_IterationsRunZeroOnInitializeQuit` — verifies `RunResult.IterationsRun` is zero when `ActionQuit` fires during the initialize phase
+  - `TestRun_IterationsRunOnIterationQuit` — verifies `RunResult.IterationsRun` reflects the in-progress iteration index when `ActionQuit` fires mid-loop
+  - `TestRun_IterationHeaderUpdatesAfterCaptureAs` — verifies that `RenderIterationLine` is re-called with the issue ID after a `captureAs` step binds `ISSUE_ID`
+  - `TestRun_SecondIterationStartsWithEmptyIssueID` — verifies that at the start of each iteration, `RenderIterationLine` is called with an empty issue ID (cleared by `ResetIteration`)
+  - `TestRun_NonCapturingIterStepDoesNotRerenderHeader` — verifies that iteration steps without `captureAs` do not trigger a second `RenderIterationLine` call
+  - `TestRun_InitializeRenderCalledPerStep` — verifies `RenderInitializeLine` is called once per init step with correct `stepNum`, `stepCount`, and `stepName` values
+  - `TestRun_FinalizeRenderCalledPerStep` — verifies `RenderFinalizeLine` is called once per finalize step with correct `stepNum`, `stepCount`, and `stepName` values
+  - `TestRun_InitializeBuildErrorSkipsRenderInitializeLine` — verifies that `RenderInitializeLine` is not called for an init step whose `buildStep` call fails
+  - `TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine` — verifies that `RenderFinalizeLine` is not called for a finalize step whose `buildStep` call fails
+  - `TestRun_CaptureAsNonIssueIDProducesEmptyIssueIDInHeader` — verifies that a `captureAs` binding for a variable other than `ISSUE_ID` still re-renders the header, but with an empty issue ID
+  - `TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls` — verifies that quitting during the initialize phase produces zero `RenderIterationLine` and `RenderFinalizeLine` calls
+  - `TestRun_QuitDuringFinalizeRecordsOnlyTheQuittingStepRender` — verifies that when quit fires during the finalize phase, only render calls up to and including the quitting step are recorded
+  - `TestRun_FinalizeRenderCalledAfterBreakLoopIfEmpty` — verifies that `RenderFinalizeLine` is still called for finalize steps after an early loop exit via `BreakLoopIfEmpty`
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain
 
 ## Additional Information
