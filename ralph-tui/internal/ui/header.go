@@ -1,6 +1,10 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // StepState represents the display state of a single workflow step.
 type StepState int
@@ -18,7 +22,7 @@ const HeaderCols = 4
 
 // StatusHeader manages the pointer-mutable string state for the TUI status header.
 // Glyph reads the exported fields via pointer on each render cycle — callers
-// update state by mutating struct fields directly (e.g. SetIteration, SetStepState).
+// update state by mutating struct fields directly (e.g. RenderIterationLine, SetStepState).
 //
 // Layout:
 //
@@ -43,15 +47,54 @@ func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
 	}
 }
 
-// SetIteration updates the iteration line string.
-// issueID is the bare number (e.g. "42"); issueTitle is the issue's full title.
-// When total == 0, the iteration line omits the total (unbounded mode).
-func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
-	if total > 0 {
-		h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+const initializeHeaderFormat = "Initializing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+const finalizeHeaderFormat = "Finalizing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+
+// RenderInitializeLine updates the iteration line for the initialize phase.
+// Example output: "Initializing 1/2: Splash".
+func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
+	h.IterationLine = substitute(initializeHeaderFormat, map[string]string{
+		"STEP_NUM":   strconv.Itoa(stepNum),
+		"STEP_COUNT": strconv.Itoa(stepCount),
+		"STEP_NAME":  stepName,
+	})
+}
+
+// RenderIterationLine updates the iteration line for the iteration phase.
+// When maxIter == 0, the total is omitted (unbounded mode).
+// When issueID is empty, the issue suffix is omitted.
+// Example outputs: "Iteration 2/5 — Issue #42", "Iteration 3".
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+	var b strings.Builder
+	if maxIter > 0 {
+		fmt.Fprintf(&b, "Iteration %d/%d", iter, maxIter)
 	} else {
-		h.IterationLine = fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)
+		fmt.Fprintf(&b, "Iteration %d", iter)
 	}
+	if issueID != "" {
+		fmt.Fprintf(&b, " — Issue #%s", issueID)
+	}
+	h.IterationLine = b.String()
+}
+
+// RenderFinalizeLine updates the iteration line for the finalize phase.
+// Example output: "Finalizing 1/3: Deferred work".
+func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
+	h.IterationLine = substitute(finalizeHeaderFormat, map[string]string{
+		"STEP_NUM":   strconv.Itoa(stepNum),
+		"STEP_COUNT": strconv.Itoa(stepCount),
+		"STEP_NAME":  stepName,
+	})
+}
+
+// substitute replaces all {{KEY}} tokens in template with the corresponding
+// value from vals. Keys not present in vals are left as-is.
+func substitute(template string, vals map[string]string) string {
+	pairs := make([]string, 0, len(vals)*2)
+	for k, v := range vals {
+		pairs = append(pairs, "{{"+k+"}}", v)
+	}
+	return strings.NewReplacer(pairs...).Replace(template)
 }
 
 // SetPhaseSteps replaces the current step name list and re-renders all

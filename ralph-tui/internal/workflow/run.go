@@ -21,7 +21,9 @@ type StepExecutor interface {
 // RunHeader is the interface for updating the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
-	SetIteration(current, total int, issueID, issueTitle string)
+	RenderInitializeLine(stepNum, stepCount int, stepName string)
+	RenderIterationLine(iter, maxIter int, issueID string)
+	RenderFinalizeLine(stepNum, stepCount int, stepName string)
 	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
 }
@@ -99,7 +101,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		vt.SetIteration(i)
 		vt.SetPhase(vars.Iteration)
 
-		header.SetIteration(i, cfg.Iterations, "", "")
+		header.RenderIterationLine(i, cfg.Iterations, "")
 		iterStepNames := make([]string, len(cfg.Steps))
 		for j, s := range cfg.Steps {
 			iterStepNames[j] = s.Name

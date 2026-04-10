@@ -183,25 +183,113 @@ func TestSetStepState_OutOfBoundsIsNoOp(t *testing.T) {
 	}
 }
 
-// --- SetIteration ---
+// --- RenderInitializeLine ---
 
-func TestStatusHeader_IterationLine(t *testing.T) {
+func TestRenderInitializeLine(t *testing.T) {
+	cases := []struct {
+		stepNum, stepCount int
+		stepName           string
+		want               string
+	}{
+		{1, 2, "Splash", "Initializing 1/2: Splash"},
+		{2, 2, "Setup", "Initializing 2/2: Setup"},
+		{1, 1, "Long step name with spaces", "Initializing 1/1: Long step name with spaces"},
+	}
+	for _, tc := range cases {
+		h := NewStatusHeader(4)
+		h.RenderInitializeLine(tc.stepNum, tc.stepCount, tc.stepName)
+		if h.IterationLine != tc.want {
+			t.Errorf("RenderInitializeLine(%d, %d, %q): got %q, want %q",
+				tc.stepNum, tc.stepCount, tc.stepName, h.IterationLine, tc.want)
+		}
+	}
+}
+
+func TestRenderInitializeLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.RenderInitializeLine(1, 3, "Bootstrap")
+	if h.IterationLine == "" {
+		t.Error("RenderInitializeLine did not write to IterationLine")
+	}
+}
+
+// --- RenderIterationLine ---
+
+func TestRenderIterationLine_Bounded(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.SetIteration(2, 5, "42", "Add widget support")
+	h.RenderIterationLine(2, 5, "42")
 
-	want := "Iteration 2/5 — Issue #42: Add widget support"
+	want := "Iteration 2/5 — Issue #42"
 	if h.IterationLine != want {
 		t.Errorf("got %q, want %q", h.IterationLine, want)
 	}
 }
 
-func TestStatusHeader_IterationLine_Unbounded(t *testing.T) {
+func TestRenderIterationLine_Unbounded(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.SetIteration(3, 0, "42", "Add widget support")
+	h.RenderIterationLine(3, 0, "42")
 
-	want := "Iteration 3 — Issue #42: Add widget support"
+	want := "Iteration 3 — Issue #42"
 	if h.IterationLine != want {
 		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_EmptyIssueID(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(1, 5, "")
+
+	want := "Iteration 1/5"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_UnboundedEmptyIssueID(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(4, 0, "")
+
+	want := "Iteration 4"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(1, 3, "99")
+	if h.IterationLine == "" {
+		t.Error("RenderIterationLine did not write to IterationLine")
+	}
+}
+
+// --- RenderFinalizeLine ---
+
+func TestRenderFinalizeLine(t *testing.T) {
+	cases := []struct {
+		stepNum, stepCount int
+		stepName           string
+		want               string
+	}{
+		{1, 3, "Deferred work", "Finalizing 1/3: Deferred work"},
+		{3, 3, "Final push", "Finalizing 3/3: Final push"},
+		{2, 5, "Long finalize step name", "Finalizing 2/5: Long finalize step name"},
+	}
+	for _, tc := range cases {
+		h := NewStatusHeader(4)
+		h.RenderFinalizeLine(tc.stepNum, tc.stepCount, tc.stepName)
+		if h.IterationLine != tc.want {
+			t.Errorf("RenderFinalizeLine(%d, %d, %q): got %q, want %q",
+				tc.stepNum, tc.stepCount, tc.stepName, h.IterationLine, tc.want)
+		}
+	}
+}
+
+func TestRenderFinalizeLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.RenderFinalizeLine(1, 2, "Cleanup")
+	if h.IterationLine == "" {
+		t.Error("RenderFinalizeLine did not write to IterationLine")
 	}
 }
 

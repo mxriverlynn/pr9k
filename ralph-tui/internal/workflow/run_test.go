@@ -61,14 +61,14 @@ func (f *fakeExecutor) Close() error {
 }
 
 type fakeRunHeader struct {
-	iterationCalls  []iterCall
-	stepStateCalls  []stepStateCall
-	phaseStepsCalls [][]string
+	renderIterationCalls []renderIterCall
+	stepStateCalls       []stepStateCall
+	phaseStepsCalls      [][]string
 }
 
-type iterCall struct {
-	current, total int
-	issueID, title string
+type renderIterCall struct {
+	iter, maxIter int
+	issueID       string
 }
 
 type stepStateCall struct {
@@ -76,9 +76,11 @@ type stepStateCall struct {
 	state ui.StepState
 }
 
-func (h *fakeRunHeader) SetIteration(current, total int, issueID, issueTitle string) {
-	h.iterationCalls = append(h.iterationCalls, iterCall{current, total, issueID, issueTitle})
+func (h *fakeRunHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {}
+func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID})
 }
+func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {}
 
 func (h *fakeRunHeader) SetPhaseSteps(names []string) {
 	cp := make([]string, len(names))
@@ -180,12 +182,12 @@ func TestRun_TwoIterationsAllStepsSucceed(t *testing.T) {
 		t.Fatalf("expected 3 RunStep calls, got %d: %v", len(executor.runStepCalls), executor.runStepCalls)
 	}
 
-	if len(header.iterationCalls) != 2 {
-		t.Fatalf("expected 2 SetIteration calls, got %d", len(header.iterationCalls))
+	if len(header.renderIterationCalls) != 2 {
+		t.Fatalf("expected 2 RenderIterationLine calls, got %d", len(header.renderIterationCalls))
 	}
 	// issueID is empty at iteration start (populated by step captureAs, not hardcoded)
-	if header.iterationCalls[0].issueID != "" {
-		t.Errorf("iteration 1: want empty issueID at start, got %q", header.iterationCalls[0].issueID)
+	if header.renderIterationCalls[0].issueID != "" {
+		t.Errorf("iteration 1: want empty issueID at start, got %q", header.renderIterationCalls[0].issueID)
 	}
 }
 
