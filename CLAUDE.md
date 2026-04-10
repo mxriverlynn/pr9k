@@ -96,7 +96,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 
 ### ralph-tui
 
-- Language: Go 1.23
+- Language: Go 1.25.1
 - Test: `cd ralph-tui && go test -race ./...` or `make test`
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
 - Lint: `make lint` (requires golangci-lint)

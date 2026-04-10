@@ -2,7 +2,7 @@
 
 ## Context
 
-The `ralph-bash/ralph-loop` bash script runs multiple sequential `claude` CLI calls, capturing all output into `$RESULT` and displaying it after-the-fact with `box-text`. This makes it impossible to see what's happening during long-running steps. We're building a Go program using [Glyph](https://useglyph.sh/) that replaces `ralph-loop` as the orchestrator, streaming claude output in real-time into a bordered, scrolling TUI panel with full workflow visibility.
+The `ralph-bash/ralph-loop` bash script runs multiple sequential `claude` CLI calls, capturing all output into `$RESULT` and displaying it after-the-fact with `box-text`. This makes it impossible to see what's happening during long-running steps. We're building a Go program using [Glyph](https://github.com/kungfusheep/glyph) that replaces `ralph-loop` as the orchestrator, streaming claude output in real-time into a bordered, scrolling TUI panel with full workflow visibility.
 
 ---
 

@@ -927,7 +927,7 @@ config error: files: claude step "Feature work": prompt file prompts/feature-wor
 
 ### D14. Keyboard input wiring and error-mode presentation
 
-**D14a — Glyph owns the keyboard event loop.** Ralph-tui does not spawn its own stdin reader. At app construction, ralph-tui registers either per-key callbacks (`app.BindKey("q", func(){ keyHandler.Handle("q") })`) or a single catch-all handler (`app.OnKey(func(k string){ keyHandler.Handle(k) })`), depending on Glyph's exact API. Either way, every keypress Glyph receives is forwarded to `KeyHandler.Handle(key)`, which then dispatches based on current mode (Normal / Error / QuitConfirm) as already implemented in `internal/ui/ui.go:71-117`. Glyph handles tty raw-mode setup, resize events, and cleanup on exit.
+**D14a — Glyph owns the keyboard event loop.** Ralph-tui does not spawn its own stdin reader. At app construction, ralph-tui registers per-key callbacks via `app.Handle("q", func(){ keyHandler.Handle("q") })` — the verified Glyph API (see `docs/notes/glyph-api-findings.md`). Every keypress Glyph receives is forwarded to `KeyHandler.Handle(key)`, which then dispatches based on current mode (Normal / Error / QuitConfirm) as already implemented in `internal/ui/ui.go:71-117`. Glyph handles tty raw-mode setup, resize events, and cleanup on exit.
 
 **Rationale:** Glyph is already going to handle `BindVimNav` on the Log panel (`docs/plans/ralph-tui.md:117`). If ralph-tui also read stdin, `j`/`k` keypresses would be delivered twice. A single reader is required, and Glyph has to own tty state anyway.
 
@@ -1070,7 +1070,7 @@ Scope:
 - Delete the stdout-drain goroutine at `main.go:56-63`. Replace it with a Glyph `Log(runner.LogReader())` widget inside the VBox tree.
 - Construct the Glyph VBox tree in `main.go` with the header iteration line, checkbox rows, log panel, and shortcut bar. Wire pointer-bindings to `StatusHeader` fields and `KeyHandler.ShortcutLine`.
 - Expose `KeyHandler.ShortcutLine` as an exported field (D14 Option P). Remove the `ShortcutLine()` method and the mutex if the race detector does not flag the exported-field approach.
-- Wire Glyph's key dispatch (`BindKey` or `OnKey`) to call `keyHandler.Handle(key)`.
+- Wire Glyph's key dispatch (`app.Handle(key, fn)`) to call `keyHandler.Handle(key)`.
 - Implement `NewStatusHeader(maxStepsAcrossPhases)` computing row count from the largest phase.
 - Pre-populate first-frame state (D16) in `main.go` before `app.Run()`.
 - Update `cmd/ralph-tui/main.go`: delete the 8-element hardcoded `var stepNames [8]string` at lines 46-52; compute `maxStepsAcrossPhases` from the loaded config instead.
@@ -1270,24 +1270,20 @@ Every file that needs to be added, modified, deleted, or moved as part of implem
 
 These are claims I made during the grill-me interview without running code or reading the Glyph source. Each one is backed by what I could infer from the existing plan + audit, but none is fully verified. Implementers should check these before or during the relevant PR.
 
-**V1. Glyph's actual API shape.**
+**V1. Glyph's actual API shape. ✓ VERIFIED (issue #46)**
 
-What I assumed:
+Verified via `go doc`, source inspection, and a scratch app (`ralph-tui/scratch/main.go`). Full findings in `docs/notes/glyph-api-findings.md`. The design shape survived — all elements exist with matching names, with two nuances:
 
-- `Text(&stringField)` — a text widget that reads from a `*string` on each render tick.
-- `HBox(...children)` / `VBox(...children)` — layout containers taking variadic widget children.
-- `Log(io.Reader)` — a streaming log widget that consumes lines from a Reader via an internal goroutine.
-- `Border(...).Title("Ralph")` — a decoration wrapping another widget with a bordered box.
-- `.Grow(1)` — a flex-grow modifier on Log to fill remaining vertical space.
-- `.MaxLines(n)` — a ring buffer cap on Log.
-- `.BindVimNav()` — automatic j/k/ctrl-d/u/g/G bindings for Log scrolling.
-- `.OnUpdate(callback)` — a callback invoked when new lines arrive.
-- `app.BindKey(key, fn)` or `app.OnKey(fn)` — keyboard event registration.
-- `app.Run()` — main event loop, blocks until quit.
-
-**What to verify:** the actual Glyph API. The names and signatures above come from `docs/plans/ralph-tui.md:92-121` — they're what the original plan claimed. Implementers should read Glyph's docs (or source) during PR2 and adjust the code sketches accordingly. The design shape should survive (pointer-bound strings, VBox/HBox tree, Log widget fed by io.Reader) — only the Go syntax changes.
-
-**How to verify:** fetch Glyph, read its godoc, write a minimal "hello world" Glyph app that mirrors the structure proposed in D10/D14, run it, iterate. Do this as the very first task of PR2 before touching existing code.
+- `Text(&stringField)` — exists, name matches.
+- `HBox(...children)` / `VBox(...children)` — exist, name matches. Modifiers chain on the **function**, not the result: `glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(child1, child2)`.
+- `Log(io.Reader)` — exists, name matches.
+- `Border(...).Title("Ralph")` — exists, name matches.
+- `.Grow(1)` — exists, name matches.
+- `.MaxLines(n)` — exists, name matches.
+- `.BindVimNav()` — exists, name matches.
+- `.OnUpdate(callback)` — exists, name matches.
+- `app.Handle(key, fn)` — **verified API**; `app.BindKey` and `app.OnKey` do not exist.
+- `app.Run()` — exists, name matches.
 
 **V2. Race detector behavior on exported `ShortcutLine`.**
 

@@ -2,7 +2,7 @@
 
 ralph-tui is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
 
-Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams subprocess output in real time through an `io.Pipe`, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
+Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralph-tui streams subprocess output in real time through an `io.Pipe`, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
 
 ## System Block Diagram
 

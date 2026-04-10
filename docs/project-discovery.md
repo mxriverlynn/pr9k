@@ -24,7 +24,7 @@
 ## ralph-tui
 
 - Root: `ralph-tui/`
-- Language: Go 1.23
+- Language: Go 1.25.1
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
