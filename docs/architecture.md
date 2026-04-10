@@ -178,6 +178,12 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 **Package:** `internal/vars/`
 
+### [Config Validation](features/config-validation.md)
+
+Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Returns a slice of structured `Error` values; an empty slice means valid. Not yet wired into `main.go` — that is issue #41.
+
+**Package:** `internal/validator/`
+
 ## Package Dependency Graph
 
 ```
@@ -186,6 +192,8 @@ cmd/ralph-tui/main.go
     ├── internal/logger     (file logging)
     ├── internal/steps      (step loading)
     ├── internal/ui         (key handling, header, orchestration)
+    ├── internal/validator  (config validation)
+    │       └── internal/vars
     ├── internal/vars       (runtime variable state)
     └── internal/workflow   (subprocess execution, run loop)
             ├── internal/logger
