@@ -12,6 +12,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // --- Test doubles ---
@@ -608,7 +609,11 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 		PromptFile: "test-prompt.txt",
 	}
 
-	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
+	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
+	resolved, err := buildIterationSteps(dir, []steps.Step{step}, vt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -650,7 +655,9 @@ func TestBuildIterationSteps_ClaudeStepMissingPromptFile(t *testing.T) {
 		PromptFile: "nonexistent.txt",
 	}
 
-	_, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Iteration)
+	_, err := buildIterationSteps(dir, []steps.Step{step}, vt)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -727,7 +734,7 @@ func TestRun_BuildIterationStepsErrorLogsAndContinuesToFinalization(t *testing.T
 }
 
 // TestBuildFinalizeSteps_ClaudeStep verifies that a finalize claude step
-// produces the correct CLI command and uses empty issueID/sha.
+// produces the correct CLI command.
 func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
@@ -744,7 +751,9 @@ func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 		PromptFile: "finalize-prompt.txt",
 	}
 
-	resolved, err := buildFinalizeSteps(dir, []steps.Step{step})
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Finalize)
+	resolved, err := buildFinalizeSteps(dir, []steps.Step{step}, vt)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

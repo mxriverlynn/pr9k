@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // projectRoot returns the path two levels up from this test file's directory
@@ -367,8 +368,9 @@ func makeTempProjectWithPrompt(t *testing.T, filename, content string) string {
 func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "do the thing\n")
 	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
 
-	result, err := steps.BuildPrompt(dir, step)
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,8 +384,9 @@ func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 func TestBuildPrompt_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	step := steps.Step{PromptFile: "missing.txt"}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
@@ -393,8 +396,9 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	dir := t.TempDir()
 	// No prompts/ subdirectory — file will not exist
 	step := steps.Step{PromptFile: "missing.txt"}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
@@ -416,9 +420,44 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := steps.Step{PromptFile: ""}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step)
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error when PromptFile is empty, got nil")
+	}
+}
+
+func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "feature.txt", "implement issue {{ISSUE_ID}}\n")
+	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
+
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "implement issue 42\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "feature.txt", "value: {{UNKNOWN}}\n")
+	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
+
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "value: \n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
 	}
 }

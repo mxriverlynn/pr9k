@@ -6,6 +6,7 @@ import (
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
@@ -49,6 +50,8 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) {
 // runs N workflow iterations, executes the finalization phase, writes the
 // completion summary, and closes the executor.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
+	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+
 	// 1. Get GitHub username.
 	userScript := filepath.Join(cfg.ProjectDir, "scripts", "get_gh_user")
 	username, err := executor.CaptureOutput([]string{userScript})
@@ -72,6 +75,12 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Warning: could not get HEAD SHA: %v", shaErr))
 		}
 
+		vt.ResetIteration()
+		vt.SetIteration(i)
+		vt.SetPhase(vars.Iteration)
+		vt.Bind(vars.Iteration, "ISSUE_ID", issueID)
+		vt.Bind(vars.Iteration, "STARTING_SHA", sha)
+
 		header.SetIteration(i, cfg.Iterations, issueID, "")
 		for j := range cfg.Steps {
 			header.SetStepState(j, ui.StepPending)
@@ -79,7 +88,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("%s — Issue #%s", iterationLabel(i, cfg.Iterations), issueID)))
 
-		resolvedSteps, err := buildIterationSteps(cfg.ProjectDir, cfg.Steps, issueID, sha)
+		resolvedSteps, err := buildIterationSteps(cfg.ProjectDir, cfg.Steps, vt)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
 			break
@@ -101,7 +110,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 	header.SetFinalization(1, len(cfg.FinalizeSteps), finalizeNames)
 
-	finalResolvedSteps, err := buildFinalizeSteps(cfg.ProjectDir, cfg.FinalizeSteps)
+	vt.SetPhase(vars.Finalize)
+	finalResolvedSteps, err := buildFinalizeSteps(cfg.ProjectDir, cfg.FinalizeSteps, vt)
 	if err == nil {
 		action := ui.Orchestrate(finalResolvedSteps, executor, &finalHeader{header}, keyHandler)
 		if action == ui.ActionQuit {
@@ -126,14 +136,13 @@ func iterationLabel(i, total int) string {
 	return fmt.Sprintf("Iteration %d", i)
 }
 
-// buildIterationSteps resolves each iteration step into a runnable command.
-// sha is reserved for the upcoming {{VAR}} substitution engine (#39) and is currently unused.
-func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {
-	_ = sha
+// buildIterationSteps resolves each iteration step into a runnable command
+// using vt for {{VAR}} substitution.
+func buildIterationSteps(projectDir string, stepsConfig []steps.Step, vt *vars.VarTable) ([]ui.ResolvedStep, error) {
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
 		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s)
+			prompt, err := steps.BuildPrompt(projectDir, s, vt, vars.Iteration)
 			if err != nil {
 				return nil, fmt.Errorf("step %q: %w", s.Name, err)
 			}
@@ -144,18 +153,18 @@ func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, s
 		} else {
 			result[i] = ui.ResolvedStep{
 				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, issueID),
+				Command: ResolveCommand(projectDir, s.Command, vt, vars.Iteration),
 			}
 		}
 	}
 	return result, nil
 }
 
-func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.ResolvedStep, error) {
+func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step, vt *vars.VarTable) ([]ui.ResolvedStep, error) {
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
 		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s)
+			prompt, err := steps.BuildPrompt(projectDir, s, vt, vars.Finalize)
 			if err != nil {
 				return nil, fmt.Errorf("finalize step %q: %w", s.Name, err)
 			}
@@ -166,7 +175,7 @@ func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.Resol
 		} else {
 			result[i] = ui.ResolvedStep{
 				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, ""),
+				Command: ResolveCommand(projectDir, s.Command, vt, vars.Finalize),
 			}
 		}
 	}

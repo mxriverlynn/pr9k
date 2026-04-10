@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // Runner executes workflow steps and streams subprocess output through an io.Pipe.
@@ -178,22 +179,23 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// ResolveCommand replaces template variables in command and resolves relative
-// script paths against projectDir.
+// ResolveCommand substitutes {{VAR}} tokens in each command element using vt
+// and resolves relative script paths against projectDir.
 //
 // For each element:
-//   - All occurrences of "{{ISSUE_ID}}" are replaced with issueID.
+//   - All {{VAR_NAME}} tokens are replaced using the substitution engine.
 //   - The first element (the executable) is resolved relative to projectDir if
 //     it is a relative path containing a path separator (i.e. not a bare
 //     command like "git").
-func ResolveCommand(projectDir string, command []string, issueID string) []string {
+func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
 	if len(command) == 0 {
 		return command
 	}
 
 	result := make([]string, len(command))
 	for i, arg := range command {
-		result[i] = strings.ReplaceAll(arg, "{{ISSUE_ID}}", issueID)
+		substituted, _ := vars.Substitute(arg, vt, phase)
+		result[i] = substituted
 	}
 
 	// Resolve the executable if it looks like a relative script path.

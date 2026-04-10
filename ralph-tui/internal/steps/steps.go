@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // Step defines a single step in the ralph workflow.
@@ -45,8 +47,9 @@ func LoadSteps(projectDir string) (StepFile, error) {
 	return sf, nil
 }
 
-// BuildPrompt reads the prompt file for the given step and returns its content.
-func BuildPrompt(projectDir string, step Step) (string, error) {
+// BuildPrompt reads the prompt file for the given step, substitutes {{VAR}}
+// tokens using vt and phase, and returns the result.
+func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
 	if step.PromptFile == "" {
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
@@ -56,5 +59,9 @@ func BuildPrompt(projectDir string, step Step) (string, error) {
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
 	}
 
-	return string(data), nil
+	content, err := vars.Substitute(string(data), vt, phase)
+	if err != nil {
+		return "", fmt.Errorf("steps: substitution failed in prompt %s: %w", promptPath, err)
+	}
+	return content, nil
 }
