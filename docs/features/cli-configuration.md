@@ -154,10 +154,9 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.ProjectDir` | Scripts, prompt files, command resolution |
 
-Within `workflow.Run`, `ProjectDir` resolves additional paths:
-- `{projectDir}/scripts/get_gh_user` — GitHub username script
-- `{projectDir}/scripts/get_next_issue` — issue fetch script
-- `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt`
+Within the workflow, `ProjectDir` anchors two path-resolution mechanisms:
+- `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt` (for Claude steps)
+- Relative script paths from step config — resolved against `projectDir` by `ResolveCommand` (e.g. `scripts/get_gh_user`, `scripts/close_gh_issue`); not hardcoded in `Run()`
 
 ## Error Handling
 
