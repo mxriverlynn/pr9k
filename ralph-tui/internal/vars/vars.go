@@ -118,7 +118,8 @@ func (vt *VarTable) ResetIteration() {
 }
 
 // SetIteration rebinds the ITER built-in to the given iteration number n.
-// This must only be called during the Iteration phase.
+// The orchestrator is expected to call this at the start of each iteration;
+// the method itself is phase-agnostic and safe to call in any phase.
 func (vt *VarTable) SetIteration(n int) {
 	vt.persistent["ITER"] = strconv.Itoa(n)
 }
