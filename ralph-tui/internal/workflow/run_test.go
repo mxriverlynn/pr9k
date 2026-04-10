@@ -563,6 +563,60 @@ func TestRun_QuitFromInitializeOrchestrateClosesEarly(t *testing.T) {
 	}
 }
 
+// TestRun_InitializeBuildErrorContinuesToNextInitStep verifies that when
+// buildStep fails for an initialize step (e.g., missing prompt file), Run logs
+// the error and continues to the next initialize step rather than aborting the
+// initialize phase. The subsequent initialize step and the iteration loop both
+// still run.
+func TestRun_InitializeBuildErrorContinuesToNextInitStep(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	badInitStep := steps.Step{
+		Name:       "bad-init",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{badInitStep, nonClaudeSteps("good-init")[0]},
+		Steps:           nonClaudeSteps("iter-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	foundErr := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Error preparing initialize step") {
+			foundErr = true
+		}
+	}
+	if !foundErr {
+		t.Errorf("expected 'Error preparing initialize step' in log, got %v", executor.logLines)
+	}
+
+	ranGoodInit := false
+	ranIter := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "good-init" {
+			ranGoodInit = true
+		}
+		if call.name == "iter-step" {
+			ranIter = true
+		}
+	}
+	if !ranGoodInit {
+		t.Error("expected good-init step to run after bad-init build error")
+	}
+	if !ranIter {
+		t.Error("expected iteration to run after initialize phase completed")
+	}
+}
+
 // TestBuildStep_ClaudeStepIteration verifies that a claude iteration step
 // produces the correct CLI command with the expected flags and prompt content.
 func TestBuildStep_ClaudeStepIteration(t *testing.T) {
@@ -815,6 +869,31 @@ func TestLastCapture_StripsTrailingCarriageReturn(t *testing.T) {
 
 	if got := runner.LastCapture(); got != "hello" {
 		t.Errorf("LastCapture: got %q, want %q", got, "hello")
+	}
+}
+
+// TestLastCapture_StderrNotCaptured verifies that output written only to stderr
+// does not appear in LastCapture. The forwardAndCapture function is wired to
+// stdout only; stderr is handled by forward, which does not accumulate lines.
+func TestLastCapture_StderrNotCaptured(t *testing.T) {
+	logDir := t.TempDir()
+	log, err := logger.NewLogger(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, logDir)
+	collect := collectLines(t, runner)
+
+	if err := runner.RunStep("test", []string{"sh", "-c", "echo stderr-only >&2"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = runner.Close()
+	_ = collect()
+
+	if got := runner.LastCapture(); got != "" {
+		t.Errorf("LastCapture: got %q, want empty string (stderr should not be captured)", got)
 	}
 }
 
