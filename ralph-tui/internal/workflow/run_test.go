@@ -1699,3 +1699,111 @@ func TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered(t *testing.T) {
 		}
 	}
 }
+
+// TestRun_BreakLoopIfEmpty_LastStepNoRemainingSkips verifies that when the
+// breakLoopIfEmpty trigger fires on the last iteration step, no SetStepState
+// calls are made (the remaining range is empty — j+1 == len(Steps)).
+func TestRun_BreakLoopIfEmpty_LastStepNoRemainingSkips(t *testing.T) {
+	// Single-step iteration; the step fires the break with empty capture.
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID")},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepSkipped {
+			t.Errorf("no StepSkipped calls expected when break fires on last step; got idx %d", call.idx)
+		}
+	}
+}
+
+// TestRun_BreakLoopIfEmpty_MultiIterBreakOnSecond verifies that when
+// breakLoopIfEmpty fires on the second iteration, only the remaining steps in
+// that iteration are marked StepSkipped — not steps from iteration 1.
+func TestRun_BreakLoopIfEmpty_MultiIterBreakOnSecond(t *testing.T) {
+	// 2-step iteration, 2 iterations.
+	// Iteration 1: get-issue → "issue-42" (non-empty → run work step → continue).
+	// Iteration 2: get-issue → "" (empty → break; work step should be StepSkipped).
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"issue-42", "", "", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 2,
+		Steps: []steps.Step{
+			breakStep("get-issue", "ISSUE_ID"),
+			nonClaudeSteps("work")[0],
+		},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	skippedCount := 0
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepSkipped {
+			skippedCount++
+			if call.idx != 1 {
+				t.Errorf("StepSkipped expected only at index 1 (work); got idx %d", call.idx)
+			}
+		}
+	}
+	if skippedCount != 1 {
+		t.Errorf("expected exactly 1 StepSkipped call (iteration 2, work); got %d", skippedCount)
+	}
+}
+
+// TestRun_BreakLoopIfEmpty_FailedStepNoSkips verifies that when a step with
+// BreakLoopIfEmpty fails (non-zero exit), no steps are marked StepSkipped —
+// the StepSkipped marking only activates on successful completion (StepDone).
+func TestRun_BreakLoopIfEmpty_FailedStepNoSkips(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors:   []error{errors.New("exit 1"), nil},
+		runStepCaptures: []string{"", ""},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID"), nonClaudeSteps("work")[0]},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionContinue")
+	}
+
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepSkipped {
+			t.Errorf("no StepSkipped calls expected when break step fails; got idx %d", call.idx)
+		}
+	}
+}
