@@ -16,9 +16,9 @@ type Step struct {
 	// Command holds the argv for non-claude steps. Arguments may contain
 	// template placeholders (e.g. "{{ISSUE_ID}}") that callers must substitute
 	// before execution; the steps package does no expansion itself.
-	Command        []string `json:"command,omitempty"`
-	CaptureAs      string   `json:"captureAs,omitempty"`
-	BreakLoopIfEmpty bool   `json:"breakLoopIfEmpty,omitempty"`
+	Command          []string `json:"command,omitempty"`
+	CaptureAs        string   `json:"captureAs,omitempty"`
+	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
 }
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
