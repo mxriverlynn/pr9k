@@ -113,7 +113,7 @@ func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude step (index 2; indices 0–1 are non-claude init steps)
+	// "Feature work" is a claude step (index 2; preceded by two non-claude data-gathering steps)
 	s := got.Iteration[2]
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
