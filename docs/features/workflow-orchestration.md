@@ -151,6 +151,8 @@ result[i] = ui.ResolvedStep{
 }
 ```
 
+The `sha` captured at the start of each iteration is passed to `buildIterationSteps` but is currently unused (`_ = sha`). It is reserved for the upcoming `{{VAR}}` substitution engine (issue #39), which will expand `{{STARTINGSHA}}` and other variables in both prompt content and shell commands.
+
 ### The Orchestrate State Machine
 
 `Orchestrate()` runs resolved steps in sequence with error recovery:

@@ -2,15 +2,9 @@
 
 This guide explains how data flows between workflow steps in ralph-tui: how variables are injected into prompts and commands, how step output is captured, and how steps pass data to each other through files.
 
-## Variable Injection into Prompts (PrependVars)
+## Variable Injection into Prompts
 
-When a Claude step has `"prependVars": true`, the orchestrator prepends two lines to the prompt content before passing it to the Claude CLI:
-
-```
-ISSUENUMBER=<issue-id>
-STARTINGSHA=<commit-sha>
-<original prompt file content>
-```
+Iteration context variables (`ISSUENUMBER`, `STARTINGSHA`) are injected by including them directly at the top of each prompt file that needs them. Claude reads the variable assignments and substitutes them wherever the prompt references those names.
 
 **Where the values come from:**
 
@@ -19,23 +13,17 @@ STARTINGSHA=<commit-sha>
 
 These values are captured once per iteration and reused for all steps in that iteration. The SHA is not refreshed on retry — if a step is retried, it uses the same SHA from when the iteration started.
 
-**Implementation:** `steps.BuildPrompt()` in `internal/steps/steps.go` reads the prompt file from `prompts/<promptFile>` and conditionally prepends the variables.
+**Implementation:** `steps.BuildPrompt()` in `internal/steps/steps.go` reads the prompt file from `prompts/<promptFile>` and returns its raw content unchanged. Variable injection is the responsibility of the prompt file itself or the orchestrator level.
+
+> **Upcoming:** A general-purpose `{{VAR}}` substitution engine (issue #39) will expand named variables in both prompt content and shell command arguments. This will replace the current convention of hardcoding variable lines in prompt files.
 
 ### Example
 
-Given `prompts/feature-work.md` containing:
+A prompt file `prompts/feature-work.md` that provides its own context:
 
 ```
-@progress.txt
-1. Implement github issue ISSUENUMBER in the current branch
-2. Commit changes in a single commit
-```
-
-With issue `42` and SHA `abc123`, the actual prompt passed to Claude becomes:
-
-```
-ISSUENUMBER=42
-STARTINGSHA=abc123
+ISSUENUMBER=<issue-id>
+STARTINGSHA=<starting-sha>
 @progress.txt
 1. Implement github issue ISSUENUMBER in the current branch
 2. Commit changes in a single commit
@@ -129,8 +117,8 @@ Finalization:
 
 To inject issue and SHA context into a custom Claude step:
 
-1. Set `"prependVars": true` in the step config
-2. Reference `ISSUENUMBER` and `STARTINGSHA` by name in your prompt text
+1. Include `ISSUENUMBER=<issue-id>` and `STARTINGSHA=<starting-sha>` lines at the top of your prompt file
+2. Reference `ISSUENUMBER` and `STARTINGSHA` by name in the rest of the prompt text
 
 To use the issue number in a custom shell command:
 
