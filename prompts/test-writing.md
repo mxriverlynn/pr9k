@@ -6,7 +6,7 @@ If the test-plan.md file is empty, non-existent, or otherwise says there is noth
 4. Commit changes in a single commit.
 5. Append your progress to progress.txt
 6. Append all deferred work to deferred.txt
-7. Update the github issue ISSUENUMBER with what was done.
+7. Update the github issue #{{ISSUE_ID}} with what was done.
 Never commit test-plan.md
 Never commit progress.txt
 Never commit deferred.txt
