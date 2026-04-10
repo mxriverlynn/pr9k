@@ -22,10 +22,10 @@ func main() {
 	pr, pw := io.Pipe()
 	go func() {
 		for i := 0; i < 20; i++ {
-			fmt.Fprintf(pw, "step output line %d\n", i+1)
+			fmt.Fprintf(pw, "step output line %d\n", i+1) //nolint:errcheck
 			time.Sleep(100 * time.Millisecond)
 		}
-		pw.Close()
+		_ = pw.Close()
 	}()
 
 	// Pointer-bound strings that the header will display.

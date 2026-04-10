@@ -24,7 +24,7 @@ const HeaderCols = 4
 //	IterationLine    →  Text(&h.IterationLine)
 //	Rows[r][0..3]   →  HBox(Text(&h.Rows[r][0]), ..., Text(&h.Rows[r][3]))  // one row per HeaderCols steps
 type StatusHeader struct {
-	IterationLine string              // e.g. "Iteration 1/3 — Issue #42: Add widget support"
+	IterationLine string               // e.g. "Iteration 1/3 — Issue #42: Add widget support"
 	Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
 	stepNames     []string             // current phase's step name list
 }

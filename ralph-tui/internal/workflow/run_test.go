@@ -18,8 +18,8 @@ import (
 
 type fakeExecutor struct {
 	runStepCalls    []runStepCall
-	runStepErrors   []error   // per-call errors; nil entries mean success
-	runStepCaptures []string  // per-call LastCapture values (indexed by call order)
+	runStepErrors   []error  // per-call errors; nil entries mean success
+	runStepCaptures []string // per-call LastCapture values (indexed by call order)
 	lastCapture     string
 	logLines        []string
 	closed          bool
@@ -882,6 +882,140 @@ func TestRun_IterationsRunOnIterationQuit(t *testing.T) {
 
 	if result.IterationsRun != 1 {
 		t.Errorf("expected IterationsRun=1 on iteration quit, got %d", result.IterationsRun)
+	}
+}
+
+// TestRun_SetPhaseStepsCalledPerIteration verifies that SetPhaseSteps is called
+// once per iteration with the iteration step names, plus once for finalization.
+func TestRun_SetPhaseStepsCalledPerIteration(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    2,
+		Steps:         nonClaudeSteps("step1", "step2"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Expect 3 SetPhaseSteps calls: iteration 1, iteration 2, finalization.
+	if len(header.phaseStepsCalls) != 3 {
+		t.Fatalf("expected 3 SetPhaseSteps calls, got %d: %v", len(header.phaseStepsCalls), header.phaseStepsCalls)
+	}
+
+	wantIterNames := []string{"step1", "step2"}
+	for i := 0; i < 2; i++ {
+		got := header.phaseStepsCalls[i]
+		if len(got) != len(wantIterNames) {
+			t.Errorf("phaseStepsCalls[%d]: got %v, want %v", i, got, wantIterNames)
+			continue
+		}
+		for j, name := range wantIterNames {
+			if got[j] != name {
+				t.Errorf("phaseStepsCalls[%d][%d]: got %q, want %q", i, j, got[j], name)
+			}
+		}
+	}
+
+	wantFinalNames := []string{"final1"}
+	got := header.phaseStepsCalls[2]
+	if len(got) != len(wantFinalNames) || got[0] != wantFinalNames[0] {
+		t.Errorf("phaseStepsCalls[2] (finalization): got %v, want %v", got, wantFinalNames)
+	}
+}
+
+// TestRun_FinalizationStepStateCallsUseCorrectIndices verifies that finalization
+// step state updates use 0-based indices within the finalize phase, not
+// continuation indices from the iteration phase.
+func TestRun_FinalizationStepStateCallsUseCorrectIndices(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter1", "iter2", "iter3"),
+		FinalizeSteps: nonClaudeSteps("final1", "final2"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Each step produces SetStepState(idx, Active) and SetStepState(idx, Done).
+	// Iteration: 3 steps × 2 calls = 6 calls (indices 0, 1, 2).
+	// Finalization: 2 steps × 2 calls = 4 calls (indices must be 0, 1 — not 3, 4).
+	totalCalls := len(header.stepStateCalls)
+	if totalCalls < 10 {
+		t.Fatalf("expected at least 10 step state calls (6 iter + 4 final), got %d", totalCalls)
+	}
+
+	finalCalls := header.stepStateCalls[totalCalls-4:]
+	for _, call := range finalCalls {
+		if call.idx > 1 {
+			t.Errorf("finalization step state call used index %d, want 0 or 1 (not a continuation of iteration indices)", call.idx)
+		}
+	}
+}
+
+// TestRun_FinalizationPhaseStepsSetAfterBreak verifies that SetPhaseSteps is
+// still called with finalization step names even when the iteration loop exits
+// early via breakLoopIfEmpty.
+func TestRun_FinalizationPhaseStepsSetAfterBreak(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""}, // break step captures empty → exit loop
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    3,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID")},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// phaseStepsCalls: [0] = iteration names, [1] = finalization names.
+	if len(header.phaseStepsCalls) < 2 {
+		t.Fatalf("expected at least 2 SetPhaseSteps calls (iteration + finalization), got %d", len(header.phaseStepsCalls))
+	}
+
+	last := header.phaseStepsCalls[len(header.phaseStepsCalls)-1]
+	if len(last) != 1 || last[0] != "final1" {
+		t.Errorf("last SetPhaseSteps call (finalization): got %v, want [final1]", last)
+	}
+}
+
+// TestRun_InitializeDoesNotCallSetPhaseSteps verifies that the initialize phase
+// does not call header.SetPhaseSteps — the first phaseStepsCalls entry is the
+// iteration step names, not the initialize step names.
+func TestRun_InitializeDoesNotCallSetPhaseSteps(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init1", "init2"),
+		Steps:           nonClaudeSteps("iter-step"),
+		FinalizeSteps:   nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.phaseStepsCalls) == 0 {
+		t.Fatal("expected at least one SetPhaseSteps call")
+	}
+
+	// The first SetPhaseSteps call must be for the iteration phase, not initialize.
+	first := header.phaseStepsCalls[0]
+	if len(first) != 1 || first[0] != "iter-step" {
+		t.Errorf("phaseStepsCalls[0]: got %v, want [iter-step] (initialize must not call SetPhaseSteps)", first)
 	}
 }
 

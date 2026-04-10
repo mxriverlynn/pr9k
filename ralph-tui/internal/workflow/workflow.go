@@ -217,4 +217,3 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
-

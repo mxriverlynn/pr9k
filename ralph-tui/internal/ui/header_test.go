@@ -165,7 +165,7 @@ func TestSetStepState_OutOfBoundsIsNoOp(t *testing.T) {
 
 	rowsBefore := h.Rows[0]
 	h.SetStepState(-1, StepDone)
-	h.SetStepState(3, StepDone)  // idx 3 is beyond len(stepNames)==3
+	h.SetStepState(3, StepDone) // idx 3 is beyond len(stepNames)==3
 	h.SetStepState(99, StepDone)
 
 	if h.Rows[0] != rowsBefore {
@@ -192,5 +192,74 @@ func TestStatusHeader_IterationLine_Unbounded(t *testing.T) {
 	want := "Iteration 3 — Issue #42: Add widget support"
 	if h.IterationLine != want {
 		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+// --- Input immutability ---
+
+func TestSetPhaseSteps_DoesNotMutateInput(t *testing.T) {
+	h := NewStatusHeader(4)
+	names := []string{"Alpha", "Beta", "Gamma"}
+	h.SetPhaseSteps(names)
+
+	// Mutate the caller's slice after the call.
+	names[0] = "MUTATED"
+
+	// The header's internal state should still reflect the original names.
+	if h.Rows[0][0] != "[ ] Alpha" {
+		t.Errorf("Rows[0][0] = %q after mutating input, want %q", h.Rows[0][0], "[ ] Alpha")
+	}
+}
+
+// --- Phase transition interactions ---
+
+func TestSetStepState_AfterPhaseTransition(t *testing.T) {
+	// Start with a longer phase (8 steps), then switch to a shorter one (3 steps).
+	// An index valid in the old phase but out-of-bounds in the new phase must be a no-op.
+	h := NewStatusHeader(8)
+	h.SetPhaseSteps([]string{"A", "B", "C", "D", "E", "F", "G", "H"})
+	h.SetPhaseSteps([]string{"X", "Y", "Z"})
+
+	rowsBefore := h.Rows[0]
+	h.SetStepState(5, StepDone) // index 5 was valid in the old phase, invalid now
+
+	if h.Rows[0] != rowsBefore {
+		t.Errorf("Rows[0] changed after out-of-bounds SetStepState (post phase transition): got %v, want %v", h.Rows[0], rowsBefore)
+	}
+}
+
+// --- SetPhaseSteps edge cases ---
+
+func TestSetPhaseSteps_ExactlyOneFullRow(t *testing.T) {
+	h := NewStatusHeader(4)
+	names := []string{"Step1", "Step2", "Step3", "Step4"}
+	h.SetPhaseSteps(names)
+
+	for c, name := range names {
+		want := "[ ] " + name
+		if h.Rows[0][c] != want {
+			t.Errorf("Rows[0][%d] = %q, want %q", c, h.Rows[0][c], want)
+		}
+	}
+}
+
+func TestSetPhaseSteps_ZeroSteps(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Prev1", "Prev2"}) // load a previous phase
+	h.SetPhaseSteps([]string{})                 // now clear with zero steps
+
+	for c, v := range h.Rows[0] {
+		if v != "" {
+			t.Errorf("Rows[0][%d] = %q, want empty after zero-step SetPhaseSteps", c, v)
+		}
+	}
+}
+
+// --- NewStatusHeader edge cases ---
+
+func TestNewStatusHeader_NegativeInput(t *testing.T) {
+	h := NewStatusHeader(-1)
+	if len(h.Rows) != 1 {
+		t.Errorf("NewStatusHeader(-1): got %d rows, want 1", len(h.Rows))
 	}
 }
