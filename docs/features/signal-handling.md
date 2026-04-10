@@ -2,7 +2,7 @@
 
 Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the ralph-tui workflow, terminating the active subprocess and exiting with the appropriate status code.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
@@ -30,11 +30,15 @@ Key files:
        │
        ▼
   signal handler goroutine:
-  ┌──────────────────────────┐
-  │  <-sigChan               │
-  │  close(signaled)         │  ← marks that a signal was received
-  │  keyHandler.ForceQuit()  │  ← terminates subprocess + injects ActionQuit
-  └──────────────────────────┘
+  ┌──────────────────────────────────────────────┐
+  │  <-sigChan                                   │
+  │  close(signaled)         ← one-shot flag     │
+  │  keyHandler.ForceQuit()  ← terminate sub +  │
+  │                             inject ActionQuit│
+  │  app.Stop()              ← stop the TUI      │
+  │  wait on <-done or 2s timeout                │
+  │  os.Exit(1)              ← direct exit       │
+  └──────────────────────────────────────────────┘
        │
        ├───▶ Runner.Terminate()     → SIGTERM subprocess, SIGKILL after 3s
        │
@@ -45,21 +49,29 @@ Key files:
           before each step → sees ActionQuit
           → returns ActionQuit
           → Run() closes and returns
-                │
-                ▼
-          main goroutine:
-          ┌─────────────────────┐
-          │  <-done             │
-          │  signal.Stop(sigChan)│
-          │  log.Close()        │
-          │                     │
-          │  select {           │
-          │  case <-signaled:   │
-          │    os.Exit(1)       │  ← signal-initiated
-          │  default:           │
-          │    os.Exit(0)       │  ← normal completion
-          │  }                  │
-          └─────────────────────┘
+
+  workflow goroutine (normal completion path):
+  ┌──────────────────────────┐
+  │  workflow.Run(...)       │
+  │  signal.Stop(sigChan)    │  ← deregister signal handler
+  │  log.Close()             │  ← flush and close log file
+  │  app.Stop()              │  ← stop the TUI
+  │  close(done)             │
+  └──────────────────────────┘
+
+  main goroutine (after app.Run() returns):
+  ┌─────────────────────────────────────────┐
+  │  wait on <-done or 2s timeout           │
+  │                                         │
+  │  select {                               │
+  │  case <-signaled:                       │
+  │    os.Exit(1)   ← signal path (already │
+  │                    exited above, but    │
+  │                    defensive fallback)  │
+  │  default:                               │
+  │    os.Exit(0)   ← normal completion    │
+  │  }                                      │
+  └─────────────────────────────────────────┘
 ```
 
 ## Implementation Details
@@ -76,10 +88,16 @@ go func() {
     <-sigChan
     close(signaled)
     keyHandler.ForceQuit()
+    app.Stop()
+    select {
+    case <-done:
+    case <-time.After(2 * time.Second):
+    }
+    os.Exit(1)
 }()
 ```
 
-The `signaled` channel is a one-shot flag — once closed, it stays closed for the exit code check.
+The `signaled` channel is a one-shot flag — once closed, it stays closed. The signal handler calls `app.Stop()` to tear down the Glyph TUI, waits up to 2 seconds for the workflow goroutine to finish (so the log is flushed), then calls `os.Exit(1)` directly.
 
 ### ForceQuit Integration
 
@@ -103,24 +121,41 @@ default:
 
 This catches the `ActionQuit` injected by `ForceQuit` even if the signal arrives between steps (when no goroutine is blocking on the channel).
 
-### Exit Code Selection
+### Workflow Goroutine Cleanup
 
-After the workflow goroutine completes, the main goroutine checks whether a signal was received:
+On normal workflow completion, `signal.Stop`, `log.Close`, and `app.Stop` all run inside the workflow goroutine before `done` is closed:
 
 ```go
-<-done
-signal.Stop(sigChan)
-_ = log.Close()
+go func() {
+    defer close(done)
+    _ = workflow.Run(runner, header, keyHandler, runCfg)
+    signal.Stop(sigChan)  // deregister signal handler
+    _ = log.Close()       // flush and close the log file
+    app.Stop()            // stop the Glyph TUI
+}()
+```
+
+Placing cleanup here ensures it always runs when the workflow finishes naturally, without relying on the main goroutine to sequence it.
+
+### Exit Code Selection
+
+After `app.Run()` returns, the main goroutine waits for the workflow goroutine and checks whether a signal was received:
+
+```go
+select {
+case <-done:
+case <-time.After(2 * time.Second):
+}
 
 select {
 case <-signaled:
-    os.Exit(1)  // signal-initiated shutdown
+    os.Exit(1)  // signal-initiated shutdown (defensive; signal handler already exited)
 default:
     os.Exit(0)  // normal completion
 }
 ```
 
-`signal.Stop` is called before exit to deregister the signal handler and avoid processing stale signals.
+In the signal path, the signal handler goroutine already called `os.Exit(1)` directly. The exit code check in main is a defensive fallback for the case where `app.Run()` returns before the signal handler fires.
 
 ## Testing
 
