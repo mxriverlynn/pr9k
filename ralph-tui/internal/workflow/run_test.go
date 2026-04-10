@@ -432,7 +432,7 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 }
 
 // TestRun_Integration_FullFlow runs the orchestration end-to-end with fake
-// scripts and real subprocesses — verifying the full path from startup banner
+// scripts and real subprocesses — verifying the full path from GitHub user lookup
 // to completion summary.
 func TestRun_Integration_FullFlow(t *testing.T) {
 	projectDir := t.TempDir()

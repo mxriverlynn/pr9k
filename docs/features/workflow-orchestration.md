@@ -117,9 +117,8 @@ type ResolvedStep struct {
 
 `Run()` executes the full workflow lifecycle:
 
-1. **Banner** — displays the embedded `ralph-art.txt` banner (compiled into the binary via `//go:embed`)
-2. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
-3. **Iteration loop** — runs from i=1 upward, stopping when `i > Iterations` (bounded) or when no issue is found (unbounded, `Iterations == 0`):
+1. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
+2. **Iteration loop** — runs from i=1 upward, stopping when `i > Iterations` (bounded) or when no issue is found (unbounded, `Iterations == 0`):
    - Fetches the next issue via `scripts/get_next_issue`
    - If no issue found, exits the loop early (the only exit condition in unbounded mode)
    - Captures the current HEAD SHA
@@ -127,12 +126,12 @@ type ResolvedStep struct {
    - Builds resolved steps via `buildIterationSteps`
    - Runs steps through `Orchestrate()`
    - If `Orchestrate` returns `ActionQuit`, closes and returns immediately
-4. **Finalization** — runs even after early loop exit:
+3. **Finalization** — runs even after early loop exit:
    - Switches the header to finalization mode
    - Builds resolved steps via `buildFinalizeSteps`
    - Runs through `Orchestrate()` with a `finalHeader` adapter
-5. **Completion summary** — logs iteration count and finalization task count
-6. **Close** — sends EOF to the log pipe
+4. **Completion summary** — logs iteration count and finalization task count
+5. **Close** — sends EOF to the log pipe
 
 ### Step Resolution
 

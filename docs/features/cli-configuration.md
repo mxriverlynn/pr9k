@@ -155,7 +155,7 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 | `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
 
 Within `workflow.Run`, `ProjectDir` resolves additional paths:
-- `ralph-art.txt` — startup banner (embedded in the binary via `//go:embed`)
+- `ralph-art.txt` — startup banner (copied into `bin/` by `make build`; not embedded in the binary)
 - `{projectDir}/scripts/get_gh_user` — GitHub username script
 - `{projectDir}/scripts/get_next_issue` — issue fetch script
 - `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt`
