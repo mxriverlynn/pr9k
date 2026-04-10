@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
 
-- **Last Updated:** 2026-04-10 (issue #51)
+- **Last Updated:** 2026-04-10 (issue #52)
 - **Authors:**
   - River Bailey
 
@@ -16,7 +16,7 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
 
 Key files:
-- `ralph-tui/internal/ui/header.go` — StatusHeader struct, SetIteration, SetPhaseSteps, SetStepState
+- `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, SetPhaseSteps, SetStepState
 - `ralph-tui/internal/ui/header_test.go` — Unit tests for header state management
 - `ralph-tui/internal/ui/log.go` — StepSeparator, RetryStepSeparator
 - `ralph-tui/internal/ui/log_test.go` — Unit tests for separator formatting
@@ -30,8 +30,8 @@ Key files:
   ┌─────────────────────────────────────────────┐
   │              StatusHeader                    │
   │                                              │
-  │  IterationLine: "Iteration 1/3 — Issue #42" │  ← bounded (total > 0)
-  │  IterationLine: "Iteration 1 — Issue #42"   │  ← unbounded (total == 0)
+  │  IterationLine: "Iteration 1/3 — Issue #42" │  ← bounded (maxIter > 0)
+  │  IterationLine: "Iteration 1 — Issue #42"   │  ← unbounded (maxIter == 0)
   │                                              │
   │  Rows[0]: [▸] Feature work  [✓] Test planning│
   │           [ ] Test writing   [ ] Code review  │
@@ -81,8 +81,7 @@ const HeaderCols = 4
 // StatusHeader manages pointer-mutable string state for the TUI.
 // Glyph reads exported fields via pointer on each render cycle.
 type StatusHeader struct {
-    IterationLine string               // e.g. "Iteration 1/3 — Issue #42: Add widget support" (bounded)
-                                       //   or "Iteration 1 — Issue #42: Add widget support" (unbounded, total==0)
+    IterationLine string               // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
     Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
     stepNames     []string             // current phase's step name list
 }
@@ -120,16 +119,18 @@ func (h *StatusHeader) SetPhaseSteps(names []string) {
 
 ### Iteration Line and Step State
 
-`SetIteration` updates the iteration line. When `total > 0` the line shows `N/M`; when `total == 0` (unbounded mode, run until done) the total is omitted. `SetStepState` updates individual step checkboxes (0-indexed within the current phase's step list):
+Three phase-specific render methods update `IterationLine`. A local `substitute` helper replaces `{{KEY}}` tokens for the initialize and finalize formats; `RenderIterationLine` uses a `strings.Builder` because its output is conditional (bounded/unbounded, with/without issueID). `SetStepState` updates individual step checkboxes (0-indexed within the current phase's step list):
 
 ```go
-func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
-    if total > 0 {
-        h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
-    } else {
-        h.IterationLine = fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)
-    }
-}
+// RenderInitializeLine: "Initializing 1/2: Splash"
+func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string)
+
+// RenderIterationLine: "Iteration 2/5 — Issue #42" (bounded, with issue)
+//                      "Iteration 3" (unbounded, no issue)
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string)
+
+// RenderFinalizeLine: "Finalizing 1/3: Deferred work"
+func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string)
 
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
     if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
@@ -202,7 +203,7 @@ if len(stepFile.Initialize) > 0 {
 
 - If an initialize phase exists, the header is set to that phase with the first step marked active and `IterationLine` showing `Initializing 1/N: <step name>`
 - Otherwise the header starts on the iteration phase with `Iteration 1/M` (bounded) or `Iteration 1` (unbounded)
-- The workflow goroutine then calls `SetPhaseSteps` / `SetStepState` / `SetIteration` as it progresses, overwriting this initial state
+- The workflow goroutine then calls `SetPhaseSteps` / `SetStepState` / `RenderIterationLine` (and `RenderInitializeLine`/`RenderFinalizeLine` for those phases) as it progresses, overwriting this initial state
 
 ## Glyph Layout Assembly
 
@@ -237,7 +238,7 @@ app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), SetIteration (bounded and unbounded), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
 ## Additional Information
