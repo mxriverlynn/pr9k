@@ -73,6 +73,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 ## ADRs
 
 - [`docs/adr/20260409135303-cobra-cli-framework.md`](docs/adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing (POSIX flags, subcommands). Apply when modifying CLI argument handling or adding new commands.
+- [`docs/adr/20260410170952-narrow-reading-principle.md`](docs/adr/20260410170952-narrow-reading-principle.md) — Narrow-reading principle: ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code. Apply when evaluating any PR that adds Ralph-specific knowledge to Go code.
 
 ## Coding Standards
 
