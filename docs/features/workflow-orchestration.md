@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-10 (issue #53)
+- **Last Updated:** 2026-04-10 (issue #54)
 - **Authors:**
   - River Bailey
 
@@ -165,7 +165,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Updates the status header for each iteration
 - Builds resolved steps via `buildStep` (uses VarTable for `{{VAR}}` substitution)
 - After each step, if `s.CaptureAs != ""`, binds captured output into the iteration-scoped VarTable, then re-calls `header.RenderIterationLine(i, cfg.Iterations, issueID)` — looking up `ISSUE_ID` from the iteration VarTable to update the header with the newly bound issue ID (empty string if `ISSUE_ID` was not the captured variable)
-- If `s.BreakLoopIfEmpty` is set, `executor.LastCapture()` is empty, **and the step completed as `StepDone`**, exits the loop (finalization still runs); if the step failed (non-zero exit), the check is skipped so normal error-mode handling takes effect instead
+- If `s.BreakLoopIfEmpty` is set, `executor.LastCapture()` is empty, **and the step completed as `StepDone`**, exits the loop: remaining iteration steps are marked `StepSkipped` in the header before the loop exits, then finalization still runs; if the step failed (non-zero exit), the check is skipped so normal error-mode handling takes effect instead
 - If `buildStep` fails, logs `"Error preparing steps: ..."` and breaks the inner loop (finalization still runs)
 - If `Orchestrate` returns `ActionQuit`, closes executor and returns without finalization
 
@@ -292,6 +292,11 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_InitializeBuildErrorContinuesToNextInitStep` — verifies that a bad init step (missing prompt file) logs `"Error preparing initialize step"`, skips that step, and continues to the next
   - `TestRun_QuitFromInitializeOrchestrateClosesEarly` — verifies `ActionQuit` during init closes the executor and skips iteration and finalization
   - `TestRun_BreakLoopIfEmptyCapture` / `TestRun_BreakLoopIfEmptyNonEmptyCapture` — verify early-exit loop semantics
+  - `TestRun_BreakLoopIfEmpty_MarksRemainingStepsSkipped` — verifies trigger at index 0 marks all subsequent step indices as `StepSkipped`
+  - `TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered` — verifies no `StepSkipped` calls when captured value is non-empty (break does not fire)
+  - `TestRun_BreakLoopIfEmpty_LastStepNoRemainingSkips` — boundary: single-step iteration, break fires on the only step → no remaining steps to mark
+  - `TestRun_BreakLoopIfEmpty_MultiIterBreakOnSecond` — multi-iteration: break fires on iteration 2 only; `StepSkipped` appears exactly once, confirming iteration 1 steps are unaffected
+  - `TestRun_BreakLoopIfEmpty_FailedStepNoSkips` — failed step guard: step returns error → no `StepSkipped` calls (break check is skipped)
   - `TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization` — verifies a missing prompt file for an iteration step logs `"Error preparing steps"` and skips to finalization
   - `TestRun_IterationsRunOnNormalCompletion` — verifies `RunResult.IterationsRun` equals the configured `Iterations` count after a normal bounded run
   - `TestRun_IterationsRunZeroOnInitializeQuit` — verifies `RunResult.IterationsRun` is zero when `ActionQuit` fires during the initialize phase
