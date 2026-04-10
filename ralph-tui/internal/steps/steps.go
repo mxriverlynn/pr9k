@@ -16,14 +16,16 @@ type Step struct {
 	// Command holds the argv for non-claude steps. Arguments may contain
 	// template placeholders (e.g. "{{ISSUE_ID}}") that callers must substitute
 	// before execution; the steps package does no expansion itself.
-	Command     []string `json:"command,omitempty"`
-	PrependVars bool     `json:"prependVars,omitempty"`
+	Command        []string `json:"command,omitempty"`
+	CaptureAs      string   `json:"captureAs,omitempty"`
+	BreakLoopIfEmpty bool   `json:"breakLoopIfEmpty,omitempty"`
 }
 
-// StepFile holds the two groups of steps loaded from ralph-steps.json.
+// StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-	Iteration []Step `json:"iteration"`
-	Finalize  []Step `json:"finalize"`
+	Initialize []Step `json:"initialize"`
+	Iteration  []Step `json:"iteration"`
+	Finalize   []Step `json:"finalize"`
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,
@@ -44,8 +46,7 @@ func LoadSteps(projectDir string) (StepFile, error) {
 }
 
 // BuildPrompt reads the prompt file for the given step and returns its content.
-// When step.PrependVars is true, it prepends ISSUENUMBER and STARTINGSHA lines.
-func BuildPrompt(projectDir string, step Step, issueID string, startingSHA string) (string, error) {
+func BuildPrompt(projectDir string, step Step) (string, error) {
 	if step.PromptFile == "" {
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
@@ -55,9 +56,5 @@ func BuildPrompt(projectDir string, step Step, issueID string, startingSHA strin
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
 	}
 
-	content := string(data)
-	if step.PrependVars {
-		content = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + startingSHA + "\n" + content
-	}
-	return content, nil
+	return string(data), nil
 }

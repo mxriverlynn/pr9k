@@ -126,11 +126,14 @@ func iterationLabel(i, total int) string {
 	return fmt.Sprintf("Iteration %d", i)
 }
 
+// buildIterationSteps resolves each iteration step into a runnable command.
+// sha is reserved for the upcoming {{VAR}} substitution engine (#39) and is currently unused.
 func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {
+	_ = sha
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
 		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, issueID, sha)
+			prompt, err := steps.BuildPrompt(projectDir, s)
 			if err != nil {
 				return nil, fmt.Errorf("step %q: %w", s.Name, err)
 			}
@@ -152,7 +155,7 @@ func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.Resol
 	result := make([]ui.ResolvedStep, len(stepsConfig))
 	for i, s := range stepsConfig {
 		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, "", "")
+			prompt, err := steps.BuildPrompt(projectDir, s)
 			if err != nil {
 				return nil, fmt.Errorf("finalize step %q: %w", s.Name, err)
 			}

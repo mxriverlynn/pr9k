@@ -602,11 +602,10 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 	}
 
 	step := steps.Step{
-		Name:        "test-step",
-		IsClaude:    true,
-		Model:       "claude-opus-4-6",
-		PromptFile:  "test-prompt.txt",
-		PrependVars: true,
+		Name:       "test-step",
+		IsClaude:   true,
+		Model:      "claude-opus-4-6",
+		PromptFile: "test-prompt.txt",
 	}
 
 	resolved, err := buildIterationSteps(dir, []steps.Step{step}, "42", "abc123")
@@ -634,11 +633,8 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 		t.Errorf("expected -p flag, got %q", rs.Command[5])
 	}
 	prompt := rs.Command[6]
-	if !strings.Contains(prompt, "ISSUENUMBER=42") {
-		t.Errorf("expected ISSUENUMBER=42 in prompt, got %q", prompt)
-	}
-	if !strings.Contains(prompt, "STARTINGSHA=abc123") {
-		t.Errorf("expected STARTINGSHA=abc123 in prompt, got %q", prompt)
+	if prompt != "do something" {
+		t.Errorf("expected prompt to be the raw file content %q, got %q", "do something", prompt)
 	}
 }
 
@@ -742,11 +738,10 @@ func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 	}
 
 	step := steps.Step{
-		Name:        "finalize-claude",
-		IsClaude:    true,
-		Model:       "claude-sonnet-4-6",
-		PromptFile:  "finalize-prompt.txt",
-		PrependVars: true,
+		Name:       "finalize-claude",
+		IsClaude:   true,
+		Model:      "claude-sonnet-4-6",
+		PromptFile: "finalize-prompt.txt",
 	}
 
 	resolved, err := buildFinalizeSteps(dir, []steps.Step{step})
@@ -768,8 +763,8 @@ func TestBuildFinalizeSteps_ClaudeStep(t *testing.T) {
 		t.Errorf("expected -p flag at index 5, got %q", rs.Command[5])
 	}
 	prompt := rs.Command[6]
-	if !strings.HasPrefix(prompt, "ISSUENUMBER=\nSTARTINGSHA=\n") {
-		t.Errorf("expected empty ISSUENUMBER and STARTINGSHA in prompt, got %q", prompt)
+	if prompt != "finalize this" {
+		t.Errorf("expected prompt to be the raw file content %q, got %q", "finalize this", prompt)
 	}
 }
 
