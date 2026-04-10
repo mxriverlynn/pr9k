@@ -1,17 +1,12 @@
 package workflow
 
 import (
-	_ "embed"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 )
-
-//go:embed ralph-art.txt
-var bannerArt string
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
 // *Runner satisfies this interface.
@@ -50,23 +45,18 @@ func (a *finalHeader) SetStepState(idx int, state ui.StepState) {
 	a.h.SetFinalizeStepState(idx, state)
 }
 
-// Run is the main orchestration goroutine. It displays the startup banner,
-// fetches the GitHub username, runs N workflow iterations, executes the
-// finalization phase, writes the completion summary, and closes the executor.
+// Run is the main orchestration goroutine. It fetches the GitHub username,
+// runs N workflow iterations, executes the finalization phase, writes the
+// completion summary, and closes the executor.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
-	// 1. Display embedded banner.
-	for _, line := range strings.Split(bannerArt, "\n") {
-		executor.WriteToLog(line)
-	}
-
-	// 2. Get GitHub username.
+	// 1. Get GitHub username.
 	userScript := filepath.Join(cfg.ProjectDir, "scripts", "get_gh_user")
 	username, err := executor.CaptureOutput([]string{userScript})
 	if err != nil {
 		executor.WriteToLog(fmt.Sprintf("Warning: could not get GitHub user: %v", err))
 	}
 
-	// 3. Iteration loop.
+	// 2. Iteration loop.
 	iterationsRun := 0
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		issueScript := filepath.Join(cfg.ProjectDir, "scripts", "get_next_issue")
@@ -104,7 +94,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		iterationsRun++
 	}
 
-	// 4. Finalization phase (runs even after early loop exit).
+	// 3. Finalization phase (runs even after early loop exit).
 	finalizeNames := make([]string, len(cfg.FinalizeSteps))
 	for i, s := range cfg.FinalizeSteps {
 		finalizeNames[i] = s.Name
@@ -120,11 +110,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 	}
 
-	// 5. Completion summary.
+	// 4. Completion summary.
 	executor.WriteToLog(fmt.Sprintf("Ralph completed after %d iteration(s) and %d finalizing tasks.",
 		iterationsRun, len(cfg.FinalizeSteps)))
 
-	// 6. Close executor (sends EOF to log pipe).
+	// 5. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
 }
 

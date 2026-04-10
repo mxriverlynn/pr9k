@@ -7,6 +7,7 @@ build:
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
 	cp ralph-tui/ralph-steps.json bin/
+	cp ralph-art.txt bin/
 
 test:
 	cd ralph-tui && go test -race -count=1 ./...

@@ -302,41 +302,6 @@ func TestRun_FinalizationRunsWhenNoIssueFound(t *testing.T) {
 	}
 }
 
-// TestRun_BannerWrittenToLog verifies the embedded banner is written
-// to the log at startup.
-func TestRun_BannerWrittenToLog(t *testing.T) {
-	dir := t.TempDir()
-
-	executor := &fakeExecutor{
-		captureResults: []captureResult{
-			{output: "testuser"},
-			{output: ""}, // no issue
-		},
-	}
-	header := &fakeRunHeader{}
-	kh := newTestKeyHandler()
-
-	cfg := RunConfig{
-		ProjectDir:    dir,
-		Iterations:    1,
-		Steps:         nonClaudeSteps("step1"),
-		FinalizeSteps: nonClaudeSteps("final1"),
-	}
-
-	Run(executor, header, kh, cfg)
-
-	// The embedded banner should appear in the log lines.
-	found := false
-	for _, line := range executor.logLines {
-		if strings.Contains(line, "Power-Raph.9000") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected embedded banner content in log lines, got %v", executor.logLines)
-	}
-}
-
 // TestRun_GetNextIssueCalledWithUsername verifies get_next_issue is called with
 // the GitHub username returned by get_gh_user.
 func TestRun_GetNextIssueCalledWithUsername(t *testing.T) {
@@ -535,7 +500,6 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 		desc    string
 		contain string
 	}{
-		{"banner", "Power-Raph.9000"},
 		{"iteration step output", "iteration step done"},
 		{"finalization step output", "finalization done"},
 		{"completion summary", "Ralph completed"},
