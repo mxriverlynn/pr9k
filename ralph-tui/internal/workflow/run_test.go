@@ -643,6 +643,47 @@ func TestBuildIterationSteps_ClaudeStep(t *testing.T) {
 	}
 }
 
+// TestBuildIterationSteps_ClaudeStepWithVarSubstitution verifies the primary
+// integration point: {{VAR}} tokens in a prompt file are substituted with
+// VarTable-bound iteration values when wired through buildIterationSteps.
+func TestBuildIterationSteps_ClaudeStepWithVarSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	promptContent := "implement issue {{ISSUE_ID}} from sha {{STARTING_SHA}}"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "subst-prompt.txt"), []byte(promptContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{
+		Name:       "subst-step",
+		IsClaude:   true,
+		Model:      "claude-opus-4-6",
+		PromptFile: "subst-prompt.txt",
+	}
+
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
+	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
+	resolved, err := buildIterationSteps(dir, []steps.Step{step}, vt)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved step, got %d", len(resolved))
+	}
+
+	if len(resolved[0].Command) < 7 {
+		t.Fatalf("expected at least 7 command elements, got %d: %v", len(resolved[0].Command), resolved[0].Command)
+	}
+	want := "implement issue 42 from sha abc123"
+	if got := resolved[0].Command[6]; got != want {
+		t.Errorf("expected substituted prompt %q, got %q", want, got)
+	}
+}
+
 // TestBuildIterationSteps_ClaudeStepMissingPromptFile verifies that a claude
 // step with a missing prompt file returns a non-nil error containing the step name.
 func TestBuildIterationSteps_ClaudeStepMissingPromptFile(t *testing.T) {
