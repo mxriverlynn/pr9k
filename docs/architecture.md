@@ -218,6 +218,7 @@ cmd/ralph-tui/main.go
 
 ## Key Design Principles
 
+- **Narrow-reading principle**: Ralph-tui facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
 - **Streaming over buffering**: Subprocess output streams through `io.Pipe` in real time — no buffered collection and dump.
 - **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `RenderInitializeLine`, `RenderIterationLine`, `RenderFinalizeLine`, `SetPhaseSteps`, and `SetStepState`.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.

@@ -36,6 +36,11 @@
 - TUI: Glyph (planned, not yet in go.mod)
 - Task runner: Make (`Makefile` at repo root)
 
+### Architecture Decision Records
+
+- [Cobra CLI Framework](adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing
+- [Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md) — Ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code
+
 ### Commands and Tests
 
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`

@@ -139,6 +139,7 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 
 ## Related Documentation
 
+- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `ralph-steps.json`, not Go code; includes documented exceptions
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Implementation details of step loading and prompt construction
 - [Variable Output & Injection](variable-output-and-injection.md) — How variables are injected into prompts and commands
 - [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
