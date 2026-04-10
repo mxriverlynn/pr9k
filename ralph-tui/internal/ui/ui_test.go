@@ -366,8 +366,8 @@ func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 	}()
 
 	// Workflow goroutine: cycle through all modes.
-	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal}
-	for i := 0; i < 100; i++ {
+	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal, ModeDone}
+	for i := range 100 {
 		h.SetMode(modes[i%len(modes)])
 	}
 
@@ -427,7 +427,7 @@ func TestShortcutLinePtr_StableAddress(t *testing.T) {
 // T4: *ShortcutLinePtr() always agrees with ShortcutLine() after each SetMode.
 func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
 	h, _, _ := newTestHandler(t)
-	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm}
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeDone}
 
 	for _, mode := range modes {
 		h.SetMode(mode)

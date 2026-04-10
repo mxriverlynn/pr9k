@@ -1966,3 +1966,52 @@ func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 		t.Fatal("Run() did not unblock after ActionQuit")
 	}
 }
+
+// TestRun_CompletionSummary_AfterBreakLoopIfEmpty verifies that when the loop
+// exits early via breakLoopIfEmpty (on the first iteration of a 3-iteration
+// config), the completion sequence reports iterationsRun=1 and the correct
+// finalizeCount.
+func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""},
+	}
+	completionCh := make(chan completionLineCall, 1)
+	header := &fakeRunHeader{completionStarted: completionCh}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    3,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID"), nonClaudeSteps("work")[0]},
+		FinalizeSteps: nonClaudeSteps("final1", "final2"),
+	}
+
+	done := make(chan RunResult, 1)
+	go func() {
+		done <- Run(executor, header, kh, cfg)
+	}()
+
+	var got completionLineCall
+	select {
+	case got = <-completionCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("completion sequence did not start after breakLoopIfEmpty")
+	}
+
+	if got.iterationsRun != 1 {
+		t.Errorf("completion: want iterationsRun=1 (broke on first iter), got %d", got.iterationsRun)
+	}
+	if got.finalizeCount != 2 {
+		t.Errorf("completion: want finalizeCount=2, got %d", got.finalizeCount)
+	}
+
+	actions <- ui.ActionQuit
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not unblock after ActionQuit")
+	}
+}

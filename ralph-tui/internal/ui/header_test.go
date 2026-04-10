@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -60,8 +61,8 @@ func TestSetPhaseSteps_LongPhase(t *testing.T) {
 	names := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
 	h.SetPhaseSteps(names)
 
-	for r := 0; r < 2; r++ {
-		for c := 0; c < HeaderCols; c++ {
+	for r := range 2 {
+		for c := range HeaderCols {
 			idx := r*HeaderCols + c
 			want := "[ ] " + names[idx]
 			if h.Rows[r][c] != want {
@@ -382,6 +383,41 @@ func TestSetStepState_SkippedStep_SecondRow(t *testing.T) {
 	h.SetStepState(5, StepSkipped)
 	if h.Rows[1][1] != "[-] F" {
 		t.Errorf("Rows[1][1] = %q, want %q", h.Rows[1][1], "[-] F")
+	}
+}
+
+// --- RenderCompletionLine ---
+
+// T1: RenderCompletionLine formats the summary string correctly.
+func TestRenderCompletionLine(t *testing.T) {
+	cases := []struct {
+		iterationsRun, finalizeCount int
+		want                         string
+	}{
+		{3, 2, "Ralph completed after 3 iteration(s) and 2 finalizing tasks."},
+		{1, 0, "Ralph completed after 1 iteration(s) and 0 finalizing tasks."},
+	}
+	for _, tc := range cases {
+		h := NewStatusHeader(4)
+		h.RenderCompletionLine(tc.iterationsRun, tc.finalizeCount)
+		if h.IterationLine != tc.want {
+			t.Errorf("RenderCompletionLine(%d, %d): got %q, want %q",
+				tc.iterationsRun, tc.finalizeCount, h.IterationLine, tc.want)
+		}
+	}
+}
+
+// T4: RenderCompletionLine overwrites a previous IterationLine value.
+func TestRenderCompletionLine_OverwritesPreviousIterationLine(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(1, 5, "42")
+	h.RenderCompletionLine(1, 3)
+
+	if !strings.Contains(h.IterationLine, "Ralph completed") {
+		t.Errorf("expected IterationLine to contain %q, got %q", "Ralph completed", h.IterationLine)
+	}
+	if strings.Contains(h.IterationLine, "Iteration") {
+		t.Errorf("expected IterationLine to not contain %q after RenderCompletionLine, got %q", "Iteration", h.IterationLine)
 	}
 }
 
