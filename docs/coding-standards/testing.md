@@ -161,13 +161,32 @@ go func() { defer close(done); doWork() }()
 require.Equal(t, expected, actual)
 ```
 
+## Do not test assembly-only code in func main()
+
+When `func main()` only wires together already-tested components — no new logic, no new error paths, no new state machines — adding tests requires either mocking the framework or extracting premature abstractions for one-time assembly code. Neither is worthwhile.
+
+Signs that code falls into this category:
+- Every call site is a constructor or configuration call on a type that already has its own tests.
+- There is no conditional logic, error branching, or transformation that hasn't been tested elsewhere.
+- Extracting the wiring into a function would exist solely to make it testable, not because it is reused.
+
+```go
+// Example: assembling a Glyph layout from tested components.
+// StatusHeader, KeyHandler, Runner, and workflow.Run all have thorough tests.
+// The wiring itself — building the VBox tree, calling app.Run — is framework usage,
+// not application logic. Adding a test here would test Glyph, not ralph-tui.
+app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
+```
+
+This standard applies to `func main()` and to any analogous one-time assembly function that exclusively assembles tested components without adding new behavior.
+
 ## Verify go vet before committing
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
 
 ## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle
+- [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded)
 - [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
 - [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState; phase transition testing via SetPhaseSteps

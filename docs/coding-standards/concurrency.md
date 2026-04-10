@@ -117,10 +117,82 @@ for _, step := range steps {
 }
 ```
 
+## Both shutdown paths must call terminal restore
+
+When a TUI app has two paths that cause the event loop to stop — a signal path (SIGINT/SIGTERM) and a normal completion path — both must call the terminal restore function (`app.Stop()`). Missing it on either path leaves the terminal in raw mode after the process exits.
+
+```go
+// Signal path — triggered by SIGINT/SIGTERM
+go func() {
+    <-sigChan
+    keyHandler.ForceQuit()
+    app.Stop() // must be here
+    // ...
+}()
+
+// Normal completion path — triggered when the workflow goroutine finishes
+go func() {
+    defer close(done)
+    _ = workflow.Run(...)
+    app.Stop() // must also be here
+}()
+```
+
+If `app.Stop()` is only in the signal handler, normal exits corrupt the terminal. If it is only in the completion goroutine, signal exits corrupt the terminal.
+
+## Drain background goroutines after the event loop exits
+
+After a blocking event loop call (e.g., `app.Run()`) returns, use a `select` with a timeout to wait for background goroutines. The event loop may return before the workflow goroutine finishes — especially when `app.Stop()` is called from inside that goroutine.
+
+```go
+if err := app.Run(); err != nil {
+    fmt.Fprintln(os.Stderr, "glyph:", err)
+    os.Exit(1)
+}
+
+// app.Run() may return before the workflow goroutine closes done.
+select {
+case <-done:
+case <-time.After(2 * time.Second):
+}
+```
+
+Choose a timeout that is long enough to cover cleanup (flushing logs, deregistering signals) but short enough that a hung goroutine does not stall the process indefinitely. Two seconds is a reasonable default for in-process cleanup.
+
+## Split pointer/mutex access for single-threaded event loop frameworks
+
+When a UI framework reads a field via a pointer binding (e.g., Glyph's `Text(&field)`) and the same field is written by other goroutines, use two accessors with different safety contracts:
+
+- **Pointer method** — returns `*string` for the framework's render loop. Safe because the event loop reads synchronously between write windows and the race detector does not flag this access pattern.
+- **Mutex-protected method** — returns a copy for all other goroutines.
+
+```go
+type KeyHandler struct {
+    mu           sync.Mutex
+    shortcutLine string // protected by mu for concurrent callers
+}
+
+// ShortcutLine is safe to call from any goroutine.
+func (h *KeyHandler) ShortcutLine() string {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.shortcutLine
+}
+
+// ShortcutLinePtr returns a pointer for Glyph's Text(&...) widget binding.
+// Use only from code that runs inside the Glyph event loop — not from other goroutines.
+func (h *KeyHandler) ShortcutLinePtr() *string {
+    return &h.shortcutLine
+}
+```
+
+Document which accessor is appropriate for which caller. This pattern should be attempted only after verifying that the exported-field approach (Option P) produces a real data race under `go test -race`.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Mutex-protected io.Pipe writes, WaitGroup drain, and snapshot-then-unlock in Terminate
+- [TUI Display & Glyph Wiring](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and split pointer/mutex access for ShortcutLinePtr
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Non-blocking drain before each orchestration step
