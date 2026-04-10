@@ -554,6 +554,25 @@ func TestValidate_BreakLoopIfEmptyOnlyInIteration(t *testing.T) {
 	requireError(t, errs, "only valid in the iteration phase")
 }
 
+// TestValidate_BreakLoopIfEmptyRejectedInFinalize verifies that breakLoopIfEmpty
+// in the finalize phase is also an error (same guard clause, distinct phase argument).
+func TestValidate_BreakLoopIfEmptyRejectedInFinalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "s")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": [
+			{"name":"Fin","isClaude":false,"command":["scripts/s"],"captureAs":"OUT","breakLoopIfEmpty":true}
+		]
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "only valid in the iteration phase")
+}
+
 // ----------------------------------------------------------------------------
 // Category 3 — phase-size checks
 // ----------------------------------------------------------------------------
@@ -730,6 +749,30 @@ func TestValidate_IterBuiltinNotInFinalize(t *testing.T) {
 
 	errs := validator.Validate(dir)
 	requireError(t, errs, "{{ITER}}")
+}
+
+// TestValidate_InitCaptureVisibleInFinalize confirms that a variable captured
+// via captureAs in an initialize step is in scope for finalize steps (persistent
+// scope propagation).
+func TestValidate_InitCaptureVisibleInFinalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "init")
+	writePrompt(t, dir, "fin.md", "value={{INIT_OUT}}\n")
+
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Init","isClaude":false,"command":["scripts/init"],"captureAs":"INIT_OUT"}
+		],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": [
+			{"name":"Use","isClaude":true,"model":"sonnet","promptFile":"fin.md"}
+		]
+	}`)
+
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
 }
 
 // TestValidate_IterCaptureNotInFinalize confirms that a variable captured in the
