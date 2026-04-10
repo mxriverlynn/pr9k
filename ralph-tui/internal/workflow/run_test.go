@@ -1193,6 +1193,230 @@ func TestRun_FinalizeRenderCalledPerStep(t *testing.T) {
 	}
 }
 
+// TestRun_InitializeBuildErrorSkipsRenderInitializeLine verifies that
+// RenderInitializeLine is NOT called for an initialize step when buildStep
+// fails, but IS called for the subsequent valid step.
+func TestRun_InitializeBuildErrorSkipsRenderInitializeLine(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	badInitStep := steps.Step{
+		Name:       "bad-init",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{badInitStep, nonClaudeSteps("good-init")[0]},
+		Steps:           nonClaudeSteps("iter-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.renderInitializeCalls) != 1 {
+		t.Fatalf("expected 1 RenderInitializeLine call (bad step skipped), got %d: %v",
+			len(header.renderInitializeCalls), header.renderInitializeCalls)
+	}
+	got := header.renderInitializeCalls[0]
+	if got.stepNum != 2 || got.stepCount != 2 || got.stepName != "good-init" {
+		t.Errorf("expected {stepNum=2, stepCount=2, stepName=%q}, got {%d, %d, %q}",
+			"good-init", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
+// TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine verifies that
+// RenderFinalizeLine is NOT called for a finalize step when buildStep fails,
+// but IS called for the subsequent valid step.
+func TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	badFinalStep := steps.Step{
+		Name:       "bad-final",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: []steps.Step{badFinalStep, nonClaudeSteps("good-final")[0]},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	foundErr := false
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Error preparing finalize step") {
+			foundErr = true
+		}
+	}
+	if !foundErr {
+		t.Errorf("expected 'Error preparing finalize step' in log, got %v", executor.logLines)
+	}
+
+	if len(header.renderFinalizeCalls) != 1 {
+		t.Fatalf("expected 1 RenderFinalizeLine call (bad step skipped), got %d: %v",
+			len(header.renderFinalizeCalls), header.renderFinalizeCalls)
+	}
+	got := header.renderFinalizeCalls[0]
+	if got.stepNum != 2 || got.stepCount != 2 || got.stepName != "good-final" {
+		t.Errorf("expected {stepNum=2, stepCount=2, stepName=%q}, got {%d, %d, %q}",
+			"good-final", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
+// TestRun_CaptureAsNonIssueIDProducesEmptyIssueIDInHeader verifies that when a
+// captureAs step binds a variable other than "ISSUE_ID", the re-render of the
+// iteration header still uses an empty issueID (because the lookup key is
+// hardcoded to "ISSUE_ID").
+func TestRun_CaptureAsNonIssueIDProducesEmptyIssueIDInHeader(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"abc123"},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      []steps.Step{captureStep("get-sha", "STARTING_SHA")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// 2 calls expected: iteration-start (empty) + re-render after captureAs (also empty)
+	if len(header.renderIterationCalls) != 2 {
+		t.Fatalf("expected 2 RenderIterationLine calls, got %d: %v",
+			len(header.renderIterationCalls), header.renderIterationCalls)
+	}
+	for i, call := range header.renderIterationCalls {
+		if call.issueID != "" {
+			t.Errorf("renderIterationCalls[%d]: want empty issueID, got %q", i, call.issueID)
+		}
+	}
+}
+
+// TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls verifies
+// that when ActionQuit fires during the initialize phase, no RenderIterationLine
+// or RenderFinalizeLine calls are made, and RenderInitializeLine is called once
+// (for the step where quit fires, render occurs before Orchestrate).
+func TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("init failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init-step"),
+		Steps:           nonClaudeSteps("iter-step"),
+		FinalizeSteps:   nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.renderInitializeCalls) != 1 {
+		t.Errorf("expected 1 RenderInitializeLine call (before quit), got %d", len(header.renderInitializeCalls))
+	}
+	if len(header.renderIterationCalls) != 0 {
+		t.Errorf("expected 0 RenderIterationLine calls after initialize quit, got %d", len(header.renderIterationCalls))
+	}
+	if len(header.renderFinalizeCalls) != 0 {
+		t.Errorf("expected 0 RenderFinalizeLine calls after initialize quit, got %d", len(header.renderFinalizeCalls))
+	}
+}
+
+// TestRun_QuitDuringFinalizeRecordsOnlyTheQuittingStepRender verifies that when
+// ActionQuit fires during the first finalize step's error mode, RenderFinalizeLine
+// is called exactly once (render happens before Orchestrate) and subsequent
+// finalize steps are not rendered.
+func TestRun_QuitDuringFinalizeRecordsOnlyTheQuittingStepRender(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		// index 0 = iter-step succeeds, index 1 = final-a fails → enters error mode
+		runStepErrors: []error{nil, errors.New("finalize failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final-a", "final-b"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Let Orchestrate reach error mode for final-a, then send ActionQuit.
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionQuit
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionQuit")
+	}
+
+	if len(header.renderFinalizeCalls) != 1 {
+		t.Fatalf("expected 1 RenderFinalizeLine call (quit on first finalize step), got %d: %v",
+			len(header.renderFinalizeCalls), header.renderFinalizeCalls)
+	}
+	got := header.renderFinalizeCalls[0]
+	if got.stepNum != 1 || got.stepCount != 2 || got.stepName != "final-a" {
+		t.Errorf("expected {stepNum=1, stepCount=2, stepName=%q}, got {%d, %d, %q}",
+			"final-a", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
+// TestRun_FinalizeRenderCalledAfterBreakLoopIfEmpty verifies that
+// RenderFinalizeLine is called for finalize steps even when the iteration loop
+// exits early via breakLoopIfEmpty.
+func TestRun_FinalizeRenderCalledAfterBreakLoopIfEmpty(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""}, // break step captures empty → exit loop
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    3,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID")},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.renderFinalizeCalls) != 1 {
+		t.Fatalf("expected 1 RenderFinalizeLine call after early loop break, got %d: %v",
+			len(header.renderFinalizeCalls), header.renderFinalizeCalls)
+	}
+	got := header.renderFinalizeCalls[0]
+	if got.stepNum != 1 || got.stepCount != 1 || got.stepName != "final1" {
+		t.Errorf("expected {stepNum=1, stepCount=1, stepName=%q}, got {%d, %d, %q}",
+			"final1", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
 // --- Integration tests ---
 
 // writeScript creates an executable shell script at path with the given content.
