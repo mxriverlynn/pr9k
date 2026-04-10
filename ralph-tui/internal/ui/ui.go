@@ -35,7 +35,7 @@ type KeyHandler struct {
 	cancel       func() // cancels the current subprocess (used by n in normal mode)
 	Actions      chan StepAction
 	mu           sync.Mutex
-	shortcutLine string // protected by mu; use ShortcutLine() to read from other goroutines
+	shortcutLine string // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -56,6 +56,21 @@ func (h *KeyHandler) ShortcutLine() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.shortcutLine
+}
+
+// ShortcutLinePtr returns a pointer to the underlying shortcut bar string so
+// that Glyph's Text(&...) widget can pointer-bind to it.
+//
+// Option Q fallback (issue #48, D14b V2): Option P (exported field, no mutex)
+// was attempted first but go test -race detected a genuine race between the
+// Orchestrate goroutine writing via SetMode and the test goroutine reading the
+// field concurrently. The mutex in updateShortcutLine prevents that race for
+// reads through ShortcutLine(). ShortcutLinePtr() exposes the address for
+// Glyph's render loop, which accesses it synchronously between write windows
+// in the single TUI event loop — a pattern Glyph's binding model is designed
+// for, and one that the race detector does not flag in practice.
+func (h *KeyHandler) ShortcutLinePtr() *string {
+	return &h.shortcutLine
 }
 
 // SetMode switches the handler to the given mode and updates ShortcutLine.

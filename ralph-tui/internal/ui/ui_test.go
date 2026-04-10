@@ -343,6 +343,37 @@ func TestForceQuit_Idempotent_CalledTwice(t *testing.T) {
 	}
 }
 
+// --- Race detector: concurrent ShortcutLine access (issue #48, Option Q) ---
+
+// TestShortcutLine_ConcurrentRead_NoRace simulates Glyph's render goroutine
+// reading ShortcutLine (via the mutex-protected accessor) concurrently while
+// the workflow goroutine cycles modes. Verifies Option Q is race-free.
+// Run with: go test -race ./...
+func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	stop := make(chan struct{})
+	// Simulate Glyph's render goroutine: continuously reads ShortcutLine.
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = h.ShortcutLine()
+			}
+		}
+	}()
+
+	// Workflow goroutine: cycle through all modes.
+	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal}
+	for i := 0; i < 100; i++ {
+		h.SetMode(modes[i%len(modes)])
+	}
+
+	close(stop)
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {
