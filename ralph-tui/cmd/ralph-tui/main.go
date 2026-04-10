@@ -12,6 +12,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/workflow"
 )
 
@@ -34,6 +35,15 @@ func main() {
 	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_ = log.Close()
+		os.Exit(1)
+	}
+
+	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
+		for _, ve := range validationErrs {
+			fmt.Fprintln(os.Stderr, ve.Error())
+		}
+		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
 		_ = log.Close()
 		os.Exit(1)
 	}
