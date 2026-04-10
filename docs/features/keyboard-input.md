@@ -2,7 +2,7 @@
 
 A three-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
@@ -66,7 +66,7 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode dispatch, ForceQuit, ShortcutLine |
+| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode dispatch, ForceQuit, ShortcutLine, ShortcutLinePtr |
 | `ralph-tui/internal/ui/ui_test.go` | Tests for all modes, transitions, and ForceQuit |
 
 ## Core Types
@@ -92,7 +92,7 @@ type KeyHandler struct {
     cancel       func()         // terminates the current subprocess
     Actions      chan StepAction // communicates decisions to orchestration
     mu           sync.Mutex     // protects shortcutLine
-    shortcutLine string         // current shortcut bar text
+    shortcutLine string         // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
 }
 ```
 
@@ -158,7 +158,9 @@ func (h *KeyHandler) ForceQuit() {
 
 ### ShortcutLine Thread Safety
 
-`ShortcutLine()` is a mutex-protected getter for the current shortcut bar text, safe to call from any goroutine (e.g., Glyph's render loop):
+Two accessors expose the shortcut bar text for different callers:
+
+**`ShortcutLine()`** is a mutex-protected getter, safe to call from any goroutine (e.g., the orchestration goroutine, the signal handler):
 
 ```go
 func (h *KeyHandler) ShortcutLine() string {
@@ -168,11 +170,23 @@ func (h *KeyHandler) ShortcutLine() string {
 }
 ```
 
+**`ShortcutLinePtr()`** returns a `*string` pointing to the underlying field for Glyph's `Text(&...)` pointer-binding API:
+
+```go
+func (h *KeyHandler) ShortcutLinePtr() *string {
+    return &h.shortcutLine
+}
+```
+
+`ShortcutLinePtr()` is intended exclusively for Glyph's single-threaded event loop, which reads the pointer synchronously between write windows. It bypasses the mutex and must not be called from concurrent goroutines.
+
 The shortcut line is updated internally by `updateShortcutLine()` whenever the mode changes.
+
+> **Why Option Q?** Option P (exporting `ShortcutLine` as a field, dropping the mutex) was attempted first but `go test -race` detected a genuine race between the `Orchestrate` goroutine writing via `SetMode` and the test goroutine reading the field concurrently. Option Q retains the private field and mutex for `ShortcutLine()`, and adds `ShortcutLinePtr()` for Glyph's pointer-binding path.
 
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel, ForceQuit, ShortcutLine thread safety
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel, ForceQuit, ShortcutLine thread safety, ShortcutLinePtr (non-nil return, value tracking, stable address, agreement with ShortcutLine)
 
 ## Additional Information
 
