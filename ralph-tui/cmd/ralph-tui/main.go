@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -15,6 +16,15 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/workflow"
 )
+
+// stepNames extracts the Name field from each step in a slice.
+func stepNames(ss []steps.Step) []string {
+	names := make([]string, len(ss))
+	for i, s := range ss {
+		names[i] = s.Name
+	}
+	return names
+}
 
 func main() {
 	cfg, err := cli.Execute()
@@ -55,6 +65,22 @@ func main() {
 
 	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
 	header := ui.NewStatusHeader(maxSteps)
+
+	// Pre-populate the first visible phase state so the first rendered frame
+	// shows real content, not empty slots.
+	if len(stepFile.Initialize) > 0 {
+		header.SetPhaseSteps(stepNames(stepFile.Initialize))
+		header.SetStepState(0, ui.StepActive)
+		header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+	} else {
+		header.SetPhaseSteps(stepNames(stepFile.Iteration))
+		header.SetStepState(0, ui.StepActive)
+		if cfg.Iterations > 0 {
+			header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+		} else {
+			header.IterationLine = "Iteration 1"
+		}
+	}
 
 	app := glyph.NewApp()
 
