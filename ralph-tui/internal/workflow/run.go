@@ -15,7 +15,6 @@ import (
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
-	CaptureOutput(command []string) (string, error)
 	Close() error
 }
 

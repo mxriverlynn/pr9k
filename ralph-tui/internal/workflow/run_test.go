@@ -54,10 +54,6 @@ func (f *fakeExecutor) LastCapture() string {
 	return f.lastCapture
 }
 
-func (f *fakeExecutor) CaptureOutput(command []string) (string, error) {
-	return "", nil
-}
-
 func (f *fakeExecutor) Close() error {
 	f.closed = true
 	return nil

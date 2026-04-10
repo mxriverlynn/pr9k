@@ -134,7 +134,7 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	// the stdout goroutine; read only after wg.Wait(), so no mutex is needed.
 	var capturedLines []string
 
-	forwardAndCapture := func(pipe io.Reader) {
+	forwardPipe := func(pipe io.Reader, capture bool) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(pipe)
 		buf := make([]byte, 256*1024)
@@ -142,7 +142,9 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 		var logErr error
 		for scanner.Scan() {
 			line := scanner.Text()
-			capturedLines = append(capturedLines, line)
+			if capture {
+				capturedLines = append(capturedLines, line)
+			}
 			if logErr == nil {
 				logErr = r.log.Log(stepName, line)
 				if logErr != nil {
@@ -158,31 +160,8 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 		}
 	}
 
-	forward := func(pipe io.Reader) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(pipe)
-		buf := make([]byte, 256*1024)
-		scanner.Buffer(buf, 256*1024)
-		var logErr error
-		for scanner.Scan() {
-			line := scanner.Text()
-			if logErr == nil {
-				logErr = r.log.Log(stepName, line)
-				if logErr != nil {
-					_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
-				}
-			}
-			r.mu.Lock()
-			_, _ = fmt.Fprintln(r.logWriter, line)
-			r.mu.Unlock()
-		}
-		if err := scanner.Err(); err != nil {
-			_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
-		}
-	}
-
-	go forwardAndCapture(stdout)
-	go forward(stderr)
+	go forwardPipe(stdout, true)
+	go forwardPipe(stderr, false)
 
 	wg.Wait()
 	waitErr := cmd.Wait()
