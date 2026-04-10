@@ -16,7 +16,7 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
 
 Key files:
-- `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, SetPhaseSteps, SetStepState
+- `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, RenderCompletionLine, SetPhaseSteps, SetStepState
 - `ralph-tui/internal/ui/header_test.go` — Unit tests for header state management
 - `ralph-tui/internal/ui/log.go` — StepSeparator, RetryStepSeparator
 - `ralph-tui/internal/ui/log_test.go` — Unit tests for separator formatting
@@ -132,6 +132,10 @@ func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string)
 // RenderFinalizeLine: "Finalizing 1/3: Deferred work"
 func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string)
 
+// RenderCompletionLine: "Ralph completed after 3 iteration(s) and 2 finalizing tasks."
+// Overwrites IterationLine; called once after finalization completes.
+func (h *StatusHeader) RenderCompletionLine(iterationsRun, finalizeCount int)
+
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
     if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
     r, c := idx/HeaderCols, idx%HeaderCols
@@ -238,7 +242,7 @@ app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine/RenderCompletionLine (bounded and unbounded modes, with/without issueID, substitute template correctness, completion summary format, overwrite of previous iteration line), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
 ## Additional Information

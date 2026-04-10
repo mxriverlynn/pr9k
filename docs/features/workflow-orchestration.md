@@ -106,6 +106,7 @@ type RunHeader interface {
     RenderInitializeLine(stepNum, stepCount int, stepName string)
     RenderIterationLine(iter, maxIter int, issueID string)
     RenderFinalizeLine(stepNum, stepCount int, stepName string)
+    RenderCompletionLine(iterationsRun, finalizeCount int)
     SetPhaseSteps(names []string)
     SetStepState(idx int, state ui.StepState)
 }
@@ -144,6 +145,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     // Phase 3: Finalization
     vt.SetPhase(vars.Finalize)
     for j, s := range cfg.FinalizeSteps { ... }
+
+    // Phase 4: Completion sequence — render summary, wait for keypress
+    header.RenderCompletionLine(iterationsRun, len(cfg.FinalizeSteps))
+    keyHandler.SetMode(ui.ModeDone)
+    <-keyHandler.Actions  // blocks until any key is pressed (handleDone sends ActionQuit)
 
     _ = executor.Close()
     return RunResult{IterationsRun: iterationsRun}
@@ -312,6 +318,12 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls` — verifies that quitting during the initialize phase produces zero `RenderIterationLine` and `RenderFinalizeLine` calls
   - `TestRun_QuitDuringFinalizeRecordsOnlyTheQuittingStepRender` — verifies that when quit fires during the finalize phase, only render calls up to and including the quitting step are recorded
   - `TestRun_FinalizeRenderCalledAfterBreakLoopIfEmpty` — verifies that `RenderFinalizeLine` is still called for finalize steps after an early loop exit via `BreakLoopIfEmpty`
+  - `TestRun_CompletionSummaryAndBlockForKeypress` — verifies `RenderCompletionLine` is called with correct `iterationsRun` and `finalizeCount`, that `Run` blocks before `ActionQuit` is sent, and that `Run` returns after it is sent
+  - `TestRun_CompletionSummaryWithEmptyFinalize` — verifies `RenderCompletionLine` is called with `finalizeCount=0` when `FinalizeSteps` is empty
+  - `TestRun_CompletionSummary_AfterBreakLoopIfEmpty` — verifies `iterationsRun=1` after early loop exit with a 3-iteration config; confirms the completion sequence fires with the correct partial iteration count
+- `ralph-tui/internal/ui/header_test.go` (completion tests):
+  - `TestRenderCompletionLine` — table-driven with multi-iteration and single-iteration cases; verifies exact format string output
+  - `TestRenderCompletionLine_OverwritesPreviousIterationLine` — verifies that `RenderCompletionLine` replaces content set by a prior `RenderIterationLine` call
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain
 
 ## Additional Information

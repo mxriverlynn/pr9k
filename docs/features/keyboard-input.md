@@ -1,6 +1,6 @@
 # Keyboard Input & Error Recovery
 
-A three-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
+A four-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
 - **Last Updated:** 2026-04-10
 - **Authors:**
@@ -8,7 +8,7 @@ A three-mode state machine that routes keypresses and communicates user decision
 
 ## Overview
 
-- `KeyHandler` operates in three modes: Normal, Error, and QuitConfirm — each with its own keypress bindings and shortcut bar text
+- `KeyHandler` operates in four modes: Normal, Error, QuitConfirm, and Done — each with its own keypress bindings and shortcut bar text
 - User decisions are sent to the orchestration goroutine via a buffered `Actions` channel carrying `StepAction` values (Retry, Continue, Quit)
 - In Normal mode, `n` terminates the current subprocess (skip step) and `q` enters quit confirmation
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
@@ -51,6 +51,17 @@ Key files:
    (set by          │
    Orchestrate)     │
                     │
+   ┌────────────┐   │
+   │ ModeDone   │───┘
+   │            │
+   │ any key →  │
+   │ ActionQuit │
+   └────────────┘
+         ▲
+         │
+   workflow complete
+   (set by Run after
+   finalization)
                     ▼
             ┌──────────────┐
             │   Actions    │  buffered channel (cap 10)
@@ -84,6 +95,7 @@ const (
     ModeNormal      Mode = iota
     ModeError
     ModeQuitConfirm
+    ModeDone
 )
 
 type KeyHandler struct {
@@ -103,6 +115,7 @@ type KeyHandler struct {
 | `NormalShortcuts` | `"↑/k up  ↓/j down  n next step  q quit"` | Shortcut bar in normal mode |
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
 | `QuitConfirmPrompt` | `"Quit ralph? (y/n)"` | Shortcut bar in quit confirm mode |
+| `DoneShortcuts` | `"done — press any key to exit"` | Shortcut bar in done mode |
 
 ## Implementation Details
 
@@ -116,6 +129,7 @@ func (h *KeyHandler) Handle(key string) {
     case ModeNormal:      h.handleNormal(key)
     case ModeError:       h.handleError(key)
     case ModeQuitConfirm: h.handleQuitConfirm(key)
+    case ModeDone:        h.handleDone(key)
     }
 }
 ```
@@ -139,6 +153,13 @@ Entered by `Orchestrate` when a step fails (via `h.SetMode(ModeError)`):
 - `y` — sends `ActionQuit` to the `Actions` channel
 - `n` — restores `prevMode` (returns to whichever mode initiated the quit)
 - All other keys are ignored
+
+### Done Mode
+
+Entered by `Run` after the finalization phase completes (via `h.SetMode(ModeDone)`):
+
+- Any key — sends `ActionQuit` to the `Actions` channel, causing `Run` to unblock and return
+- The completion sequence in `Run` blocks on `<-keyHandler.Actions` after entering `ModeDone`; the channel has capacity before this point so `handleDone`'s blocking send does not deadlock
 
 ### ForceQuit
 
