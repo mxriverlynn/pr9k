@@ -1,13 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/kungfusheep/glyph"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -56,15 +56,32 @@ func main() {
 	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
 	header := ui.NewStatusHeader(maxSteps)
 
-	// Drain the log pipe to stdout until EOF.
-	go func() {
-		scanner := bufio.NewScanner(runner.LogReader())
-		buf := make([]byte, 256*1024)
-		scanner.Buffer(buf, 256*1024)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
+	app := glyph.NewApp()
+
+	// Wire keyboard dispatch: Glyph owns the tty and forwards each keypress to keyHandler.
+	for _, key := range []string{"n", "q", "y", "c", "r"} {
+		k := key
+		app.Handle(k, func() { keyHandler.Handle(k) })
+	}
+
+	// Build checkpoint row widgets — one HBox per header row, HeaderCols Text widgets each.
+	rowWidgets := make([]any, len(header.Rows))
+	for r := range header.Rows {
+		cols := make([]any, ui.HeaderCols)
+		for c := range cols {
+			cols[c] = glyph.Text(&header.Rows[r][c])
 		}
-	}()
+		rowWidgets[r] = glyph.HBox(cols...)
+	}
+
+	// Assemble the full VBox layout tree.
+	children := make([]any, 0, 2+len(rowWidgets)+2)
+	children = append(children, glyph.Text(&header.IterationLine))
+	children = append(children, rowWidgets...)
+	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
+	children = append(children, glyph.Text(keyHandler.ShortcutLinePtr()))
+
+	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
 	runCfg := workflow.RunConfig{
 		ProjectDir:      cfg.ProjectDir,
@@ -84,6 +101,7 @@ func main() {
 		<-sigChan
 		close(signaled)
 		keyHandler.ForceQuit()
+		app.Stop()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -91,14 +109,25 @@ func main() {
 		os.Exit(1)
 	}()
 
+	// Run the workflow in the background; stop the TUI when it completes.
 	go func() {
 		defer close(done)
 		_ = workflow.Run(runner, header, keyHandler, runCfg)
+		signal.Stop(sigChan)
+		_ = log.Close()
+		app.Stop()
 	}()
 
-	<-done
-	signal.Stop(sigChan)
-	_ = log.Close()
+	if err := app.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "glyph:", err)
+		os.Exit(1)
+	}
+
+	// Wait for the workflow goroutine if app.Run returned before it finished.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
 
 	select {
 	case <-signaled:
