@@ -120,6 +120,41 @@ func TestBind_iterationNotVisibleInInitialize(t *testing.T) {
 	}
 }
 
+// --- New starts in Initialize phase ---
+
+func TestNew_startsInInitializePhase(t *testing.T) {
+	vt := newTable()
+	vt.Bind(vars.Iteration, "ISSUE_ID", "99")
+	// Iteration-scoped variables are not visible in the Initialize phase.
+	_, ok := vt.Get("ISSUE_ID")
+	if ok {
+		t.Error("expected iteration-scoped variable to be invisible in Initialize phase")
+	}
+}
+
+// --- Bind overwrite semantics ---
+
+func TestBind_initializePhaseOverwritesExistingValue(t *testing.T) {
+	vt := newTable()
+	vt.Bind(vars.Initialize, "MY_VAR", "first")
+	vt.Bind(vars.Initialize, "MY_VAR", "second")
+	v, ok := vt.Get("MY_VAR")
+	if !ok || v != "second" {
+		t.Errorf("expected MY_VAR=second after overwrite, got %q ok=%v", v, ok)
+	}
+}
+
+func TestBind_iterationPhaseOverwritesExistingValue(t *testing.T) {
+	vt := newTable()
+	vt.Bind(vars.Iteration, "ISSUE_ID", "1")
+	vt.Bind(vars.Iteration, "ISSUE_ID", "2")
+	vt.SetPhase(vars.Iteration)
+	v, ok := vt.Get("ISSUE_ID")
+	if !ok || v != "2" {
+		t.Errorf("expected ISSUE_ID=2 after overwrite, got %q ok=%v", v, ok)
+	}
+}
+
 // --- Resolution order ---
 
 func TestGet_iterationShadowsPersistent(t *testing.T) {
@@ -150,6 +185,17 @@ func TestGet_missingVariableReturnsFalse(t *testing.T) {
 	_, ok := vt.Get("NONEXISTENT")
 	if ok {
 		t.Error("expected ok=false for unbound variable")
+	}
+}
+
+func TestGet_missingVariableReturnsEmptyString(t *testing.T) {
+	vt := newTable()
+	v, ok := vt.Get("NONEXISTENT")
+	if ok {
+		t.Error("expected ok=false for unbound variable")
+	}
+	if v != "" {
+		t.Errorf("expected empty string for unbound variable, got %q", v)
 	}
 }
 
