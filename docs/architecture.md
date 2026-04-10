@@ -165,7 +165,7 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 ### [TUI Status Header](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as two rows of 4 checkboxes each (8 steps total), where each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
+A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize).
 
 **Package:** `internal/ui/` (`header.go`, `log.go`)
 
@@ -219,7 +219,7 @@ cmd/ralph-tui/main.go
 ## Key Design Principles
 
 - **Streaming over buffering**: Subprocess output streams through `io.Pipe` in real time — no buffered collection and dump.
-- **Pointer-mutable state**: The `StatusHeader` uses exported string fields that Glyph reads by pointer on each render; callers mutate in place.
+- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `SetIteration`, `SetPhaseSteps`, and `SetStepState`.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
 - **Non-blocking sends for signal safety**: `ForceQuit` uses `select`/`default` to inject `ActionQuit` without blocking, making it safe to call from a signal handler goroutine.
 - **Interface-driven testability**: `StepRunner`, `StepHeader`, `StepExecutor`, and `RunHeader` interfaces decouple orchestration from concrete implementations.
