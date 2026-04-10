@@ -104,9 +104,8 @@ type StepExecutor interface {
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
     SetIteration(current, total int, issueID, issueTitle string)
+    SetPhaseSteps(names []string)
     SetStepState(idx int, state ui.StepState)
-    SetFinalization(current, total int, steps []string)
-    SetFinalizeStepState(idx int, state ui.StepState)
 }
 
 // ResolvedStep holds a step's name and its fully-resolved command argv.
@@ -168,10 +167,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - If `Orchestrate` returns `ActionQuit`, closes executor and returns without finalization
 
 **Phase 3 — Finalization:** runs even after an early loop exit:
+- Calls `header.SetPhaseSteps(finalizeNames)` to switch the header to finalization step names
 - Switches the VarTable phase to `Finalize`
-- Switches the header to finalization mode
 - Builds resolved steps via `buildStep`
-- Runs through `Orchestrate()` with an `offsetFinalHeader` adapter
+- Runs through `Orchestrate()` with a `trackingOffsetIterHeader` adapter (same adapter as the iteration phase, reused since both phases use `SetStepState`)
 
 ### Step Resolution
 
@@ -249,7 +248,7 @@ func runStepWithErrorHandling(...) StepAction {
 
 ### Header Adapters
 
-Three adapter types route `SetStepState` calls to the correct TUI row depending on the workflow phase:
+Two adapter types route `SetStepState` calls to the correct TUI checkbox position depending on the workflow phase:
 
 ```go
 // noopHeader satisfies ui.StepHeader with no-op methods. Used for the
@@ -258,9 +257,13 @@ type noopHeader struct{}
 func (noopHeader) SetStepState(int, ui.StepState) {}
 
 // trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
-// iteration step at absolute index idx. It also records the last StepState
-// set so Run can check whether the step ended as StepDone before consulting
+// step at absolute index idx. It also records the last StepState set so Run
+// can check whether the step ended as StepDone before consulting
 // BreakLoopIfEmpty.
+//
+// Used for both iteration and finalization phases — both phases call
+// SetPhaseSteps to swap the header's step name list, so the same
+// SetStepState call routes correctly for either phase.
 type trackingOffsetIterHeader struct {
     h         RunHeader
     idx       int
@@ -270,19 +273,9 @@ func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
     a.lastState = state
     a.h.SetStepState(a.idx, state)
 }
-
-// offsetFinalHeader adapts RunHeader to ui.StepHeader for a single finalize
-// step at absolute index idx within the full finalize step list.
-type offsetFinalHeader struct {
-    h   RunHeader
-    idx int
-}
-func (a *offsetFinalHeader) SetStepState(_ int, state ui.StepState) {
-    a.h.SetFinalizeStepState(a.idx, state)
-}
 ```
 
-The `trackingOffsetIterHeader`/`offsetFinalHeader` adapters are needed because `Orchestrate` always calls `header.SetStepState(i, ...)` using the local step index `i`, but each step is dispatched individually from `Run()` — so the absolute TUI checkbox position must be pinned at construction time via `idx`. The tracking variant also records `lastState` so `Run` can distinguish a successful `StepDone` completion from a failed step before evaluating `BreakLoopIfEmpty`.
+The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always calls `header.SetStepState(i, ...)` using the local step index `i`, but each step is dispatched individually from `Run()` — so the absolute TUI checkbox position must be pinned at construction time via `idx`. The tracking variant also records `lastState` so `Run` can distinguish a successful `StepDone` completion from a failed step before evaluating `BreakLoopIfEmpty`.
 
 ## Testing
 

@@ -16,11 +16,11 @@ func (l *Logger) SetContext(iteration int, stepName string) {
 
 ## Add bounds guards to all state-mutating array indexers
 
-Any method that uses a caller-supplied index to mutate an array field must guard against out-of-bounds access. Panic on invalid index is unacceptable in long-running TUI processes.
+Any method that uses a caller-supplied index to mutate an array or slice field must guard against out-of-bounds access. Panic on invalid index is unacceptable in long-running TUI processes.
 
 ```go
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
-    if idx < 0 || idx >= 8 {
+    if idx < 0 || idx >= len(h.stepNames) {
         return
     }
     // ...
@@ -50,21 +50,24 @@ const issueIDPlaceholder = "{{ISSUE_ID}}"
 
 ## Adapter types for interface narrowing
 
-When a single concrete type satisfies multiple interfaces that route the same method name to different behaviors, use a thin adapter struct rather than adding conditional logic to the callee. This keeps each call site unambiguous and the concrete type free of orchestration knowledge.
+When a caller needs to route an interface method call to a specific position in a larger data structure (e.g. a single step's checkbox within a multi-step grid), use a thin adapter struct rather than adding conditional logic to the callee. This keeps each call site unambiguous and the concrete type free of orchestration knowledge.
 
 ```go
-// iterHeader routes SetStepState to the iteration columns of the header.
-type iterHeader struct{ h RunHeader }
-
-func (a iterHeader) SetStepState(idx int, state ui.StepState) {
-    a.h.SetStepState(idx, state)
+// trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
+// step at absolute index idx. It pins the absolute TUI checkbox position at
+// construction time, because Orchestrate always calls SetStepState with a
+// local index i (not the global position). It also records the last StepState
+// so Run can check whether the step ended as StepDone before evaluating
+// BreakLoopIfEmpty.
+type trackingOffsetIterHeader struct {
+    h         RunHeader
+    idx       int
+    lastState ui.StepState
 }
 
-// finalHeader routes the same SetStepState call to the finalization columns.
-type finalHeader struct{ h RunHeader }
-
-func (a finalHeader) SetStepState(idx int, state ui.StepState) {
-    a.h.SetFinalizeStepState(idx, state)
+func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
+    a.lastState = state
+    a.h.SetStepState(a.idx, state)
 }
 ```
 
@@ -104,8 +107,8 @@ if strings.Contains(command[0], "/") {
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (iterHeader/finalHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup
-- [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState and SetFinalizeStepState
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup
+- [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState; SetPhaseSteps panic-on-overflow as the appropriate choice for programming errors
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand
 - [Error Handling](error-handling.md) — Complementary standards for error message formatting

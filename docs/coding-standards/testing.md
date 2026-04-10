@@ -35,21 +35,22 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 
 ## Test array bounds guards explicitly
 
-For any state-mutating method that indexes into a fixed-size array, test the boundary values: index `-1` and index `N` (length). These tests document the guard and prevent panic regressions.
+For any state-mutating method that indexes into a fixed-size array or slice, test the boundary values: index `-1` and index `N` (length). These tests document the guard and prevent panic regressions.
 
 ```go
-func TestSetStepState_OutOfBounds(t *testing.T) {
-    h := NewStatusHeader(...)
-    before := h.Row1
+func TestSetStepState_OutOfBoundsIsNoOp(t *testing.T) {
+    h := NewStatusHeader(4)  // 4 steps → 1 row of 4 slots
+    h.SetPhaseSteps([]string{"a", "b", "c", "d"})
+    before := h.Rows[0]
     h.SetStepState(-1, StepDone)  // below lower bound
-    h.SetStepState(8, StepDone)   // at upper bound (len == 8)
-    require.Equal(t, before, h.Row1) // unchanged
+    h.SetStepState(4, StepDone)   // at upper bound (len == 4)
+    require.Equal(t, before, h.Rows[0]) // unchanged
 }
 ```
 
 ## Test nil/uninitialized guard paths
 
-For methods that require prior initialization (e.g., calling `SetFinalizeStepState` before `SetFinalization`), add a test that exercises the guard path and verifies a no-op, not a panic.
+For methods that require prior initialization (e.g., calling `SetStepState` before `SetPhaseSteps`), add a test that exercises the guard path and verifies a no-op, not a panic.
 
 ## Test all file I/O error paths
 
@@ -169,7 +170,7 @@ Run `go vet ./...` before every commit. Vet catches correctness issues that the 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded)
 - [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
-- [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState and SetFinalizeStepState
+- [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState; phase transition testing via SetPhaseSteps
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand; stdout-only capture contract (D4) tested via TestLastCapture_StderrNotCaptured
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration

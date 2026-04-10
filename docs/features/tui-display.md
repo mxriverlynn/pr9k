@@ -10,13 +10,13 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 
 - `StatusHeader` is a pointer-mutable struct that Glyph reads on each render cycle — callers update state by mutating fields directly
 - Displays the current iteration/issue on one line; shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
-- Displays step progress as two rows of 4 checkboxes (8 steps total)
+- Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
 - Each step shows one of four states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed
-- Switches between iteration mode and finalization mode with different step names
+- Switches between phases (initialize, iteration, finalize) by calling `SetPhaseSteps` with the new phase's step names
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
 
 Key files:
-- `ralph-tui/internal/ui/header.go` — StatusHeader struct, SetIteration, SetStepState, SetFinalization
+- `ralph-tui/internal/ui/header.go` — StatusHeader struct, SetIteration, SetPhaseSteps, SetStepState
 - `ralph-tui/internal/ui/header_test.go` — Unit tests for header state management
 - `ralph-tui/internal/ui/log.go` — StepSeparator, RetryStepSeparator
 - `ralph-tui/internal/ui/log_test.go` — Unit tests for separator formatting
@@ -33,22 +33,22 @@ Key files:
   │  IterationLine: "Iteration 1/3 — Issue #42" │  ← bounded (total > 0)
   │  IterationLine: "Iteration 1 — Issue #42"   │  ← unbounded (total == 0)
   │                                              │
-  │  Row1: [▸] Feature work  [✓] Test planning   │
-  │        [ ] Test writing   [ ] Code review     │
+  │  Rows[0]: [▸] Feature work  [✓] Test planning│
+  │           [ ] Test writing   [ ] Code review  │
   │                                              │
-  │  Row2: [ ] Review fixes   [ ] Close issue     │
-  │        [ ] Update docs    [ ] Git push        │
+  │  Rows[1]: [ ] Review fixes   [ ] Close issue  │
+  │           [ ] Update docs    [ ] Git push     │
   └─────────────────────────────────────────────┘
 
-  After iteration loop completes:
+  After SetPhaseSteps called with finalize step names:
 
   ┌─────────────────────────────────────────────┐
-  │  IterationLine: "Finalizing 1/3"            │
+  │  IterationLine: (set by caller)             │
   │                                              │
-  │  Row1: [▸] Deferred work  [ ] Lessons learned│
-  │        [ ] Final git push                    │
+  │  Rows[0]: [▸] Deferred work  [ ] Lessons learned│
+  │           [ ] Final git push                 │
   │                                              │
-  │  Row2: (empty)                               │
+  │  Rows[1]: (empty — trailing slots cleared)  │
   └─────────────────────────────────────────────┘
 ```
 
@@ -74,35 +74,52 @@ const (
     StepFailed                     // [✗]
 )
 
+// HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
+const HeaderCols = 4
+
 // StatusHeader manages pointer-mutable string state for the TUI.
 // Glyph reads exported fields via pointer on each render cycle.
 type StatusHeader struct {
-    IterationLine string    // e.g., "Iteration 1/3 — Issue #42: Add widget support" (bounded)
-                            //    or "Iteration 1 — Issue #42: Add widget support" (unbounded, total==0)
-    Row1          [4]string // checkbox labels for steps 0-3
-    Row2          [4]string // checkbox labels for steps 4-7
-    stepNames     [8]string
-    finalizeNames []string
+    IterationLine string               // e.g. "Iteration 1/3 — Issue #42: Add widget support" (bounded)
+                                       //   or "Iteration 1 — Issue #42: Add widget support" (unbounded, total==0)
+    Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
+    stepNames     []string             // current phase's step name list
 }
 ```
 
 ## Implementation Details
 
-### Iteration Mode
+### Startup Sizing
 
-`NewStatusHeader` takes an array of 8 step names and initializes all checkboxes to pending:
+`NewStatusHeader` takes the maximum step count across all phases and sizes the `Rows` grid to fit. The row count is computed via ceiling division so all steps fit without overflow:
 
 ```go
-func NewStatusHeader(stepNames [8]string) *StatusHeader {
-    h := &StatusHeader{stepNames: stepNames}
-    for i, name := range stepNames {
-        h.writeLabel(i, StepPending, name)
+func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
+    rowCount := (maxStepsAcrossPhases + HeaderCols - 1) / HeaderCols // ceil division
+    if rowCount < 1 {
+        rowCount = 1
     }
-    return h
+    return &StatusHeader{
+        Rows: make([][HeaderCols]string, rowCount),
+    }
 }
 ```
 
-`SetIteration` updates the iteration line. When `total > 0` the line shows `N/M`; when `total == 0` (unbounded mode, run until done) the total is omitted. `SetStepState` updates individual step checkboxes (0-indexed, mapped to Row1[0-3] and Row2[0-3]):
+### Phase Switching
+
+`SetPhaseSteps` replaces the current step name list and re-renders all checkbox slots. Call this at the start of each phase to swap the header to the new phase's step set. Trailing slots beyond the current phase's step count are cleared to empty string. Panics if `len(names)` exceeds the grid capacity — this is a programming error (caller passed wrong max to constructor), not a user-reachable path:
+
+```go
+func (h *StatusHeader) SetPhaseSteps(names []string) {
+    // panics if len(names) > len(h.Rows)*HeaderCols
+    h.stepNames = append(h.stepNames[:0], names...)  // copy — does not alias input
+    // fills Rows[r][c] with pending checkboxes; clears trailing slots
+}
+```
+
+### Iteration Line and Step State
+
+`SetIteration` updates the iteration line. When `total > 0` the line shows `N/M`; when `total == 0` (unbounded mode, run until done) the total is omitted. `SetStepState` updates individual step checkboxes (0-indexed within the current phase's step list):
 
 ```go
 func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
@@ -114,20 +131,9 @@ func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle stri
 }
 
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
-    if idx < 0 || idx >= 8 { return }  // bounds guard
-    h.writeLabel(idx, state, h.stepNames[idx])
-}
-```
-
-### Finalization Mode
-
-`SetFinalization` switches the header to finalization mode, replacing iteration step names with finalization step names. Supports up to 8 finalization steps across two rows; unused slots are set to empty string:
-
-```go
-func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
-    h.IterationLine = fmt.Sprintf("Finalizing %d/%d", current, total)
-    h.finalizeNames = steps
-    // Fill Row1[0-3] and Row2[0-3] with finalization step names or ""
+    if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
+    r, c := idx/HeaderCols, idx%HeaderCols
+    h.Rows[r][c] = checkboxLabel(state, h.stepNames[idx])
 }
 ```
 
@@ -162,7 +168,7 @@ These are passed to `Runner.WriteToLog()` by the orchestration loop.
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader, SetIteration (bounded and unbounded), SetStepState, SetFinalization, SetFinalizeStepState, bounds guards
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), SetIteration (bounded and unbounded), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, out-of-bounds no-op)
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
 ## Additional Information
