@@ -112,6 +112,54 @@ func TestIterationLabel_BoundedMode(t *testing.T) { ... }
 func TestIterationLabel(t *testing.T) { ... }
 ```
 
+## Test both positive and negative cases for scope/visibility rules
+
+When testing whether a value is visible in a given scope, test both directions: that it IS visible where it should be, and that it is NOT visible where it should not be. Testing only the negative case leaves the positive contract unverified — a bug in the propagation path will be invisible.
+
+```go
+// Bad: only the negative direction is tested
+func TestValidate_IterCaptureNotInFinalize(t *testing.T) { ... }
+
+// Good: both directions are tested
+func TestValidate_IterCaptureNotInFinalize(t *testing.T) { ... }
+func TestValidate_InitCaptureVisibleInFinalize(t *testing.T) { ... }
+```
+
+This pattern arises wherever data flows through phases, scopes, or propagation rules (e.g., variable tables, permission systems, initialization ordering).
+
+## Test continue-on-error recovery explicitly
+
+When an error loop uses `continue` rather than `return` or `break`, add a test that verifies the loop continues past the failing item and processes subsequent items. The `continue` contract is distinct from `return` and is not implicitly verified by tests that only check the error message.
+
+```go
+// run.go uses continue on buildStep failure during the initialize phase:
+//   if err != nil { log.Printf(...); continue }
+//
+// This test must confirm that subsequent init steps AND the iteration loop still run.
+func TestRun_InitializeBuildErrorContinuesToNextInitStep(t *testing.T) {
+    // First init step fails to build; second init step and iteration steps must still execute.
+    ...
+}
+```
+
+## Avoid time.Sleep for test synchronization
+
+Do not use `time.Sleep` to wait for goroutines or background work in tests. Sleep-based synchronization is inherently racy: it fails under load and passes when the system happens to be fast enough.
+
+Use channels, `sync.WaitGroup`, or other signaling primitives instead. If a test currently uses sleep as a pragmatic shortcut, note it explicitly and expect to replace it if the test becomes flaky.
+
+```go
+// Bad — inherently racy under load
+time.Sleep(30 * time.Millisecond)
+require.Equal(t, expected, actual)
+
+// Good — deterministic signal
+done := make(chan struct{})
+go func() { defer close(done); doWork() }()
+<-done
+require.Equal(t, expected, actual)
+```
+
 ## Verify go vet before committing
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
@@ -122,8 +170,10 @@ Run `go vet ./...` before every commit. Vet catches correctness issues that the 
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded)
 - [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
 - [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState and SetFinalizeStepState
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand; stdout-only capture contract (D4) tested via TestLastCapture_StderrNotCaptured
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes)
+- [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration
+- [Config Validation](../features/config-validation.md) — Positive and negative scope-visibility tests for variable table phase propagation
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify
 - [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests

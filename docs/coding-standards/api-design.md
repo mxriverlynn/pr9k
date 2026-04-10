@@ -68,6 +68,28 @@ func (a finalHeader) SetStepState(idx int, state ui.StepState) {
 }
 ```
 
+## Remove unused methods from interfaces
+
+When a method is removed from an interface's concrete callers, remove it from the interface too. A method that exists only on the concrete type — not consumed through the interface anywhere — is dead weight. It forces all test doubles to implement a no-op, misleads readers about what the interface contract covers, and signals that the abstraction boundary is drifting.
+
+```go
+// Bad — CaptureOutput removed from all interface call sites but left on the interface
+type StepExecutor interface {
+    RunStep(...)
+    LastCapture() string
+    CaptureOutput(...) (string, error) // no longer called through this interface
+}
+
+// Good — interface matches the actual usage contract
+type StepExecutor interface {
+    RunStep(...)
+    LastCapture() string
+}
+// CaptureOutput can remain on the concrete Runner if it is still used directly.
+```
+
+When reviewing a PR that removes a method from concrete callers: check whether the method should also be removed from the interface.
+
 ## Document platform-scoped assumptions
 
 If a function uses platform-specific behavior (e.g., `/` as the path separator to detect script paths vs. bare commands), document the assumption at the call site so future maintainers know it is intentional, not an oversight.
@@ -82,7 +104,7 @@ if strings.Contains(command[0], "/") {
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (iterHeader/finalHeader) applying the interface narrowing pattern
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (iterHeader/finalHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup
 - [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState and SetFinalizeStepState
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand
