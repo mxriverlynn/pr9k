@@ -50,7 +50,7 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
 | `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
-| `ralph-tui/ralph-steps.json` | All step definitions (iteration and finalization) |
+| `ralph-tui/ralph-steps.json` | All step definitions (initialize, iteration, and finalization) |
 
 ## Core Types
 
@@ -88,22 +88,35 @@ func LoadSteps(projectDir string) (StepFile, error) {
 }
 ```
 
+### Initialize Steps
+
+Two steps run once before the iteration loop begins:
+
+| # | Name | Type | captureAs |
+|---|------|------|-----------|
+| 1 | Splash | Shell | — |
+| 2 | Get GitHub user | Shell | `GITHUB_USER` |
+
+"Splash" runs `cat {{PROJECT_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
+
 ### Iteration Steps
 
-The 8 iteration steps run in sequence for each GitHub issue:
+The 10 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model |
-|---|------|------|-------|
-| 1 | Feature work | Claude | sonnet |
-| 2 | Test planning | Claude | opus |
-| 3 | Test writing | Claude | sonnet |
-| 4 | Code review | Claude | opus |
-| 5 | Review fixes | Claude | sonnet |
-| 6 | Close issue | Shell | — |
-| 7 | Update docs | Claude | sonnet |
-| 8 | Git push | Shell | — |
+| # | Name | Type | Model | captureAs |
+|---|------|------|-------|-----------|
+| 1 | Get next issue | Shell | — | `ISSUE_ID` |
+| 2 | Get starting SHA | Shell | — | `STARTING_SHA` |
+| 3 | Feature work | Claude | sonnet | — |
+| 4 | Test planning | Claude | opus | — |
+| 5 | Test writing | Claude | sonnet | — |
+| 6 | Code review | Claude | opus | — |
+| 7 | Review fixes | Claude | sonnet | — |
+| 8 | Close issue | Shell | — | — |
+| 9 | Update docs | Claude | sonnet | — |
+| 10 | Git push | Shell | — | — |
 
-Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 
