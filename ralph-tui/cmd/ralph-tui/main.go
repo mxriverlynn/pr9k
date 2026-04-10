@@ -73,10 +73,11 @@ func main() {
 	}()
 
 	runCfg := workflow.RunConfig{
-		ProjectDir:    cfg.ProjectDir,
-		Iterations:    cfg.Iterations,
-		Steps:         stepFile.Iteration,
-		FinalizeSteps: stepFile.Finalize,
+		ProjectDir:      cfg.ProjectDir,
+		Iterations:      cfg.Iterations,
+		InitializeSteps: stepFile.Initialize,
+		Steps:           stepFile.Iteration,
+		FinalizeSteps:   stepFile.Finalize,
 	}
 
 	done := make(chan struct{})

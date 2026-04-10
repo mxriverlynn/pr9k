@@ -6,14 +6,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
-	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // Runner executes workflow steps and streams subprocess output through an io.Pipe.
@@ -31,6 +29,11 @@ type Runner struct {
 	currentProc *os.Process
 	procDone    chan struct{}
 	terminated  bool // set by Terminate(), reset at start of RunStep
+
+	// lastCapture holds the last non-empty stdout line from the most recent
+	// successful RunStep call. Empty string if the last step failed or produced
+	// no non-empty stdout lines.
+	lastCapture string
 }
 
 // NewRunner creates a Runner that streams subprocess output to log and through
@@ -85,10 +88,12 @@ func (r *Runner) Terminate() {
 }
 
 // RunStep executes command as a subprocess and streams its stdout and stderr in
-// real-time to both the pipe and the file logger. A WaitGroup ensures both
-// pipes are fully drained before cmd.Wait() is called. Writes to the shared
-// PipeWriter are mutex-protected because io.PipeWriter is not safe for
-// concurrent use.
+// real-time to both the pipe and the file logger. Stdout is also captured into
+// an in-memory buffer; after the command succeeds, the last non-empty stdout
+// line is stored and retrievable via LastCapture. On failure, LastCapture is
+// set to "". A WaitGroup ensures both pipes are fully drained before cmd.Wait()
+// is called. Writes to the shared PipeWriter are mutex-protected because
+// io.PipeWriter is not safe for concurrent use.
 func (r *Runner) RunStep(stepName string, command []string) error {
 	r.processMu.Lock()
 	r.terminated = false
@@ -125,6 +130,34 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	// capturedLines accumulates stdout lines for lastCapture. Written only by
+	// the stdout goroutine; read only after wg.Wait(), so no mutex is needed.
+	var capturedLines []string
+
+	forwardAndCapture := func(pipe io.Reader) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(pipe)
+		buf := make([]byte, 256*1024)
+		scanner.Buffer(buf, 256*1024)
+		var logErr error
+		for scanner.Scan() {
+			line := scanner.Text()
+			capturedLines = append(capturedLines, line)
+			if logErr == nil {
+				logErr = r.log.Log(stepName, line)
+				if logErr != nil {
+					_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+				}
+			}
+			r.mu.Lock()
+			_, _ = fmt.Fprintln(r.logWriter, line)
+			r.mu.Unlock()
+		}
+		if err := scanner.Err(); err != nil {
+			_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
+		}
+	}
+
 	forward := func(pipe io.Reader) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(pipe)
@@ -148,11 +181,38 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 		}
 	}
 
-	go forward(stdout)
+	go forwardAndCapture(stdout)
 	go forward(stderr)
 
 	wg.Wait()
-	return cmd.Wait()
+	waitErr := cmd.Wait()
+
+	if waitErr == nil {
+		r.lastCapture = lastNonEmptyLine(capturedLines)
+	} else {
+		r.lastCapture = ""
+	}
+
+	return waitErr
+}
+
+// LastCapture returns the last non-empty stdout line from the most recent
+// successful RunStep call, stripped of trailing carriage returns and whitespace.
+// Returns "" if the last step failed or produced no non-empty stdout output.
+func (r *Runner) LastCapture() string {
+	return r.lastCapture
+}
+
+// lastNonEmptyLine walks lines in reverse, strips trailing \r and whitespace,
+// and returns the first non-empty line found. Returns "" if all lines are empty.
+func lastNonEmptyLine(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(strings.TrimRight(lines[i], "\r"))
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // WriteToLog writes a single line directly to the log pipe. Use this to
@@ -179,30 +239,3 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// ResolveCommand substitutes {{VAR}} tokens in each command element using vt
-// and resolves relative script paths against projectDir.
-//
-// For each element:
-//   - All {{VAR_NAME}} tokens are replaced using the substitution engine.
-//   - The first element (the executable) is resolved relative to projectDir if
-//     it is a relative path containing a path separator (i.e. not a bare
-//     command like "git").
-func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
-	if len(command) == 0 {
-		return command
-	}
-
-	result := make([]string, len(command))
-	for i, arg := range command {
-		substituted, _ := vars.Substitute(arg, vt, phase)
-		result[i] = substituted
-	}
-
-	// Resolve the executable if it looks like a relative script path.
-	exe := result[0]
-	if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
-		result[0] = filepath.Join(projectDir, exe)
-	}
-
-	return result
-}
