@@ -61,10 +61,9 @@ func (f *fakeExecutor) Close() error {
 }
 
 type fakeRunHeader struct {
-	iterationCalls    []iterCall
-	stepStateCalls    []stepStateCall
-	finalizationCalls []finalizeCall
-	finalizeStepCalls []stepStateCall
+	iterationCalls  []iterCall
+	stepStateCalls  []stepStateCall
+	phaseStepsCalls [][]string
 }
 
 type iterCall struct {
@@ -77,25 +76,18 @@ type stepStateCall struct {
 	state ui.StepState
 }
 
-type finalizeCall struct {
-	current, total int
-	names          []string
-}
-
 func (h *fakeRunHeader) SetIteration(current, total int, issueID, issueTitle string) {
 	h.iterationCalls = append(h.iterationCalls, iterCall{current, total, issueID, issueTitle})
 }
 
+func (h *fakeRunHeader) SetPhaseSteps(names []string) {
+	cp := make([]string, len(names))
+	copy(cp, names)
+	h.phaseStepsCalls = append(h.phaseStepsCalls, cp)
+}
+
 func (h *fakeRunHeader) SetStepState(idx int, state ui.StepState) {
 	h.stepStateCalls = append(h.stepStateCalls, stepStateCall{idx, state})
-}
-
-func (h *fakeRunHeader) SetFinalization(current, total int, names []string) {
-	h.finalizationCalls = append(h.finalizationCalls, finalizeCall{current, total, names})
-}
-
-func (h *fakeRunHeader) SetFinalizeStepState(idx int, state ui.StepState) {
-	h.finalizeStepCalls = append(h.finalizeStepCalls, stepStateCall{idx, state})
 }
 
 // newTestKeyHandler creates a KeyHandler suitable for tests where all steps succeed.

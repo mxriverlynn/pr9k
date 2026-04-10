@@ -53,14 +53,8 @@ func main() {
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
-	var stepNames [8]string
-	for i, s := range stepFile.Iteration {
-		if i >= 8 {
-			break
-		}
-		stepNames[i] = s.Name
-	}
-	header := ui.NewStatusHeader(stepNames)
+	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
+	header := ui.NewStatusHeader(maxSteps)
 
 	// Drain the log pipe to stdout until EOF.
 	go func() {

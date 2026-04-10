@@ -22,9 +22,8 @@ type StepExecutor interface {
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
 	SetIteration(current, total int, issueID, issueTitle string)
+	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
-	SetFinalization(current, total int, steps []string)
-	SetFinalizeStepState(idx int, state ui.StepState)
 }
 
 // RunConfig holds all parameters needed by Run.
@@ -55,17 +54,6 @@ type trackingOffsetIterHeader struct {
 func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
 	a.lastState = state
 	a.h.SetStepState(a.idx, state)
-}
-
-// offsetFinalHeader adapts RunHeader to ui.StepHeader for a single finalize
-// step at absolute index idx within the full finalize step list.
-type offsetFinalHeader struct {
-	h   RunHeader
-	idx int
-}
-
-func (a *offsetFinalHeader) SetStepState(_ int, state ui.StepState) {
-	a.h.SetFinalizeStepState(a.idx, state)
 }
 
 // RunResult holds the outcome of a completed Run call.
@@ -112,9 +100,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		vt.SetPhase(vars.Iteration)
 
 		header.SetIteration(i, cfg.Iterations, "", "")
-		for j := range cfg.Steps {
-			header.SetStepState(j, ui.StepPending)
+		iterStepNames := make([]string, len(cfg.Steps))
+		for j, s := range cfg.Steps {
+			iterStepNames[j] = s.Name
 		}
+		header.SetPhaseSteps(iterStepNames)
 
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
 
@@ -155,7 +145,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	for i, s := range cfg.FinalizeSteps {
 		finalizeNames[i] = s.Name
 	}
-	header.SetFinalization(1, len(cfg.FinalizeSteps), finalizeNames)
+	header.SetPhaseSteps(finalizeNames)
 
 	vt.SetPhase(vars.Finalize)
 	for j, s := range cfg.FinalizeSteps {
@@ -165,7 +155,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
 		}
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &offsetFinalHeader{header, j}, keyHandler)
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
 			return RunResult{IterationsRun: iterationsRun}
