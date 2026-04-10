@@ -374,6 +374,71 @@ func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 	close(stop)
 }
 
+// --- ShortcutLinePtr ---
+
+// T1: ShortcutLinePtr returns a non-nil pointer.
+func TestShortcutLinePtr_ReturnsNonNilPointer(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	p := h.ShortcutLinePtr()
+
+	if p == nil {
+		t.Error("expected non-nil pointer from ShortcutLinePtr")
+	}
+}
+
+// T2: Dereferencing the pointer returned by ShortcutLinePtr tracks mode changes.
+func TestShortcutLinePtr_DereferencesToCurrentValue(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	p := h.ShortcutLinePtr()
+
+	if *p != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts initially, got %q", *p)
+	}
+
+	h.SetMode(ModeError)
+	if *p != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts after SetMode(ModeError), got %q", *p)
+	}
+
+	h.SetMode(ModeQuitConfirm)
+	if *p != QuitConfirmPrompt {
+		t.Errorf("expected QuitConfirmPrompt after SetMode(ModeQuitConfirm), got %q", *p)
+	}
+
+	h.SetMode(ModeNormal)
+	if *p != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after SetMode(ModeNormal), got %q", *p)
+	}
+}
+
+// T3: ShortcutLinePtr returns the same address on every call.
+func TestShortcutLinePtr_StableAddress(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	p1 := h.ShortcutLinePtr()
+	p2 := h.ShortcutLinePtr()
+
+	if p1 != p2 {
+		t.Errorf("expected stable pointer address, got %p and %p", p1, p2)
+	}
+}
+
+// T4: *ShortcutLinePtr() always agrees with ShortcutLine() after each SetMode.
+func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm}
+
+	for _, mode := range modes {
+		h.SetMode(mode)
+		got := *h.ShortcutLinePtr()
+		want := h.ShortcutLine()
+		if got != want {
+			t.Errorf("mode %v: *ShortcutLinePtr() = %q, ShortcutLine() = %q", mode, got, want)
+		}
+	}
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {
