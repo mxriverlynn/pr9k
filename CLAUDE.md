@@ -12,7 +12,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 - `ralph-tui/` — Go TUI orchestrator. See "ralph-tui" section below.
 - `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
-- `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Iteration prompts get `ISSUENUMBER=` and `STARTINGSHA=` prepended.
+- `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Prompts use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other `{{VAR}}` tokens that are substituted at runtime.
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
 - `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans
 
@@ -60,7 +60,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
 - [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`) and project directory resolution from the executable path
-- [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with variable prepending for iteration context
+- [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming, graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
 - [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
