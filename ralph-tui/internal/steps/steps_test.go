@@ -34,6 +34,30 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	}
 }
 
+func TestLoadSteps_InitializeCount(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+	if len(got.Initialize) != 2 {
+		t.Errorf("expected 2 initialize steps, got %d", len(got.Initialize))
+	}
+}
+
+func TestLoadSteps_InitializeOrder(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+
+	wantNames := []string{"Splash", "Get GitHub user"}
+	for i, want := range wantNames {
+		if got.Initialize[i].Name != want {
+			t.Errorf("step[%d]: expected name %q, got %q", i, want, got.Initialize[i].Name)
+		}
+	}
+}
+
 func TestLoadSteps_FinalizeCount(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
