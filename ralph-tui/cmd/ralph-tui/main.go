@@ -99,7 +99,7 @@ func main() {
 
 	go func() {
 		defer close(done)
-		workflow.Run(runner, header, keyHandler, runCfg)
+		_ = workflow.Run(runner, header, keyHandler, runCfg)
 	}()
 
 	<-done

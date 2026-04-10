@@ -42,14 +42,18 @@ type noopHeader struct{}
 
 func (noopHeader) SetStepState(int, ui.StepState) {}
 
-// offsetIterHeader adapts RunHeader to ui.StepHeader for a single iteration
-// step at absolute index idx within the full step list.
-type offsetIterHeader struct {
-	h   RunHeader
-	idx int
+// trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
+// iteration step at absolute index idx. It also records the last StepState
+// set so Run can check whether the step ended as StepDone before consulting
+// BreakLoopIfEmpty.
+type trackingOffsetIterHeader struct {
+	h         RunHeader
+	idx       int
+	lastState ui.StepState
 }
 
-func (a *offsetIterHeader) SetStepState(_ int, state ui.StepState) {
+func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
+	a.lastState = state
 	a.h.SetStepState(a.idx, state)
 }
 
@@ -64,10 +68,18 @@ func (a *offsetFinalHeader) SetStepState(_ int, state ui.StepState) {
 	a.h.SetFinalizeStepState(a.idx, state)
 }
 
+// RunResult holds the outcome of a completed Run call.
+type RunResult struct {
+	// IterationsRun is the index of the last iteration that began (1-based).
+	// It includes the iteration that triggered a breakLoopIfEmpty exit.
+	// Zero if the iteration loop never started.
+	IterationsRun int
+}
+
 // Run is the main orchestration goroutine. It drives three config-defined phases
 // — initialize, iteration loop, finalize — via VarTable-based substitution, and
 // closes the executor when done.
-func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
+func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
 	// 1. Initialize phase: run each step in order, binding captureAs results
@@ -83,7 +95,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
-			return
+			return RunResult{}
 		}
 		if s.CaptureAs != "" {
 			vt.Bind(vars.Initialize, s.CaptureAs, executor.LastCapture())
@@ -91,8 +103,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 
 	// 2. Iteration loop: repeat until the configured limit or until a step with
-	// BreakLoopIfEmpty produces empty stdout capture.
+	// BreakLoopIfEmpty produces empty stdout capture on successful completion.
+	iterationsRun := 0
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
+		iterationsRun = i
 		vt.ResetIteration()
 		vt.SetIteration(i)
 		vt.SetPhase(vars.Iteration)
@@ -113,16 +127,20 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				breakOuter = true
 				break
 			}
-			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &offsetIterHeader{header, j}, keyHandler)
+			th := &trackingOffsetIterHeader{h: header, idx: j}
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, th, keyHandler)
 			if action == ui.ActionQuit {
 				_ = executor.Close()
-				return
+				return RunResult{IterationsRun: iterationsRun}
 			}
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
 			}
-			if s.BreakLoopIfEmpty && captured == "" {
+			// BreakLoopIfEmpty fires only on successful completion (StepDone).
+			// If the step failed (non-zero exit), the check is skipped so that
+			// normal error-mode handling takes effect instead.
+			if s.BreakLoopIfEmpty && th.lastState == ui.StepDone && captured == "" {
 				breakOuter = true
 				break
 			}
@@ -150,12 +168,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &offsetFinalHeader{header, j}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
-			return
+			return RunResult{IterationsRun: iterationsRun}
 		}
 	}
 
 	// 4. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
+	return RunResult{IterationsRun: iterationsRun}
 }
 
 // buildStep resolves a single step into a runnable ResolvedStep using vt for

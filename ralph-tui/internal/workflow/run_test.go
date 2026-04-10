@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -197,7 +198,8 @@ func TestRun_TwoIterationsAllStepsSucceed(t *testing.T) {
 }
 
 // TestRun_BreakLoopIfEmptyCapture verifies the loop exits when a step with
-// BreakLoopIfEmpty produces empty capture.
+// BreakLoopIfEmpty produces empty capture, and iterationsRun reflects the
+// iteration that triggered the break.
 func TestRun_BreakLoopIfEmptyCapture(t *testing.T) {
 	// runStepCaptures[0] is "" (empty) for the break step, so loop exits immediately.
 	executor := &fakeExecutor{
@@ -215,7 +217,7 @@ func TestRun_BreakLoopIfEmptyCapture(t *testing.T) {
 		FinalizeSteps: nonClaudeSteps("final1"),
 	}
 
-	Run(executor, header, kh, cfg)
+	result := Run(executor, header, kh, cfg)
 
 	// "work" step should not have run (loop broke before it)
 	for _, call := range executor.runStepCalls {
@@ -234,10 +236,15 @@ func TestRun_BreakLoopIfEmptyCapture(t *testing.T) {
 	if !found {
 		t.Error("expected finalization to run even after early loop exit")
 	}
+
+	if result.IterationsRun != 1 {
+		t.Errorf("expected IterationsRun=1 (break on first iteration), got %d", result.IterationsRun)
+	}
 }
 
 // TestRun_BreakLoopIfEmptyNonEmptyCapture verifies the loop continues when
 // BreakLoopIfEmpty is set but capture is non-empty, and breaks when empty.
+// iterationsRun reflects the iteration that triggered the break.
 func TestRun_BreakLoopIfEmptyNonEmptyCapture(t *testing.T) {
 	// Iteration 1: get-issue → "issue-42" (non-empty → continue), work → ""
 	// Iteration 2: get-issue → "" (empty AND BreakLoopIfEmpty → break)
@@ -258,11 +265,67 @@ func TestRun_BreakLoopIfEmptyNonEmptyCapture(t *testing.T) {
 		FinalizeSteps: nonClaudeSteps("final1"),
 	}
 
-	Run(executor, header, kh, cfg)
+	result := Run(executor, header, kh, cfg)
 
 	count := len(executor.runStepCalls)
 	if count != 4 {
 		t.Errorf("expected 4 RunStep calls (iter1: get-issue+work, iter2: get-issue breaks, final1), got %d: %v", count, executor.runStepCalls)
+	}
+
+	if result.IterationsRun != 2 {
+		t.Errorf("expected IterationsRun=2 (break on second iteration), got %d", result.IterationsRun)
+	}
+}
+
+// TestRun_BreakLoopIfEmptyStepFails verifies that when a step with
+// BreakLoopIfEmpty fails (non-zero exit), the break does not fire — normal
+// error-mode path takes over instead.
+func TestRun_BreakLoopIfEmptyStepFails(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		// step 0 (get-issue) fails; step 1 (work) succeeds
+		runStepErrors:   []error{errors.New("exit 1"), nil},
+		runStepCaptures: []string{"", ""},
+	}
+	header := &fakeRunHeader{}
+
+	breakIter := breakStep("get-issue", "ISSUE_ID")
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         []steps.Step{breakIter, nonClaudeSteps("work")[0]},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Let Orchestrate reach the blocked error-mode state, then send ActionContinue.
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionContinue")
+	}
+
+	// "work" step must have run — the break did not fire despite empty capture,
+	// because the step failed (StepFailed, not StepDone).
+	found := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "work" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("work step should have run: breakLoopIfEmpty must not fire when the step fails")
 	}
 }
 
