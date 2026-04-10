@@ -285,6 +285,7 @@ func validatePhase(
 // A path containing "/" is treated as relative (resolved under projectDir) or
 // absolute.  A bare name is looked up via exec.LookPath.
 func validateCommandPath(projectDir, cmd string) string {
+	// Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
 	if strings.Contains(cmd, "/") {
 		var resolved string
 		if filepath.IsAbs(cmd) {
