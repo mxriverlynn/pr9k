@@ -2,13 +2,13 @@
 
 Drives the entire ralph-tui workflow: iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-09
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `Run()` is the top-level orchestration goroutine that manages the full lifecycle: banner display, GitHub user lookup, iteration loop, finalization phase, and completion summary
+- `Run()` is the top-level orchestration goroutine that manages the full lifecycle: GitHub user lookup, iteration loop, finalization phase, and completion summary
 - The iteration loop runs for exactly N iterations when `Iterations > 0`, or until no issue is found when `Iterations == 0` (unbounded / run-until-done mode)
 - `Orchestrate()` sequences resolved steps, manages step state transitions (pending → active → done/failed), and handles interactive error recovery
 - Iteration steps are resolved per-iteration with the current issue ID and commit SHA; finalization steps are resolved once
@@ -25,17 +25,17 @@ Key files:
 ```
                          Run()
                            │
-              ┌────────────┼────────────────┐
-              │            │                │
-              ▼            ▼                ▼
-         Display      Get GitHub      Iteration Loop
-         Banner       Username         (1..N)
-                                          │
-                           ┌──────────────┼──────────────┐
-                           │              │              │
-                           ▼              ▼              ▼
-                     get_next_issue  git rev-parse   buildIteration
-                                       HEAD           Steps()
+                  ┌────────┴────────┐
+                  │                 │
+                  ▼                 ▼
+            Get GitHub        Iteration Loop
+            Username           (1..N)
+                                    │
+                   ┌────────────────┼──────────────┐
+                   │                │              │
+                   ▼                ▼              ▼
+             get_next_issue  git rev-parse   buildIteration
+                                   HEAD           Steps()
                                                         │
                                                         ▼
                                               ┌──────────────────┐

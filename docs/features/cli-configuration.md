@@ -2,7 +2,7 @@
 
 Parses command-line flags and resolves the project directory that anchors all relative path resolution throughout ralph-tui.
 
-- **Last Updated:** 2026-04-09
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
@@ -152,10 +152,9 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 | `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
 | `steps.LoadSteps(projectDir)` | `{projectDir}/ralph-steps.json` |
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
-| `workflow.RunConfig.ProjectDir` | Banner, scripts, prompt files, command resolution |
+| `workflow.RunConfig.ProjectDir` | Scripts, prompt files, command resolution |
 
 Within `workflow.Run`, `ProjectDir` resolves additional paths:
-- `ralph-art.txt` — startup banner (copied into `bin/` by `make build`; not embedded in the binary)
 - `{projectDir}/scripts/get_gh_user` — GitHub username script
 - `{projectDir}/scripts/get_next_issue` — issue fetch script
 - `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt`
