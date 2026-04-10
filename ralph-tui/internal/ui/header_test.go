@@ -385,6 +385,27 @@ func TestSetStepState_SkippedStep_SecondRow(t *testing.T) {
 	}
 }
 
+// --- substitute helper ---
+
+// T3a: substitute with an empty vals map returns the template string unchanged.
+func TestSubstitute_EmptyValsReturnsTemplateUnchanged(t *testing.T) {
+	tmpl := "Initializing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+	got := substitute(tmpl, map[string]string{})
+	if got != tmpl {
+		t.Errorf("substitute with empty vals: got %q, want %q", got, tmpl)
+	}
+}
+
+// T3b: substitute leaves unknown {{KEY}} tokens in the template as-is.
+func TestSubstitute_UnknownKeyLeftAsIs(t *testing.T) {
+	tmpl := "Hello {{KNOWN}} and {{UNKNOWN}}"
+	got := substitute(tmpl, map[string]string{"KNOWN": "world"})
+	want := "Hello world and {{UNKNOWN}}"
+	if got != want {
+		t.Errorf("substitute with unknown key: got %q, want %q", got, want)
+	}
+}
+
 // T3: An unrecognized StepState value falls through to the default (pending) display.
 func TestSetStepState_UnknownStateFallsToDefault(t *testing.T) {
 	h := NewStatusHeader(4)

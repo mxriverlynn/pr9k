@@ -189,6 +189,18 @@ func TestRun_TwoIterationsAllStepsSucceed(t *testing.T) {
 	if header.renderIterationCalls[0].issueID != "" {
 		t.Errorf("iteration 1: want empty issueID at start, got %q", header.renderIterationCalls[0].issueID)
 	}
+	if header.renderIterationCalls[0].iter != 1 {
+		t.Errorf("iteration 1: want iter=1, got %d", header.renderIterationCalls[0].iter)
+	}
+	if header.renderIterationCalls[0].maxIter != 2 {
+		t.Errorf("iteration 1: want maxIter=2, got %d", header.renderIterationCalls[0].maxIter)
+	}
+	if header.renderIterationCalls[1].iter != 2 {
+		t.Errorf("iteration 2: want iter=2, got %d", header.renderIterationCalls[1].iter)
+	}
+	if header.renderIterationCalls[1].maxIter != 2 {
+		t.Errorf("iteration 2: want maxIter=2, got %d", header.renderIterationCalls[1].maxIter)
+	}
 }
 
 // TestRun_BreakLoopIfEmptyCapture verifies the loop exits when a step with
