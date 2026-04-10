@@ -12,8 +12,8 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │                                                                     │
 │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐  │
 │  │  CLI Parsing │  │ Step Loading │  │    OS Signal Handling     │  │
-│  │  (cli.Parse  │  │ (steps.Load  │  │  SIGINT/SIGTERM → chan    │  │
-│  │   Args)      │  │  Steps)      │  │  → KeyHandler.ForceQuit   │  │
+│  │  (cli.       │  │ (steps.Load  │  │  SIGINT/SIGTERM → chan    │  │
+│  │   Execute)   │  │  Steps)      │  │  → KeyHandler.ForceQuit   │  │
 │  └──────┬───────┘  └──────┬───────┘  └───────────┬───────────────┘  │
 │         │                 │                      │                  │
 │         ▼                 ▼                      ▼                  │
@@ -21,7 +21,7 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │  │                    workflow.Run (goroutine)                     ││
 │  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
-│  │  │              Iteration Loop (1..N)                      │    ││
+│  │  │     Iteration Loop (1..N, or until no issue found)      │    ││
 │  │  │                                                         │    ││
 │  │  │  get_next_issue → git rev-parse HEAD → build steps      │    ││
 │  │  │       │                                                 │    ││
@@ -126,7 +126,7 @@ Each feature is documented in detail in its own file under [`docs/features/`](fe
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line arguments (`<iterations>` and optional `-project-dir` flag) and resolves the project directory. Uses a `reorderArgs` workaround to allow flags in any position despite Go's `flag` package stopping at the first positional argument. Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks`.
+Parses command-line flags (`--iterations`/`-n` and `--project-dir`/`-p`) using [spf13/cobra](https://github.com/spf13/cobra) and resolves the project directory. Iterations defaults to 0 (run until done). Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when `--project-dir` is not given.
 
 **Package:** `internal/cli/`
 
@@ -144,13 +144,13 @@ The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in
 
 ### [Workflow Orchestration](features/workflow-orchestration.md)
 
-The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over N iterations (each fetching an issue and running 8 steps through the step sequencer), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
+The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over iterations (bounded to N when `--iterations N > 0`, or running until no issue is found when `--iterations 0`), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 
 ### [TUI Status Header](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line and step progress as two rows of 4 checkboxes each (8 steps total). Each step displays as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
+A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as two rows of 4 checkboxes each (8 steps total), where each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). Switches to finalization mode with its own step names when the iteration loop completes.
 
 **Package:** `internal/ui/` (`header.go`, `log.go`)
 
@@ -205,5 +205,5 @@ cmd/ralph-tui/main.go
   - [Concurrency](coding-standards/concurrency.md) — Mutex patterns, WaitGroup drain, channel dispatch, non-blocking sends
   - [Error Handling](coding-standards/error-handling.md) — Package-prefixed errors, file paths in I/O errors, scanner error checking
   - [API Design](coding-standards/api-design.md) — Bounds guards, precondition validation, adapter types, platform assumptions
-  - [Go Patterns](coding-standards/go-patterns.md) — Flag reordering, symlink-safe paths, slice immutability, scanner buffers
+  - [Go Patterns](coding-standards/go-patterns.md) — Symlink-safe paths, slice immutability, scanner buffers
   - [Testing](coding-standards/testing.md) — Race detector, idempotent close, bounds testing, test doubles with mutexes

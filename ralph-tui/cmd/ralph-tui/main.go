@@ -16,10 +16,13 @@ import (
 )
 
 func main() {
-	cfg, err := cli.ParseArgs(os.Args[1:])
+	cfg, err := cli.Execute()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
 		os.Exit(1)
+	}
+	if cfg == nil {
+		os.Exit(0)
 	}
 
 	log, err := logger.NewLogger(cfg.ProjectDir)

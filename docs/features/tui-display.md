@@ -2,14 +2,15 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-09
 - **Authors:**
   - River Bailey
 
 ## Overview
 
 - `StatusHeader` is a pointer-mutable struct that Glyph reads on each render cycle — callers update state by mutating fields directly
-- Displays the current iteration/issue on one line and step progress as two rows of 4 checkboxes (8 steps total)
+- Displays the current iteration/issue on one line; shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
+- Displays step progress as two rows of 4 checkboxes (8 steps total)
 - Each step shows one of four states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed
 - Switches between iteration mode and finalization mode with different step names
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
@@ -29,7 +30,8 @@ Key files:
   ┌─────────────────────────────────────────────┐
   │              StatusHeader                    │
   │                                              │
-  │  IterationLine: "Iteration 1/3 — Issue #42" │
+  │  IterationLine: "Iteration 1/3 — Issue #42" │  ← bounded (total > 0)
+  │  IterationLine: "Iteration 1 — Issue #42"   │  ← unbounded (total == 0)
   │                                              │
   │  Row1: [▸] Feature work  [✓] Test planning   │
   │        [ ] Test writing   [ ] Code review     │
@@ -75,7 +77,8 @@ const (
 // StatusHeader manages pointer-mutable string state for the TUI.
 // Glyph reads exported fields via pointer on each render cycle.
 type StatusHeader struct {
-    IterationLine string    // e.g., "Iteration 1/3 — Issue #42: Add widget support"
+    IterationLine string    // e.g., "Iteration 1/3 — Issue #42: Add widget support" (bounded)
+                            //    or "Iteration 1 — Issue #42: Add widget support" (unbounded, total==0)
     Row1          [4]string // checkbox labels for steps 0-3
     Row2          [4]string // checkbox labels for steps 4-7
     stepNames     [8]string
@@ -99,11 +102,15 @@ func NewStatusHeader(stepNames [8]string) *StatusHeader {
 }
 ```
 
-`SetIteration` updates the iteration line. `SetStepState` updates individual step checkboxes (0-indexed, mapped to Row1[0-3] and Row2[0-3]):
+`SetIteration` updates the iteration line. When `total > 0` the line shows `N/M`; when `total == 0` (unbounded mode, run until done) the total is omitted. `SetStepState` updates individual step checkboxes (0-indexed, mapped to Row1[0-3] and Row2[0-3]):
 
 ```go
 func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
-    h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+    if total > 0 {
+        h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+    } else {
+        h.IterationLine = fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)
+    }
 }
 
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
@@ -155,7 +162,7 @@ These are passed to `Runner.WriteToLog()` by the orchestration loop.
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader, SetIteration, SetStepState, SetFinalization, SetFinalizeStepState, bounds guards
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader, SetIteration (bounded and unbounded), SetStepState, SetFinalization, SetFinalizeStepState, bounds guards
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
 ## Additional Information

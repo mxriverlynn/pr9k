@@ -37,7 +37,7 @@ The `ralph-bash/ralph-loop` bash script runs multiple sequential `claude` CLI ca
 ### Three sections, top to bottom:
 
 **1. Status header (fixed height)**
-- Current iteration and total: `Iteration 1/3`
+- Current iteration and total: `Iteration 1/3` (bounded mode); `Iteration 1` (unbounded mode — when `--iterations` is omitted or `0`)
 - Issue being worked: `Issue #42: Add widget support`
 - Step tracker with checkboxes across two rows showing all 8 steps per iteration
 - Status indicators: `[✓]` done, `[▸ ...]` active (with spinner), `[ ]` pending
@@ -299,7 +299,7 @@ type StepFile struct {
 func loadSteps(projectDir string) (StepFile, error) {
     // projectDir is the repo root, resolved at startup via os.Executable().
     // Note: os.Executable() returns a temp path when using `go run`.
-    // During development, use `go build` or pass the -project-dir flag (see CLI args below).
+    // During development, use `go build` or pass the --project-dir flag (see CLI args below).
     data, err := os.ReadFile(filepath.Join(projectDir, "ralph-steps.json"))
     if err != nil {
         return StepFile{}, fmt.Errorf("could not read ralph-steps.json: %w", err)
@@ -429,13 +429,13 @@ pr9k/                               # repo root (projectDir)
 ## CLI Arguments
 
 ```
-ralph-tui <iterations> [-project-dir <path>]
+ralph-tui [-n <iterations>] [-p <project-dir>]
 ```
 
-- **`<iterations>`** (required) — Number of iterations to run. Must be > 0.
-- **`-project-dir <path>`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
+- **`--iterations` / `-n`** (optional) — Number of iterations to run. Defaults to `0`, which means run until `get_next_issue` finds no more issues (until-done mode). Pass a positive integer to cap the run.
+- **`--project-dir` / `-p`** (optional) — Override the auto-detected project directory (repo root). Useful during development with `go run`, where `os.Executable()` returns a temp path. When omitted, `projectDir` is resolved via `os.Executable()` with `filepath.EvalSymlinks`.
 
-Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -project-dir /tmp` and `ralph-tui -project-dir /tmp 3` are valid). This is handled by `reorderArgs` in `internal/cli/args.go`, which moves flag args before positionals prior to parsing, working around Go's `flag` package stopping at the first non-flag argument.
+Both flags use POSIX-style parsing via [spf13/cobra](https://github.com/spf13/cobra). Positional arguments are rejected (`cobra.NoArgs`). No custom reordering is needed.
 
 ---
 
@@ -562,7 +562,7 @@ Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -
 ### UI: Status header (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
-- Displays current iteration number and total (e.g., `Iteration 1/3`)
+- Displays current iteration number and total (e.g., `Iteration 1/3`); omits the total in unbounded mode when `SetIteration` is called with `total == 0` (e.g., `Iteration 1`)
 - Displays the issue being worked (e.g., `Issue #42: Add widget support`)
 - Shows 8 step checkboxes across two rows
 - Step indicators: `[✓]` done, `[▸ ...]` active with spinner, `[ ]` pending
@@ -570,6 +570,7 @@ Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -
 
 **Unit tests:**
 - Set iteration to 2/5 — verify the iteration line string is formatted correctly
+- Set iteration with `total == 0` — verify the line omits the total (`Iteration N` instead of `Iteration N/M`)
 - Mark steps 1-3 as done, step 4 as active, rest pending — verify checkbox states
 - Switch to finalization mode — verify header shows `Finalizing` and finalization step names
 - All 8 steps fit across two rows of 4
@@ -645,7 +646,7 @@ Flags may appear before or after positional arguments (e.g., both `ralph-tui 3 -
 ## Verification
 
 1. `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui` — compiles and places binary at repo root (required for `os.Executable()` directory resolution)
-2. From the target repo, run with `path/to/pr9k/ralph-tui 1`
+2. From the target repo, run with `path/to/pr9k/ralph-tui -n 1`
 3. Verify: output streams line-by-line in the log panel as claude runs
 4. Verify: step checkboxes update as steps complete
 5. Verify: `j`/`k`/arrows scroll the log, auto-scroll resumes at bottom
