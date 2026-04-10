@@ -172,6 +172,12 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 **Package:** `internal/logger/`
 
+### [Variable State Management](features/variable-state.md)
+
+`VarTable` owns all runtime variable state for a single run. It maintains two scoped tables — persistent (survives the whole run) and iteration (cleared at the start of each iteration) — plus six built-in variables seeded from CLI flags and updated by the orchestrator (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). Resolution order during an iteration step is iteration table → persistent table; during initialize or finalize, only the persistent table is consulted. `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase.
+
+**Package:** `internal/vars/`
+
 ## Package Dependency Graph
 
 ```
@@ -180,6 +186,7 @@ cmd/ralph-tui/main.go
     ├── internal/logger     (file logging)
     ├── internal/steps      (step loading)
     ├── internal/ui         (key handling, header, orchestration)
+    ├── internal/vars       (runtime variable state)
     └── internal/workflow   (subprocess execution, run loop)
             ├── internal/logger
             ├── internal/steps

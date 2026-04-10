@@ -47,7 +47,7 @@
 - Vulnerability check: `make vulncheck` (requires govulncheck)
 - CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `configs/`
+- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `configs/`
 
 ### Configuration
 
@@ -59,6 +59,7 @@
 - [Architecture Overview](architecture.md) — System-level architecture of ralph-tui with block diagrams and feature summaries
 - [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
 - [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
+- [Variable State Management](features/variable-state.md) — `VarTable` scoped variable tables, built-in variables, and phase-based resolution
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
