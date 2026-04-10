@@ -84,6 +84,14 @@ type RunConfig struct {
     FinalizeSteps   []steps.Step  // run once after the loop
 }
 
+// RunResult holds the outcome of a completed Run call.
+type RunResult struct {
+    // IterationsRun is the index of the last iteration that began (1-based).
+    // It includes the iteration that triggered a breakLoopIfEmpty exit.
+    // Zero if the iteration loop never started.
+    IterationsRun int
+}
+
 // StepExecutor wraps StepRunner + LastCapture + Close.
 // *Runner satisfies this interface.
 type StepExecutor interface {
@@ -115,7 +123,7 @@ type ResolvedStep struct {
 `Run()` executes the full workflow lifecycle in three phases, all driven by the `VarTable`:
 
 ```go
-func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
+func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
     vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
     // Phase 1: Initialize
@@ -123,7 +131,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     for j, s := range cfg.InitializeSteps { ... }
 
     // Phase 2: Iteration loop
+    iterationsRun := 0
     for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
+        iterationsRun = i
         vt.ResetIteration()
         vt.SetIteration(i)
         vt.SetPhase(vars.Iteration)
@@ -135,6 +145,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     for j, s := range cfg.FinalizeSteps { ... }
 
     _ = executor.Close()
+    return RunResult{IterationsRun: iterationsRun}
 }
 ```
 
@@ -152,7 +163,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Updates the status header for each iteration
 - Builds resolved steps via `buildStep` (uses VarTable for `{{VAR}}` substitution)
 - After each step, if `s.CaptureAs != ""`, binds captured output into the iteration-scoped VarTable
-- If `s.BreakLoopIfEmpty` is set and `executor.LastCapture()` is empty, exits the loop (finalization still runs)
+- If `s.BreakLoopIfEmpty` is set, `executor.LastCapture()` is empty, **and the step completed as `StepDone`**, exits the loop (finalization still runs); if the step failed (non-zero exit), the check is skipped so normal error-mode handling takes effect instead
 - If `buildStep` fails, logs `"Error preparing steps: ..."` and breaks the inner loop (finalization still runs)
 - If `Orchestrate` returns `ActionQuit`, closes executor and returns without finalization
 
@@ -246,13 +257,17 @@ Three adapter types route `SetStepState` calls to the correct TUI row depending 
 type noopHeader struct{}
 func (noopHeader) SetStepState(int, ui.StepState) {}
 
-// offsetIterHeader adapts RunHeader to ui.StepHeader for a single iteration
-// step at absolute index idx within the full step list.
-type offsetIterHeader struct {
-    h   RunHeader
-    idx int
+// trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
+// iteration step at absolute index idx. It also records the last StepState
+// set so Run can check whether the step ended as StepDone before consulting
+// BreakLoopIfEmpty.
+type trackingOffsetIterHeader struct {
+    h         RunHeader
+    idx       int
+    lastState ui.StepState
 }
-func (a *offsetIterHeader) SetStepState(_ int, state ui.StepState) {
+func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
+    a.lastState = state
     a.h.SetStepState(a.idx, state)
 }
 
@@ -267,7 +282,7 @@ func (a *offsetFinalHeader) SetStepState(_ int, state ui.StepState) {
 }
 ```
 
-The `offsetIter`/`offsetFinal` adapters are needed because `Orchestrate` always calls `header.SetStepState(i, ...)` using the local step index `i`, but each step is dispatched individually from `Run()` — so the absolute TUI checkbox position must be pinned at construction time via `idx`.
+The `trackingOffsetIterHeader`/`offsetFinalHeader` adapters are needed because `Orchestrate` always calls `header.SetStepState(i, ...)` using the local step index `i`, but each step is dispatched individually from `Run()` — so the absolute TUI checkbox position must be pinned at construction time via `idx`. The tracking variant also records `lastState` so `Run` can distinguish a successful `StepDone` completion from a failed step before evaluating `BreakLoopIfEmpty`.
 
 ## Testing
 
@@ -278,6 +293,8 @@ The `offsetIter`/`offsetFinal` adapters are needed because `Orchestrate` always 
   - `TestRun_QuitFromInitializeOrchestrateClosesEarly` — verifies `ActionQuit` during init closes the executor and skips iteration and finalization
   - `TestRun_BreakLoopIfEmptyCapture` / `TestRun_BreakLoopIfEmptyNonEmptyCapture` — verify early-exit loop semantics
   - `TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization` — verifies a missing prompt file for an iteration step logs `"Error preparing steps"` and skips to finalization
+  - `TestRunResult_IterationsRun_NormalCompletion` — verifies `RunResult.IterationsRun` equals the configured `Iterations` count after a normal bounded run
+  - `TestRunResult_IterationsRun_QuitPath` — verifies `RunResult.IterationsRun` reflects the in-progress iteration index when `ActionQuit` fires mid-loop
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain
 
 ## Additional Information
