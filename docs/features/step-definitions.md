@@ -10,7 +10,7 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 
 - Step definitions are loaded from `ralph-steps.json`, which contains three step groups: initialize (pre-loop), iteration (per-issue), and finalize (post-loop)
 - Each step is either a Claude CLI invocation (with model and prompt file) or a shell command (with template variable substitution)
-- `BuildPrompt` reads prompt files from `prompts/` and returns the raw content — variable injection is handled at the orchestrator level
+- `BuildPrompt` reads prompt files from `prompts/` and applies `{{VAR}}` substitution using the supplied `VarTable` and phase
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
@@ -117,21 +117,23 @@ Three steps run once after all iterations complete:
 
 ### Prompt Building
 
-`BuildPrompt` reads the prompt file and returns its raw content:
+`BuildPrompt` reads the prompt file, applies `{{VAR}}` substitution using the supplied `VarTable` and phase, and returns the result:
 
 ```go
-func BuildPrompt(projectDir string, step Step) (string, error) {
+func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
     if step.PromptFile == "" {
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
     promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
     data, err := os.ReadFile(promptPath)
     // ...
-    return string(data), nil
+    content, err := vars.Substitute(string(data), vt, phase)
+    // ...
+    return content, nil
 }
 ```
 
-Variable injection (e.g., `ISSUENUMBER`, `STARTINGSHA`) is handled at the orchestrator level, not inside `BuildPrompt`. The upcoming `{{VAR}}` substitution engine (tracked in issue #39) will provide general-purpose variable expansion for both prompts and shell commands.
+All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` before the string is returned. Unresolved variables log a warning and substitute the empty string.
 
 ## Error Handling
 
@@ -141,6 +143,7 @@ Variable injection (e.g., `ISSUENUMBER`, `STARTINGSHA`) is handled at the orches
 | Malformed JSON | `"steps: malformed JSON in {path}: ..."` | Returned to caller |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
+| Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 

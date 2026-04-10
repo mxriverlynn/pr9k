@@ -117,41 +117,44 @@ type ResolvedStep struct {
 
 `Run()` executes the full workflow lifecycle:
 
-1. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
-2. **Iteration loop** — runs from i=1 upward, stopping when `i > Iterations` (bounded) or when no issue is found (unbounded, `Iterations == 0`):
+1. **VarTable init** — creates a `vars.VarTable` seeded with `PROJECT_DIR` and `MAX_ITER`
+2. **GitHub username** — calls `scripts/get_gh_user` via `CaptureOutput`
+3. **Iteration loop** — runs from i=1 upward, stopping when `i > Iterations` (bounded) or when no issue is found (unbounded, `Iterations == 0`):
    - Fetches the next issue via `scripts/get_next_issue`
    - If no issue found, exits the loop early (the only exit condition in unbounded mode)
    - Captures the current HEAD SHA
+   - Resets the iteration table (`ResetIteration`), sets `ITER`, switches phase to `Iteration`, and binds `ISSUE_ID` and `STARTING_SHA`
    - Updates the status header
-   - Builds resolved steps via `buildIterationSteps`
+   - Builds resolved steps via `buildIterationSteps` (uses VarTable for `{{VAR}}` substitution)
    - Runs steps through `Orchestrate()`
    - If `Orchestrate` returns `ActionQuit`, closes and returns immediately
-3. **Finalization** — runs even after early loop exit:
+4. **Finalization** — runs even after early loop exit:
+   - Switches the VarTable phase to `Finalize`
    - Switches the header to finalization mode
-   - Builds resolved steps via `buildFinalizeSteps`
+   - Builds resolved steps via `buildFinalizeSteps` (uses VarTable for `{{VAR}}` substitution)
    - Runs through `Orchestrate()` with a `finalHeader` adapter
-4. **Completion summary** — logs iteration count and finalization task count
-5. **Close** — sends EOF to the log pipe
+5. **Completion summary** — logs iteration count and finalization task count
+6. **Close** — sends EOF to the log pipe
 
 ### Step Resolution
 
-`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command:
+`buildIterationSteps` converts `[]Step` into `[]ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution:
 
 ```go
-// Claude step → claude --permission-mode acceptEdits --model <model> -p <prompt>
+// Claude step → BuildPrompt applies {{VAR}} substitution, then:
 result[i] = ui.ResolvedStep{
     Name:    s.Name,
     Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
 }
 
-// Shell step → resolve template vars and script paths
+// Shell step → ResolveCommand applies {{VAR}} substitution and resolves script paths
 result[i] = ui.ResolvedStep{
     Name:    s.Name,
-    Command: ResolveCommand(projectDir, s.Command, issueID),
+    Command: ResolveCommand(projectDir, s.Command, vt, vars.Iteration),
 }
 ```
 
-The `sha` captured at the start of each iteration is passed to `buildIterationSteps` but is currently unused (`_ = sha`). It is reserved for the upcoming `{{VAR}}` substitution engine (issue #39), which will expand `{{STARTINGSHA}}` and other variables in both prompt content and shell commands.
+The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
 
 ### The Orchestrate State Machine
 

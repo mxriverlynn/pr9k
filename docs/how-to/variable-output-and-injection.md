@@ -2,42 +2,58 @@
 
 This guide explains how data flows between workflow steps in ralph-tui: how variables are injected into prompts and commands, how step output is captured, and how steps pass data to each other through files.
 
-## Variable Injection into Prompts
+## {{VAR}} Substitution Engine
 
-Iteration context variables (`ISSUENUMBER`, `STARTINGSHA`) are injected by including them directly at the top of each prompt file that needs them. Claude reads the variable assignments and substitutes them wherever the prompt references those names.
+All `{{VAR_NAME}}` tokens in prompt files and shell command arguments are expanded at runtime using the `vars.Substitute` function. Substitution is applied by:
 
-**Where the values come from:**
+- `steps.BuildPrompt()` — replaces tokens in prompt file content before passing the string to Claude
+- `workflow.ResolveCommand()` — replaces tokens in each element of a shell command's argv
 
-- **ISSUENUMBER** — The current GitHub issue number, fetched at the start of each iteration by running `scripts/get_next_issue <username>`
-- **STARTINGSHA** — The HEAD commit SHA at the start of each iteration, captured via `git rev-parse HEAD`
+**Where values come from:**
 
-These values are captured once per iteration and reused for all steps in that iteration. The SHA is not refreshed on retry — if a step is retried, it uses the same SHA from when the iteration started.
+The `VarTable` is created at the start of `Run` and carries two categories of variables:
 
-**Implementation:** `steps.BuildPrompt()` in `internal/steps/steps.go` reads the prompt file from `prompts/<promptFile>` and returns its raw content unchanged. Variable injection is the responsibility of the prompt file itself or the orchestrator level.
+- **Built-in variables** — seeded from CLI flags and updated by the orchestrator:
 
-> **Upcoming:** A general-purpose `{{VAR}}` substitution engine (issue #39) will expand named variables in both prompt content and shell command arguments. This will replace the current convention of hardcoding variable lines in prompt files.
+  | Variable | Value |
+  |----------|-------|
+  | `PROJECT_DIR` | Resolved project directory path |
+  | `MAX_ITER` | Value of `--iterations` flag (0 = unbounded) |
+  | `ITER` | Current iteration number (1-based) |
+  | `STEP_NUM` | Current step number within the phase |
+  | `STEP_COUNT` | Total steps in the phase |
+  | `STEP_NAME` | Display name of the current step |
 
-### Example
+- **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration and cleared at the start of the next:
 
-A prompt file `prompts/feature-work.md` that provides its own context:
+  | Variable | Value |
+  |----------|-------|
+  | `ISSUE_ID` | Current GitHub issue number |
+  | `STARTING_SHA` | HEAD commit SHA at the start of the iteration |
+
+The SHA is not refreshed on retry — a retried step uses the same `STARTING_SHA` from when the iteration started.
+
+**Resolution order:** During iteration steps, `VarTable` checks the iteration table first, then the persistent table. During finalize steps, only the persistent table is visible.
+
+**Unresolved variables** log a warning and substitute the empty string.
+
+### Example: prompt file with substitution
 
 ```
-ISSUENUMBER=<issue-id>
-STARTINGSHA=<starting-sha>
 @progress.txt
-1. Implement github issue ISSUENUMBER in the current branch
+1. Implement github issue {{ISSUE_ID}} in the current branch
 2. Commit changes in a single commit
 ```
 
-The prompt text uses `ISSUENUMBER` as a literal reference that Claude reads and understands — it is not a template substitution. Claude sees the `ISSUENUMBER=42` line and uses `42` wherever the prompt mentions `ISSUENUMBER`.
+At runtime with issue `42`, the token `{{ISSUE_ID}}` is replaced before the prompt is passed to Claude:
 
-## Template Substitution in Commands ({{ISSUE_ID}})
+```
+@progress.txt
+1. Implement github issue 42 in the current branch
+2. Commit changes in a single commit
+```
 
-Shell command steps can use the `{{ISSUE_ID}}` placeholder in their `command` arrays. At runtime, `ResolveCommand()` replaces all occurrences of `{{ISSUE_ID}}` with the actual issue number in every element of the command array.
-
-**Implementation:** `workflow.ResolveCommand()` in `internal/workflow/workflow.go`.
-
-### Example
+### Example: shell command with substitution
 
 Config:
 ```json
@@ -53,7 +69,11 @@ Note that the relative script path `scripts/close_gh_issue` is also resolved to 
 
 ### Finalization steps
 
-Finalization steps do not have a current issue. If a finalization command uses `{{ISSUE_ID}}`, it resolves to an empty string. Finalization steps should generally not use `{{ISSUE_ID}}`.
+Finalization steps run after all iterations complete. Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible during the finalize phase — using them in a finalize step will log a warning and substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
+
+### Escape sequences
+
+To include a literal `{{` or `}}` in prompt content, use `{{{{` (produces `{{`) or `}}}}` (produces `}}`).
 
 ## Metadata Capture (CaptureOutput)
 
@@ -64,8 +84,8 @@ The orchestrator uses `CaptureOutput()` to run commands and capture their stdout
 | Script | Output | Used For |
 |--------|--------|----------|
 | `scripts/get_gh_user` | GitHub username | Passed to `get_next_issue` to filter issues |
-| `scripts/get_next_issue <username>` | Issue number (or empty) | Used as `ISSUENUMBER` / `{{ISSUE_ID}}` for the iteration |
-| `git rev-parse HEAD` | Commit SHA | Used as `STARTINGSHA` for the iteration |
+| `scripts/get_next_issue <username>` | Issue number (or empty) | Bound as `{{ISSUE_ID}}` for the iteration |
+| `git rev-parse HEAD` | Commit SHA | Bound as `{{STARTING_SHA}}` for the iteration |
 
 An empty issue number signals that no more issues are available, and the iteration loop exits early.
 
@@ -115,14 +135,13 @@ Finalization:
 
 ## Adding Variables to a Custom Workflow
 
-To inject issue and SHA context into a custom Claude step:
+To inject iteration context into a custom Claude prompt:
 
-1. Include `ISSUENUMBER=<issue-id>` and `STARTINGSHA=<starting-sha>` lines at the top of your prompt file
-2. Reference `ISSUENUMBER` and `STARTINGSHA` by name in the rest of the prompt text
+1. Use `{{ISSUE_ID}}` and `{{STARTING_SHA}}` directly in the prompt file text — they are substituted at runtime
 
-To use the issue number in a custom shell command:
+To use iteration variables in a custom shell command:
 
-1. Use `{{ISSUE_ID}}` in the command array: `["my-script", "{{ISSUE_ID}}"]`
+1. Use `{{ISSUE_ID}}` or any other `{{VAR_NAME}}` in the command array: `["my-script", "{{ISSUE_ID}}"]`
 
 To pass data between custom steps:
 

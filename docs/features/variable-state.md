@@ -16,7 +16,9 @@ Owns and resolves runtime variable state for a ralph-tui run, providing two scop
 
 Key files:
 - `ralph-tui/internal/vars/vars.go` — `VarTable`, `Phase`, built-in constants, all public methods
+- `ralph-tui/internal/vars/substitute.go` — `Substitute` and `ExtractReferences` functions
 - `ralph-tui/internal/vars/vars_test.go` — Unit tests for scoping, phase contract, overwrite semantics, and built-in protection
+- `ralph-tui/internal/vars/substitute_test.go` — Unit tests for token substitution and escape sequences
 
 ## Architecture
 
@@ -131,6 +133,25 @@ func (vt *VarTable) SetStep(num, count int, name string)
 
 Orchestrator-facing setters that update the built-in variables in the persistent table.
 
+## Substitution Engine
+
+`vars.Substitute` expands `{{VAR_NAME}}` tokens in a string using the variable values from a `VarTable`:
+
+```go
+func Substitute(input string, vt *VarTable, phase Phase) (string, error)
+```
+
+- Uses `GetInPhase` for resolution, so the phase's lookup order applies.
+- `{{{{` → literal `{{`; `}}}}` → literal `}}` (escape sequences).
+- Unresolved variables log a warning and substitute the empty string.
+- If `vt` is nil, the input is returned unchanged.
+
+`vars.ExtractReferences` returns all variable names referenced by `{{VAR_NAME}}` tokens in a string (used for validation and tooling):
+
+```go
+func ExtractReferences(input string) []string
+```
+
 ## Phase Contract
 
 | Phase | Bind target | Get sees |
@@ -152,9 +173,10 @@ These are programming errors, not runtime conditions — the step validator (iss
 
 ## Testing
 
-- `ralph-tui/internal/vars/vars_test.go` — Unit tests with race detector
+- `ralph-tui/internal/vars/vars_test.go` — Unit tests for `VarTable` with race detector
+- `ralph-tui/internal/vars/substitute_test.go` — Unit tests for `Substitute` and `ExtractReferences`
 
-Covered behaviors:
+`VarTable` covered behaviors:
 - Built-in seeding via `New`
 - Phase transitions and resolution-order contract
 - `captureAs` routing to the correct scope
@@ -164,6 +186,13 @@ Covered behaviors:
 - Empty-string returns for unknown variables
 - Reserved-name protection (`Bind` panics)
 - Finalize-phase `Bind` panic
+
+`Substitute` / `ExtractReferences` covered behaviors:
+- Token replacement using iteration and persistent scopes
+- Escape sequences (`{{{{` → `{{`, `}}}}` → `}}`)
+- Unresolved variable warning and empty-string substitution
+- Nil `VarTable` pass-through
+- `ExtractReferences` deduplication and escape handling
 
 ## Additional Information
 

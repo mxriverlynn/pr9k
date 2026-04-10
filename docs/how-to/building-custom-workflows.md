@@ -23,8 +23,8 @@ Each step object has the following fields:
 | `model` | string | Claude steps | Claude model to use (`"sonnet"`, `"opus"`) |
 | `promptFile` | string | Claude steps | Filename in `prompts/` directory (e.g., `"feature-work.md"`) |
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
-| `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps (see issue #39) |
-| `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty (see issue #39) |
+| `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
+| `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
 
 ## Claude Steps
 
@@ -34,7 +34,7 @@ A Claude step invokes the `claude` CLI with a prompt file. At runtime, the orche
 claude --permission-mode acceptEdits --model <model> -p <prompt-content>
 ```
 
-The prompt content is read verbatim from `prompts/<promptFile>`. To provide iteration context (issue number, starting SHA), include those values directly in the prompt file or reference them via the upcoming `{{VAR}}` substitution engine (see [Variable Output & Injection](variable-output-and-injection.md) for details).
+The prompt content is read from `prompts/<promptFile>` and all `{{VAR_NAME}}` tokens are substituted at runtime. Use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other built-in variables to inject iteration context (see [Variable Output & Injection](variable-output-and-injection.md) for the full variable list).
 
 ### Example: Claude step
 
@@ -62,9 +62,9 @@ Relative paths containing a `/` separator are resolved against the project direc
 
 **Initialize steps** (the `"initialize"` array in `ralph-steps.json`) run once before the iteration loop begins. Use them for setup tasks that must complete before any issue is processed.
 
-**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to the current issue number and starting SHA — shell steps can use `{{ISSUE_ID}}` for the issue number; prompt-based variable injection is described in [Variable Output & Injection](variable-output-and-injection.md).
+**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
 
-**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). They do not have access to issue-specific variables — `{{ISSUE_ID}}` will resolve to an empty string.
+**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ## The Default Workflow
 
