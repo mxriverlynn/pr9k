@@ -21,9 +21,15 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │  │                    workflow.Run (goroutine)                     ││
 │  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
-│  │  │     Iteration Loop (1..N, or until no issue found)      │    ││
+│  │  │  Initialize Phase (once, before loop)                   │    ││
+│  │  │  buildStep → ui.Orchestrate → LastCapture → VarTable    │    ││
+│  │  │  (noopHeader: no TUI checkbox updates during init)      │    ││
+│  │  └─────────────────────────────────────────────────────────┘    ││
+│  │                                                                 ││
+│  │  ┌─────────────────────────────────────────────────────────┐    ││
+│  │  │     Iteration Loop (1..N, or until BreakLoopIfEmpty)    │    ││
 │  │  │                                                         │    ││
-│  │  │  get_next_issue → git rev-parse HEAD → build steps      │    ││
+│  │  │  VarTable.ResetIteration → buildStep → Orchestrate      │    ││
 │  │  │       │                                                 │    ││
 │  │  │       ▼                                                 │    ││
 │  │  │  ┌──────────────────────────────────────────────────┐   │    ││
@@ -59,20 +65,21 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
 │  (configs/)  │    │   (prompts/)     │    │   (scripts/)        │
 └──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
        │                     │                         │
-       ▼                     ▼                         ▼
-┌──────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│ steps.Load   │    │ steps.BuildPrompt│    │ runner.CaptureOutput│
-│ Steps()      │    │ ({{VAR}} subst.) │    │ (issue ID, user,    │
-│              │    │                  │    │  HEAD SHA)          │
-└──────┬───────┘    └────────┬─────────┘    └──────────┬──────────┘
-       │                     │                         │
+       ▼                     ▼                         │
+┌──────────────┐    ┌──────────────────┐               │
+│ steps.Load   │    │ steps.BuildPrompt│               │ (run as
+│ Steps()      │    │ ({{VAR}} subst.) │               │  initialize
+│              │    │                  │               │  steps via
+└──────┬───────┘    └────────┬─────────┘               │  RunStep +
+       │                     │                         │  LastCapture)
        └─────────┬───────────┘                         │
                  ▼                                     │
-       ┌──────────────────┐                            │
-       │ buildIteration   │◄───────────────────────────┘
-       │ Steps()          │
-       │ → ResolvedStep[] │
-       └────────┬─────────┘
+       ┌──────────────────┐    ┌──────────────────┐    │
+       │   buildStep()    │    │    VarTable       │◄───┘
+       │ (per phase, per  │◄───│  (persistent +   │
+       │  step)           │    │   iteration       │
+       │ → ResolvedStep   │    │   scopes)         │
+       └────────┬─────────┘    └──────────────────┘
                 │
                 ▼
        ┌──────────────────┐     ┌────────────────┐
@@ -85,14 +92,22 @@ Built with [Glyph](https://useglyph.sh/) for TUI rendering, ralph-tui streams su
        │                  │     ┌────────────────┐
        │                  │     │ scanner        │
        │                  │     │ goroutines (2) │
+       │                  │     │ stdout: capture│
+       │                  │     │ stderr: forward│
        │                  │     └───┬────────┬───┘
        │                  │         │        │
        └──────────────────┘         │        │
-                                    ▼        ▼
-                            ┌────────┐  ┌─────────┐
-                            │io.Pipe │  │ Logger  │
-                            │(→ TUI) │  │(→ file) │
-                            └────────┘  └─────────┘
+              │                     ▼        ▼
+              │             ┌────────┐  ┌─────────┐
+              │             │io.Pipe │  │ Logger  │
+              │             │(→ TUI) │  │(→ file) │
+              │             └────────┘  └─────────┘
+              │
+              ▼ LastCapture()
+       ┌──────────────────┐
+       │ VarTable.Bind    │
+       │ (CaptureAs vars) │
+       └──────────────────┘
 ```
 
 ## Keyboard & Mode State Machine
@@ -138,13 +153,13 @@ Loads workflow step definitions from `ralph-steps.json`, which contains initiali
 
 ### [Subprocess Execution & Streaming](features/subprocess-execution.md)
 
-The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time through an `io.Pipe` to the TUI and a file logger simultaneously. Uses mutex-protected writes, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback) and single-value output capture for helper scripts.
+The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time through an `io.Pipe` to the TUI and a file logger simultaneously. Uses mutex-protected writes, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback). After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`, which the orchestrator uses to bind `CaptureAs` variables into the `VarTable`. `ResolveCommand` (in `run.go`) applies `{{VAR}}` substitution and resolves relative script paths.
 
-**Package:** `internal/workflow/` (`workflow.go`)
+**Package:** `internal/workflow/` (`workflow.go`, `run.go`)
 
 ### [Workflow Orchestration](features/workflow-orchestration.md)
 
-The top-level `Run` function drives the entire workflow: displays a startup banner, fetches the GitHub username, loops over iterations (bounded to N when `--iterations N > 0`, or running until no issue is found when `--iterations 0`), then runs the finalization phase (deferred work, lessons learned, final push). The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
+The top-level `Run` function drives the entire workflow in three config-defined phases: initialize (runs once before the loop, binding `CaptureAs` values such as GitHub username and issue ID into the persistent VarTable), iteration loop (bounded to N when `--iterations N > 0`, or until `BreakLoopIfEmpty` fires when `--iterations 0`), and finalization (deferred work, lessons learned, final push). All step resolution goes through `buildStep` and `{{VAR}}` substitution via `VarTable`. The `Orchestrate` function sequences resolved steps, manages step state transitions, and handles error recovery by blocking on user input.
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 

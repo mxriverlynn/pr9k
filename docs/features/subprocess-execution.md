@@ -1,8 +1,8 @@
 # Subprocess Execution & Streaming
 
-Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination.
+Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination and per-step stdout capture.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
@@ -10,12 +10,15 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 
 - The `Runner` struct manages subprocess lifecycle: starting, streaming, terminating, and capturing output
 - Subprocess output streams through an `io.Pipe` — the write end receives forwarded stdout/stderr, the read end is passed to the Glyph TUI for real-time display
-- Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`
+- Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`; only the stdout goroutine captures lines for `LastCapture`
+- After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`; the orchestrator calls this to bind `CaptureAs` values into the `VarTable`
 - `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
 
 Key files:
-- `ralph-tui/internal/workflow/workflow.go` — Runner struct, RunStep, Terminate, CaptureOutput, ResolveCommand
-- `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution and command resolution
+- `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
+- `ralph-tui/internal/workflow/run.go` — `ResolveCommand` ({{VAR}} substitution + script path resolution)
+- `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution
+- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture`, `CaptureOutput`, and `ResolveCommand`
 
 ## Architecture
 
@@ -37,7 +40,8 @@ Key files:
                     │     │               │     │
                     │  ┌──▼──────────────▼──┐  │
                     │  │  scanner goroutines │  │
-                    │  │  (256KB buffer)     │  │
+                    │  │  capture=true(stdout│  │
+                    │  │  capture=false(stderr  │
                     │  │  + sync.WaitGroup   │  │
                     │  └──┬──────────────┬──┘  │
                     │     │              │      │
@@ -48,6 +52,9 @@ Key files:
   ──────────────────┼─▶│       │   │        │  │
   SIGTERM→SIGKILL   │  └───┬───┘   └────────┘  │
                     │      │                    │
+                    │   lastCapture             │
+                    │   (stdout only,           │
+                    │    on success)            │
                     └──────┼────────────────────┘
                            │
                            ▼
@@ -59,8 +66,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/workflow.go` | Runner struct, RunStep, Terminate, WriteToLog, CaptureOutput, ResolveCommand |
-| `ralph-tui/internal/workflow/workflow_test.go` | Unit tests for all Runner methods and ResolveCommand |
+| `ralph-tui/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
+| `ralph-tui/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
+| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close` |
+| `ralph-tui/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
 
 ## Core Types
 
@@ -77,6 +86,9 @@ type Runner struct {
     currentProc *os.Process    // active subprocess (nil when idle)
     procDone    chan struct{}   // closed when subprocess exits
     terminated  bool           // set by Terminate(), reset at start of RunStep
+
+    lastCapture string         // last non-empty stdout line from the most recent
+                               // successful RunStep; "" on failure or no output
 }
 ```
 
@@ -84,7 +96,7 @@ type Runner struct {
 
 ### Subprocess Streaming (RunStep)
 
-`RunStep` starts a subprocess, creates two scanner goroutines to forward stdout and stderr, and waits for both to drain before calling `cmd.Wait()`:
+`RunStep` starts a subprocess, creates two scanner goroutines to forward stdout and stderr, and waits for both to drain before calling `cmd.Wait()`. Only the stdout goroutine captures lines for `LastCapture`:
 
 ```go
 func (r *Runner) RunStep(stepName string, command []string) error {
@@ -105,12 +117,20 @@ func (r *Runner) RunStep(stepName string, command []string) error {
     r.procDone = done
     r.processMu.Unlock()
 
+    var capturedLines []string
     var wg sync.WaitGroup
     wg.Add(2)
-    go forward(stdout)  // scanner goroutine
-    go forward(stderr)  // scanner goroutine
-    wg.Wait()           // drain before Wait
-    return cmd.Wait()
+    go forwardPipe(stdout, true)   // capture=true: accumulates capturedLines
+    go forwardPipe(stderr, false)  // capture=false: forwards only, no capture
+    wg.Wait()                      // drain before Wait
+
+    waitErr := cmd.Wait()
+    if waitErr == nil {
+        r.lastCapture = lastNonEmptyLine(capturedLines)
+    } else {
+        r.lastCapture = ""
+    }
+    return waitErr
 }
 ```
 
@@ -123,6 +143,23 @@ scanner.Buffer(buf, 256*1024)
 ```
 
 Writes to the shared `io.PipeWriter` are mutex-protected because `io.PipeWriter` is not safe for concurrent use. The file logger is also written to under its own internal mutex.
+
+### Per-Step Stdout Capture (LastCapture)
+
+After each successful `RunStep`, `Runner` stores the last non-empty stdout line. The orchestrator calls `LastCapture()` to retrieve it and bind it into the VarTable when a step has `CaptureAs` set:
+
+```go
+// LastCapture returns the last non-empty stdout line from the most recent
+// successful RunStep call, stripped of trailing carriage returns and whitespace.
+// Returns "" if the last step failed or produced no non-empty stdout output.
+func (r *Runner) LastCapture() string {
+    return r.lastCapture
+}
+```
+
+`lastNonEmptyLine` walks the captured slice in reverse, trims trailing `\r` and whitespace, and returns the first non-empty line found. Stderr lines are never captured — `forwardPipe` is called with `capture=false` for stderr, so only stdout contributes to `LastCapture`.
+
+`LastCapture()` is part of the `StepExecutor` interface. `CaptureOutput` is not — it exists only as a concrete method on `*Runner` (see below).
 
 ### Graceful Termination
 
@@ -162,9 +199,9 @@ func (r *Runner) WriteToLog(line string) {
 }
 ```
 
-### Output Capture (CaptureOutput)
+### Single-Value Output Capture (CaptureOutput)
 
-`CaptureOutput` runs a command and returns trimmed stdout as a string. Stderr is discarded. Used for single-value queries that don't need streaming:
+`CaptureOutput` runs a command and returns trimmed stdout as a string. Stderr is discarded. It is a concrete method on `*Runner` but is **not part of the `StepExecutor` interface** — it is not called from the workflow run loop. Single-value lookups that previously used `CaptureOutput` directly (GitHub username, issue ID, HEAD SHA) are now configured as initialize-phase steps with `CaptureAs`, handled via `RunStep` + `LastCapture`:
 
 ```go
 func (r *Runner) CaptureOutput(command []string) (string, error) {
@@ -175,22 +212,18 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 }
 ```
 
-Used by the workflow loop for:
-- `scripts/get_next_issue` — fetches the next GitHub issue ID
-- `scripts/get_gh_user` — fetches the GitHub username
-- `git rev-parse HEAD` — captures the current commit SHA
-
 ### Command Resolution (ResolveCommand)
 
-`ResolveCommand` prepares command arrays for execution by replacing template variables and resolving relative script paths:
+`ResolveCommand` lives in `run.go` and prepares command arrays for execution by substituting `{{VAR}}` tokens via the `VarTable` and resolving relative script paths:
 
 ```go
-func ResolveCommand(projectDir string, command []string, issueID string) []string {
+func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
     result := make([]string, len(command))
     for i, arg := range command {
-        result[i] = strings.ReplaceAll(arg, "{{ISSUE_ID}}", issueID)
+        substituted, _ := vars.Substitute(arg, vt, phase)
+        result[i] = substituted
     }
-    // Resolve relative script paths (e.g., "scripts/close_gh_issue")
+    // Resolve the executable if it looks like a relative script path.
     exe := result[0]
     if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
         result[0] = filepath.Join(projectDir, exe)
@@ -199,7 +232,7 @@ func ResolveCommand(projectDir string, command []string, issueID string) []strin
 }
 ```
 
-Bare commands like `git` are not resolved — only relative paths containing a `/` separator.
+Bare commands like `git` are not resolved — only relative paths containing a `/` separator are joined with `projectDir`.
 
 ## Concurrency
 
@@ -221,19 +254,27 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for RunStep, Terminate, WasTerminated, WriteToLog, CaptureOutput, ResolveCommand, and Close
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, and `ResolveCommand` (`TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough)
+- `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
+  - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
+  - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step
+  - `TestLastCapture_StripsTrailingCarriageReturn` — verifies trailing `\r` is stripped
+  - `TestLastCapture_StderrNotCaptured` — verifies stderr output does not appear in `LastCapture`
+  - `TestCaptureOutput_UsesWorkingDir` — verifies `CaptureOutput` sets `cmd.Dir`
+  - `TestBuildStep_*` — tests for `buildStep` including Claude and shell step variants
 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how streaming fits into the data flow
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How `ResolveCommand` and `CaptureOutput` fit into the variable injection system
-- [Building Custom Workflows](../how-to/building-custom-workflows.md) — How shell command steps use ResolveCommand for path resolution
-- [Workflow Orchestration](workflow-orchestration.md) — How RunStep is called by the orchestration loop
+- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How `ResolveCommand` and `LastCapture` fit into the variable injection system
+- [Building Custom Workflows](../how-to/building-custom-workflows.md) — How shell command steps use `ResolveCommand` for path resolution
+- [Workflow Orchestration](workflow-orchestration.md) — How `RunStep` and `LastCapture` are called by the orchestration loop
+- [Variable State Management](variable-state.md) — How `CaptureAs` bindings use `LastCapture` to populate the `VarTable`
 - [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built before execution
-- [Keyboard Input & Error Recovery](keyboard-input.md) — How Terminate is triggered by keyboard input
-- [Signal Handling & Shutdown](signal-handling.md) — How Terminate is triggered by OS signals
+- [Keyboard Input & Error Recovery](keyboard-input.md) — How `Terminate` is triggered by keyboard input
+- [Signal Handling & Shutdown](signal-handling.md) — How `Terminate` is triggered by OS signals
 - [File Logging](file-logging.md) — The logger that receives forwarded subprocess output
-- [CLI & Configuration](cli-configuration.md) — How ProjectDir sets the working directory for all subprocesses
+- [CLI & Configuration](cli-configuration.md) — How `ProjectDir` sets the working directory for all subprocesses
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected writes, WaitGroup drain, and io.Pipe streaming
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for scanner error checking and goroutine write error tracking
 - [Go Patterns](../coding-standards/go-patterns.md) — Coding standard for 256KB scanner buffer sizing
