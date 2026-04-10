@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-10 (issue #50)
 - **Authors:**
   - River Bailey
 
@@ -165,6 +165,42 @@ func RetryStepSeparator(stepName string) string {
 ```
 
 These are passed to `Runner.WriteToLog()` by the orchestration loop.
+
+## First-Frame Pre-Population
+
+Before `app.Run()` is called, `main()` pre-populates the header so the first rendered frame shows real content instead of empty slots. A `stepNames()` helper (in `main.go`) extracts `Step.Name` from a step slice:
+
+```go
+func stepNames(ss []steps.Step) []string {
+    names := make([]string, len(ss))
+    for i, s := range ss {
+        names[i] = s.Name
+    }
+    return names
+}
+```
+
+The pre-population block runs immediately after `NewStatusHeader`:
+
+```go
+if len(stepFile.Initialize) > 0 {
+    header.SetPhaseSteps(stepNames(stepFile.Initialize))
+    header.SetStepState(0, ui.StepActive)
+    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+} else {
+    header.SetPhaseSteps(stepNames(stepFile.Iteration))
+    header.SetStepState(0, ui.StepActive)
+    if cfg.Iterations > 0 {
+        header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+    } else {
+        header.IterationLine = "Iteration 1"
+    }
+}
+```
+
+- If an initialize phase exists, the header is set to that phase with the first step marked active and `IterationLine` showing `Initializing 1/N: <step name>`
+- Otherwise the header starts on the iteration phase with `Iteration 1/M` (bounded) or `Iteration 1` (unbounded)
+- The workflow goroutine then calls `SetPhaseSteps` / `SetStepState` / `SetIteration` as it progresses, overwriting this initial state
 
 ## Glyph Layout Assembly
 
