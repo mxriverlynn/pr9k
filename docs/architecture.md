@@ -180,7 +180,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Config Validation](features/config-validation.md)
 
-Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Returns a slice of structured `Error` values; an empty slice means valid. Not yet wired into `main.go` — that is issue #41.
+Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
