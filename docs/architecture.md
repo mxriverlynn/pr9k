@@ -219,7 +219,7 @@ cmd/ralph-tui/main.go
 ## Key Design Principles
 
 - **Streaming over buffering**: Subprocess output streams through `io.Pipe` in real time — no buffered collection and dump.
-- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `SetIteration`, `SetPhaseSteps`, and `SetStepState`.
+- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `RenderInitializeLine`, `RenderIterationLine`, `RenderFinalizeLine`, `SetPhaseSteps`, and `SetStepState`.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
 - **Non-blocking sends for signal safety**: `ForceQuit` uses `select`/`default` to inject `ActionQuit` without blocking, making it safe to call from a signal handler goroutine.
 - **Interface-driven testability**: `StepRunner`, `StepHeader`, `StepExecutor`, and `RunHeader` interfaces decouple orchestration from concrete implementations.

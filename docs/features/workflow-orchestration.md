@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, and running finalization tasks.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-10 (issue #52)
 - **Authors:**
   - River Bailey
 
@@ -103,7 +103,9 @@ type StepExecutor interface {
 // RunHeader updates the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
-    SetIteration(current, total int, issueID, issueTitle string)
+    RenderInitializeLine(stepNum, stepCount int, stepName string)
+    RenderIterationLine(iter, maxIter int, issueID string)
+    RenderFinalizeLine(stepNum, stepCount int, stepName string)
     SetPhaseSteps(names []string)
     SetStepState(idx int, state ui.StepState)
 }
