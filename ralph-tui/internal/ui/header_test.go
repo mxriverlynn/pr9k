@@ -273,3 +273,36 @@ func TestNewStatusHeader_NegativeInput(t *testing.T) {
 		t.Errorf("NewStatusHeader(-1): got %d rows, want 1", len(h.Rows))
 	}
 }
+
+// T1: SetStepState before SetPhaseSteps is called is a no-op (stepNames is nil).
+func TestSetStepState_BeforeSetPhaseSteps_IsNoOp(t *testing.T) {
+	h := NewStatusHeader(4)
+	// Do NOT call SetPhaseSteps — stepNames is nil.
+	rowsBefore := h.Rows[0]
+	h.SetStepState(0, StepSkipped)
+	if h.Rows[0] != rowsBefore {
+		t.Errorf("Rows[0] changed without SetPhaseSteps: got %v, want %v", h.Rows[0], rowsBefore)
+	}
+}
+
+// T2: StepSkipped at a second-row grid position uses correct row/col arithmetic.
+func TestSetStepState_SkippedStep_SecondRow(t *testing.T) {
+	h := NewStatusHeader(8)
+	names := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	h.SetPhaseSteps(names)
+	// index 5 → row 1, col 1
+	h.SetStepState(5, StepSkipped)
+	if h.Rows[1][1] != "[-] F" {
+		t.Errorf("Rows[1][1] = %q, want %q", h.Rows[1][1], "[-] F")
+	}
+}
+
+// T3: An unrecognized StepState value falls through to the default (pending) display.
+func TestSetStepState_UnknownStateFallsToDefault(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Alpha", "Beta", "Gamma"})
+	h.SetStepState(0, StepState(99))
+	if h.Rows[0][0] != "[ ] Alpha" {
+		t.Errorf("Rows[0][0] = %q, want %q", h.Rows[0][0], "[ ] Alpha")
+	}
+}
