@@ -81,4 +81,4 @@ Scope walk is skipped if any of the three required top-level arrays are missing,
 
 ## Wiring
 
-The package is not yet wired into `main.go` — that is tracked in issue #41.
+Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
