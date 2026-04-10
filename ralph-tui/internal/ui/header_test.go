@@ -159,6 +159,16 @@ func TestSetStepState_FailedStep(t *testing.T) {
 	}
 }
 
+func TestSetStepState_SkippedStep(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Alpha", "Beta", "Gamma"})
+	h.SetStepState(2, StepSkipped)
+
+	if h.Rows[0][2] != "[-] Gamma" {
+		t.Errorf("Rows[0][2] = %q, want %q", h.Rows[0][2], "[-] Gamma")
+	}
+}
+
 func TestSetStepState_OutOfBoundsIsNoOp(t *testing.T) {
 	h := NewStatusHeader(4)
 	h.SetPhaseSteps([]string{"A", "B", "C"})

@@ -10,6 +10,7 @@ const (
 	StepActive
 	StepDone
 	StepFailed
+	StepSkipped // displayed as "[-] <name>"
 )
 
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
@@ -96,6 +97,8 @@ func checkboxLabel(state StepState, name string) string {
 		return fmt.Sprintf("[✓] %s", name)
 	case StepFailed:
 		return fmt.Sprintf("[✗] %s", name)
+	case StepSkipped:
+		return fmt.Sprintf("[-] %s", name)
 	default:
 		return fmt.Sprintf("[ ] %s", name)
 	}
