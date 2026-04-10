@@ -74,8 +74,8 @@ Ralph-tui **facilitates** the workflow; it does not **define** it. The specific 
 |------|---------|
 | `ralph-tui/ralph-steps.json` | The step definitions that own the Ralph workflow |
 | `ralph-tui/internal/workflow/run.go` | The Run loop — phase sequencing, iteration bounds, finalization |
-| `ralph-tui/internal/workflow/orchestrate.go` | The Orchestrate step sequencer — drives steps, captures output |
-| `ralph-tui/internal/config/loader.go` | Loads and validates `ralph-steps.json` |
+| `ralph-tui/internal/ui/orchestrate.go` | The Orchestrate step sequencer — drives steps, captures output |
+| `ralph-tui/internal/steps/steps.go` | Loads and validates `ralph-steps.json` |
 
 ### Related Docs
 
