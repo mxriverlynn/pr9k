@@ -37,7 +37,7 @@ The `ralph-bash/ralph-loop` bash script runs multiple sequential `claude` CLI ca
 ### Three sections, top to bottom:
 
 **1. Status header (fixed height)**
-- Current iteration and total: `Iteration 1/3`
+- Current iteration and total: `Iteration 1/3` (bounded mode); `Iteration 1` (unbounded mode — when `--iterations` is omitted or `0`)
 - Issue being worked: `Issue #42: Add widget support`
 - Step tracker with checkboxes across two rows showing all 8 steps per iteration
 - Status indicators: `[✓]` done, `[▸ ...]` active (with spinner), `[ ]` pending
@@ -562,7 +562,7 @@ Both flags use POSIX-style parsing via [spf13/cobra](https://github.com/spf13/co
 ### UI: Status header (`internal/ui/ui.go`)
 
 **Acceptance criteria:**
-- Displays current iteration number and total (e.g., `Iteration 1/3`)
+- Displays current iteration number and total (e.g., `Iteration 1/3`); omits the total in unbounded mode when `SetIteration` is called with `total == 0` (e.g., `Iteration 1`)
 - Displays the issue being worked (e.g., `Issue #42: Add widget support`)
 - Shows 8 step checkboxes across two rows
 - Step indicators: `[✓]` done, `[▸ ...]` active with spinner, `[ ]` pending
@@ -570,6 +570,7 @@ Both flags use POSIX-style parsing via [spf13/cobra](https://github.com/spf13/co
 
 **Unit tests:**
 - Set iteration to 2/5 — verify the iteration line string is formatted correctly
+- Set iteration with `total == 0` — verify the line omits the total (`Iteration N` instead of `Iteration N/M`)
 - Mark steps 1-3 as done, step 4 as active, rest pending — verify checkbox states
 - Switch to finalization mode — verify header shows `Finalizing` and finalization step names
 - All 8 steps fit across two rows of 4
