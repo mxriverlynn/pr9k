@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
 
-- **Last Updated:** 2026-04-10 (issue #50)
+- **Last Updated:** 2026-04-10 (issue #51)
 - **Authors:**
   - River Bailey
 
@@ -11,7 +11,7 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 - `StatusHeader` is a pointer-mutable struct that Glyph reads on each render cycle — callers update state by mutating fields directly
 - Displays the current iteration/issue on one line; shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
-- Each step shows one of four states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed
+- Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped
 - Switches between phases (initialize, iteration, finalize) by calling `SetPhaseSteps` with the new phase's step names
 - `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
 
@@ -72,6 +72,7 @@ const (
     StepActive                     // [▸]
     StepDone                       // [✓]
     StepFailed                     // [✗]
+    StepSkipped                    // [-]
 )
 
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
@@ -142,10 +143,11 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 ```go
 func checkboxLabel(state StepState, name string) string {
     switch state {
-    case StepActive: return fmt.Sprintf("[▸] %s", name)
-    case StepDone:   return fmt.Sprintf("[✓] %s", name)
-    case StepFailed: return fmt.Sprintf("[✗] %s", name)
-    default:         return fmt.Sprintf("[ ] %s", name)
+    case StepActive:  return fmt.Sprintf("[▸] %s", name)
+    case StepDone:    return fmt.Sprintf("[✓] %s", name)
+    case StepFailed:  return fmt.Sprintf("[✗] %s", name)
+    case StepSkipped: return fmt.Sprintf("[-] %s", name)
+    default:          return fmt.Sprintf("[ ] %s", name)
     }
 }
 ```
@@ -235,7 +237,7 @@ app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), SetIteration (bounded and unbounded), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, out-of-bounds no-op)
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), SetIteration (bounded and unbounded), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
 
 ## Additional Information
