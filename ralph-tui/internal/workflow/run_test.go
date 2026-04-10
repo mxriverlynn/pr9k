@@ -61,9 +61,16 @@ func (f *fakeExecutor) Close() error {
 }
 
 type fakeRunHeader struct {
-	renderIterationCalls []renderIterCall
-	stepStateCalls       []stepStateCall
-	phaseStepsCalls      [][]string
+	renderInitializeCalls []renderPhaseCall
+	renderIterationCalls  []renderIterCall
+	renderFinalizeCalls   []renderPhaseCall
+	stepStateCalls        []stepStateCall
+	phaseStepsCalls       [][]string
+}
+
+type renderPhaseCall struct {
+	stepNum, stepCount int
+	stepName           string
 }
 
 type renderIterCall struct {
@@ -76,11 +83,15 @@ type stepStateCall struct {
 	state ui.StepState
 }
 
-func (h *fakeRunHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {}
+func (h *fakeRunHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
+	h.renderInitializeCalls = append(h.renderInitializeCalls, renderPhaseCall{stepNum, stepCount, stepName})
+}
 func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID})
 }
-func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {}
+func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
+	h.renderFinalizeCalls = append(h.renderFinalizeCalls, renderPhaseCall{stepNum, stepCount, stepName})
+}
 
 func (h *fakeRunHeader) SetPhaseSteps(names []string) {
 	cp := make([]string, len(names))
@@ -921,7 +932,7 @@ func TestRun_SetPhaseStepsCalledPerIteration(t *testing.T) {
 	}
 
 	wantIterNames := []string{"step1", "step2"}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		got := header.phaseStepsCalls[i]
 		if len(got) != len(wantIterNames) {
 			t.Errorf("phaseStepsCalls[%d]: got %v, want %v", i, got, wantIterNames)
@@ -1030,6 +1041,155 @@ func TestRun_InitializeDoesNotCallSetPhaseSteps(t *testing.T) {
 	first := header.phaseStepsCalls[0]
 	if len(first) != 1 || first[0] != "iter-step" {
 		t.Errorf("phaseStepsCalls[0]: got %v, want [iter-step] (initialize must not call SetPhaseSteps)", first)
+	}
+}
+
+// TestRun_IterationHeaderUpdatesAfterCaptureAs verifies that RenderIterationLine
+// is called at iteration start with an empty issueID, then again with the bound
+// ISSUE_ID value after the captureAs step completes.
+func TestRun_IterationHeaderUpdatesAfterCaptureAs(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"42"}, // get-issue captures "42" as ISSUE_ID
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 3,
+		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Iteration 1: start call (issueID="") + captureAs call (issueID="42").
+	// Subsequent iterations: start call ("") + captureAs call ("42" from new capture).
+	// We verify just the first two calls for iteration 1.
+	if len(header.renderIterationCalls) < 2 {
+		t.Fatalf("expected at least 2 RenderIterationLine calls for iteration 1, got %d", len(header.renderIterationCalls))
+	}
+
+	start := header.renderIterationCalls[0]
+	if start.iter != 1 || start.maxIter != 3 || start.issueID != "" {
+		t.Errorf("iteration 1 start: want {1, 3, \"\"}, got {%d, %d, %q}", start.iter, start.maxIter, start.issueID)
+	}
+
+	after := header.renderIterationCalls[1]
+	if after.iter != 1 || after.maxIter != 3 || after.issueID != "42" {
+		t.Errorf("iteration 1 after captureAs: want {1, 3, \"42\"}, got {%d, %d, %q}", after.iter, after.maxIter, after.issueID)
+	}
+}
+
+// TestRun_SecondIterationStartsWithEmptyIssueID verifies that when a new
+// iteration begins, RenderIterationLine is called with an empty issueID
+// (the iteration table is reset), even after a prior iteration bound ISSUE_ID.
+func TestRun_SecondIterationStartsWithEmptyIssueID(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"42", "99"}, // iter1 captures "42", iter2 captures "99"
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 2,
+		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Expected sequence: iter1-start(""), iter1-capture("42"), iter2-start(""), iter2-capture("99")
+	if len(header.renderIterationCalls) != 4 {
+		t.Fatalf("expected 4 RenderIterationLine calls (2 per iteration), got %d: %v",
+			len(header.renderIterationCalls), header.renderIterationCalls)
+	}
+
+	iter2Start := header.renderIterationCalls[2]
+	if iter2Start.iter != 2 || iter2Start.issueID != "" {
+		t.Errorf("iteration 2 start: want {iter=2, issueID=\"\"}, got {iter=%d, issueID=%q}",
+			iter2Start.iter, iter2Start.issueID)
+	}
+}
+
+// TestRun_NonCapturingIterStepDoesNotRerenderHeader verifies that a step
+// without captureAs does not cause an additional RenderIterationLine call.
+// Only the iteration-start call should appear.
+func TestRun_NonCapturingIterStepDoesNotRerenderHeader(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("work-step"), // no captureAs
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Exactly 1 call: the iteration-start render. No re-render after non-capturing step.
+	if len(header.renderIterationCalls) != 1 {
+		t.Errorf("expected 1 RenderIterationLine call (iteration start only), got %d: %v",
+			len(header.renderIterationCalls), header.renderIterationCalls)
+	}
+	if header.renderIterationCalls[0].issueID != "" {
+		t.Errorf("iteration start: want empty issueID, got %q", header.renderIterationCalls[0].issueID)
+	}
+}
+
+// TestRun_InitializeRenderCalledPerStep verifies RenderInitializeLine is called
+// once per initialize step with the correct step number and step name.
+func TestRun_InitializeRenderCalledPerStep(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init-a", "init-b"),
+		Steps:           nonClaudeSteps("iter-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.renderInitializeCalls) != 2 {
+		t.Fatalf("expected 2 RenderInitializeLine calls, got %d: %v",
+			len(header.renderInitializeCalls), header.renderInitializeCalls)
+	}
+	if got := header.renderInitializeCalls[0]; got.stepNum != 1 || got.stepCount != 2 || got.stepName != "init-a" {
+		t.Errorf("init step 1: want {1, 2, \"init-a\"}, got {%d, %d, %q}", got.stepNum, got.stepCount, got.stepName)
+	}
+	if got := header.renderInitializeCalls[1]; got.stepNum != 2 || got.stepCount != 2 || got.stepName != "init-b" {
+		t.Errorf("init step 2: want {2, 2, \"init-b\"}, got {%d, %d, %q}", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
+// TestRun_FinalizeRenderCalledPerStep verifies RenderFinalizeLine is called
+// once per finalize step with the correct step number and step name.
+func TestRun_FinalizeRenderCalledPerStep(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final-a", "final-b"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(header.renderFinalizeCalls) != 2 {
+		t.Fatalf("expected 2 RenderFinalizeLine calls, got %d: %v",
+			len(header.renderFinalizeCalls), header.renderFinalizeCalls)
+	}
+	if got := header.renderFinalizeCalls[0]; got.stepNum != 1 || got.stepCount != 2 || got.stepName != "final-a" {
+		t.Errorf("finalize step 1: want {1, 2, \"final-a\"}, got {%d, %d, %q}", got.stepNum, got.stepCount, got.stepName)
+	}
+	if got := header.renderFinalizeCalls[1]; got.stepNum != 2 || got.stepCount != 2 || got.stepName != "final-b" {
+		t.Errorf("finalize step 2: want {2, 2, \"final-b\"}, got {%d, %d, %q}", got.stepNum, got.stepCount, got.stepName)
 	}
 }
 

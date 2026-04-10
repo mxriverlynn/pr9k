@@ -82,6 +82,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
 			continue
 		}
+		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
@@ -128,6 +129,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
+				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				header.RenderIterationLine(i, cfg.Iterations, issueID)
 			}
 			// BreakLoopIfEmpty fires only on successful completion (StepDone).
 			// If the step failed (non-zero exit), the check is skipped so that
@@ -157,6 +160,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
 		}
+		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
