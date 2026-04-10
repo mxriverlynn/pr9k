@@ -136,6 +136,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			// If the step failed (non-zero exit), the check is skipped so that
 			// normal error-mode handling takes effect instead.
 			if s.BreakLoopIfEmpty && th.lastState == ui.StepDone && captured == "" {
+				for remaining := j + 1; remaining < len(cfg.Steps); remaining++ {
+					header.SetStepState(remaining, ui.StepSkipped)
+				}
 				breakOuter = true
 				break
 			}

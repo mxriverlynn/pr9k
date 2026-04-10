@@ -1625,3 +1625,77 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 		}
 	}
 }
+
+// TestRun_BreakLoopIfEmpty_MarksRemainingStepsSkipped verifies that when a
+// step with BreakLoopIfEmpty triggers (StepDone + empty capture), all
+// subsequent iteration steps are marked StepSkipped in the header.
+func TestRun_BreakLoopIfEmpty_MarksRemainingStepsSkipped(t *testing.T) {
+	// breakStep at index 0 returns empty capture → triggers break.
+	// steps at index 1 and 2 should be marked StepSkipped.
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps: []steps.Step{
+			breakStep("get-issue", "ISSUE_ID"),
+			nonClaudeSteps("work")[0],
+			nonClaudeSteps("review")[0],
+		},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Collect all StepSkipped calls and their indices.
+	skippedIdxs := map[int]bool{}
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepSkipped {
+			skippedIdxs[call.idx] = true
+		}
+	}
+
+	if !skippedIdxs[1] {
+		t.Error("expected step index 1 (work) to be marked StepSkipped")
+	}
+	if !skippedIdxs[2] {
+		t.Error("expected step index 2 (review) to be marked StepSkipped")
+	}
+	if skippedIdxs[0] {
+		t.Error("trigger step (index 0) must not be marked StepSkipped — it completed as StepDone")
+	}
+}
+
+// TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered verifies that when
+// BreakLoopIfEmpty is set but the captured value is non-empty (break does not
+// fire), no step is marked StepSkipped.
+func TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered(t *testing.T) {
+	// breakStep returns a non-empty value → no break, full iteration runs.
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"issue-42", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps: []steps.Step{
+			breakStep("get-issue", "ISSUE_ID"),
+			nonClaudeSteps("work")[0],
+		},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	for _, call := range header.stepStateCalls {
+		if call.state == ui.StepSkipped {
+			t.Errorf("no step should be StepSkipped when break does not fire; got StepSkipped at idx %d", call.idx)
+		}
+	}
+}
