@@ -24,6 +24,7 @@ type RunHeader interface {
 	RenderInitializeLine(stepNum, stepCount int, stepName string)
 	RenderIterationLine(iter, maxIter int, issueID string)
 	RenderFinalizeLine(stepNum, stepCount int, stepName string)
+	RenderCompletionLine(iterationsRun, finalizeCount int)
 	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
 }
@@ -171,7 +172,12 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 	}
 
-	// 4. Close executor (sends EOF to log pipe).
+	// 4. Completion sequence: write summary, flip to ModeDone, wait for one keypress.
+	header.RenderCompletionLine(iterationsRun, len(cfg.FinalizeSteps))
+	keyHandler.SetMode(ui.ModeDone)
+	<-keyHandler.Actions
+
+	// 5. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
 	return RunResult{IterationsRun: iterationsRun}
 }

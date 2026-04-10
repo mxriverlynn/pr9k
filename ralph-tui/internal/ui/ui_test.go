@@ -439,6 +439,42 @@ func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
 	}
 }
 
+// --- Done mode ---
+
+// TestSetMode_Done_UpdatesShortcutLine verifies that SetMode(ModeDone) swaps
+// the shortcut bar to DoneShortcuts.
+func TestSetMode_Done_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeDone)
+
+	if h.ShortcutLine() != DoneShortcuts {
+		t.Errorf("expected DoneShortcuts, got %q", h.ShortcutLine())
+	}
+}
+
+// TestDoneMode_AnyKey_SendsActionQuit verifies that any key press in ModeDone
+// sends ActionQuit.
+func TestDoneMode_AnyKey_SendsActionQuit(t *testing.T) {
+	keys := []string{"q", "n", "y", "c", "r", " ", "x", "\r"}
+	for _, key := range keys {
+		actions := make(chan StepAction, 1)
+		h := NewKeyHandler(func() {}, actions)
+		h.SetMode(ModeDone)
+
+		h.Handle(key)
+
+		select {
+		case action := <-actions:
+			if action != ActionQuit {
+				t.Errorf("key %q: expected ActionQuit, got %v", key, action)
+			}
+		default:
+			t.Errorf("key %q: expected ActionQuit to be sent, but channel was empty", key)
+		}
+	}
+}
+
 // --- Keyboard dispatch routes correctly ---
 
 func TestKeyboardDispatch_NormalVsError(t *testing.T) {

@@ -60,12 +60,22 @@ func (f *fakeExecutor) Close() error {
 	return nil
 }
 
+type completionLineCall struct {
+	iterationsRun, finalizeCount int
+}
+
 type fakeRunHeader struct {
 	renderInitializeCalls []renderPhaseCall
 	renderIterationCalls  []renderIterCall
 	renderFinalizeCalls   []renderPhaseCall
+	renderCompletionCalls []completionLineCall
 	stepStateCalls        []stepStateCall
 	phaseStepsCalls       [][]string
+	// completionStarted, when non-nil, receives the completionLineCall value
+	// as soon as RenderCompletionLine is called. The channel send happens-after
+	// the append, so receivers are guaranteed to see the written data. Tests
+	// that need to observe the completion sequence set this before starting Run.
+	completionStarted chan completionLineCall
 }
 
 type renderPhaseCall struct {
@@ -92,6 +102,16 @@ func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.renderFinalizeCalls = append(h.renderFinalizeCalls, renderPhaseCall{stepNum, stepCount, stepName})
 }
+func (h *fakeRunHeader) RenderCompletionLine(iterationsRun, finalizeCount int) {
+	call := completionLineCall{iterationsRun, finalizeCount}
+	h.renderCompletionCalls = append(h.renderCompletionCalls, call)
+	if h.completionStarted != nil {
+		select {
+		case h.completionStarted <- call:
+		default:
+		}
+	}
+}
 
 func (h *fakeRunHeader) SetPhaseSteps(names []string) {
 	cp := make([]string, len(names))
@@ -104,9 +124,17 @@ func (h *fakeRunHeader) SetStepState(idx int, state ui.StepState) {
 }
 
 // newTestKeyHandler creates a KeyHandler suitable for tests where all steps succeed.
+// It injects ActionQuit asynchronously after a brief delay to unblock the
+// completion sequence's final blocking receive without interfering with
+// Orchestrate's non-blocking pre-step checks.
 func newTestKeyHandler() *ui.KeyHandler {
 	actions := make(chan ui.StepAction, 10)
-	return ui.NewKeyHandler(func() {}, actions)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		actions <- ui.ActionQuit
+	}()
+	return kh
 }
 
 // nonClaudeSteps creates simple non-claude steps with echo commands for testing.
@@ -326,6 +354,10 @@ func TestRun_BreakLoopIfEmptyStepFails(t *testing.T) {
 	// Let Orchestrate reach the blocked error-mode state, then send ActionContinue.
 	time.Sleep(30 * time.Millisecond)
 	actions <- ui.ActionContinue
+	// After ActionContinue is consumed, remaining steps complete near-instantly.
+	// Inject ActionQuit to unblock the completion sequence's final blocking receive.
+	time.Sleep(10 * time.Millisecond)
+	actions <- ui.ActionQuit
 
 	select {
 	case <-done:
@@ -1579,6 +1611,12 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	// Actions channel for KeyHandler.
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
+	// Inject ActionQuit to unblock the completion sequence after all steps finish.
+	// Real subprocesses take only milliseconds; 500ms is sufficient margin.
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		actions <- ui.ActionQuit
+	}()
 
 	initSteps := []steps.Step{
 		{Name: "Get GitHub user", IsClaude: false, Command: []string{"scripts/get_gh_user"}, CaptureAs: "GITHUB_USER"},
@@ -1794,6 +1832,10 @@ func TestRun_BreakLoopIfEmpty_FailedStepNoSkips(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 	actions <- ui.ActionContinue
+	// After ActionContinue is consumed, remaining steps complete near-instantly.
+	// Inject ActionQuit to unblock the completion sequence's final blocking receive.
+	time.Sleep(10 * time.Millisecond)
+	actions <- ui.ActionQuit
 
 	select {
 	case <-done:
@@ -1805,5 +1847,122 @@ func TestRun_BreakLoopIfEmpty_FailedStepNoSkips(t *testing.T) {
 		if call.state == ui.StepSkipped {
 			t.Errorf("no StepSkipped calls expected when break step fails; got idx %d", call.idx)
 		}
+	}
+}
+
+// TestRun_CompletionSummaryAndBlockForKeypress verifies that after all finalize
+// steps complete, Run() writes the completion summary to the header, switches to
+// ModeDone, and blocks until ActionQuit is received.
+//
+// Synchronization: header.completionStarted receives the completion call data
+// immediately after the append inside RenderCompletionLine. Per Go's memory
+// model a channel send happens-before the corresponding receive, so reading the
+// received value is race-free. The done channel is used to synchronize the
+// final result check.
+func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{}
+	completionCh := make(chan completionLineCall, 1)
+	header := &fakeRunHeader{completionStarted: completionCh}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    2,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1", "final2"),
+	}
+
+	done := make(chan RunResult, 1)
+	go func() {
+		done <- Run(executor, header, kh, cfg)
+	}()
+
+	// Wait for RenderCompletionLine to be called; the channel send happens-after
+	// the append, so reading the received value is synchronized.
+	var got completionLineCall
+	select {
+	case got = <-completionCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("completion sequence did not start")
+	}
+
+	if got.iterationsRun != 2 {
+		t.Errorf("completion: want iterationsRun=2, got %d", got.iterationsRun)
+	}
+	if got.finalizeCount != 2 {
+		t.Errorf("completion: want finalizeCount=2, got %d", got.finalizeCount)
+	}
+
+	// Verify Run() is still blocking (done has no result yet).
+	select {
+	case <-done:
+		t.Fatal("Run() should still be blocked waiting for keypress")
+	default:
+	}
+
+	// Inject ActionQuit to unblock the completion sequence.
+	actions <- ui.ActionQuit
+
+	select {
+	case result := <-done:
+		if result.IterationsRun != 2 {
+			t.Errorf("expected IterationsRun=2, got %d", result.IterationsRun)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not unblock after ActionQuit")
+	}
+}
+
+// TestRun_CompletionSummaryWithEmptyFinalize verifies that the completion
+// sequence fires with finalizeCount=0 when FinalizeSteps is empty.
+func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{}
+	completionCh := make(chan completionLineCall, 1)
+	header := &fakeRunHeader{completionStarted: completionCh}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		// FinalizeSteps intentionally empty.
+	}
+
+	done := make(chan RunResult, 1)
+	go func() {
+		done <- Run(executor, header, kh, cfg)
+	}()
+
+	var got completionLineCall
+	select {
+	case got = <-completionCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("completion sequence did not start")
+	}
+
+	if got.iterationsRun != 1 {
+		t.Errorf("completion: want iterationsRun=1, got %d", got.iterationsRun)
+	}
+	if got.finalizeCount != 0 {
+		t.Errorf("completion: want finalizeCount=0 (empty finalize), got %d", got.finalizeCount)
+	}
+
+	// Verify Run() is still blocking.
+	select {
+	case <-done:
+		t.Fatal("Run() should still be blocked waiting for keypress")
+	default:
+	}
+
+	actions <- ui.ActionQuit
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() did not unblock after ActionQuit")
 	}
 }

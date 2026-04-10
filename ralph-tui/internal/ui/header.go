@@ -87,6 +87,15 @@ func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName strin
 	})
 }
 
+// RenderCompletionLine updates the iteration line with a completion summary.
+// Example output: "Ralph completed after 3 iteration(s) and 2 finalizing tasks."
+func (h *StatusHeader) RenderCompletionLine(iterationsRun, finalizeCount int) {
+	h.IterationLine = fmt.Sprintf(
+		"Ralph completed after %d iteration(s) and %d finalizing tasks.",
+		iterationsRun, finalizeCount,
+	)
+}
+
 // substitute replaces all {{KEY}} tokens in template with the corresponding
 // value from vals. Keys not present in vals are left as-is.
 func substitute(template string, vals map[string]string) string {
