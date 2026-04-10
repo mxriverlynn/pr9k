@@ -822,6 +822,77 @@ func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 	}
 }
 
+// TestRun_IterationsRunOnNormalCompletion verifies that IterationsRun equals the
+// configured iteration count when all iterations complete without a break.
+func TestRun_IterationsRunOnNormalCompletion(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 2,
+		Steps:      nonClaudeSteps("step1"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.IterationsRun != 2 {
+		t.Errorf("expected IterationsRun=2 on normal completion, got %d", result.IterationsRun)
+	}
+}
+
+// TestRun_IterationsRunZeroOnInitializeQuit verifies that IterationsRun is zero
+// when the workflow quits during the initialize phase before the loop begins.
+func TestRun_IterationsRunZeroOnInitializeQuit(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("init failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init-step"),
+		Steps:           nonClaudeSteps("iter-step"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.IterationsRun != 0 {
+		t.Errorf("expected IterationsRun=0 on initialize quit, got %d", result.IterationsRun)
+	}
+}
+
+// TestRun_IterationsRunOnIterationQuit verifies that IterationsRun reflects the
+// iteration index at the time of quit, not zero.
+func TestRun_IterationsRunOnIterationQuit(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 3,
+		Steps:      nonClaudeSteps("iter-step"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.IterationsRun != 1 {
+		t.Errorf("expected IterationsRun=1 on iteration quit, got %d", result.IterationsRun)
+	}
+}
+
 // --- Integration tests ---
 
 // writeScript creates an executable shell script at path with the given content.
