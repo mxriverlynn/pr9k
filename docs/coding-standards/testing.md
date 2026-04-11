@@ -13,10 +13,11 @@ go test -race ./...
 Every type with a `Close` method must have a test that calls `Close` twice. The second call must return `nil` and must not panic. This documents the contract and prevents resource-management bugs in callers.
 
 ```go
-func TestClose_IsIdempotent(t *testing.T) {
-    r := newRunner(t)
-    require.NoError(t, r.Close())
-    require.NoError(t, r.Close()) // must not panic or error
+func TestCloseIsIdempotent(t *testing.T) {
+    l, err := NewLogger(t.TempDir())
+    require.NoError(t, err)
+    require.NoError(t, l.Close())
+    require.NoError(t, l.Close()) // must not panic or error
 }
 ```
 

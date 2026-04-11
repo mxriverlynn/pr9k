@@ -117,6 +117,10 @@ func (r *Runner) SetSender(send func(string)) {
 
 ```go
 func (r *Runner) RunStep(stepName string, command []string) error {
+    if len(command) == 0 {
+        return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
+    }
+
     r.processMu.Lock()
     r.terminated = false  // reset for this step
     r.processMu.Unlock()
@@ -223,6 +227,9 @@ func (r *Runner) WriteToLog(line string) {
 
 ```go
 func (r *Runner) CaptureOutput(command []string) (string, error) {
+    if len(command) == 0 {
+        return "", fmt.Errorf("workflow: CaptureOutput: empty command")
+    }
     cmd := exec.Command(command[0], command[1:]...)
     cmd.Dir = r.workingDir
     out, err := cmd.Output()
