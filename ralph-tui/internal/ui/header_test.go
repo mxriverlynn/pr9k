@@ -1,269 +1,417 @@
 package ui
 
 import (
-	"strings"
 	"testing"
 )
 
-var testStepNames = [8]string{
-	"Feature work",
-	"Test planning",
-	"Test writing",
-	"Code review",
-	"Review fixes",
-	"Close issue",
-	"Update docs",
-	"Git push",
-}
+// --- NewStatusHeader row-count computation ---
 
-func TestStatusHeader_IterationLine(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	h.SetIteration(2, 5, "42", "Add widget support")
-
-	want := "Iteration 2/5 — Issue #42: Add widget support"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
+func TestNewStatusHeader_RowCount(t *testing.T) {
+	cases := []struct {
+		maxSteps int
+		wantRows int
+	}{
+		{0, 1},  // minimum 1 row
+		{1, 1},  // 1 step → 1 row
+		{4, 1},  // exactly 4 → 1 row
+		{5, 2},  // 5 → ceil(5/4) = 2 rows
+		{8, 2},  // 8 → ceil(8/4) = 2 rows
+		{9, 3},  // 9 → ceil(9/4) = 3 rows
+		{20, 5}, // 20 → ceil(20/4) = 5 rows
+	}
+	for _, tc := range cases {
+		h := NewStatusHeader(tc.maxSteps)
+		if len(h.Rows) != tc.wantRows {
+			t.Errorf("NewStatusHeader(%d): got %d rows, want %d", tc.maxSteps, len(h.Rows), tc.wantRows)
+		}
 	}
 }
 
-func TestStatusHeader_IterationLine_Unbounded(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	h.SetIteration(3, 0, "42", "Add widget support")
+// --- SetPhaseSteps ---
 
-	want := "Iteration 3 — Issue #42: Add widget support"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
+func TestSetPhaseSteps_ShortPhase(t *testing.T) {
+	h := NewStatusHeader(8)
+	names := []string{"Step A", "Step B", "Step C"}
+	h.SetPhaseSteps(names)
+
+	if h.Rows[0][0] != "[ ] Step A" {
+		t.Errorf("Rows[0][0] = %q, want %q", h.Rows[0][0], "[ ] Step A")
+	}
+	if h.Rows[0][1] != "[ ] Step B" {
+		t.Errorf("Rows[0][1] = %q, want %q", h.Rows[0][1], "[ ] Step B")
+	}
+	if h.Rows[0][2] != "[ ] Step C" {
+		t.Errorf("Rows[0][2] = %q, want %q", h.Rows[0][2], "[ ] Step C")
+	}
+	// trailing slot in the same row should be blank
+	if h.Rows[0][3] != "" {
+		t.Errorf("Rows[0][3] should be empty, got %q", h.Rows[0][3])
+	}
+	// second row should be entirely blank
+	for c, v := range h.Rows[1] {
+		if v != "" {
+			t.Errorf("Rows[1][%d] should be empty, got %q", c, v)
+		}
 	}
 }
 
-func TestStatusHeader_StepCheckboxStates(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
+func TestSetPhaseSteps_LongPhase(t *testing.T) {
+	h := NewStatusHeader(8)
+	names := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	h.SetPhaseSteps(names)
 
-	// Steps 0-2 done, step 3 active, rest pending
+	for r := range 2 {
+		for c := range HeaderCols {
+			idx := r*HeaderCols + c
+			want := "[ ] " + names[idx]
+			if h.Rows[r][c] != want {
+				t.Errorf("Rows[%d][%d] = %q, want %q", r, c, h.Rows[r][c], want)
+			}
+		}
+	}
+}
+
+func TestSetPhaseSteps_PhaseTransitionClearsTrailingSlots(t *testing.T) {
+	// Start with a longer phase, then switch to a shorter one.
+	h := NewStatusHeader(8)
+	longNames := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	h.SetPhaseSteps(longNames)
+
+	shortNames := []string{"X", "Y", "Z"}
+	h.SetPhaseSteps(shortNames)
+
+	if h.Rows[0][0] != "[ ] X" {
+		t.Errorf("Rows[0][0] = %q, want %q", h.Rows[0][0], "[ ] X")
+	}
+	if h.Rows[0][1] != "[ ] Y" {
+		t.Errorf("Rows[0][1] = %q, want %q", h.Rows[0][1], "[ ] Y")
+	}
+	if h.Rows[0][2] != "[ ] Z" {
+		t.Errorf("Rows[0][2] = %q, want %q", h.Rows[0][2], "[ ] Z")
+	}
+	// trailing slot in row 0 and all of row 1 must be blank (no stale names)
+	if h.Rows[0][3] != "" {
+		t.Errorf("Rows[0][3] should be empty after phase transition, got %q", h.Rows[0][3])
+	}
+	for c, v := range h.Rows[1] {
+		if v != "" {
+			t.Errorf("Rows[1][%d] should be empty after phase transition, got %q", c, v)
+		}
+	}
+}
+
+func TestSetPhaseSteps_OverflowPanics(t *testing.T) {
+	h := NewStatusHeader(4) // 1 row = 4 slots
+	names := make([]string, 5)
+	for i := range names {
+		names[i] = "step"
+	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic for overflow SetPhaseSteps, got none")
+		}
+	}()
+	h.SetPhaseSteps(names)
+}
+
+// --- SetStepState ---
+
+func TestSetStepState_UpdatesRightRowCol(t *testing.T) {
+	h := NewStatusHeader(8)
+	names := []string{"Feature work", "Test planning", "Test writing", "Code review",
+		"Review fixes", "Close issue", "Update docs", "Git push"}
+	h.SetPhaseSteps(names)
+
 	h.SetStepState(0, StepDone)
 	h.SetStepState(1, StepDone)
 	h.SetStepState(2, StepDone)
 	h.SetStepState(3, StepActive)
+	// steps 4-7 remain pending from SetPhaseSteps
 
 	cases := []struct {
-		got  string
-		want string
+		row, col int
+		want     string
 	}{
-		{h.Row1[0], "[✓] Feature work"},
-		{h.Row1[1], "[✓] Test planning"},
-		{h.Row1[2], "[✓] Test writing"},
-		{h.Row1[3], "[▸] Code review"},
-		{h.Row2[0], "[ ] Review fixes"},
-		{h.Row2[1], "[ ] Close issue"},
-		{h.Row2[2], "[ ] Update docs"},
-		{h.Row2[3], "[ ] Git push"},
+		{0, 0, "[✓] Feature work"},
+		{0, 1, "[✓] Test planning"},
+		{0, 2, "[✓] Test writing"},
+		{0, 3, "[▸] Code review"},
+		{1, 0, "[ ] Review fixes"},
+		{1, 1, "[ ] Close issue"},
+		{1, 2, "[ ] Update docs"},
+		{1, 3, "[ ] Git push"},
 	}
 	for _, c := range cases {
-		if c.got != c.want {
-			t.Errorf("got %q, want %q", c.got, c.want)
+		got := h.Rows[c.row][c.col]
+		if got != c.want {
+			t.Errorf("Rows[%d][%d] = %q, want %q", c.row, c.col, got, c.want)
 		}
 	}
 }
 
-func TestStatusHeader_FailedStep(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	h.SetStepState(2, StepFailed)
+func TestSetStepState_FailedStep(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Alpha", "Beta", "Gamma"})
+	h.SetStepState(1, StepFailed)
 
-	if h.Row1[2] != "[✗] Test writing" {
-		t.Errorf("failed step: got %q, want %q", h.Row1[2], "[✗] Test writing")
+	if h.Rows[0][1] != "[✗] Beta" {
+		t.Errorf("Rows[0][1] = %q, want %q", h.Rows[0][1], "[✗] Beta")
 	}
 }
 
-func TestStatusHeader_FinalizationMode(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	finalSteps := []string{"Deferred work", "Lessons learned", "Final git push"}
-	h.SetFinalization(1, 3, finalSteps)
+func TestSetStepState_SkippedStep(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Alpha", "Beta", "Gamma"})
+	h.SetStepState(2, StepSkipped)
 
-	if !strings.HasPrefix(h.IterationLine, "Finalizing") {
-		t.Errorf("expected IterationLine to start with 'Finalizing', got %q", h.IterationLine)
-	}
-	if !strings.Contains(h.IterationLine, "1/3") {
-		t.Errorf("expected '1/3' in IterationLine, got %q", h.IterationLine)
-	}
-	if h.Row1[0] != "[ ] Deferred work" {
-		t.Errorf("finalize step 0: got %q, want %q", h.Row1[0], "[ ] Deferred work")
-	}
-	if h.Row1[1] != "[ ] Lessons learned" {
-		t.Errorf("finalize step 1: got %q, want %q", h.Row1[1], "[ ] Lessons learned")
-	}
-	if h.Row1[2] != "[ ] Final git push" {
-		t.Errorf("finalize step 2: got %q, want %q", h.Row1[2], "[ ] Final git push")
-	}
-	if h.Row1[3] != "" {
-		t.Errorf("finalize step 3 should be empty, got %q", h.Row1[3])
-	}
-	// Row2 unused for 3 finalization steps
-	for i, v := range h.Row2 {
-		if v != "" {
-			t.Errorf("Row2[%d] should be empty for 3 finalization steps, got %q", i, v)
-		}
+	if h.Rows[0][2] != "[-] Gamma" {
+		t.Errorf("Rows[0][2] = %q, want %q", h.Rows[0][2], "[-] Gamma")
 	}
 }
 
-func TestStatusHeader_TwoRowsOfFour(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
+func TestSetStepState_OutOfBoundsIsNoOp(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"A", "B", "C"})
 
-	// Row1 holds steps 0-3 (all pending on init)
-	for i, name := range testStepNames[:4] {
-		want := "[ ] " + name
-		if h.Row1[i] != want {
-			t.Errorf("Row1[%d] = %q, want %q", i, h.Row1[i], want)
-		}
-	}
-	// Row2 holds steps 4-7 (all pending on init)
-	for i, name := range testStepNames[4:] {
-		want := "[ ] " + name
-		if h.Row2[i] != want {
-			t.Errorf("Row2[%d] = %q, want %q", i, h.Row2[i], want)
-		}
-	}
-}
-
-// T1 — SetStepState ignores out-of-bounds index
-func TestStatusHeader_SetStepState_OutOfBounds(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	row1Before := h.Row1
-	row2Before := h.Row2
-
+	rowsBefore := h.Rows[0]
 	h.SetStepState(-1, StepDone)
-	h.SetStepState(8, StepDone)
+	h.SetStepState(3, StepDone) // idx 3 is beyond len(stepNames)==3
+	h.SetStepState(99, StepDone)
 
-	if h.Row1 != row1Before {
-		t.Errorf("Row1 changed after out-of-bounds SetStepState: got %v, want %v", h.Row1, row1Before)
-	}
-	if h.Row2 != row2Before {
-		t.Errorf("Row2 changed after out-of-bounds SetStepState: got %v, want %v", h.Row2, row2Before)
+	if h.Rows[0] != rowsBefore {
+		t.Errorf("Rows[0] changed after out-of-bounds SetStepState: got %v, want %v", h.Rows[0], rowsBefore)
 	}
 }
 
-// T2 — SetFinalizeStepState is no-op before SetFinalization
-func TestStatusHeader_SetFinalizeStepState_BeforeSetFinalization(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	row1Before := h.Row1
-	row2Before := h.Row2
+// --- RenderInitializeLine ---
 
-	h.SetFinalizeStepState(0, StepDone)
-
-	if h.Row1 != row1Before {
-		t.Errorf("Row1 changed after SetFinalizeStepState before SetFinalization: got %v, want %v", h.Row1, row1Before)
+func TestRenderInitializeLine(t *testing.T) {
+	cases := []struct {
+		stepNum, stepCount int
+		stepName           string
+		want               string
+	}{
+		{1, 2, "Splash", "Initializing 1/2: Splash"},
+		{2, 2, "Setup", "Initializing 2/2: Setup"},
+		{1, 1, "Long step name with spaces", "Initializing 1/1: Long step name with spaces"},
 	}
-	if h.Row2 != row2Before {
-		t.Errorf("Row2 changed after SetFinalizeStepState before SetFinalization: got %v, want %v", h.Row2, row2Before)
-	}
-}
-
-// T3 — SetFinalizeStepState ignores out-of-bounds index after SetFinalization
-func TestStatusHeader_SetFinalizeStepState_OutOfBounds(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	finalSteps := []string{"Deferred work", "Lessons learned", "Final git push"}
-	h.SetFinalization(1, 3, finalSteps)
-	row1Before := h.Row1
-	row2Before := h.Row2
-
-	h.SetFinalizeStepState(3, StepDone)
-	h.SetFinalizeStepState(-1, StepDone)
-
-	if h.Row1 != row1Before {
-		t.Errorf("Row1 changed after out-of-bounds SetFinalizeStepState: got %v, want %v", h.Row1, row1Before)
-	}
-	if h.Row2 != row2Before {
-		t.Errorf("Row2 changed after out-of-bounds SetFinalizeStepState: got %v, want %v", h.Row2, row2Before)
-	}
-}
-
-// T4 — SetFinalizeStepState updates Row2 for idx >= 4
-func TestStatusHeader_SetFinalizeStepState_Row2Update(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	finalSteps := []string{"Step A", "Step B", "Step C", "Step D", "Step E", "Step F"}
-	h.SetFinalization(1, 6, finalSteps)
-
-	h.SetFinalizeStepState(5, StepDone)
-
-	if h.Row2[1] != "[✓] Step F" {
-		t.Errorf("Row2[1] = %q, want %q", h.Row2[1], "[✓] Step F")
-	}
-	if h.Row2[0] != "[ ] Step E" {
-		t.Errorf("Row2[0] = %q, want %q (should still be pending)", h.Row2[0], "[ ] Step E")
-	}
-}
-
-// T5 — SetFinalization with >4 steps spans both rows
-func TestStatusHeader_SetFinalization_SixSteps(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	finalSteps := []string{"Step A", "Step B", "Step C", "Step D", "Step E", "Step F"}
-	h.SetFinalization(1, 6, finalSteps)
-
-	for i := range 4 {
-		want := "[ ] " + finalSteps[i]
-		if h.Row1[i] != want {
-			t.Errorf("Row1[%d] = %q, want %q", i, h.Row1[i], want)
-		}
-	}
-	if h.Row2[0] != "[ ] Step E" {
-		t.Errorf("Row2[0] = %q, want %q", h.Row2[0], "[ ] Step E")
-	}
-	if h.Row2[1] != "[ ] Step F" {
-		t.Errorf("Row2[1] = %q, want %q", h.Row2[1], "[ ] Step F")
-	}
-	if h.Row2[2] != "" {
-		t.Errorf("Row2[2] should be empty, got %q", h.Row2[2])
-	}
-	if h.Row2[3] != "" {
-		t.Errorf("Row2[3] should be empty, got %q", h.Row2[3])
-	}
-}
-
-// T6 — SetFinalization overwrites prior iteration state
-func TestStatusHeader_SetFinalization_OverwritesIterationState(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	h.SetStepState(0, StepDone)
-	h.SetStepState(1, StepDone)
-	h.SetStepState(4, StepActive)
-
-	finalSteps := []string{"Deferred work", "Lessons learned", "Final git push"}
-	h.SetFinalization(1, 3, finalSteps)
-
-	if h.Row1[0] != "[ ] Deferred work" {
-		t.Errorf("Row1[0] = %q, want %q", h.Row1[0], "[ ] Deferred work")
-	}
-	if h.Row1[1] != "[ ] Lessons learned" {
-		t.Errorf("Row1[1] = %q, want %q", h.Row1[1], "[ ] Lessons learned")
-	}
-	if h.Row1[2] != "[ ] Final git push" {
-		t.Errorf("Row1[2] = %q, want %q", h.Row1[2], "[ ] Final git push")
-	}
-	if h.Row1[3] != "" {
-		t.Errorf("Row1[3] should be empty, got %q", h.Row1[3])
-	}
-	for i, v := range h.Row2 {
-		if v != "" {
-			t.Errorf("Row2[%d] should be empty, got %q", i, v)
+	for _, tc := range cases {
+		h := NewStatusHeader(4)
+		h.RenderInitializeLine(tc.stepNum, tc.stepCount, tc.stepName)
+		if h.IterationLine != tc.want {
+			t.Errorf("RenderInitializeLine(%d, %d, %q): got %q, want %q",
+				tc.stepNum, tc.stepCount, tc.stepName, h.IterationLine, tc.want)
 		}
 	}
 }
 
-// T7 — SetFinalization with 0 steps
-func TestStatusHeader_SetFinalization_ZeroSteps(t *testing.T) {
-	h := NewStatusHeader(testStepNames)
-	h.SetFinalization(0, 0, []string{})
+func TestRenderInitializeLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.RenderInitializeLine(1, 3, "Bootstrap")
+	if h.IterationLine == "" {
+		t.Error("RenderInitializeLine did not write to IterationLine")
+	}
+}
 
-	want := "Finalizing 0/0"
+// --- RenderIterationLine ---
+
+func TestRenderIterationLine_Bounded(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(2, 5, "42")
+
+	want := "Iteration 2/5 — Issue #42"
 	if h.IterationLine != want {
-		t.Errorf("IterationLine = %q, want %q", h.IterationLine, want)
+		t.Errorf("got %q, want %q", h.IterationLine, want)
 	}
-	for i, v := range h.Row1 {
-		if v != "" {
-			t.Errorf("Row1[%d] should be empty, got %q", i, v)
+}
+
+func TestRenderIterationLine_Unbounded(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(3, 0, "42")
+
+	want := "Iteration 3 — Issue #42"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_EmptyIssueID(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(1, 5, "")
+
+	want := "Iteration 1/5"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_UnboundedEmptyIssueID(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(4, 0, "")
+
+	want := "Iteration 4"
+	if h.IterationLine != want {
+		t.Errorf("got %q, want %q", h.IterationLine, want)
+	}
+}
+
+func TestRenderIterationLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(8)
+	h.RenderIterationLine(1, 3, "99")
+	if h.IterationLine == "" {
+		t.Error("RenderIterationLine did not write to IterationLine")
+	}
+}
+
+// --- RenderFinalizeLine ---
+
+func TestRenderFinalizeLine(t *testing.T) {
+	cases := []struct {
+		stepNum, stepCount int
+		stepName           string
+		want               string
+	}{
+		{1, 3, "Deferred work", "Finalizing 1/3: Deferred work"},
+		{3, 3, "Final push", "Finalizing 3/3: Final push"},
+		{2, 5, "Long finalize step name", "Finalizing 2/5: Long finalize step name"},
+	}
+	for _, tc := range cases {
+		h := NewStatusHeader(4)
+		h.RenderFinalizeLine(tc.stepNum, tc.stepCount, tc.stepName)
+		if h.IterationLine != tc.want {
+			t.Errorf("RenderFinalizeLine(%d, %d, %q): got %q, want %q",
+				tc.stepNum, tc.stepCount, tc.stepName, h.IterationLine, tc.want)
 		}
 	}
-	for i, v := range h.Row2 {
-		if v != "" {
-			t.Errorf("Row2[%d] should be empty, got %q", i, v)
+}
+
+func TestRenderFinalizeLine_WritesToIterationLine(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.RenderFinalizeLine(1, 2, "Cleanup")
+	if h.IterationLine == "" {
+		t.Error("RenderFinalizeLine did not write to IterationLine")
+	}
+}
+
+// --- Input immutability ---
+
+func TestSetPhaseSteps_DoesNotMutateInput(t *testing.T) {
+	h := NewStatusHeader(4)
+	names := []string{"Alpha", "Beta", "Gamma"}
+	h.SetPhaseSteps(names)
+
+	// Mutate the caller's slice after the call.
+	names[0] = "MUTATED"
+
+	// The header's internal state should still reflect the original names.
+	if h.Rows[0][0] != "[ ] Alpha" {
+		t.Errorf("Rows[0][0] = %q after mutating input, want %q", h.Rows[0][0], "[ ] Alpha")
+	}
+}
+
+// --- Phase transition interactions ---
+
+func TestSetStepState_AfterPhaseTransition(t *testing.T) {
+	// Start with a longer phase (8 steps), then switch to a shorter one (3 steps).
+	// An index valid in the old phase but out-of-bounds in the new phase must be a no-op.
+	h := NewStatusHeader(8)
+	h.SetPhaseSteps([]string{"A", "B", "C", "D", "E", "F", "G", "H"})
+	h.SetPhaseSteps([]string{"X", "Y", "Z"})
+
+	rowsBefore := h.Rows[0]
+	h.SetStepState(5, StepDone) // index 5 was valid in the old phase, invalid now
+
+	if h.Rows[0] != rowsBefore {
+		t.Errorf("Rows[0] changed after out-of-bounds SetStepState (post phase transition): got %v, want %v", h.Rows[0], rowsBefore)
+	}
+}
+
+// --- SetPhaseSteps edge cases ---
+
+func TestSetPhaseSteps_ExactlyOneFullRow(t *testing.T) {
+	h := NewStatusHeader(4)
+	names := []string{"Step1", "Step2", "Step3", "Step4"}
+	h.SetPhaseSteps(names)
+
+	for c, name := range names {
+		want := "[ ] " + name
+		if h.Rows[0][c] != want {
+			t.Errorf("Rows[0][%d] = %q, want %q", c, h.Rows[0][c], want)
 		}
+	}
+}
+
+func TestSetPhaseSteps_ZeroSteps(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Prev1", "Prev2"}) // load a previous phase
+	h.SetPhaseSteps([]string{})                 // now clear with zero steps
+
+	for c, v := range h.Rows[0] {
+		if v != "" {
+			t.Errorf("Rows[0][%d] = %q, want empty after zero-step SetPhaseSteps", c, v)
+		}
+	}
+}
+
+// --- NewStatusHeader edge cases ---
+
+func TestNewStatusHeader_NegativeInput(t *testing.T) {
+	h := NewStatusHeader(-1)
+	if len(h.Rows) != 1 {
+		t.Errorf("NewStatusHeader(-1): got %d rows, want 1", len(h.Rows))
+	}
+}
+
+// T1: SetStepState before SetPhaseSteps is called is a no-op (stepNames is nil).
+func TestSetStepState_BeforeSetPhaseSteps_IsNoOp(t *testing.T) {
+	h := NewStatusHeader(4)
+	// Do NOT call SetPhaseSteps — stepNames is nil.
+	rowsBefore := h.Rows[0]
+	h.SetStepState(0, StepSkipped)
+	if h.Rows[0] != rowsBefore {
+		t.Errorf("Rows[0] changed without SetPhaseSteps: got %v, want %v", h.Rows[0], rowsBefore)
+	}
+}
+
+// T2: StepSkipped at a second-row grid position uses correct row/col arithmetic.
+func TestSetStepState_SkippedStep_SecondRow(t *testing.T) {
+	h := NewStatusHeader(8)
+	names := []string{"A", "B", "C", "D", "E", "F", "G", "H"}
+	h.SetPhaseSteps(names)
+	// index 5 → row 1, col 1
+	h.SetStepState(5, StepSkipped)
+	if h.Rows[1][1] != "[-] F" {
+		t.Errorf("Rows[1][1] = %q, want %q", h.Rows[1][1], "[-] F")
+	}
+}
+
+// --- substitute helper ---
+
+// T3a: substitute with an empty vals map returns the template string unchanged.
+func TestSubstitute_EmptyValsReturnsTemplateUnchanged(t *testing.T) {
+	tmpl := "Initializing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+	got := substitute(tmpl, map[string]string{})
+	if got != tmpl {
+		t.Errorf("substitute with empty vals: got %q, want %q", got, tmpl)
+	}
+}
+
+// T3b: substitute leaves unknown {{KEY}} tokens in the template as-is.
+func TestSubstitute_UnknownKeyLeftAsIs(t *testing.T) {
+	tmpl := "Hello {{KNOWN}} and {{UNKNOWN}}"
+	got := substitute(tmpl, map[string]string{"KNOWN": "world"})
+	want := "Hello world and {{UNKNOWN}}"
+	if got != want {
+		t.Errorf("substitute with unknown key: got %q, want %q", got, want)
+	}
+}
+
+// T3: An unrecognized StepState value falls through to the default (pending) display.
+func TestSetStepState_UnknownStateFallsToDefault(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.SetPhaseSteps([]string{"Alpha", "Beta", "Gamma"})
+	h.SetStepState(0, StepState(99))
+	if h.Rows[0][0] != "[ ] Alpha" {
+		t.Errorf("Rows[0][0] = %q, want %q", h.Rows[0][0], "[ ] Alpha")
 	}
 }

@@ -2,44 +2,44 @@
 
 Loads workflow step definitions from JSON configuration files and builds prompt strings for Claude CLI invocations.
 
-- **Last Updated:** 2026-04-08 12:00
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- Step definitions are loaded from `ralph-steps.json`, which contains both iteration steps (8) and finalization steps (3)
-- Each step is either a Claude CLI invocation (with model, prompt file, and optional variable prepending) or a shell command (with template variable substitution)
-- `BuildPrompt` reads prompt files from `prompts/` and optionally prepends `ISSUENUMBER=` and `STARTINGSHA=` for iteration context
+- Step definitions are loaded from `ralph-steps.json`, which contains three step groups: initialize (pre-loop), iteration (per-issue), and finalize (post-loop)
+- Each step is either a Claude CLI invocation (with model and prompt file) or a shell command (with template variable substitution)
+- `BuildPrompt` reads prompt files from `prompts/` and applies `{{VAR}}` substitution using the supplied `VarTable` and phase
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
 - `ralph-tui/internal/steps/steps.go` — Step struct, StepFile struct, LoadSteps, BuildPrompt
 - `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
-- `ralph-tui/ralph-steps.json` — All step definitions (iteration and finalization)
+- `ralph-tui/ralph-steps.json` — All step definitions (initialize, iteration, and finalization)
 
 ## Architecture
 
 ```
 ┌─────────────────────┐     ┌──────────────────────┐
 │ ralph-steps.json     │     │ prompts/              │
-│  iteration: [...]    │     │  feature-work.md      │
-│  finalize:  [...]    │     │  test-planning.md     │
-└─────────┬───────────┘     │  test-writing.md      │
-          │                  │  code-review-*.md     │
-          ▼                  │  update-docs.md       │
-   ┌──────────────┐         │  deferred-work.md     │
-   │ LoadSteps()  │         │  lessons-learned.md   │
-   └──────┬───────┘         └──────────┬────────────┘
+│  initialize: [...]   │     │  feature-work.md      │
+│  iteration: [...]    │     │  test-planning.md     │
+│  finalize:  [...]    │     │  test-writing.md      │
+└─────────┬───────────┘     │  code-review-*.md     │
+          │                  │  update-docs.md       │
+          ▼                  │  deferred-work.md     │
+   ┌──────────────┐         │  lessons-learned.md   │
+   │ LoadSteps()  │         └──────────┬────────────┘
+   └──────┬───────┘                    │
           │                            │
           ▼                            ▼
    ┌──────────────┐         ┌──────────────────┐
    │  StepFile    │────────▶│  BuildPrompt()   │
-   │  .Iteration  │         │  prepend vars    │
-   │  .Finalize   │         │  read file       │
-   └──────────────┘         └──────┬───────────┘
-                                   │
-                                   ▼
+   │  .Initialize │         │  read file       │
+   │  .Iteration  │         └──────┬───────────┘
+   │  .Finalize   │                │
+   └──────────────┘                ▼
                             prompt string
                             (passed to claude -p)
 ```
@@ -50,25 +50,27 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
 | `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
-| `ralph-tui/ralph-steps.json` | All step definitions (iteration and finalization) |
+| `ralph-tui/ralph-steps.json` | All step definitions (initialize, iteration, and finalization) |
 
 ## Core Types
 
 ```go
 // Step defines a single step in the ralph workflow.
 type Step struct {
-    Name        string   `json:"name"`
-    Model       string   `json:"model,omitempty"`       // Claude model (e.g., "sonnet", "opus")
-    PromptFile  string   `json:"promptFile,omitempty"`   // filename in prompts/ directory
-    IsClaude    bool     `json:"isClaude"`               // true = Claude CLI, false = shell command
-    Command     []string `json:"command,omitempty"`      // argv for non-Claude steps
-    PrependVars bool     `json:"prependVars,omitempty"`  // prepend ISSUENUMBER/STARTINGSHA
+    Name             string   `json:"name"`
+    Model            string   `json:"model,omitempty"`            // Claude model (e.g., "sonnet", "opus")
+    PromptFile       string   `json:"promptFile,omitempty"`       // filename in prompts/ directory
+    IsClaude         bool     `json:"isClaude"`                   // true = Claude CLI, false = shell command
+    Command          []string `json:"command,omitempty"`          // argv for non-Claude steps
+    CaptureAs        string   `json:"captureAs,omitempty"`        // store step output under this variable name
+    BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"` // exit iteration loop when captured output is empty
 }
 
-// StepFile holds the two groups of steps loaded from ralph-steps.json.
+// StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Iteration []Step `json:"iteration"`
-    Finalize  []Step `json:"finalize"`
+    Initialize []Step `json:"initialize"`
+    Iteration  []Step `json:"iteration"`
+    Finalize   []Step `json:"finalize"`
 }
 ```
 
@@ -86,22 +88,35 @@ func LoadSteps(projectDir string) (StepFile, error) {
 }
 ```
 
+### Initialize Steps
+
+Two steps run once before the iteration loop begins:
+
+| # | Name | Type | captureAs |
+|---|------|------|-----------|
+| 1 | Splash | Shell | — |
+| 2 | Get GitHub user | Shell | `GITHUB_USER` |
+
+"Splash" runs `cat {{PROJECT_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
+
 ### Iteration Steps
 
-The 8 iteration steps run in sequence for each GitHub issue:
+The 10 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | Prepend Vars |
-|---|------|------|-------|--------------|
-| 1 | Feature work | Claude | sonnet | yes |
-| 2 | Test planning | Claude | opus | yes |
-| 3 | Test writing | Claude | sonnet | yes |
-| 4 | Code review | Claude | opus | yes |
-| 5 | Review fixes | Claude | sonnet | yes |
-| 6 | Close issue | Shell | — | — |
-| 7 | Update docs | Claude | sonnet | yes |
-| 8 | Git push | Shell | — | — |
+| # | Name | Type | Model | captureAs |
+|---|------|------|-------|-----------|
+| 1 | Get next issue | Shell | — | `ISSUE_ID` |
+| 2 | Get starting SHA | Shell | — | `STARTING_SHA` |
+| 3 | Feature work | Claude | sonnet | — |
+| 4 | Test planning | Claude | opus | — |
+| 5 | Test writing | Claude | sonnet | — |
+| 6 | Code review | Claude | opus | — |
+| 7 | Review fixes | Claude | sonnet | — |
+| 8 | Close issue | Shell | — | — |
+| 9 | Update docs | Claude | sonnet | — |
+| 10 | Git push | Shell | — | — |
 
-Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 
@@ -115,31 +130,23 @@ Three steps run once after all iterations complete:
 
 ### Prompt Building
 
-`BuildPrompt` reads the prompt file and optionally prepends iteration context variables:
+`BuildPrompt` reads the prompt file, applies `{{VAR}}` substitution using the supplied `VarTable` and phase, and returns the result:
 
 ```go
-func BuildPrompt(projectDir string, step Step, issueID, startingSHA string) (string, error) {
+func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
     if step.PromptFile == "" {
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
     promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
     data, err := os.ReadFile(promptPath)
     // ...
-    content := string(data)
-    if step.PrependVars {
-        content = "ISSUENUMBER=" + issueID + "\nSTARTINGSHA=" + startingSHA + "\n" + content
-    }
+    content, err := vars.Substitute(string(data), vt, phase)
+    // ...
     return content, nil
 }
 ```
 
-When `PrependVars` is true, the resulting prompt looks like:
-
-```
-ISSUENUMBER=42
-STARTINGSHA=abc123f
-<original prompt file content>
-```
+All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` before the string is returned. Unresolved variables log a warning and substitute the empty string.
 
 ## Error Handling
 
@@ -149,6 +156,7 @@ STARTINGSHA=abc123f
 | Malformed JSON | `"steps: malformed JSON in {path}: ..."` | Returned to caller |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
+| Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 

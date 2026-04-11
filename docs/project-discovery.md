@@ -1,6 +1,6 @@
 # Project Discovery
 
-- **Last Updated:** 2026-04-09
+- **Last Updated:** 2026-04-10
 
 ## Repository
 
@@ -12,8 +12,8 @@
 
 - Docs: `docs/`
 - Plans: `docs/plans/`
-- Coding standards: `docs/coding-standards/` (`error-handling.md`, `testing.md`, `concurrency.md`, `api-design.md`, `go-patterns.md`)
-- Prompts: `prompts/` (8 markdown prompt files consumed by both orchestrators)
+- Coding standards: `docs/coding-standards/` (`error-handling.md`, `testing.md`, `concurrency.md`, `api-design.md`, `go-patterns.md`, `lint-and-tooling.md`, `versioning.md`)
+- Prompts: `prompts/` (markdown prompt files consumed by the orchestrator)
 
 ## scripts
 
@@ -24,17 +24,25 @@
 ## ralph-tui
 
 - Root: `ralph-tui/`
-- Language: Go 1.23
+- Language: Go 1.26.2
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- External dependencies: `github.com/spf13/cobra` v1.10.2 (and transitive deps: pflag v1.0.9, mousetrap v1.1.0)
+- Current version: `0.1.0` (single source of truth: `ralph-tui/internal/version/version.go`)
+- External dependencies: `github.com/kungfusheep/glyph`, `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
 
 - CLI: spf13/cobra v1.10.2 (ADR: [20260409135303-cobra-cli-framework](adr/20260409135303-cobra-cli-framework.md))
-- TUI: Glyph (planned, not yet in go.mod)
+- TUI: [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`)
+- Terminal size detection: `golang.org/x/sys/unix` (ioctl TIOCGWINSZ) for full-width phase banners
 - Task runner: Make (`Makefile` at repo root)
+- Linter: golangci-lint v2.11.4 (pinned in CI)
+
+### Architecture Decision Records
+
+- [Cobra CLI Framework](adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing
+- [Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md) — Ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code
 
 ### Commands and Tests
 
@@ -47,7 +55,7 @@
 - Vulnerability check: `make vulncheck` (requires govulncheck)
 - CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `configs/`
+- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`
 
 ### Configuration
 
@@ -59,9 +67,10 @@
 - [Architecture Overview](architecture.md) — System-level architecture of ralph-tui with block diagrams and feature summaries
 - [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
 - [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
+- [Variable State Management](features/variable-state.md) — `VarTable` scoped variable tables, built-in variables, and phase-based resolution
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
 - **Coding Standards** — Conventions governing Go code in ralph-tui:
-  - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md)
+  - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md), [Lint and Tooling](coding-standards/lint-and-tooling.md), [Versioning](coding-standards/versioning.md)
 - [ralph-tui Plan](plans/ralph-tui.md) — Original specification and design rationale

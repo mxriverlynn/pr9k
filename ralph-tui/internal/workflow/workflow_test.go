@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // newTestRunner creates a Runner backed by a temp dir logger for testing.
@@ -344,10 +345,19 @@ func TestClose_IsIdempotent(t *testing.T) {
 	}
 }
 
+// newIterVT creates a VarTable in Iteration phase with ISSUE_ID bound.
+func newIterVT(projectDir, issueID string) *vars.VarTable {
+	vt := vars.New(projectDir, 0)
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ISSUE_ID", issueID)
+	return vt
+}
+
 func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 	projectDir := "/home/user/project"
 	cmd := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "42")
+	vt := newIterVT(projectDir, "42")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	want := []string{"/home/user/project/scripts/close_gh_issue", "42"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -362,7 +372,8 @@ func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 	projectDir := "/home/user/project"
 	cmd := []string{"git", "push"}
-	got := ResolveCommand(projectDir, cmd, "99")
+	vt := newIterVT(projectDir, "99")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	want := []string{"git", "push"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -377,7 +388,8 @@ func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"scripts/foo", "{{ISSUE_ID}}", "--label={{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "7")
+	vt := newIterVT(projectDir, "7")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	want := []string{"/proj/scripts/foo", "7", "--label=7"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -392,7 +404,8 @@ func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 	projectDir := "/base"
 	cmd := []string{"scripts/foo", "arg"}
-	got := ResolveCommand(projectDir, cmd, "1")
+	vt := newIterVT(projectDir, "1")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	wantExe := "/base/scripts/foo"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
@@ -402,7 +415,8 @@ func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"/usr/bin/env", "{{ISSUE_ID}}"}
-	got := ResolveCommand(projectDir, cmd, "3")
+	vt := newIterVT(projectDir, "3")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	if got[0] != "/usr/bin/env" {
 		t.Errorf("exe: got %q, want /usr/bin/env", got[0])
 	}
@@ -414,7 +428,8 @@ func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
 func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 	projectDir := "/proj"
 	cmd := []string{"git", "commit", "-m", "fix things"}
-	got := ResolveCommand(projectDir, cmd, "10")
+	vt := newIterVT(projectDir, "10")
+	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
 	want := []string{"git", "commit", "-m", "fix things"}
 	for i := range want {
 		if got[i] != want[i] {
@@ -424,7 +439,8 @@ func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 }
 
 func TestResolveCommand_EmptySlice(t *testing.T) {
-	got := ResolveCommand("/proj", []string{}, "42")
+	vt := newIterVT("/proj", "42")
+	got := ResolveCommand("/proj", []string{}, vt, vars.Iteration)
 	if len(got) != 0 {
 		t.Errorf("expected empty slice, got %v", got)
 	}
@@ -434,7 +450,8 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 	original := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
 	input := make([]string, len(original))
 	copy(input, original)
-	ResolveCommand("/proj", input, "42")
+	vt := newIterVT("/proj", "42")
+	ResolveCommand("/proj", input, vt, vars.Iteration)
 	for i := range original {
 		if input[i] != original[i] {
 			t.Errorf("input[%d] mutated: got %q, want %q", i, input[i], original[i])
@@ -444,7 +461,8 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 
 func TestResolveCommand_TemplateInExecutable(t *testing.T) {
 	cmd := []string{"scripts/issue-{{ISSUE_ID}}/run", "arg"}
-	got := ResolveCommand("/proj", cmd, "5")
+	vt := newIterVT("/proj", "5")
+	got := ResolveCommand("/proj", cmd, vt, vars.Iteration)
 	wantExe := "/proj/scripts/issue-5/run"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
@@ -452,7 +470,8 @@ func TestResolveCommand_TemplateInExecutable(t *testing.T) {
 }
 
 func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
-	got := ResolveCommand("/proj", []string{"git"}, "1")
+	vt := newIterVT("/proj", "1")
+	got := ResolveCommand("/proj", []string{"git"}, vt, vars.Iteration)
 	if got[0] != "git" {
 		t.Errorf("exe: got %q, want %q", got[0], "git")
 	}

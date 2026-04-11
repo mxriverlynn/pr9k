@@ -117,14 +117,68 @@ if cfg == nil {
 
 Do not treat `(nil, nil)` as an error — it is the documented --help path.
 
+## Pre-populate TUI widget state before starting the event loop
+
+When a TUI framework renders widgets by reading from pointer-bound fields, populate those fields before calling the blocking event-loop start function (e.g., `app.Run()`). The first rendered frame reads from those pointers immediately. Uninitialized values produce blank or misleading content on the first frame.
+
+```go
+// Pre-populate before app.Run() so the first frame shows real content.
+if len(stepFile.Initialize) > 0 {
+    header.SetPhaseSteps(stepNames(stepFile.Initialize))
+    header.SetStepState(0, ui.StepActive)
+    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+} else {
+    header.SetPhaseSteps(stepNames(stepFile.Iteration))
+    header.SetStepState(0, ui.StepActive)
+    header.IterationLine = "Iteration 1"
+}
+
+app := glyph.NewApp()
+// ... bind widgets to header fields ...
+app.Run() // first frame renders from already-populated state
+```
+
+This mirrors the general principle that display state should be initialized before the display is activated, not after.
+
+## Use strings.NewReplacer for multi-key template substitution
+
+When substituting multiple `{{KEY}}` tokens in a template string, use `strings.NewReplacer` rather than chained `strings.ReplaceAll` calls. It builds the replacement table once and applies all substitutions in a single pass, which is both faster and easier to read as the number of keys grows.
+
+```go
+// Good — single pass, one replacement table
+func substitute(template string, vals map[string]string) string {
+    pairs := make([]string, 0, len(vals)*2)
+    for k, v := range vals {
+        pairs = append(pairs, "{{"+k+"}}", v)
+    }
+    return strings.NewReplacer(pairs...).Replace(template)
+}
+
+// Usage:
+h.IterationLine = substitute("Initializing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}", map[string]string{
+    "STEP_NUM":   strconv.Itoa(stepNum),
+    "STEP_COUNT": strconv.Itoa(stepCount),
+    "STEP_NAME":  stepName,
+})
+
+// Bad — multiple passes, growing number of ReplaceAll calls as keys are added
+s := strings.ReplaceAll(template, "{{STEP_NUM}}", strconv.Itoa(stepNum))
+s = strings.ReplaceAll(s, "{{STEP_COUNT}}", strconv.Itoa(stepCount))
+s = strings.ReplaceAll(s, "{{STEP_NAME}}", stepName)
+```
+
+Keys not present in `vals` are left as-is by `strings.NewReplacer` — this is the correct contract for a template engine (missing keys stay visible as unresolved placeholders rather than silently becoming empty strings).
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
+- [TUI Display & Glyph Wiring](../features/tui-display.md) — Pre-populate TUI widget state before app.Run() (issue #50)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
 - [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests
 - [API Design](api-design.md) — Complementary standards for platform-scoped assumptions
 - [Concurrency](concurrency.md) — Complementary concurrency patterns
 - [Error Handling](error-handling.md) — Complementary error handling conventions
+- [TUI Display & Glyph Wiring](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example

@@ -1,6 +1,10 @@
 package ui
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // StepState represents the display state of a single workflow step.
 type StepState int
@@ -10,98 +14,122 @@ const (
 	StepActive
 	StepDone
 	StepFailed
+	StepSkipped // displayed as "[-] <name>"
 )
+
+// HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
+const HeaderCols = 4
 
 // StatusHeader manages the pointer-mutable string state for the TUI status header.
 // Glyph reads the exported fields via pointer on each render cycle — callers
-// update state by mutating struct fields directly (e.g. SetIteration, SetStepState).
+// update state by mutating struct fields directly (e.g. RenderIterationLine, SetStepState).
 //
 // Layout:
 //
-//	IterationLine  →  Text(&h.IterationLine)
-//	Row1[0..3]     →  HBox(Text(&h.Row1[0]), ..., Text(&h.Row1[3]))   // steps 1-4
-//	Row2[0..3]     →  HBox(Text(&h.Row2[0]), ..., Text(&h.Row2[3]))   // steps 5-8
+//	IterationLine    →  Text(&h.IterationLine)
+//	Rows[r][0..3]   →  HBox(Text(&h.Rows[r][0]), ..., Text(&h.Rows[r][3]))  // one row per HeaderCols steps
 type StatusHeader struct {
-	IterationLine string    // e.g. "Iteration 1/3 — Issue #42: Add widget support"
-	Row1          [4]string // checkbox labels for steps 0-3
-	Row2          [4]string // checkbox labels for steps 4-7
-	stepNames     [8]string
-	finalizeNames []string
+	IterationLine string               // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
+	Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
+	stepNames     []string             // current phase's step name list
 }
 
-// NewStatusHeader creates a StatusHeader with all 8 iteration step names, each
-// initialised to pending state.
-func NewStatusHeader(stepNames [8]string) *StatusHeader {
-	h := &StatusHeader{stepNames: stepNames}
-	for i, name := range stepNames {
-		h.writeLabel(i, StepPending, name)
+// NewStatusHeader constructs a header sized to fit the largest phase.
+// Call this once at startup, after validation, with the max step count across
+// all three phases (initialize, iteration, finalize).
+func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
+	rowCount := (maxStepsAcrossPhases + HeaderCols - 1) / HeaderCols // ceil division
+	if rowCount < 1 {
+		rowCount = 1
 	}
-	return h
+	return &StatusHeader{
+		Rows: make([][HeaderCols]string, rowCount),
+	}
 }
 
-// SetIteration updates the iteration line string.
-// issueID is the bare number (e.g. "42"); issueTitle is the issue's full title.
-// When total == 0, the iteration line omits the total (unbounded mode).
-func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle string) {
-	if total > 0 {
-		h.IterationLine = fmt.Sprintf("Iteration %d/%d — Issue #%s: %s", current, total, issueID, issueTitle)
+const initializeHeaderFormat = "Initializing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+const finalizeHeaderFormat = "Finalizing {{STEP_NUM}}/{{STEP_COUNT}}: {{STEP_NAME}}"
+
+// RenderInitializeLine updates the iteration line for the initialize phase.
+// Example output: "Initializing 1/2: Splash".
+func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
+	h.IterationLine = substitute(initializeHeaderFormat, map[string]string{
+		"STEP_NUM":   strconv.Itoa(stepNum),
+		"STEP_COUNT": strconv.Itoa(stepCount),
+		"STEP_NAME":  stepName,
+	})
+}
+
+// RenderIterationLine updates the iteration line for the iteration phase.
+// When maxIter == 0, the total is omitted (unbounded mode).
+// When issueID is empty, the issue suffix is omitted.
+// Example outputs: "Iteration 2/5 — Issue #42", "Iteration 3".
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+	var b strings.Builder
+	if maxIter > 0 {
+		fmt.Fprintf(&b, "Iteration %d/%d", iter, maxIter)
 	} else {
-		h.IterationLine = fmt.Sprintf("Iteration %d — Issue #%s: %s", current, issueID, issueTitle)
+		fmt.Fprintf(&b, "Iteration %d", iter)
+	}
+	if issueID != "" {
+		fmt.Fprintf(&b, " — Issue #%s", issueID)
+	}
+	h.IterationLine = b.String()
+}
+
+// RenderFinalizeLine updates the iteration line for the finalize phase.
+// Example output: "Finalizing 1/3: Deferred work".
+func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
+	h.IterationLine = substitute(finalizeHeaderFormat, map[string]string{
+		"STEP_NUM":   strconv.Itoa(stepNum),
+		"STEP_COUNT": strconv.Itoa(stepCount),
+		"STEP_NAME":  stepName,
+	})
+}
+
+// substitute replaces all {{KEY}} tokens in template with the corresponding
+// value from vals. Keys not present in vals are left as-is.
+func substitute(template string, vals map[string]string) string {
+	pairs := make([]string, 0, len(vals)*2)
+	for k, v := range vals {
+		pairs = append(pairs, "{{"+k+"}}", v)
+	}
+	return strings.NewReplacer(pairs...).Replace(template)
+}
+
+// SetPhaseSteps replaces the current step name list and re-renders all
+// checkbox slots. Call at the start of each phase (initialize, iteration,
+// finalize) to swap the header to the new phase's step set.
+//
+// Panics if len(names) exceeds the allocated grid capacity — this is a bug
+// indicator, not a user-reachable path (NewStatusHeader is sized to the
+// largest phase, so overflow means the caller passed the wrong max).
+func (h *StatusHeader) SetPhaseSteps(names []string) {
+	totalSlots := len(h.Rows) * HeaderCols
+	if len(names) > totalSlots {
+		panic(fmt.Sprintf("ui: phase has %d steps, exceeds allocated grid capacity %d", len(names), totalSlots))
+	}
+	h.stepNames = append(h.stepNames[:0], names...)
+	for r := 0; r < len(h.Rows); r++ {
+		for c := 0; c < HeaderCols; c++ {
+			idx := r*HeaderCols + c
+			if idx < len(names) {
+				h.Rows[r][c] = checkboxLabel(StepPending, names[idx])
+			} else {
+				h.Rows[r][c] = "" // trailing empty slots render as blank padding
+			}
+		}
 	}
 }
 
-// SetStepState updates the checkbox label for iteration step idx (0-based, 0-7).
+// SetStepState updates the checkbox label for step idx in the current phase.
+// Out-of-range idx is a no-op.
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
-	if idx < 0 || idx >= 8 {
+	if idx < 0 || idx >= len(h.stepNames) {
 		return
 	}
-	h.writeLabel(idx, state, h.stepNames[idx])
-}
-
-// SetFinalization switches the header to finalization mode, showing
-// "Finalizing current/total" and replacing the step rows with finalization
-// step names (all initialised to pending). Supports up to 8 finalization steps
-// across two rows; extra slots are set to "".
-func (h *StatusHeader) SetFinalization(current, total int, steps []string) {
-	h.IterationLine = fmt.Sprintf("Finalizing %d/%d", current, total)
-	h.finalizeNames = steps
-	for i := range 4 {
-		if i < len(steps) {
-			h.Row1[i] = checkboxLabel(StepPending, steps[i])
-		} else {
-			h.Row1[i] = ""
-		}
-	}
-	for i := range 4 {
-		if idx := i + 4; idx < len(steps) {
-			h.Row2[i] = checkboxLabel(StepPending, steps[idx])
-		} else {
-			h.Row2[i] = ""
-		}
-	}
-}
-
-// SetFinalizeStepState updates the state of finalization step idx (0-based).
-// Must be called after SetFinalization.
-func (h *StatusHeader) SetFinalizeStepState(idx int, state StepState) {
-	if h.finalizeNames == nil || idx < 0 || idx >= 8 || idx >= len(h.finalizeNames) {
-		return
-	}
-	label := checkboxLabel(state, h.finalizeNames[idx])
-	if idx < 4 {
-		h.Row1[idx] = label
-	} else {
-		h.Row2[idx-4] = label
-	}
-}
-
-func (h *StatusHeader) writeLabel(idx int, state StepState, name string) {
-	label := checkboxLabel(state, name)
-	if idx < 4 {
-		h.Row1[idx] = label
-	} else {
-		h.Row2[idx-4] = label
-	}
+	r, c := idx/HeaderCols, idx%HeaderCols
+	h.Rows[r][c] = checkboxLabel(state, h.stepNames[idx])
 }
 
 func checkboxLabel(state StepState, name string) string {
@@ -112,6 +140,8 @@ func checkboxLabel(state StepState, name string) string {
 		return fmt.Sprintf("[✓] %s", name)
 	case StepFailed:
 		return fmt.Sprintf("[✗] %s", name)
+	case StepSkipped:
+		return fmt.Sprintf("[-] %s", name)
 	default:
 		return fmt.Sprintf("[ ] %s", name)
 	}

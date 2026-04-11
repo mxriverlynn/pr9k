@@ -1,181 +1,287 @@
 package workflow
 
 import (
-	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
-
-//go:embed ralph-art.txt
-var bannerArt string
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
 // *Runner satisfies this interface.
 type StepExecutor interface {
 	ui.StepRunner
-	CaptureOutput(command []string) (string, error)
+	LastCapture() string
 	Close() error
 }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
-	SetIteration(current, total int, issueID, issueTitle string)
+	RenderInitializeLine(stepNum, stepCount int, stepName string)
+	RenderIterationLine(iter, maxIter int, issueID string)
+	RenderFinalizeLine(stepNum, stepCount int, stepName string)
+	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
-	SetFinalization(current, total int, steps []string)
-	SetFinalizeStepState(idx int, state ui.StepState)
 }
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-	ProjectDir    string
-	Iterations    int
-	Steps         []steps.Step
-	FinalizeSteps []steps.Step
+	ProjectDir      string
+	Iterations      int
+	InitializeSteps []steps.Step
+	Steps           []steps.Step
+	FinalizeSteps   []steps.Step
+	// LogWidth is the column width to use for full-width log separators
+	// (e.g. phase banner underlines). A value of 0 or less falls back to
+	// ui.DefaultTerminalWidth. Callers should pass the log panel's visible
+	// width so banners fill the panel without wrapping.
+	LogWidth int
 }
 
-// iterHeader adapts RunHeader to ui.StepHeader for iteration steps.
-type iterHeader struct{ h RunHeader }
+// noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
+// initialize) that do not update the TUI step-checkbox display.
+type noopHeader struct{}
 
-func (a *iterHeader) SetStepState(idx int, state ui.StepState) { a.h.SetStepState(idx, state) }
+func (noopHeader) SetStepState(int, ui.StepState) {}
 
-// finalHeader adapts RunHeader to ui.StepHeader for finalization steps.
-type finalHeader struct{ h RunHeader }
-
-func (a *finalHeader) SetStepState(idx int, state ui.StepState) {
-	a.h.SetFinalizeStepState(idx, state)
+// trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
+// iteration step at absolute index idx. It also records the last StepState
+// set so Run can check whether the step ended as StepDone before consulting
+// BreakLoopIfEmpty.
+type trackingOffsetIterHeader struct {
+	h         RunHeader
+	idx       int
+	lastState ui.StepState
 }
 
-// Run is the main orchestration goroutine. It displays the startup banner,
-// fetches the GitHub username, runs N workflow iterations, executes the
-// finalization phase, writes the completion summary, and closes the executor.
-func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) {
-	// 1. Display embedded banner.
-	for _, line := range strings.Split(bannerArt, "\n") {
-		executor.WriteToLog(line)
+func (a *trackingOffsetIterHeader) SetStepState(_ int, state ui.StepState) {
+	a.lastState = state
+	a.h.SetStepState(a.idx, state)
+}
+
+// RunResult holds the outcome of a completed Run call.
+type RunResult struct {
+	// IterationsRun is the index of the last iteration that began (1-based).
+	// It includes the iteration that triggered a breakLoopIfEmpty exit.
+	// Zero if the iteration loop never started.
+	IterationsRun int
+}
+
+// Run is the main orchestration goroutine. It drives three config-defined phases
+// — initialize, iteration loop, finalize — via VarTable-based substitution, and
+// closes the executor when done.
+func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
+	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+
+	logWidth := cfg.LogWidth
+	if logWidth <= 0 {
+		logWidth = ui.DefaultTerminalWidth
 	}
 
-	// 2. Get GitHub username.
-	userScript := filepath.Join(cfg.ProjectDir, "scripts", "get_gh_user")
-	username, err := executor.CaptureOutput([]string{userScript})
-	if err != nil {
-		executor.WriteToLog(fmt.Sprintf("Warning: could not get GitHub user: %v", err))
+	// emitBlank writes a single blank line to the log body if one is needed
+	// to separate the next piece of content from the previous. It is called
+	// before each iteration separator, each step's Orchestrate call, and
+	// the completion summary. The first call in Run is a no-op so the log
+	// does not begin with a leading blank line.
+	needBlank := false
+	emitBlank := func() {
+		if needBlank {
+			executor.WriteToLog("")
+		}
+		needBlank = true
 	}
 
-	// 3. Iteration loop.
-	iterationsRun := 0
-	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
-		issueScript := filepath.Join(cfg.ProjectDir, "scripts", "get_next_issue")
-		issueID, _ := executor.CaptureOutput([]string{issueScript, username})
+	// writePhaseBanner emits the full-width phase-entry banner: an emit-blank
+	// separator (suppressed on the very first log line), the phase name, and
+	// a full-width "═" underline. A trailing blank line is supplied by the
+	// next content block's emitBlank call.
+	writePhaseBanner := func(phaseName string) {
+		emitBlank()
+		heading, underline := ui.PhaseBanner(phaseName, logWidth)
+		executor.WriteToLog(heading)
+		executor.WriteToLog(underline)
+	}
 
-		if issueID == "" {
-			executor.WriteToLog(fmt.Sprintf("%s — No issue found. Exiting loop.", iterationLabel(i, cfg.Iterations)))
-			break
-		}
+	// writeCaptureLog appends the "Captured VAR = value" line to the log
+	// body directly after a step that defined captureAs, separated from the
+	// preceding step output by a blank line for readability.
+	writeCaptureLog := func(varName, value string) {
+		emitBlank()
+		executor.WriteToLog(ui.CaptureLog(varName, value))
+	}
 
-		sha, shaErr := executor.CaptureOutput([]string{"git", "rev-parse", "HEAD"})
-		if shaErr != nil {
-			executor.WriteToLog(fmt.Sprintf("Warning: could not get HEAD SHA: %v", shaErr))
-		}
-
-		header.SetIteration(i, cfg.Iterations, issueID, "")
-		for j := range cfg.Steps {
-			header.SetStepState(j, ui.StepPending)
-		}
-
-		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("%s — Issue #%s", iterationLabel(i, cfg.Iterations), issueID)))
-
-		resolvedSteps, err := buildIterationSteps(cfg.ProjectDir, cfg.Steps, issueID, sha)
+	// 1. Initialize phase: run each step in order, binding captureAs results
+	// into the persistent variable table so they are available in all phases.
+	vt.SetPhase(vars.Initialize)
+	if len(cfg.InitializeSteps) > 0 {
+		writePhaseBanner("Initializing")
+	}
+	for j, s := range cfg.InitializeSteps {
+		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
+		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Initialize)
 		if err != nil {
-			executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
-			break
+			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
+			continue
 		}
-
-		action := ui.Orchestrate(resolvedSteps, executor, &iterHeader{header}, keyHandler)
+		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
+		emitBlank()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
-			return
+			return RunResult{}
 		}
-
-		iterationsRun++
+		if s.CaptureAs != "" {
+			captured := executor.LastCapture()
+			vt.Bind(vars.Initialize, s.CaptureAs, captured)
+			writeCaptureLog(s.CaptureAs, captured)
+		}
 	}
 
-	// 4. Finalization phase (runs even after early loop exit).
+	// 2. Iteration loop: repeat until the configured limit or until a step with
+	// BreakLoopIfEmpty produces empty stdout capture on successful completion.
+	writePhaseBanner("Iterations")
+	iterationsRun := 0
+	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
+		iterationsRun = i
+		vt.ResetIteration()
+		vt.SetIteration(i)
+		vt.SetPhase(vars.Iteration)
+
+		header.RenderIterationLine(i, cfg.Iterations, "")
+		iterStepNames := make([]string, len(cfg.Steps))
+		for j, s := range cfg.Steps {
+			iterStepNames[j] = s.Name
+		}
+		header.SetPhaseSteps(iterStepNames)
+
+		emitBlank()
+		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
+
+		breakOuter := false
+		for j, s := range cfg.Steps {
+			vt.SetStep(j+1, len(cfg.Steps), s.Name)
+			resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Iteration)
+			if err != nil {
+				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
+				breakOuter = true
+				break
+			}
+			emitBlank()
+			th := &trackingOffsetIterHeader{h: header, idx: j}
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, th, keyHandler)
+			if action == ui.ActionQuit {
+				_ = executor.Close()
+				return RunResult{IterationsRun: iterationsRun}
+			}
+			captured := executor.LastCapture()
+			if s.CaptureAs != "" {
+				vt.Bind(vars.Iteration, s.CaptureAs, captured)
+				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				header.RenderIterationLine(i, cfg.Iterations, issueID)
+				writeCaptureLog(s.CaptureAs, captured)
+			}
+			// BreakLoopIfEmpty fires only on successful completion (StepDone).
+			// If the step failed (non-zero exit), the check is skipped so that
+			// normal error-mode handling takes effect instead.
+			if s.BreakLoopIfEmpty && th.lastState == ui.StepDone && captured == "" {
+				for remaining := j + 1; remaining < len(cfg.Steps); remaining++ {
+					header.SetStepState(remaining, ui.StepSkipped)
+				}
+				breakOuter = true
+				break
+			}
+		}
+		if breakOuter {
+			break
+		}
+	}
+
+	// 3. Finalization phase: runs even after an early loop exit.
 	finalizeNames := make([]string, len(cfg.FinalizeSteps))
 	for i, s := range cfg.FinalizeSteps {
 		finalizeNames[i] = s.Name
 	}
-	header.SetFinalization(1, len(cfg.FinalizeSteps), finalizeNames)
+	header.SetPhaseSteps(finalizeNames)
 
-	finalResolvedSteps, err := buildFinalizeSteps(cfg.ProjectDir, cfg.FinalizeSteps)
-	if err == nil {
-		action := ui.Orchestrate(finalResolvedSteps, executor, &finalHeader{header}, keyHandler)
+	vt.SetPhase(vars.Finalize)
+	if len(cfg.FinalizeSteps) > 0 {
+		writePhaseBanner("Finalizing")
+	}
+	for j, s := range cfg.FinalizeSteps {
+		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
+		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Finalize)
+		if err != nil {
+			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
+			continue
+		}
+		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
+		emitBlank()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
-			return
+			return RunResult{IterationsRun: iterationsRun}
 		}
 	}
 
-	// 5. Completion summary.
-	executor.WriteToLog(fmt.Sprintf("Ralph completed after %d iteration(s) and %d finalizing tasks.",
-		iterationsRun, len(cfg.FinalizeSteps)))
+	// 4. Completion sequence: write summary as the last line of the main
+	// body log, flip to ModeDone, wait for one keypress.
+	emitBlank()
+	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
+	keyHandler.SetMode(ui.ModeDone)
+	<-keyHandler.Actions
 
-	// 6. Close executor (sends EOF to log pipe).
+	// 5. Close executor (sends EOF to log pipe).
 	_ = executor.Close()
+	return RunResult{IterationsRun: iterationsRun}
 }
 
-// iterationLabel returns "Iteration N/M" for bounded mode or "Iteration N" for unbounded (total == 0).
-func iterationLabel(i, total int) string {
-	if total > 0 {
-		return fmt.Sprintf("Iteration %d/%d", i, total)
-	}
-	return fmt.Sprintf("Iteration %d", i)
-}
-
-func buildIterationSteps(projectDir string, stepsConfig []steps.Step, issueID, sha string) ([]ui.ResolvedStep, error) {
-	result := make([]ui.ResolvedStep, len(stepsConfig))
-	for i, s := range stepsConfig {
-		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, issueID, sha)
-			if err != nil {
-				return nil, fmt.Errorf("step %q: %w", s.Name, err)
-			}
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
-			}
-		} else {
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, issueID),
-			}
+// buildStep resolves a single step into a runnable ResolvedStep using vt for
+// {{VAR}} substitution in the given phase.
+func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+	if s.IsClaude {
+		prompt, err := steps.BuildPrompt(projectDir, s, vt, phase)
+		if err != nil {
+			return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
 		}
+		return ui.ResolvedStep{
+			Name:    s.Name,
+			Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
+		}, nil
 	}
-	return result, nil
+	return ui.ResolvedStep{
+		Name:    s.Name,
+		Command: ResolveCommand(projectDir, s.Command, vt, phase),
+	}, nil
 }
 
-func buildFinalizeSteps(projectDir string, stepsConfig []steps.Step) ([]ui.ResolvedStep, error) {
-	result := make([]ui.ResolvedStep, len(stepsConfig))
-	for i, s := range stepsConfig {
-		if s.IsClaude {
-			prompt, err := steps.BuildPrompt(projectDir, s, "", "")
-			if err != nil {
-				return nil, fmt.Errorf("finalize step %q: %w", s.Name, err)
-			}
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
-			}
-		} else {
-			result[i] = ui.ResolvedStep{
-				Name:    s.Name,
-				Command: ResolveCommand(projectDir, s.Command, ""),
-			}
-		}
+// ResolveCommand substitutes {{VAR}} tokens in each command element using vt
+// and resolves relative script paths against projectDir.
+//
+// For each element:
+//   - All {{VAR_NAME}} tokens are replaced using the substitution engine.
+//   - The first element (the executable) is resolved relative to projectDir if
+//     it is a relative path containing a path separator (i.e. not a bare
+//     command like "git").
+func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+	if len(command) == 0 {
+		return command
 	}
-	return result, nil
+
+	result := make([]string, len(command))
+	for i, arg := range command {
+		substituted, _ := vars.Substitute(arg, vt, phase)
+		result[i] = substituted
+	}
+
+	// Resolve the executable if it looks like a relative script path.
+	exe := result[0]
+	if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
+		result[0] = filepath.Join(projectDir, exe)
+	}
+
+	return result
 }

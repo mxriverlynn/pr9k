@@ -56,10 +56,14 @@ func TestNormalMode_OtherKeys_Ignored(t *testing.T) {
 // --- Quit confirmation from normal mode ---
 
 func TestQuitConfirm_Y_SendsActionQuit(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+	h, cancelCalled, actions := newTestHandler(t)
 
 	h.Handle("q")
 	h.Handle("y")
+
+	if !*cancelCalled {
+		t.Error("expected cancel (subprocess terminate) to be called when confirming quit from normal mode")
+	}
 
 	select {
 	case action := <-actions:
@@ -96,6 +100,72 @@ func TestQuitConfirm_OtherKey_RemainsInConfirmMode(t *testing.T) {
 	}
 	if len(actions) != 0 {
 		t.Error("no action should be sent for unrecognized key in quit-confirm mode")
+	}
+}
+
+// Pressing Escape while in the quit-confirm prompt must cancel the quit and
+// return the handler to its previous mode (ModeNormal in this case).
+func TestQuitConfirm_Escape_FromNormal_RestoresNormalMode(t *testing.T) {
+	h, cancelCalled, actions := newTestHandler(t)
+
+	h.Handle("q")
+	h.Handle("<Escape>")
+
+	if h.mode != ModeNormal {
+		t.Errorf("expected ModeNormal after Escape, got %v", h.mode)
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected normal shortcuts after Escape, got %q", h.ShortcutLine())
+	}
+	if *cancelCalled {
+		t.Error("cancel must not fire when the quit is cancelled via Escape")
+	}
+	if len(actions) != 0 {
+		t.Error("no action should be sent when Escape cancels quit")
+	}
+}
+
+// Escape must return to the previous mode (ModeError) when quit was triggered
+// from error mode, not unconditionally to normal.
+func TestQuitConfirm_Escape_FromErrorMode_RestoresErrorMode(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.Handle("q")
+	h.Handle("<Escape>")
+
+	if h.mode != ModeError {
+		t.Errorf("expected ModeError to be restored, got %v", h.mode)
+	}
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts after Escape, got %q", h.ShortcutLine())
+	}
+}
+
+// Confirming a quit with 'y' flips the footer to "Quitting..." so the user
+// has visual feedback that the confirmation was accepted before the
+// orchestration goroutine unwinds.
+func TestQuitConfirm_Y_SetsQuittingFooter(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.Handle("q")
+	h.Handle("y")
+
+	if h.mode != ModeQuitting {
+		t.Errorf("expected ModeQuitting after y, got %v", h.mode)
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine footer, got %q", h.ShortcutLine())
+	}
+}
+
+func TestSetMode_Quitting_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeQuitting)
+
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine, got %q", h.ShortcutLine())
 	}
 }
 
@@ -222,11 +292,17 @@ func TestErrorMode_OtherKeys_Ignored(t *testing.T) {
 // --- Quit confirmation from error mode ---
 
 func TestQuitConfirm_Y_FromErrorMode_SendsActionQuit(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+	h, cancelCalled, actions := newTestHandler(t)
 	h.SetMode(ModeError)
 
 	h.Handle("q")
 	h.Handle("y")
+
+	// Terminate is a no-op at runtime when no subprocess is running, but the
+	// cancel hook should still fire so quit semantics are identical across modes.
+	if !*cancelCalled {
+		t.Error("expected cancel to be called when confirming quit from error mode")
+	}
 
 	select {
 	case action := <-actions:
@@ -340,6 +416,138 @@ func TestForceQuit_Idempotent_CalledTwice(t *testing.T) {
 	action := <-actions
 	if action != ActionQuit {
 		t.Errorf("expected ActionQuit, got %v", action)
+	}
+}
+
+// --- Race detector: concurrent ShortcutLine access (issue #48, Option Q) ---
+
+// TestShortcutLine_ConcurrentRead_NoRace simulates Glyph's render goroutine
+// reading ShortcutLine (via the mutex-protected accessor) concurrently while
+// the workflow goroutine cycles modes. Verifies Option Q is race-free.
+// Run with: go test -race ./...
+func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	stop := make(chan struct{})
+	// Simulate Glyph's render goroutine: continuously reads ShortcutLine.
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = h.ShortcutLine()
+			}
+		}
+	}()
+
+	// Workflow goroutine: cycle through all modes.
+	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal, ModeDone}
+	for i := range 100 {
+		h.SetMode(modes[i%len(modes)])
+	}
+
+	close(stop)
+}
+
+// --- ShortcutLinePtr ---
+
+// T1: ShortcutLinePtr returns a non-nil pointer.
+func TestShortcutLinePtr_ReturnsNonNilPointer(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	p := h.ShortcutLinePtr()
+
+	if p == nil {
+		t.Error("expected non-nil pointer from ShortcutLinePtr")
+	}
+}
+
+// T2: Dereferencing the pointer returned by ShortcutLinePtr tracks mode changes.
+func TestShortcutLinePtr_DereferencesToCurrentValue(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	p := h.ShortcutLinePtr()
+
+	if *p != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts initially, got %q", *p)
+	}
+
+	h.SetMode(ModeError)
+	if *p != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts after SetMode(ModeError), got %q", *p)
+	}
+
+	h.SetMode(ModeQuitConfirm)
+	if *p != QuitConfirmPrompt {
+		t.Errorf("expected QuitConfirmPrompt after SetMode(ModeQuitConfirm), got %q", *p)
+	}
+
+	h.SetMode(ModeNormal)
+	if *p != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after SetMode(ModeNormal), got %q", *p)
+	}
+}
+
+// T3: ShortcutLinePtr returns the same address on every call.
+func TestShortcutLinePtr_StableAddress(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	p1 := h.ShortcutLinePtr()
+	p2 := h.ShortcutLinePtr()
+
+	if p1 != p2 {
+		t.Errorf("expected stable pointer address, got %p and %p", p1, p2)
+	}
+}
+
+// T4: *ShortcutLinePtr() always agrees with ShortcutLine() after each SetMode.
+func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeDone}
+
+	for _, mode := range modes {
+		h.SetMode(mode)
+		got := *h.ShortcutLinePtr()
+		want := h.ShortcutLine()
+		if got != want {
+			t.Errorf("mode %v: *ShortcutLinePtr() = %q, ShortcutLine() = %q", mode, got, want)
+		}
+	}
+}
+
+// --- Done mode ---
+
+// TestSetMode_Done_UpdatesShortcutLine verifies that SetMode(ModeDone) swaps
+// the shortcut bar to DoneShortcuts.
+func TestSetMode_Done_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeDone)
+
+	if h.ShortcutLine() != DoneShortcuts {
+		t.Errorf("expected DoneShortcuts, got %q", h.ShortcutLine())
+	}
+}
+
+// TestDoneMode_AnyKey_SendsActionQuit verifies that any key press in ModeDone
+// sends ActionQuit.
+func TestDoneMode_AnyKey_SendsActionQuit(t *testing.T) {
+	keys := []string{"q", "n", "y", "c", "r", " ", "x", "\r"}
+	for _, key := range keys {
+		actions := make(chan StepAction, 1)
+		h := NewKeyHandler(func() {}, actions)
+		h.SetMode(ModeDone)
+
+		h.Handle(key)
+
+		select {
+		case action := <-actions:
+			if action != ActionQuit {
+				t.Errorf("key %q: expected ActionQuit, got %v", key, action)
+			}
+		default:
+			t.Errorf("key %q: expected ActionQuit to be sent, but channel was empty", key)
+		}
 	}
 }
 

@@ -1,19 +1,31 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/kungfusheep/glyph"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/workflow"
 )
+
+// stepNames extracts the Name field from each step in a slice.
+func stepNames(ss []steps.Step) []string {
+	names := make([]string, len(ss))
+	for i, s := range ss {
+		names[i] = s.Name
+	}
+	return names
+}
 
 func main() {
 	cfg, err := cli.Execute()
@@ -38,35 +50,95 @@ func main() {
 		os.Exit(1)
 	}
 
+	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
+		for _, ve := range validationErrs {
+			fmt.Fprintln(os.Stderr, ve.Error())
+		}
+		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
+		_ = log.Close()
+		os.Exit(1)
+	}
+
 	runner := workflow.NewRunner(log, cfg.ProjectDir)
 
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
-	var stepNames [8]string
-	for i, s := range stepFile.Iteration {
-		if i >= 8 {
-			break
-		}
-		stepNames[i] = s.Name
-	}
-	header := ui.NewStatusHeader(stepNames)
+	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
+	header := ui.NewStatusHeader(maxSteps)
 
-	// Drain the log pipe to stdout until EOF.
-	go func() {
-		scanner := bufio.NewScanner(runner.LogReader())
-		buf := make([]byte, 256*1024)
-		scanner.Buffer(buf, 256*1024)
-		for scanner.Scan() {
-			fmt.Println(scanner.Text())
+	// Pre-populate the first visible phase state so the first rendered frame
+	// shows real content, not empty slots.
+	if len(stepFile.Initialize) > 0 {
+		header.SetPhaseSteps(stepNames(stepFile.Initialize))
+		header.SetStepState(0, ui.StepActive)
+		header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+	} else {
+		header.SetPhaseSteps(stepNames(stepFile.Iteration))
+		header.SetStepState(0, ui.StepActive)
+		if cfg.Iterations > 0 {
+			header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+		} else {
+			header.IterationLine = "Iteration 1"
 		}
-	}()
+	}
+
+	app := glyph.NewApp()
+
+	// Wire keyboard dispatch: Glyph owns the tty and forwards each keypress to keyHandler.
+	for _, key := range []string{"n", "q", "y", "c", "r", "<Escape>"} {
+		k := key
+		app.Handle(k, func() { keyHandler.Handle(k) })
+	}
+
+	// Build checkpoint row widgets — one HBox per header row, HeaderCols Text widgets each.
+	rowWidgets := make([]any, len(header.Rows))
+	for r := range header.Rows {
+		cols := make([]any, ui.HeaderCols)
+		for c := range cols {
+			cols[c] = glyph.Text(&header.Rows[r][c])
+		}
+		rowWidgets[r] = glyph.HBox(cols...)
+	}
+
+	// Assemble the full VBox layout tree. HRules separate the checkbox grid
+	// from the iteration status line, the status line from the log panel,
+	// and the log panel from the shortcut footer.
+	children := make([]any, 0, 5+len(rowWidgets)+2)
+	children = append(children, rowWidgets...)
+	children = append(children, glyph.HRule())
+	children = append(children, glyph.Text(&header.IterationLine))
+	children = append(children, glyph.HRule())
+	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
+	children = append(children, glyph.HRule())
+	// Footer: shortcut bar on the left, app version pinned to the bottom-right.
+	// glyph.Space() is a flex spacer inside an HBox, pushing the version text
+	// against the right border of the VBox.
+	versionLabel := "ralph-tui v" + version.Version
+	children = append(children, glyph.HBox(
+		glyph.Text(keyHandler.ShortcutLinePtr()),
+		glyph.Space(),
+		glyph.Text(&versionLabel),
+	))
+
+	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
+
+	// logWidth sizes the full-width phase banner underline to fill the log
+	// panel. The panel sits inside a rounded VBox border, so we subtract 2
+	// columns for the left and right border glyphs. A non-TTY stdout falls
+	// back to ui.DefaultTerminalWidth.
+	logWidth := ui.TerminalWidth() - 2
+	if logWidth < 1 {
+		logWidth = ui.DefaultTerminalWidth
+	}
 
 	runCfg := workflow.RunConfig{
-		ProjectDir:    cfg.ProjectDir,
-		Iterations:    cfg.Iterations,
-		Steps:         stepFile.Iteration,
-		FinalizeSteps: stepFile.Finalize,
+		ProjectDir:      cfg.ProjectDir,
+		Iterations:      cfg.Iterations,
+		InitializeSteps: stepFile.Initialize,
+		Steps:           stepFile.Iteration,
+		FinalizeSteps:   stepFile.Finalize,
+		LogWidth:        logWidth,
 	}
 
 	done := make(chan struct{})
@@ -79,6 +151,7 @@ func main() {
 		<-sigChan
 		close(signaled)
 		keyHandler.ForceQuit()
+		app.Stop()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -86,14 +159,25 @@ func main() {
 		os.Exit(1)
 	}()
 
+	// Run the workflow in the background; stop the TUI when it completes.
 	go func() {
 		defer close(done)
-		workflow.Run(runner, header, keyHandler, runCfg)
+		_ = workflow.Run(runner, header, keyHandler, runCfg)
+		signal.Stop(sigChan)
+		_ = log.Close()
+		app.Stop()
 	}()
 
-	<-done
-	signal.Stop(sigChan)
-	_ = log.Close()
+	if err := app.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, "glyph:", err)
+		os.Exit(1)
+	}
+
+	// Wait for the workflow goroutine if app.Run returned before it finished.
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
 
 	select {
 	case <-signaled:

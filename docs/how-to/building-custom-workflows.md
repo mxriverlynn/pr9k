@@ -4,8 +4,9 @@ This guide explains how to create and modify workflow step sequences in ralph-tu
 
 ## Step Configuration Files
 
-Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the project directory). This file contains two groups:
+Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the project directory). This file contains three groups:
 
+- **`initialize`** — Steps run once before the iteration loop begins
 - **`iteration`** — Steps run once per issue
 - **`finalize`** — Steps run once after all iterations complete
 
@@ -21,8 +22,9 @@ Each step object has the following fields:
 | `isClaude` | bool | yes | `true` for Claude CLI steps, `false` for shell commands |
 | `model` | string | Claude steps | Claude model to use (`"sonnet"`, `"opus"`) |
 | `promptFile` | string | Claude steps | Filename in `prompts/` directory (e.g., `"feature-work.md"`) |
-| `prependVars` | bool | Claude steps | Whether to prepend `ISSUENUMBER=` and `STARTINGSHA=` to the prompt |
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
+| `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
+| `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
 
 ## Claude Steps
 
@@ -32,12 +34,12 @@ A Claude step invokes the `claude` CLI with a prompt file. At runtime, the orche
 claude --permission-mode acceptEdits --model <model> -p <prompt-content>
 ```
 
-The prompt content is read from `prompts/<promptFile>`. When `prependVars` is `true`, the issue number and starting SHA are prepended to the prompt text (see [Variable Output & Injection](variable-output-and-injection.md) for details).
+The prompt content is read from `prompts/<promptFile>` and all `{{VAR_NAME}}` tokens are substituted at runtime. Use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other built-in variables to inject iteration context (see [Variable Output & Injection](variable-output-and-injection.md) for the full variable list).
 
 ### Example: Claude step
 
 ```json
-{"name": "Feature work", "model": "sonnet", "promptFile": "feature-work.md", "isClaude": true, "prependVars": true}
+{"name": "Feature work", "model": "sonnet", "promptFile": "feature-work.md", "isClaude": true}
 ```
 
 ## Shell Command Steps
@@ -56,11 +58,13 @@ Relative paths containing a `/` separator are resolved against the project direc
 {"name": "Git push", "isClaude": false, "command": ["git", "push"]}
 ```
 
-## Iteration vs. Finalization Steps
+## Initialize, Iteration, and Finalization Steps
 
-**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to the current issue number and starting SHA through variable injection (`prependVars: true` for Claude steps, `{{ISSUE_ID}}` for shell commands).
+**Initialize steps** (the `"initialize"` array in `ralph-steps.json`) run once before the iteration loop begins. Use them for setup tasks that must complete before any issue is processed.
 
-**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). They do not have access to issue-specific variables — `prependVars` should be `false`, and `{{ISSUE_ID}}` will resolve to an empty string.
+**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
+
+**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ## The Default Workflow
 
@@ -93,9 +97,10 @@ Create or modify `ralph-steps.json`. For example, a minimal workflow:
 
 ```json
 {
+  "initialize": [],
   "iteration": [
-    {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true, "prependVars": true},
-    {"name": "Test", "model": "sonnet", "promptFile": "write-tests.md", "isClaude": true, "prependVars": true},
+    {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true},
+    {"name": "Test", "model": "sonnet", "promptFile": "write-tests.md", "isClaude": true},
     {"name": "Push", "isClaude": false, "command": ["git", "push"]}
   ],
   "finalize": [
@@ -134,7 +139,13 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 
 ## Related Documentation
 
+- [Getting Started](getting-started.md) — Install, first run, and orientation
+- [Variable Output & Injection](variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved into prompts and commands
+- [Capturing Step Output](capturing-step-output.md) — How to use `captureAs` to bind step stdout to a variable
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
+- [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
+- [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures
+- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `ralph-steps.json`, not Go code; includes documented exceptions
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Implementation details of step loading and prompt construction
-- [Variable Output & Injection](variable-output-and-injection.md) — How variables are injected into prompts and commands
 - [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
 - [Subprocess Execution](../features/subprocess-execution.md) — How steps are executed as subprocesses

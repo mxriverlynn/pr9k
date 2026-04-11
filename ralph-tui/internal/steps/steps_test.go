@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
 // projectRoot returns the path two levels up from this test file's directory
@@ -28,8 +29,32 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 8 {
-		t.Errorf("expected 8 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 10 {
+		t.Errorf("expected 10 iteration steps, got %d", len(got.Iteration))
+	}
+}
+
+func TestLoadSteps_InitializeCount(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+	if len(got.Initialize) != 2 {
+		t.Errorf("expected 2 initialize steps, got %d", len(got.Initialize))
+	}
+}
+
+func TestLoadSteps_InitializeOrder(t *testing.T) {
+	got, err := steps.LoadSteps(projectRoot(t))
+	if err != nil {
+		t.Fatalf("LoadSteps returned error: %v", err)
+	}
+
+	wantNames := []string{"Splash", "Get GitHub user"}
+	for i, want := range wantNames {
+		if got.Initialize[i].Name != want {
+			t.Errorf("step[%d]: expected name %q, got %q", i, want, got.Initialize[i].Name)
+		}
 	}
 }
 
@@ -50,6 +75,8 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 	}
 
 	wantNames := []string{
+		"Get next issue",
+		"Get starting SHA",
 		"Feature work",
 		"Test planning",
 		"Test writing",
@@ -86,8 +113,8 @@ func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude step
-	s := got.Iteration[0]
+	// "Feature work" is a claude step (index 2; preceded by two non-claude data-gathering steps)
+	s := got.Iteration[2]
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
 	}
@@ -105,8 +132,8 @@ func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" is a non-claude step
-	s := got.Iteration[7]
+	// "Git push" is a non-claude step (index 9; two new steps prepended)
+	s := got.Iteration[9]
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -206,32 +233,102 @@ func TestLoadSteps_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestLoadSteps_IterationPrependVars(t *testing.T) {
-	got, err := steps.LoadSteps(projectRoot(t))
-	if err != nil {
-		t.Fatalf("LoadSteps returned error: %v", err)
+func TestLoadSteps_InitializeDefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	for i, s := range got.Iteration {
-		if s.IsClaude && !s.PrependVars {
-			t.Errorf("iteration step %d (%q): isClaude=true but prependVars is false; iteration steps require ISSUENUMBER and STARTINGSHA", i, s.Name)
-		}
-		if !s.IsClaude && s.PrependVars {
-			t.Errorf("iteration step %d (%q): isClaude=false but prependVars is true", i, s.Name)
-		}
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(got.Initialize) != 0 {
+		t.Errorf("expected Initialize to be empty when absent from JSON, got %d steps", len(got.Initialize))
 	}
 }
 
-func TestLoadSteps_FinalizePrependVars(t *testing.T) {
-	got, err := steps.LoadSteps(projectRoot(t))
-	if err != nil {
-		t.Fatalf("LoadSteps returned error: %v", err)
+func TestLoadSteps_InitializeDeserializes(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"initialize":[{"name":"Setup","isClaude":false,"command":["echo","ready"]}],"iteration":[],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	for i, s := range got.Finalize {
-		if s.PrependVars {
-			t.Errorf("finalize step %d (%q): prependVars is true; finalization steps must not prepend issue/SHA vars", i, s.Name)
-		}
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(got.Initialize) != 1 {
+		t.Fatalf("expected 1 initialize step, got %d", len(got.Initialize))
+	}
+	if got.Initialize[0].Name != "Setup" {
+		t.Errorf("expected initialize step name %q, got %q", "Setup", got.Initialize[0].Name)
+	}
+}
+
+func TestStep_CaptureAsDefault(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.Iteration[0].CaptureAs != "" {
+		t.Errorf("expected CaptureAs to be empty by default, got %q", got.Iteration[0].CaptureAs)
+	}
+}
+
+func TestStep_CaptureAsDeserializes(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[{"name":"Get Issue","isClaude":false,"captureAs":"ISSUE_ID"}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.Iteration[0].CaptureAs != "ISSUE_ID" {
+		t.Errorf("expected CaptureAs %q, got %q", "ISSUE_ID", got.Iteration[0].CaptureAs)
+	}
+}
+
+func TestStep_BreakLoopIfEmptyDefault(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.Iteration[0].BreakLoopIfEmpty {
+		t.Error("expected BreakLoopIfEmpty to be false by default")
+	}
+}
+
+func TestStep_BreakLoopIfEmptyDeserializes(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[{"name":"Get Issue","isClaude":false,"captureAs":"ISSUE_ID","breakLoopIfEmpty":true}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !got.Iteration[0].BreakLoopIfEmpty {
+		t.Error("expected BreakLoopIfEmpty to be true when set in JSON")
 	}
 }
 
@@ -259,14 +356,14 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" command should be ["git", "push"]
-	gitPush := got.Iteration[7]
+	// "Git push" command should be ["git", "push"] (index 9; two new steps prepended)
+	gitPush := got.Iteration[9]
 	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
 		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
 	}
 
-	// "Close issue" command should contain "close_gh_issue"
-	closeIssue := got.Iteration[5]
+	// "Close issue" command should contain "close_gh_issue" (index 7; two new steps prepended)
+	closeIssue := got.Iteration[7]
 	found := false
 	for _, part := range closeIssue.Command {
 		if strings.Contains(part, "close_gh_issue") {
@@ -294,31 +391,17 @@ func makeTempProjectWithPrompt(t *testing.T, filename, content string) string {
 	return dir
 }
 
-func TestBuildPrompt_PrependVarsTrue(t *testing.T) {
+func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "do the thing\n")
-	step := steps.Step{PromptFile: "feature.txt", PrependVars: true}
+	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
 
-	result, err := steps.BuildPrompt(dir, step, "42", "abc123")
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	want := "ISSUENUMBER=42\nSTARTINGSHA=abc123\ndo the thing\n"
-	if result != want {
-		t.Errorf("got %q, want %q", result, want)
-	}
-}
-
-func TestBuildPrompt_PrependVarsFalse(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "finalize.txt", "wrap it up\n")
-	step := steps.Step{PromptFile: "finalize.txt", PrependVars: false}
-
-	result, err := steps.BuildPrompt(dir, step, "99", "deadbeef")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "wrap it up\n"
+	want := "do the thing\n"
 	if result != want {
 		t.Errorf("got %q, want %q", result, want)
 	}
@@ -326,113 +409,22 @@ func TestBuildPrompt_PrependVarsFalse(t *testing.T) {
 
 func TestBuildPrompt_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
-	step := steps.Step{PromptFile: "missing.txt", PrependVars: false}
+	step := steps.Step{PromptFile: "missing.txt"}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step, "1", "sha")
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
-	}
-}
-
-func TestBuildPrompt_RealNewlines(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "nl.txt", "content\n")
-	step := steps.Step{PromptFile: "nl.txt", PrependVars: true}
-
-	result, err := steps.BuildPrompt(dir, step, "7", "sha7")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(result, "\n") {
-		t.Error("expected real newlines in result, found none")
-	}
-	// Ensure no literal backslash-n sequences
-	if strings.Contains(result, `\n`) {
-		t.Error("result contains literal \\n instead of real newlines")
-	}
-}
-
-func TestBuildPrompt_CorrectInterpolation(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "work.txt", "body\n")
-	step := steps.Step{PromptFile: "work.txt", PrependVars: true}
-
-	result, err := steps.BuildPrompt(dir, step, "123", "feedface")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.HasPrefix(result, "ISSUENUMBER=123\nSTARTINGSHA=feedface\n") {
-		t.Errorf("result does not start with expected variable lines: %q", result)
-	}
-}
-
-// BuildPrompt gap tests
-
-func TestBuildPrompt_EmptyFile_PrependVarsTrue(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "empty.txt", "")
-	step := steps.Step{PromptFile: "empty.txt", PrependVars: true}
-
-	result, err := steps.BuildPrompt(dir, step, "42", "abc")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "ISSUENUMBER=42\nSTARTINGSHA=abc\n"
-	if result != want {
-		t.Errorf("got %q, want %q", result, want)
-	}
-}
-
-func TestBuildPrompt_EmptyFile_PrependVarsFalse(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "empty.txt", "")
-	step := steps.Step{PromptFile: "empty.txt", PrependVars: false}
-
-	result, err := steps.BuildPrompt(dir, step, "42", "abc")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result != "" {
-		t.Errorf("got %q, want empty string", result)
-	}
-}
-
-func TestBuildPrompt_SpecialCharsInVars(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "work.txt", "body\n")
-	step := steps.Step{PromptFile: "work.txt", PrependVars: true}
-
-	// issueID contains a newline — BuildPrompt does no escaping, it is inserted verbatim
-	result, err := steps.BuildPrompt(dir, step, "1\n2", "sha")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !strings.Contains(result, "ISSUENUMBER=1\n2") {
-		t.Errorf("expected literal newline in issueID to be preserved verbatim, got %q", result)
-	}
-}
-
-func TestBuildPrompt_NoTrailingNewline(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "notail.txt", "no trailing newline")
-	step := steps.Step{PromptFile: "notail.txt", PrependVars: true}
-
-	result, err := steps.BuildPrompt(dir, step, "42", "abc")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "ISSUENUMBER=42\nSTARTINGSHA=abc\nno trailing newline"
-	if result != want {
-		t.Errorf("got %q, want %q", result, want)
 	}
 }
 
 func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	dir := t.TempDir()
 	// No prompts/ subdirectory — file will not exist
-	step := steps.Step{PromptFile: "missing.txt", PrependVars: false}
+	step := steps.Step{PromptFile: "missing.txt"}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step, "1", "sha")
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error for missing prompt file, got nil")
 	}
@@ -447,31 +439,51 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	}
 }
 
-func TestBuildPrompt_MultilineContent(t *testing.T) {
-	dir := makeTempProjectWithPrompt(t, "multi.txt", "line one\nline two\nline three\n")
-	step := steps.Step{PromptFile: "multi.txt", PrependVars: true}
-
-	result, err := steps.BuildPrompt(dir, step, "5", "cafebabe")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "ISSUENUMBER=5\nSTARTINGSHA=cafebabe\nline one\nline two\nline three\n"
-	if result != want {
-		t.Errorf("got %q, want %q", result, want)
-	}
-}
-
 func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 	dir := t.TempDir()
 	promptsDir := filepath.Join(dir, "prompts")
 	if err := os.MkdirAll(promptsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	step := steps.Step{PromptFile: "", PrependVars: false}
+	step := steps.Step{PromptFile: ""}
+	vt := vars.New(dir, 0)
 
-	_, err := steps.BuildPrompt(dir, step, "1", "sha")
+	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
 		t.Fatal("expected error when PromptFile is empty, got nil")
+	}
+}
+
+func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "feature.txt", "implement issue {{ISSUE_ID}}\n")
+	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
+
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "implement issue 42\n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
+	}
+}
+
+func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
+	dir := makeTempProjectWithPrompt(t, "feature.txt", "value: {{UNKNOWN}}\n")
+	step := steps.Step{PromptFile: "feature.txt"}
+	vt := vars.New(dir, 0)
+
+	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "value: \n"
+	if result != want {
+		t.Errorf("got %q, want %q", result, want)
 	}
 }

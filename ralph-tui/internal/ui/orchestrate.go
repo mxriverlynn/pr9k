@@ -33,6 +33,14 @@ func Orchestrate(steps []ResolvedStep, runner StepRunner, header StepHeader, h *
 		default:
 		}
 
+		// Write the "Starting step: <name>" banner to the log body so every
+		// started step has a visible heading, followed by a blank line that
+		// separates the heading from the step's streamed output.
+		heading, underline := StepStartBanner(step.Name)
+		runner.WriteToLog(heading)
+		runner.WriteToLog(underline)
+		runner.WriteToLog("")
+
 		header.SetStepState(i, StepActive)
 		action := runStepWithErrorHandling(i, step, runner, header, h)
 		if action == ActionQuit {
