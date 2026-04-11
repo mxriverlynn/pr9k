@@ -606,6 +606,283 @@ func TestView_CheckboxGrid_EqualCellWidth(t *testing.T) {
 	}
 }
 
+// --- TP-001: multi-row global max cell width ---
+
+// TestView_CheckboxGrid_MultiRow_GlobalMaxCellWidth verifies that maxCellWidth
+// is computed globally across all rows, not per-row. The longest name lives on
+// row 1; both rows must use the stride derived from that name.
+func TestView_CheckboxGrid_MultiRow_GlobalMaxCellWidth(t *testing.T) {
+	// 8 steps: row 0 has short names, row 1 has the longest name first.
+	// Longest cell: "[ ] longest-name" = 16 runes → maxCellWidth = 16, stride = 18.
+	steps := []string{"aa", "bb", "cc", "dd", "longest-name", "e", "f", "g"}
+	header := NewStatusHeader(len(steps))
+	header.SetPhaseSteps(steps)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 160
+	m.height = 30
+	m.log.SetSize(156, 10)
+
+	out := stripANSI(m.View())
+
+	// Collect grid lines: lines that contain "[ ] aa" (row 0) or "[ ] longest-name" (row 1).
+	var gridLines []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] aa") || strings.Contains(line, "[ ] longest-name") {
+			gridLines = append(gridLines, line)
+		}
+	}
+	if len(gridLines) != 2 {
+		t.Fatalf("expected 2 grid rows, found %d:\n%s", len(gridLines), out)
+	}
+
+	cellWidth := len([]rune("[ ] longest-name")) // 16
+	stride := cellWidth + 2                      // 18
+
+	// Row 0: steps "aa", "bb", "cc", "dd"
+	row0Names := []string{"aa", "bb", "cc", "dd"}
+	runes0 := []rune(gridLines[0])
+	if len(runes0) > 0 && runes0[0] == '│' {
+		runes0 = runes0[1:]
+	}
+	for col, name := range row0Names {
+		start := col*stride + 4 // skip "[ ] "
+		end := start + len([]rune(name))
+		if end > len(runes0) {
+			t.Errorf("row 0 col %d: rune slice too short (len=%d) for name %q at [%d:%d]",
+				col, len(runes0), name, start, end)
+			continue
+		}
+		if got := string(runes0[start:end]); got != name {
+			t.Errorf("row 0 col %d: want %q at offset %d, got %q", col, name, start, got)
+		}
+	}
+
+	// Row 1: steps "longest-name", "e", "f", "g" — all use the same stride as row 0.
+	row1Names := []string{"longest-name", "e", "f", "g"}
+	runes1 := []rune(gridLines[1])
+	if len(runes1) > 0 && runes1[0] == '│' {
+		runes1 = runes1[1:]
+	}
+	for col, name := range row1Names {
+		start := col*stride + 4
+		end := start + len([]rune(name))
+		if end > len(runes1) {
+			t.Errorf("row 1 col %d: rune slice too short (len=%d) for name %q at [%d:%d]",
+				col, len(runes1), name, start, end)
+			continue
+		}
+		if got := string(runes1[start:end]); got != name {
+			t.Errorf("row 1 col %d: want %q at offset %d, got %q", col, name, start, got)
+		}
+	}
+}
+
+// --- TP-002: empty trailing cells padded to full width ---
+
+// TestView_CheckboxGrid_EmptyTrailingCells_AlignWithFilledRow verifies that
+// empty trailing cells on the second row are padded to maxCellWidth, so both
+// rows occupy the same total width before the right border.
+func TestView_CheckboxGrid_EmptyTrailingCells_AlignWithFilledRow(t *testing.T) {
+	// 5 steps: row 0 full (4 steps), row 1 has 1 filled + 3 empty.
+	// Longest cell "[ ] epsilon" = 11 runes → all cells padded to width 11.
+	steps := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+	header := NewStatusHeader(len(steps))
+	header.SetPhaseSteps(steps)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 160
+	m.height = 30
+	m.log.SetSize(156, 10)
+
+	out := stripANSI(m.View())
+
+	// Collect both grid rows.
+	var gridLines []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] alpha") || strings.Contains(line, "[ ] epsilon") {
+			gridLines = append(gridLines, line)
+		}
+	}
+	if len(gridLines) != 2 {
+		t.Fatalf("expected 2 grid rows, found %d:\n%s", len(gridLines), out)
+	}
+
+	// Find the right-border │ position for each row (after stripping leading │).
+	rightBorderPos := func(line string) int {
+		runes := []rune(line)
+		// Skip the leading border.
+		if len(runes) > 0 && runes[0] == '│' {
+			runes = runes[1:]
+		}
+		// The right border │ is the last │ in the line.
+		for i := len(runes) - 1; i >= 0; i-- {
+			if runes[i] == '│' {
+				return i
+			}
+		}
+		return -1
+	}
+
+	pos0 := rightBorderPos(gridLines[0])
+	pos1 := rightBorderPos(gridLines[1])
+	if pos0 != pos1 {
+		t.Errorf("right border position differs: row 0 at %d, row 1 at %d\nrow0: %q\nrow1: %q",
+			pos0, pos1, gridLines[0], gridLines[1])
+	}
+}
+
+// --- TP-003: equal-width cells — no unnecessary padding ---
+
+// TestView_CheckboxGrid_EqualWidthNames_NoPaddingWithinCells verifies that
+// when all step names have the same length, the pad>0 guard prevents any
+// extra spaces from being injected within each cell.
+func TestView_CheckboxGrid_EqualWidthNames_NoPaddingWithinCells(t *testing.T) {
+	// 4 steps each 3 chars: "[ ] aaa" = 7 runes. stride = 9.
+	steps := []string{"aaa", "bbb", "ccc", "ddd"}
+	header := NewStatusHeader(len(steps))
+	header.SetPhaseSteps(steps)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 120
+	m.height = 24
+	m.log.SetSize(116, 10)
+
+	out := stripANSI(m.View())
+
+	var gridLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] aaa") {
+			gridLine = line
+			break
+		}
+	}
+	if gridLine == "" {
+		t.Fatalf("could not find checkbox grid line:\n%s", out)
+	}
+
+	runes := []rune(gridLine)
+	if len(runes) > 0 && runes[0] == '│' {
+		runes = runes[1:]
+	}
+
+	cellWidth := len([]rune("[ ] aaa")) // 7
+	stride := cellWidth + 2             // 9
+
+	for col, name := range steps {
+		start := col * stride
+		// Verify exactly "[ ] <name>" at the cell start with no extra space before separator.
+		want := "[ ] " + name
+		end := start + len([]rune(want))
+		if end > len(runes) {
+			t.Errorf("col %d: rune slice too short (len=%d) for %q at [%d:%d]",
+				col, len(runes), want, start, end)
+			continue
+		}
+		if got := string(runes[start:end]); got != want {
+			t.Errorf("col %d: want %q at rune offset %d, got %q (inner: %q)",
+				col, want, start, got, string(runes))
+		}
+		// The character immediately after the cell (before last col) must be ' ' (start of separator).
+		if col < len(steps)-1 {
+			sepStart := start + cellWidth
+			if sepStart < len(runes) && runes[sepStart] != ' ' {
+				t.Errorf("col %d: expected space after cell at offset %d, got %q",
+					col, sepStart, string(runes[sepStart:sepStart+1]))
+			}
+		}
+	}
+}
+
+// --- TP-004: truncation still works after padding ---
+
+// TestView_CheckboxGrid_LongNames_TruncatedToTerminalWidth verifies that
+// wrapLine truncation is applied after padding, so the output never exceeds
+// m.width runes regardless of how wide the padded row is.
+func TestView_CheckboxGrid_LongNames_TruncatedToTerminalWidth(t *testing.T) {
+	// 4 steps with 20-char names; padded row is 4*24 + 3*2 = 102 chars.
+	// m.width=60 forces truncation to 58 inner chars.
+	steps := []string{
+		"abcdefghijklmnopqrst",
+		"bcdefghijklmnopqrstu",
+		"cdefghijklmnopqrstuv",
+		"defghijklmnopqrstuvw",
+	}
+	header := NewStatusHeader(len(steps))
+	header.SetPhaseSteps(steps)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 60
+	m.height = 24
+	m.log.SetSize(56, 10)
+
+	out := stripANSI(m.View())
+
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] abcde") {
+			runeCount := len([]rune(line))
+			if runeCount > m.width {
+				t.Errorf("grid line exceeds terminal width %d (got %d runes): %q",
+					m.width, runeCount, line)
+			}
+			return
+		}
+	}
+	t.Fatalf("could not find grid line in output:\n%s", out)
+}
+
+// --- TP-005: single step — minimum boundary ---
+
+// TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0 verifies that a
+// header with exactly 1 step (1 filled cell + 3 empty) does not panic and
+// renders the step name starting at the first cell position.
+func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"only-step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 120
+	m.height = 24
+	m.log.SetSize(116, 10)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("View() panicked with single step: %v", r)
+		}
+	}()
+
+	out := stripANSI(m.View())
+
+	var gridLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] only-step") {
+			gridLine = line
+			break
+		}
+	}
+	if gridLine == "" {
+		t.Fatalf("could not find grid line with 'only-step' in output:\n%s", out)
+	}
+
+	// The step name should appear at cell offset 0 (after leading border and "[ ] " prefix).
+	runes := []rune(gridLine)
+	if len(runes) > 0 && runes[0] == '│' {
+		runes = runes[1:]
+	}
+	const prefix = "[ ] only-step"
+	if len(runes) < len([]rune(prefix)) {
+		t.Fatalf("grid line too short to contain %q: %q", prefix, string(runes))
+	}
+	if got := string(runes[:len([]rune(prefix))]); got != prefix {
+		t.Errorf("expected cell at offset 0 to start with %q, got %q", prefix, got)
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
