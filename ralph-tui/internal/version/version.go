@@ -4,4 +4,4 @@
 package version
 
 // Version is the current ralph-tui release version.
-const Version = "0.2.0"
+const Version = "0.2.1"
