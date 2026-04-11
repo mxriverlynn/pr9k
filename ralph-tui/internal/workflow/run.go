@@ -35,6 +35,11 @@ type RunConfig struct {
 	InitializeSteps []steps.Step
 	Steps           []steps.Step
 	FinalizeSteps   []steps.Step
+	// LogWidth is the column width to use for full-width log separators
+	// (e.g. phase banner underlines). A value of 0 or less falls back to
+	// ui.DefaultTerminalWidth. Callers should pass the log panel's visible
+	// width so banners fill the panel without wrapping.
+	LogWidth int
 }
 
 // noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
@@ -72,6 +77,11 @@ type RunResult struct {
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
+	logWidth := cfg.LogWidth
+	if logWidth <= 0 {
+		logWidth = ui.DefaultTerminalWidth
+	}
+
 	// emitBlank writes a single blank line to the log body if one is needed
 	// to separate the next piece of content from the previous. It is called
 	// before each iteration separator, each step's Orchestrate call, and
@@ -85,9 +95,31 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		needBlank = true
 	}
 
+	// writePhaseBanner emits the full-width phase-entry banner: an emit-blank
+	// separator (suppressed on the very first log line), the phase name, and
+	// a full-width "═" underline. A trailing blank line is supplied by the
+	// next content block's emitBlank call.
+	writePhaseBanner := func(phaseName string) {
+		emitBlank()
+		heading, underline := ui.PhaseBanner(phaseName, logWidth)
+		executor.WriteToLog(heading)
+		executor.WriteToLog(underline)
+	}
+
+	// writeCaptureLog appends the "Captured VAR = value" line to the log
+	// body directly after a step that defined captureAs, separated from the
+	// preceding step output by a blank line for readability.
+	writeCaptureLog := func(varName, value string) {
+		emitBlank()
+		executor.WriteToLog(ui.CaptureLog(varName, value))
+	}
+
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)
+	if len(cfg.InitializeSteps) > 0 {
+		writePhaseBanner("Initializing")
+	}
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
 		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Initialize)
@@ -103,12 +135,15 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			return RunResult{}
 		}
 		if s.CaptureAs != "" {
-			vt.Bind(vars.Initialize, s.CaptureAs, executor.LastCapture())
+			captured := executor.LastCapture()
+			vt.Bind(vars.Initialize, s.CaptureAs, captured)
+			writeCaptureLog(s.CaptureAs, captured)
 		}
 	}
 
 	// 2. Iteration loop: repeat until the configured limit or until a step with
 	// BreakLoopIfEmpty produces empty stdout capture on successful completion.
+	writePhaseBanner("Iterations")
 	iterationsRun := 0
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		iterationsRun = i
@@ -147,6 +182,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
 				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
 				header.RenderIterationLine(i, cfg.Iterations, issueID)
+				writeCaptureLog(s.CaptureAs, captured)
 			}
 			// BreakLoopIfEmpty fires only on successful completion (StepDone).
 			// If the step failed (non-zero exit), the check is skipped so that
@@ -172,6 +208,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	header.SetPhaseSteps(finalizeNames)
 
 	vt.SetPhase(vars.Finalize)
+	if len(cfg.FinalizeSteps) > 0 {
+		writePhaseBanner("Finalizing")
+	}
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
 		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Finalize)

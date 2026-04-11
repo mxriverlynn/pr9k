@@ -103,6 +103,72 @@ func TestQuitConfirm_OtherKey_RemainsInConfirmMode(t *testing.T) {
 	}
 }
 
+// Pressing Escape while in the quit-confirm prompt must cancel the quit and
+// return the handler to its previous mode (ModeNormal in this case).
+func TestQuitConfirm_Escape_FromNormal_RestoresNormalMode(t *testing.T) {
+	h, cancelCalled, actions := newTestHandler(t)
+
+	h.Handle("q")
+	h.Handle("<Escape>")
+
+	if h.mode != ModeNormal {
+		t.Errorf("expected ModeNormal after Escape, got %v", h.mode)
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected normal shortcuts after Escape, got %q", h.ShortcutLine())
+	}
+	if *cancelCalled {
+		t.Error("cancel must not fire when the quit is cancelled via Escape")
+	}
+	if len(actions) != 0 {
+		t.Error("no action should be sent when Escape cancels quit")
+	}
+}
+
+// Escape must return to the previous mode (ModeError) when quit was triggered
+// from error mode, not unconditionally to normal.
+func TestQuitConfirm_Escape_FromErrorMode_RestoresErrorMode(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.Handle("q")
+	h.Handle("<Escape>")
+
+	if h.mode != ModeError {
+		t.Errorf("expected ModeError to be restored, got %v", h.mode)
+	}
+	if h.ShortcutLine() != ErrorShortcuts {
+		t.Errorf("expected ErrorShortcuts after Escape, got %q", h.ShortcutLine())
+	}
+}
+
+// Confirming a quit with 'y' flips the footer to "Quitting..." so the user
+// has visual feedback that the confirmation was accepted before the
+// orchestration goroutine unwinds.
+func TestQuitConfirm_Y_SetsQuittingFooter(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.Handle("q")
+	h.Handle("y")
+
+	if h.mode != ModeQuitting {
+		t.Errorf("expected ModeQuitting after y, got %v", h.mode)
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine footer, got %q", h.ShortcutLine())
+	}
+}
+
+func TestSetMode_Quitting_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeQuitting)
+
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine, got %q", h.ShortcutLine())
+	}
+}
+
 // --- Error mode ---
 
 func TestSetMode_Error_UpdatesShortcutLine(t *testing.T) {

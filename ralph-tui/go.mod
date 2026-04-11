@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/sys v0.40.0
 )
 
 require (
@@ -18,5 +19,4 @@ require (
 	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	golang.org/x/sys v0.40.0 // indirect
 )

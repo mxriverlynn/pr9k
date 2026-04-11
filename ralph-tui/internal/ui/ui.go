@@ -18,13 +18,15 @@ const (
 	ModeNormal Mode = iota
 	ModeError
 	ModeQuitConfirm
+	ModeQuitting // entered after the user confirms a quit; footer shows "Quitting..."
 	ModeDone
 )
 
 const (
 	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
 	ErrorShortcuts    = "c continue  r retry  q quit"
-	QuitConfirmPrompt = "Quit ralph? (y/n)"
+	QuitConfirmPrompt = "Quit ralph? (y/n, esc to cancel)"
+	QuittingLine      = "Quitting..."
 	DoneShortcuts     = "done — press any key to exit"
 )
 
@@ -127,8 +129,13 @@ func (h *KeyHandler) handleError(key string) {
 func (h *KeyHandler) handleQuitConfirm(key string) {
 	switch key {
 	case "y":
+		// Flip to ModeQuitting first so the footer immediately shows the
+		// "Quitting..." feedback line; then inject ActionQuit to unwind
+		// the orchestration goroutine.
+		h.mode = ModeQuitting
+		h.updateShortcutLine()
 		h.ForceQuit()
-	case "n":
+	case "n", "<Escape>":
 		h.mode = h.prevMode
 		h.updateShortcutLine()
 		// all other keys are ignored
@@ -165,6 +172,8 @@ func (h *KeyHandler) updateShortcutLine() {
 		h.shortcutLine = ErrorShortcuts
 	case ModeQuitConfirm:
 		h.shortcutLine = QuitConfirmPrompt
+	case ModeQuitting:
+		h.shortcutLine = QuittingLine
 	case ModeDone:
 		h.shortcutLine = DoneShortcuts
 	}

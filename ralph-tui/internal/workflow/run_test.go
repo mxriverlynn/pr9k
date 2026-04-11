@@ -2023,3 +2023,230 @@ func lastNonBlankLine(lines []string) string {
 	}
 	return ""
 }
+
+// indexOfLine returns the index of the first line matching pred, or -1 if
+// no line matches. Used by log-ordering assertions.
+func indexOfLine(lines []string, pred func(string) bool) int {
+	for i, line := range lines {
+		if pred(line) {
+			return i
+		}
+	}
+	return -1
+}
+
+// --- Phase banner and capture log tests ---
+
+// TestRun_LogsPhaseBanners verifies that every phase the workflow enters
+// writes a full-width phase banner (heading + underline) to the log body.
+func TestRun_LogsPhaseBanners(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init1"),
+		Steps:           nonClaudeSteps("step1"),
+		FinalizeSteps:   nonClaudeSteps("final1"),
+		LogWidth:        40,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Each phase banner is a heading line exactly equal to the phase name.
+	for _, phase := range []string{"Initializing", "Iterations", "Finalizing"} {
+		idx := indexOfLine(executor.logLines, func(l string) bool { return l == phase })
+		if idx < 0 {
+			t.Errorf("expected phase banner heading %q in log, got %v", phase, executor.logLines)
+			continue
+		}
+		// The line immediately after the heading must be the underline.
+		if idx+1 >= len(executor.logLines) {
+			t.Errorf("phase %q: missing underline line", phase)
+			continue
+		}
+		underline := executor.logLines[idx+1]
+		if len([]rune(underline)) != cfg.LogWidth {
+			t.Errorf("phase %q: underline width = %d runes, want %d (line %q)",
+				phase, len([]rune(underline)), cfg.LogWidth, underline)
+		}
+		for _, r := range underline {
+			if r != '═' {
+				t.Errorf("phase %q: underline contains non-'═' rune %q", phase, r)
+				break
+			}
+		}
+	}
+}
+
+// TestRun_PhaseBannerOrderingAcrossPhases verifies that the banners appear in
+// the expected Initializing → Iterations → Finalizing order.
+func TestRun_PhaseBannerOrderingAcrossPhases(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init1"),
+		Steps:           nonClaudeSteps("step1"),
+		FinalizeSteps:   nonClaudeSteps("final1"),
+		LogWidth:        20,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	initIdx := indexOfLine(executor.logLines, func(l string) bool { return l == "Initializing" })
+	iterIdx := indexOfLine(executor.logLines, func(l string) bool { return l == "Iterations" })
+	finalIdx := indexOfLine(executor.logLines, func(l string) bool { return l == "Finalizing" })
+
+	if initIdx < 0 || iterIdx <= initIdx || finalIdx <= iterIdx {
+		t.Errorf("expected Initializing → Iterations → Finalizing ordering, got indices init=%d iter=%d final=%d in %v",
+			initIdx, iterIdx, finalIdx, executor.logLines)
+	}
+}
+
+// TestRun_InitializingPhaseSkippedWhenNoInitSteps verifies that the
+// Initializing banner is not written when the config has no initialize steps.
+func TestRun_InitializingPhaseSkippedWhenNoInitSteps(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		LogWidth:   20,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if indexOfLine(executor.logLines, func(l string) bool { return l == "Initializing" }) >= 0 {
+		t.Errorf("Initializing banner must not appear when there are no init steps: %v", executor.logLines)
+	}
+	// The Iterations banner must still appear.
+	if indexOfLine(executor.logLines, func(l string) bool { return l == "Iterations" }) < 0 {
+		t.Errorf("Iterations banner missing: %v", executor.logLines)
+	}
+}
+
+// TestRun_FinalizingPhaseSkippedWhenNoFinalizeSteps verifies that the
+// Finalizing banner is not written when the config has no finalize steps.
+func TestRun_FinalizingPhaseSkippedWhenNoFinalizeSteps(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		LogWidth:   20,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if indexOfLine(executor.logLines, func(l string) bool { return l == "Finalizing" }) >= 0 {
+		t.Errorf("Finalizing banner must not appear when there are no finalize steps: %v", executor.logLines)
+	}
+}
+
+// TestRun_PhaseBannerUsesDefaultWidthWhenZero verifies that a zero LogWidth
+// in RunConfig falls back to ui.DefaultTerminalWidth.
+func TestRun_PhaseBannerUsesDefaultWidthWhenZero(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		// LogWidth intentionally left at 0.
+	}
+
+	Run(executor, header, kh, cfg)
+
+	idx := indexOfLine(executor.logLines, func(l string) bool { return l == "Iterations" })
+	if idx < 0 || idx+1 >= len(executor.logLines) {
+		t.Fatalf("missing Iterations banner: %v", executor.logLines)
+	}
+	underline := executor.logLines[idx+1]
+	if len([]rune(underline)) != ui.DefaultTerminalWidth {
+		t.Errorf("default-width underline: got %d runes, want %d", len([]rune(underline)), ui.DefaultTerminalWidth)
+	}
+}
+
+// TestRun_CaptureLogWrittenAfterCaptureStep verifies that a "Captured VAR =
+// value" log line is written to the body after every captureAs step.
+func TestRun_CaptureLogWrittenAfterCaptureStep(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"42"}, // iteration step's captured output
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+		LogWidth:   40,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	want := `Captured ISSUE_ID = "42"`
+	if indexOfLine(executor.logLines, func(l string) bool { return l == want }) < 0 {
+		t.Errorf("expected capture log line %q, got %v", want, executor.logLines)
+	}
+}
+
+// TestRun_CaptureLogWrittenForInitializePhase verifies that captureAs in the
+// initialize phase also produces a capture log line.
+func TestRun_CaptureLogWrittenForInitializePhase(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"octocat"}, // init step's captured output
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:      t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{captureStep("get-user", "GITHUB_USER")},
+		Steps:           nonClaudeSteps("step1"),
+		LogWidth:        40,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	want := `Captured GITHUB_USER = "octocat"`
+	if indexOfLine(executor.logLines, func(l string) bool { return l == want }) < 0 {
+		t.Errorf("expected init-phase capture log line %q, got %v", want, executor.logLines)
+	}
+}
+
+// TestRun_CaptureLogNotWrittenForNonCaptureStep verifies that steps without
+// captureAs do not emit a "Captured " log line.
+func TestRun_CaptureLogNotWrittenForNonCaptureStep(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		LogWidth:   40,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if idx := indexOfLine(executor.logLines, func(l string) bool { return strings.HasPrefix(l, "Captured ") }); idx >= 0 {
+		t.Errorf("no capture log expected for non-capture step, got %q at index %d", executor.logLines[idx], idx)
+	}
+}

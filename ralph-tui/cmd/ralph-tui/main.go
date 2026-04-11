@@ -85,7 +85,7 @@ func main() {
 	app := glyph.NewApp()
 
 	// Wire keyboard dispatch: Glyph owns the tty and forwards each keypress to keyHandler.
-	for _, key := range []string{"n", "q", "y", "c", "r"} {
+	for _, key := range []string{"n", "q", "y", "c", "r", "<Escape>"} {
 		k := key
 		app.Handle(k, func() { keyHandler.Handle(k) })
 	}
@@ -112,12 +112,22 @@ func main() {
 
 	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
+	// logWidth sizes the full-width phase banner underline to fill the log
+	// panel. The panel sits inside a rounded VBox border, so we subtract 2
+	// columns for the left and right border glyphs. A non-TTY stdout falls
+	// back to ui.DefaultTerminalWidth.
+	logWidth := ui.TerminalWidth() - 2
+	if logWidth < 1 {
+		logWidth = ui.DefaultTerminalWidth
+	}
+
 	runCfg := workflow.RunConfig{
 		ProjectDir:      cfg.ProjectDir,
 		Iterations:      cfg.Iterations,
 		InitializeSteps: stepFile.Initialize,
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,
+		LogWidth:        logWidth,
 	}
 
 	done := make(chan struct{})
