@@ -45,9 +45,9 @@ The ADR captures the *why*. This plan captures the *how*: what changes in each f
 │      tea.WithAltScreen(),                     │
 │      tea.WithoutSignalHandler())              │
 │  proxy.SetSender(program.Send)                │
-│  runner.SetSender(func(line string) {         │
-│      program.Send(ui.LogLineMsg{Line: line})  │
-│  })                                           │
+│  runner.SetSender(lineCh <- adapter) ── see §1│
+│  /* drain goroutine batches then program.Send│
+│     ui.LogLinesMsg{Lines: batch}  */          │
 │  go workflow.Run(runner, proxy, ...)          │
 │  go signalHandler(program, keyHandler,        │
 │                   sigChan, workflowDone)      │
@@ -65,7 +65,7 @@ The ADR captures the *why*. This plan captures the *how*: what changes in each f
 │  }                                        │
 │  Update(msg) routes on msg type:          │
 │    tea.KeyMsg     → keys (mode dispatch)  │
-│    logLineMsg     → log (append + scroll) │
+│    logLinesMsg    → log (append + scroll) │
 │    headerMsg      → header (render line,  │
 │                     set step state, etc.) │
 │    tea.WindowSizeMsg → all three          │
@@ -93,13 +93,7 @@ One-way data flow: workflow goroutine → `program.Send` → `Model.Update` → 
 
 **Today:** `internal/workflow/workflow.go:42-48` constructs an `io.Pipe` in `NewRunner`; `forwardPipe` (lines 137-161) writes each line into the mutex-protected `PipeWriter`; `main.go:124` passes `runner.LogReader()` to `glyph.Log`.
 
-**Change:** Remove the pipe. Add `Runner.sendLine func(string)` and a setter `Runner.SetSender(send func(string))`. The setter takes a string-typed sender (not `func(tea.Msg)`) so the `workflow` package does **not** need to import `github.com/charmbracelet/bubbletea`. The Bubble Tea adapter lives in `main.go`:
-
-```go
-runner.SetSender(func(line string) {
-    program.Send(ui.LogLineMsg{Line: line})
-})
-```
+**Change:** Remove the pipe. Add `Runner.sendLine func(string)` and a setter `Runner.SetSender(send func(string))`. The setter takes a string-typed sender (not `func(tea.Msg)`) so the `workflow` package does **not** need to import `github.com/charmbracelet/bubbletea`. The Bubble Tea adapter lives in `main.go` and goes through the buffered drain + coalescing goroutine described below — see the shape 1/2 mitigations below for the concrete wiring.
 
 This respects the [Narrow Reading ADR](../adr/20260410170952-narrow-reading-principle.md): the workflow package stays library-independent, and only the UI package + `main.go` know about Bubble Tea.
 
@@ -115,11 +109,13 @@ for scanner.Scan() {
 
 The mutex in `workflow.go:154-156` goes away because `tea.Program.Send` is safe for concurrent use across goroutines. `Runner.LogReader` is deleted. `Runner.WriteToLog` (`workflow.go:199-202`) becomes a direct `r.sendLine(line)` call with the same mutex removal.
 
-`Runner.Close()` (`workflow.go:207-209`) currently closes the pipe writer to send EOF to the UI-side reader. After the migration there is no pipe, so **`Runner.Close()` becomes a no-op returning `nil`**. It stays on the struct because `workflow.StepExecutor` (`internal/workflow/run.go:19`) requires it — `workflow.Run` calls `executor.Close()` at each exit point. The `TestClose_IsIdempotent` test continues to pass because `nil` is idempotent. Removing `Close` from the interface entirely is *out of scope* for this migration — that cleanup can happen in a follow-up PR.
+`Runner.Close()` (`workflow.go:207-209`) currently closes the pipe writer to send EOF to the UI-side reader. After the migration there is no pipe, so **`Runner.Close()` becomes a no-op returning `nil`**. It stays on the struct because `workflow.StepExecutor` (`internal/workflow/run.go:19`) requires it — `workflow.Run` calls `executor.Close()` at each exit point. Removing `Close` from the interface entirely is *out of scope* for this migration — that cleanup can happen in a follow-up PR.
+
+`TestClose_IsIdempotent` and the ~26 other tests that today call `_ = r.Close(); lines := collect()` will need to change in lockstep with the helper rewrite. Today their drain is bound to the pipe EOF that `Close()` emits; after migration they become `lines := drain()` where `drain()` is the mutex-guarded slice snapshot from `newCapturingRunner` in section 8. The idempotency test survives in a simpler form: two `Close()` calls still return `nil` from a no-op body. Section 8's `newCapturingRunner` is the only entry point for this pattern — do not leave any test still calling `collectLines`.
 
 **Sender must be non-nil at `RunStep`/`WriteToLog` call time.** To prevent a silent-drop failure mode where a test forgets to call `SetSender` and then asserts on an empty capture list, `NewRunner` initializes `sendLine` to a **sentinel that panics** with `"workflow.Runner: sendLine not set — call SetSender before running steps"`. Every production path (`main.go`) and every test helper (`newCapturingRunner` in `workflow_test.go`) must call `SetSender` before any `RunStep`. This makes the missing-wire bug loud. The nil check is not used.
 
-**Why:** `program.Send` is the canonical Bubble Tea bridge from an external goroutine into the Update loop. It's non-blocking in current Bubble Tea versions and handles its own concurrency. No `io.Pipe` EOF dance, no separate reader goroutine on the UI side.
+**Why:** `program.Send` is the canonical Bubble Tea bridge from an external goroutine into the Update loop. No `io.Pipe` EOF dance, no separate reader goroutine on the UI side. Concurrency safety comes from `program.Send` itself — though not in the form the plan originally assumed:
 
 **CRITICAL — `tea.Program.Send` IS BLOCKING.** Adversarial validation confirmed by reading `github.com/charmbracelet/bubbletea@v1.3.10/tea.go:244` and `tea.go:774-779`: `msgs` is an **unbuffered** channel and `Send` does:
 
@@ -134,18 +130,36 @@ func (p *Program) Send(msg Msg) {
 
 Every `Send` serializes against the Update+View round-trip inside `eventLoop`. The current test `TestRunStep_AllLinesArrivedBeforeCmdWait` (`workflow_test.go:147-157`) bursts 200 stderr lines in a tight loop. In production, each forwarded line would force a full Update (which runs `strings.Join` over up to 500 buffered lines) plus a View render plus a terminal write before the next line can be accepted. Under load — e.g., over SSH, in a slow tmux pane, or during a `make ci` subprocess dump — this backpressure propagates back through `forwardPipe` into the subprocess's stderr pipe buffer and eventually stalls the child's write syscalls.
 
-**Mitigation (required, not optional):** Insert a small forwarding goroutine between `forwardPipe` and `program.Send` that batches or drops under pressure. Two viable shapes:
+**Mitigation (required, not optional):** Insert a small forwarding goroutine between `forwardPipe` and `program.Send` that batches AND drops under pressure. The batching half of this is not optional because of a second, compounding problem: `bubbles/viewport.SetContent` (at `bubbles@v1.0.0/viewport/viewport.go:125-133, 536-544`) does O(N) work on every call — it runs `strings.ReplaceAll`, `strings.Split`, and `findLongestLineWidth` across the entire content string. A naive "one message per line" design would call `SetContent(strings.Join(ringBuffer, "\n"))` per forwarded line, which after the 500-line cap saturates scans ≈500×80 ≈40 KB three times per message. Under a 10 k-line claude-review burst, aggregate content scanning reaches the **hundreds-of-MB range** — a hot O(N²) path, not the "sub-millisecond" cost a single-call micro-benchmark suggests.
 
-1. **Unbounded queue goroutine (simpler):** `Runner` owns a buffered `chan string` of e.g. 4096 entries; `forwardPipe` writes to the channel non-blockingly (drop on full with a rate-limited `[log panel] N lines dropped due to render backpressure` synthetic line); a single dedicated goroutine drains the channel and calls `program.Send`. Back-pressure is isolated to that goroutine only.
-2. **Coalesce-on-send goroutine:** Same channel-based drain, but the drain goroutine batches consecutive lines within a ~10ms window into a single `logLinesMsg` struct carrying `[]string`, reducing round-trip count by 10-100x during bursts.
+Two shapes combine to fix both the `Send` backpressure and the `SetContent` amplification:
 
-Shape 1 is the minimum viable fix and what this plan commits to. Shape 2 is an optimization worth considering if the implementation finds the drop rate non-trivial on real hardware.
+1. **Buffered queue + drop-on-full drain goroutine (required for Send back-pressure):** `Runner` owns a buffered `chan string` of **4096** entries; `forwardPipe` writes to the channel non-blockingly (drop on full with a rate-limited `[log panel] N lines dropped due to render backpressure` synthetic line); a single dedicated goroutine drains the channel and calls `program.Send`. Back-pressure is isolated to the drain goroutine.
+2. **10 ms coalescing batcher inside the drain goroutine (required for `SetContent` amplification):** On every wakeup, the drain goroutine reads as many lines as are currently available in the channel (`for { select { case l := <-ch: batch = append(batch, l); default: break } }`), then sends a single `logLinesMsg{Lines: batch}` — or, when the channel is empty, blocks on a 10 ms `time.After` so a steady trickle (1 line/sec) still renders promptly. `logModel.Update` processes the whole batch with a single `SetContent` call:
 
-The `logLineMsg` type becomes `type logLineMsg struct{ Line string }` for shape 1, or `type logLinesMsg struct{ Lines []string }` for shape 2. `logModel.Update` handles both identically (append-and-scroll), differing only in the inner loop.
+```go
+case logLinesMsg:
+    for _, line := range msg.Lines {
+        m.lines = append(m.lines, line)
+    }
+    if len(m.lines) > 500 {
+        m.lines = m.lines[len(m.lines)-500:]
+    }
+    wasAtBottom := m.viewport.AtBottom()
+    m.viewport.SetContent(strings.Join(m.lines, "\n"))
+    if wasAtBottom {
+        m.viewport.GotoBottom()
+    }
+    return m, nil
+```
+
+A 10 k-line burst that fires within 100 ms becomes ~10 batches through the Update loop, each triggering one `SetContent`, dropping total scanning cost by ~100x. The single-line `logLineMsg` type is removed — the `LogLineMsg` export from `main.go`'s adapter becomes `ui.LogLinesMsg` so the string → slice bridge can happen once at the drain step, not per line.
+
+The message type is `type logLinesMsg struct{ Lines []string }` — single-line variant is not needed.
 
 **Consequences for file logging:** The file logger write must happen on the subprocess-reader goroutine (as today), *not* via the drain goroutine. If the drain drops, the file log still has the line — this preserves debugging state even when the TUI panel falls behind.
 
-**Consequences for `TestWriteToLog_AfterCloseNoPanic`:** The test must be updated to call `WriteToLog` AFTER the drain goroutine has been stopped, to actually exercise the "late write" path. A vacuous pass (no sender wired) is not acceptable.
+**Consequences for `TestWriteToLog_AfterCloseNoPanic`:** The test at `workflow_test.go:835-845` remains meaningful — it documents that `WriteToLog` is safe to call after `Runner.Close()`. After migration, `Runner.Close()` is a no-op and `sendLine` is a direct closure in tests, so the test passes without modification. Testing the drain-goroutine's post-close behavior is a *separate* concern that belongs in `main.go`-level integration testing, not at the Runner layer — and section 8 describes the same helper with a synchronous closure that makes Runner-level "late write" inherently safe.
 
 ### 2. `logModel` owns a ring buffer + `viewport.Model`
 
@@ -161,8 +175,10 @@ type logModel struct {
 
 func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
     switch msg := msg.(type) {
-    case logLineMsg:
-        m.lines = append(m.lines, msg.line)
+    case logLinesMsg:
+        for _, line := range msg.Lines {
+            m.lines = append(m.lines, line)
+        }
         if len(m.lines) > 500 {
             m.lines = m.lines[len(m.lines)-500:]
         }
@@ -178,6 +194,8 @@ func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
     return m, cmd
 }
 ```
+
+A batched `logLinesMsg` incurs exactly one `SetContent` per batch regardless of how many lines it carries, which is the whole point of the coalescing drain described in section 1.
 
 The viewport handles scroll keys and wheel events through its built-in `KeyMap` plus the mouse handling that `tea.WithMouseCellMotion()` enables. The delegation `m.viewport, cmd = m.viewport.Update(msg)` plumbs them through.
 
@@ -201,7 +219,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         var lcmd tea.Cmd
         m.log, lcmd = m.log.Update(msg) // viewport scroll
         cmds = append(cmds, lcmd)
-    case logLineMsg: /* or logLinesMsg */
+    case logLinesMsg:
         var lcmd tea.Cmd
         m.log, lcmd = m.log.Update(msg)
         cmds = append(cmds, lcmd)
@@ -290,6 +308,64 @@ Keep:
 - `ForceQuit` (`ui.go:141-153`)
 - `updateShortcutLine` (`ui.go:155-168`)
 
+**Extend `KeyHandler` mutex coverage to `mode` (fixes a latent race unmasked by the migration).** Today, `SetMode` at `ui.go:81-84` writes `h.mode` without any lock; `updateShortcutLine` only locks the `shortcutLine` field. In the current Glyph build, the only reader of `h.mode` is the Glyph keyboard callback goroutine calling `Handle`, and the only writer is the workflow goroutine via `orchestrate.go:63, 66` (`h.SetMode(ModeError)` / `h.SetMode(ModeNormal)`). Those two goroutines already race on `h.mode`, but the race detector never fires because no test exercises the cross-goroutine pattern and `TestShortcutLine_ConcurrentRead_NoRace` only concurrently reads `shortcutLine`.
+
+After the migration, the Update goroutine reads `h.Mode()` for every `tea.KeyMsg` (section 4 `keysModel.Update` pseudocode), while `orchestrate.go` continues to call `h.SetMode` from the workflow goroutine — `orchestrate.go` is explicitly listed as **Unchanged** in the files-changed table. That makes the pre-existing race a live race under the new architecture, and deleting `TestShortcutLine_ConcurrentRead_NoRace` (which at least held a mutex-protected path) without replacement makes the regression silent.
+
+**Resolution:** The same mutex that guards `shortcutLine` now also guards `mode` and `prevMode`. Concretely:
+
+```go
+// ui.go:
+func (h *KeyHandler) SetMode(mode Mode) {
+    h.mu.Lock()
+    h.mode = mode
+    h.updateShortcutLineLocked() // renamed; caller already holds h.mu
+    h.mu.Unlock()
+}
+
+func (h *KeyHandler) Mode() Mode {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.mode
+}
+```
+
+The internal handlers (`handleNormal` / `handleError` / `handleQuitConfirm`) are being moved to `keysModel` in this section, so they become the only other mutators and all call `SetMode` — they do not need to touch `h.mode` directly. `prevMode` is only read/written inside the `q → ... → Escape` round trip that stays entirely on the Update goroutine under Bubble Tea, so it does not strictly need the lock, but including it under `h.mu` keeps all KeyHandler state coherent under a single lock and avoids a future lock-ordering pitfall. `updateShortcutLine` is renamed to `updateShortcutLineLocked` to reflect the precondition.
+
+**Consequence for tests:** `TestShortcutLine_ConcurrentRead_NoRace` is **retained** but broadened — it now concurrently reads both `ShortcutLine` and `Mode()` while a second goroutine cycles `SetMode` through all four modes. `go test -race` must pass. This replaces the Option-Q-specific test purpose with a coverage guarantee for the new shared mutex.
+
+**Why not route `SetMode` through a `setModeMsg`?** Considered and rejected: it would require either making `orchestrate.go` Bubble-Tea-aware (violates the Narrow Reading ADR) or introducing a second proxy (`modeProxy`) alongside `headerProxy`. The mutex is one lock on a tiny critical section and adds zero cross-goroutine hops. The plan originally listed `setModeMsg` in `messages.go` (section files-changed table); that type is now removed from the message list — it was a vestige of an earlier design iteration.
+
+**Fix the signal-path shutdown-symmetry bug (goal-line 26).** Today, `handleQuitConfirm("y")` at `ui.go:125-133` flips the footer to `QuittingLine` via `h.mode = ModeQuitting; h.updateShortcutLine()` before calling `ForceQuit`, but the signal goroutine at `main.go:160-169` calls `keyHandler.ForceQuit()` directly and **never sets `ModeQuitting`** — `ForceQuit` at `ui.go:145-153` does not touch `h.mode`. So on SIGINT/SIGTERM the footer stays on whatever mode was active (Normal/Error) until the 2-second grace window elapses; the user sees no "Quitting..." feedback. This contradicts the Goals section's "Must preserve: Identical shutdown semantics between the signal path and the `q → y` confirm path, both routed through `KeyHandler.ForceQuit`" — a *pre-existing* asymmetry that the plan's goal statement (line 26) misrepresents as already correct. Fix it in the same PR by moving the mode flip into `ForceQuit` itself:
+
+```go
+// ui.go — new ForceQuit:
+func (h *KeyHandler) ForceQuit() {
+    h.mu.Lock()
+    h.mode = ModeQuitting
+    h.updateShortcutLineLocked()
+    h.mu.Unlock()
+
+    if h.cancel != nil {
+        h.cancel()
+    }
+    select {
+    case h.Actions <- ActionQuit:
+    default:
+    }
+}
+```
+
+With this change, both the `y`-confirm path AND the signal path produce identical footer state and identical subprocess-kill behavior via one primitive. `handleQuitConfirm("y")` no longer needs to set the mode itself — delete those two lines:
+
+```go
+// ui.go — new handleQuitConfirm case:
+case "y":
+    h.ForceQuit()  // sets ModeQuitting internally
+```
+
+Note that `ForceQuit` is safe to call when `cancel` is nil (guard is retained), and the non-blocking send on `Actions` is unchanged. The broadened `TestShortcutLine_ConcurrentRead_NoRace` (above) now exercises `ForceQuit` through the same mutex-protected path. Add a new test `TestForceQuit_SetsModeQuittingFromAnyMode` that asserts `ForceQuit` flips the footer to `QuittingLine` regardless of starting mode — this locks in the fix against future regressions.
+
 Move to `internal/ui/model.go`:
 - The switch-on-mode dispatch, rewritten as a `tea.KeyMsg` handler in `keysModel.Update`:
 
@@ -319,6 +395,53 @@ Note that `ModeQuitting` also continues to deliver `tea.KeyMsg` events to the vi
 
 The per-mode handlers are the same logic that used to live in `ui.go`, now accepting `tea.KeyMsg` values instead of `string` keys. String comparisons become `key.String() == "n"`, `key.Type == tea.KeyEscape`, etc.
 
+**CRITICAL — `cancel()` (= `runner.Terminate`) blocks for up to 3 seconds.** At `workflow.go:70-88`, `Runner.Terminate` sends SIGTERM then `select`s on `<-done` with a 3-second `time.After` fallback before escalating to SIGKILL. Under Glyph today, this call runs on either the keyboard-callback goroutine or the OS-signal goroutine — never the render goroutine. In the Bubble Tea architecture, `keysModel.handleNormal` receives the `n` key on the **Update goroutine** and would call `h.cancel()` synchronously, freezing Update (and therefore `View` rendering and every other message) for up to three seconds.
+
+**Fix — dispatch cancel asynchronously via `tea.Cmd`:**
+
+```go
+// keysModel — handleNormal:
+func (m keysModel) handleNormal(key tea.KeyMsg) (keysModel, tea.Cmd) {
+    switch key.String() {
+    case "n":
+        cancel := m.handler.Cancel() // exported accessor for h.cancel
+        if cancel == nil {
+            return m, nil
+        }
+        // Offload the 3-second blocking call to a goroutine. We don't need
+        // a result message — the workflow goroutine's next RunStep will
+        // observe WasTerminated and unwind on its own.
+        return m, func() tea.Msg {
+            cancel()
+            return nil // Bubble Tea ignores nil messages
+        }
+    case "q":
+        m.handler.SetMode(ModeQuitConfirm)
+        return m, nil
+    }
+    return m, nil
+}
+```
+
+The same asynchronous pattern applies anywhere else `h.cancel()` might be called from Update. `ForceQuit` does NOT need this wrapping: it is called from the signal goroutine (not Update) and from `handleQuitConfirm("y")`, where we also wrap the `ForceQuit` call in a `tea.Cmd` for the same reason:
+
+```go
+// keysModel — handleQuitConfirm:
+case "y":
+    // Flip the footer on the Update goroutine (cheap, mutex-only) so the
+    // user sees "Quitting..." immediately, then offload the subprocess kill.
+    // ForceQuit is idempotent, so a second call (e.g., signal path racing
+    // with y-confirm) is harmless.
+    return m, func() tea.Msg {
+        m.handler.ForceQuit()
+        return nil
+    }
+```
+
+Actually — because `ForceQuit` now sets `ModeQuitting` itself under `h.mu` (see the signal-path symmetry fix above), the Update goroutine does NOT need to pre-flip the mode; the single async call to `ForceQuit` covers both the footer update and the subprocess kill. The footer still appears "immediately" because the mode flip is a mutex-only operation that completes in microseconds — even when chained with the 3-second cancel that follows it in the same goroutine. *(Rendering still happens on the Update goroutine, which is unblocked; the next tick picks up the new `ShortcutLine()`.)*
+
+**New method on `KeyHandler`:** `func (h *KeyHandler) Cancel() func()` returns `h.cancel` under `h.mu`. Used by `keysModel.handleNormal` to read the function pointer safely. Not listed in the "Delete" block at the top of this section because it is new, not pre-existing.
+
 **Why:** The state machine *data* (Mode, Actions channel, ForceQuit) is TUI-library-independent and already well-tested in `ui_test.go`. The *dispatch* is what binds to the TUI library, and that's the only thing that needs to change. Deleting `ShortcutLinePtr` also removes the race-detector workaround documented at `ui.go:68-73` — Bubble Tea doesn't need pointer binding, so there's no concurrent reader of a `*string`.
 
 The test file `internal/ui/ui_test.go` loses its `Handle`-based cases and grows new cases that drive the `keysModel` directly via `tea.KeyMsg`. The `SetMode`, `ShortcutLine`, and `ForceQuit` tests stay exactly as they are.
@@ -327,9 +450,19 @@ The test file `internal/ui/ui_test.go` loses its `Handle`-based cases and grows 
 
 - All `Handle`-based dispatch tests: `TestNormalMode_N_SendsCancelSignal`, `TestNormalMode_Q_ShowsQuitConfirmation`, `TestNormalMode_OtherKeys_Ignored`, `TestQuitConfirm_Y_*`, `TestQuitConfirm_N_*`, `TestQuitConfirm_Escape_*`, `TestQuitConfirm_OtherKey_*`, `TestErrorMode_C_*`, `TestErrorMode_R_*`, `TestErrorMode_Q_*`, `TestErrorMode_OtherKeys_*`, `TestKeyboardDispatch_NormalVsError`, `TestNewKeyHandler_NilCancel_NKey_*` — all migrate into `internal/ui/keys_test.go` (or the new `model_test.go`) driving `keysModel.Update(tea.KeyMsg{...})`.
 - All `ShortcutLinePtr` tests (~4): `TestShortcutLinePtr_ReturnsNonNilPointer`, `TestShortcutLinePtr_DereferencesToCurrentValue`, `TestShortcutLinePtr_StableAddress`, `TestShortcutLinePtr_AgreesWithShortcutLine` — **deleted**, not migrated. No pointer-binding surface exists in Bubble Tea.
-- `TestShortcutLine_ConcurrentRead_NoRace` (`ui_test.go:428-451`) — **deleted**. This test exists specifically to validate Option Q's mutex-protected read path under Glyph's render goroutine. Bubble Tea reads `ShortcutLine` only from the single Update goroutine, so the concurrency scenario no longer exists.
+- `TestShortcutLine_ConcurrentRead_NoRace` (`ui_test.go:428-451`) — **retained and broadened** (see the mutex-extension subsection earlier in this section). Under the new architecture `SetMode` still fires from the workflow goroutine (`orchestrate.go:63, 66`) while `keysModel.Update` reads `Mode()` from the Update goroutine, so the concurrent-access scenario is real — not gone. The broadened test concurrently reads both `ShortcutLine` and `Mode()` while a second goroutine cycles modes, and `go test -race` must pass. *(An earlier draft of this plan listed this test for deletion; that directive is withdrawn.)*
 
-**Tests that stay unchanged:** `TestSetMode_*`, `TestForceQuit_*` (all six), `TestNewKeyHandler_InitialState`. These exercise the library-independent data shape.
+**Tests that stay unchanged:** `TestSetMode_*`, `TestNewKeyHandler_InitialState`. These exercise the library-independent data shape.
+
+**`TestForceQuit_*` changes driven by the signal-path symmetry fix above:**
+
+- `TestForceQuit_CallsCancelAndInjectsActionQuit` — stays, still validates the cancel + send. Add an assertion that `h.mode == ModeQuitting` after the call.
+- `TestForceQuit_NilCancel_NoPanic` — stays unchanged.
+- `TestForceQuit_FullChannel_NoPanic` — stays unchanged.
+- `TestForceQuit_DoesNotAlterMode_WhenNormal` (`ui_test.go:368-380`) — **flip assertion**: after `ForceQuit`, `h.mode` must be `ModeQuitting` and `h.ShortcutLine()` must be `QuittingLine`. Rename to `TestForceQuit_SetsModeQuitting_FromNormal`.
+- `TestForceQuit_DoesNotAlterMode_WhenError` (`ui_test.go:382-396`) — same flip. Rename to `TestForceQuit_SetsModeQuitting_FromError`.
+- `TestForceQuit_Idempotent_CalledTwice` — stays. The mode is already `ModeQuitting` after the first call; a second call re-writes the same value, which is a no-op in behavior. Cancel fires twice as documented.
+- **New:** `TestForceQuit_FromSignalPath_FootersShowQuitting` — a goroutine-level test that simulates the signal path: start the handler in Normal mode, call `ForceQuit` from a background goroutine, assert from the main goroutine that both `Mode()` and `ShortcutLine()` observed under `h.mu` return `ModeQuitting`/`QuittingLine`. Race-detector-safe.
 
 ### 5. Dynamic title: both OS window title and in-TUI border title, same source
 
@@ -343,19 +476,39 @@ func (m Model) renderTopBorder(title string) string {
     const tl, tr, h = "╭", "╮", "─"
     innerWidth := m.width - 2 // subtract corner glyphs
     leadDashes := 2
+    // Budget for the title: innerWidth minus the lead dashes, with at least
+    // one trailing dash so the title never abuts the top-right corner.
+    titleBudget := innerWidth - leadDashes - 1
+    if titleBudget < 0 {
+        // Terminal is so narrow we can't even fit "╭──╮". Emit a plain rule.
+        return lipgloss.NewStyle().Foreground(LightGray).Render(
+            tl + strings.Repeat(h, max(innerWidth, 0)) + tr,
+        )
+    }
     titleSegment := " " + title + " "
-    // lipgloss.Width handles multi-byte runes and any embedded ANSI
+    // lipgloss.Width handles multi-byte runes and any embedded ANSI; use it
+    // (not len or RuneCountInString) because the title may contain em-dashes.
     titleWidth := lipgloss.Width(titleSegment)
+    if titleWidth > titleBudget {
+        // Title overflows. Truncate using Lip Gloss's MaxWidth, which is
+        // rune-and-ANSI-aware, then re-wrap in the spacer pair so the
+        // leading/trailing spaces remain visible even after truncation.
+        inner := lipgloss.NewStyle().MaxWidth(titleBudget - 2).Render(title)
+        titleSegment = " " + inner + " "
+        titleWidth = lipgloss.Width(titleSegment)
+    }
     fillCount := innerWidth - leadDashes - titleWidth
     if fillCount < 0 {
+        // Defensive: should not be reachable after the truncation above.
         fillCount = 0
-        // truncate title if width too small (fallback — paint dashes only)
     }
     return lipgloss.NewStyle().Foreground(LightGray).Render(
         tl + strings.Repeat(h, leadDashes) + titleSegment + strings.Repeat(h, fillCount) + tr,
     )
 }
 ```
+
+**Truncation evidence:** Lip Gloss's `Style.MaxWidth` (verified against `lipgloss@v1.1.0`) uses ANSI-aware width accounting identical to `lipgloss.Width`, so the truncation respects both multi-byte runes and any embedded color codes. Tests for `renderTopBorder` must cover (a) normal title that fits, (b) title exactly at budget, (c) title one rune wider than budget → truncated with two-space spacer preserved, (d) `m.width == 4` (edge case where `titleBudget < 0` → plain rule), and (e) `m.width == 0` (terminal not yet sized → plain rule without crashing).
 
 The sides (`│ ... │`) and bottom (`╰──...──╯`) are rendered via a standard `lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderTop(false).BorderForeground(LightGray).Width(m.width - 2)` applied to the inner content. The **explicit `.Width(m.width - 2)`** is load-bearing: without it, Lip Gloss pads the border to the widest line of the inner content, which will not match the `m.width - 2` used for the hand-built top row and will produce misaligned corners.
 
@@ -435,7 +588,17 @@ program := tea.NewProgram(model,
     tea.WithAltScreen(),
     tea.WithoutSignalHandler())
 proxy := ui.NewHeaderProxy(program.Send)
-runner.SetSender(func(line string) { program.Send(ui.LogLineMsg{Line: line}) })
+// Line forwarding goes through the buffered drain + coalescing batcher
+// described in section 1. See section 8 for the complete wiring.
+lineCh := make(chan string, 4096)
+go runLineDrain(lineCh, program.Send) // batches into ui.LogLinesMsg
+runner.SetSender(func(line string) {
+    select {
+    case lineCh <- line:
+    default:
+        // buffer full — drop; file log still has it
+    }
+})
 
 workflowDone := make(chan struct{})
 go func() {
@@ -501,16 +664,45 @@ func newCapturingRunner(t *testing.T) (*Runner, *logger.Logger, func() []string)
 }
 ```
 
-`SetSender` accepts a `func(string)` here so the tests don't need to import Bubble Tea. In `main.go`, a thin adapter wraps `program.Send` via a buffered-channel drain goroutine (per section 1's back-pressure mitigation):
+`SetSender` accepts a `func(string)` here so the tests don't need to import Bubble Tea. In `main.go`, a thin adapter wraps `program.Send` via a buffered-channel drain goroutine that also coalesces into batched `LogLinesMsg` messages (per section 1's back-pressure + `SetContent` amplification mitigation):
 
 ```go
 const senderBuffer = 4096
 lineCh := make(chan string, senderBuffer)
+
+// Drain goroutine: coalesces consecutive lines within a 10 ms window into
+// a single LogLinesMsg, reducing SetContent calls by ~100x under burst.
 go func() {
-    for line := range lineCh {
-        program.Send(ui.LogLineMsg{Line: line})
+    const coalesceWindow = 10 * time.Millisecond
+    for {
+        first, ok := <-lineCh
+        if !ok {
+            return
+        }
+        batch := []string{first}
+        // Drain everything currently queued without blocking.
+    drain:
+        for {
+            select {
+            case l, ok := <-lineCh:
+                if !ok {
+                    program.Send(ui.LogLinesMsg{Lines: batch})
+                    return
+                }
+                batch = append(batch, l)
+            default:
+                break drain
+            }
+        }
+        program.Send(ui.LogLinesMsg{Lines: batch})
+        // Optional: sleep a fixed 10 ms before reading the next burst so a
+        // trickle of 1 line/sec still lands within one coalesce window.
+        // Skipped here because the blocking <-lineCh read at loop top gives
+        // the same effect for free.
+        _ = coalesceWindow
     }
 }()
+
 runner.SetSender(func(line string) {
     select {
     case lineCh <- line:
@@ -547,7 +739,7 @@ Every existing test that calls `collect := collectLines(t, r)` / `collect()` swi
 
 `TestWriteToLog_AfterCloseNoPanic` (`workflow_test.go:835-845`) continues to work because `sendLine` just calls a closure; after the migration there's nothing to close first. The test can stay as a documentation of the no-panic guarantee.
 
-**Estimated scope:** ~25 test functions in `workflow_test.go` touch `collectLines`/`LogReader`; all get the same mechanical substitution.
+**Estimated scope:** `collect := collectLines(t, runner)` appears at 26 sites in `workflow_test.go` and 5 sites in `run_test.go` (31 total; verified by `rg -c 'collect := collectLines'`). Every site gets the same mechanical substitution. `run_test.go`'s `LastCapture` tests (lines 1482, 1506, 1528, 1554, 1591) are the only ones in that file that hit a real `Runner` — the rest drive `fakeExecutor` and are unaffected.
 
 ### 9. Pre-populated header and headerProxy bootstrap
 
@@ -578,7 +770,13 @@ initialHeader := ui.NewStatusHeader(maxSteps)
 model := ui.NewModel(initialHeader, keyHandler, versionLabel)
 program := tea.NewProgram(model, /* ... */)
 proxy := ui.NewHeaderProxy(program.Send) // built with program.Send directly
-runner.SetSender(func(line string) { program.Send(ui.LogLineMsg{Line: line}) })
+// lineCh + batching drain goroutine are started here — see section 8 for body.
+runner.SetSender(func(line string) {
+    select {
+    case lineCh <- line:
+    default:
+    }
+})
 go workflow.Run(runner, proxy, keyHandler, runCfg)
 ```
 
@@ -649,9 +847,13 @@ The PR ships as one unit because the build is broken between commits 2 and 5. Co
    - `docs/features/workflow-orchestration.md` — verify and update any references to `io.Pipe`, `LogReader`, or Glyph wiring; the core Run loop text stays.
    - `docs/coding-standards/concurrency.md` — update the `io.PipeWriter` mutex example (this was a concrete example of "mutex-protected writes"). Replace with a still-valid example from the codebase (e.g., `processMu` around `currentProc`) or document the removal.
    - `docs/architecture.md` — update the TUI rendering path block diagram, the package dependency graph, and any text referencing Glyph or the pipe-based streaming path.
-   - `docs/how-to/reading-the-tui.md` — mention mouse wheel scrolling in the region tour.
+   - `docs/how-to/reading-the-tui.md` — mention mouse wheel scrolling in the region tour, and add a "Selecting log text to copy" subsection documenting the Option (macOS) / Shift (Linux/Windows) modifier-key override for drag-select, per the accepted regression in Open Question 7a.
+   - `docs/how-to/getting-started.md` — add a one-line note near the "reading the log panel" content pointing at the drag-select override so first-run users see it.
    - `docs/how-to/quitting-gracefully.md` — update any `ShortcutLinePtr` references; verify the exit-code text still matches the new signal path.
    - `docs/project-discovery.md` — update framework/dependency listings if it names Glyph explicitly.
+   - `docs/coding-standards/testing.md` (line ~236-240) — the "Glyph layout assembly" example must be replaced with a Bubble Tea equivalent (or removed and replaced with a non-Glyph test-seam example). Per the [Lint and Tooling standard](../coding-standards/lint-and-tooling.md), this is not a suppression, but a live code example that is about to become fiction.
+   - `docs/coding-standards/go-patterns.md` (lines ~136, 177, 184) — the `glyph.NewApp()` example and the two `TUI Display & Glyph Wiring` links reference Glyph-specific mechanics; update the example to Bubble Tea's `tea.NewProgram` and re-title the links.
+   - `docs/features/file-logging.md` (line ~168) — drop the "alongside `io.Pipe`" phrase in the Related Documents bullet; replace with "alongside the `sendLine` streaming path."
 
    Before landing the PR, grep the entire `docs/` tree for `glyph`, `io.Pipe`, `PipeWriter`, `PipeReader`, `LogReader`, `ShortcutLinePtr`, `app.Stop`, and `ExitRawMode` to catch anything this list missed. Historical text in ADRs (`docs/adr/`) and plans (`docs/plans/`) stays as-is — those are frozen decision records, not living docs.
 
@@ -672,12 +874,12 @@ Between commits 3 and 5, `make build` fails. That is acceptable within a PR but 
 | `ralph-tui/internal/ui/log_panel.go` | **new** — `logModel` with 500-line ring buffer + `viewport.Model`, `AtBottom`/`GotoBottom` auto-scroll. Filename is `log_panel.go` because `log.go` already holds log-body banner helpers |
 | `ralph-tui/internal/ui/keys.go` | **new** — `keysModel` dispatching `tea.KeyMsg` by mode (the logic that used to live in `Handle`) |
 | `ralph-tui/internal/ui/header_proxy.go` | **new** — proxy satisfying `workflow.RunHeader` and `ui.StepHeader` via `tea.Program.Send` |
-| `ralph-tui/internal/ui/messages.go` | **new** — `logLineMsg`, `headerStepStateMsg`, `headerIterationLineMsg`, `headerPhaseStepsMsg`, `setModeMsg` types |
+| `ralph-tui/internal/ui/messages.go` | **new** — `LogLinesMsg{Lines []string}`, `headerStepStateMsg`, `headerIterationLineMsg`, `headerPhaseStepsMsg`, `headerInitializeLineMsg`, `headerFinalizeLineMsg` types. (No single-line `logLineMsg` — the coalescing drain in §1 always delivers a batch. No `setModeMsg` — mode transitions stay on `KeyHandler.SetMode`; see section 4 for the mutex-based race fix.) |
 | `ralph-tui/internal/ui/model_test.go` | **new** — tests for root `Update` routing, key dispatch per mode, log append + auto-scroll, viewport mouse events, title assembly |
 | `ralph-tui/internal/workflow/workflow.go` | Remove `io.Pipe`, `LogReader`, `PipeWriter` mutex; add `sendLine`, `SetSender`; `forwardPipe` and `WriteToLog` call `sendLine` |
-| `ralph-tui/internal/workflow/workflow_test.go` | Update `Runner` construction to pass a fake sender closure |
+| `ralph-tui/internal/workflow/workflow_test.go` | Update `Runner` construction to pass a fake sender closure (~31 call sites — see section 8) |
 | `ralph-tui/internal/workflow/run.go` | Unchanged — the orchestration loop is TUI-library-independent |
-| `ralph-tui/internal/workflow/run_test.go` | Unchanged |
+| `ralph-tui/internal/workflow/run_test.go` | Update 5 `LastCapture` tests at `run_test.go:1482, 1506, 1528, 1554, 1591` — they call `NewRunner` + `collectLines` directly and must switch to `newCapturingRunner` alongside `workflow_test.go`. The `fakeExecutor`-driven tests that make up the bulk of the file are unchanged |
 | `docs/features/tui-display.md` | Drop pointer-binding language; describe ring buffer + viewport; note dynamic title |
 | `docs/architecture.md` | Update TUI rendering path block diagram |
 | `docs/how-to/reading-the-tui.md` | Mention mouse wheel scrolling |
@@ -689,7 +891,7 @@ Files that do **not** change: `internal/workflow/run.go`, `internal/ui/orchestra
 
 ## Verification
 
-1. **`make ci` passes.** The full pipeline: `test, lint, format, vet, vulncheck, mod-tidy, build`. Race detector stays on (`go test -race ./...`).
+1. **`make ci` passes.** Invoked from the repository root (`/Users/mxriverlynn/dev/mxriverlynn/pr9k/Makefile`, not `ralph-tui/Makefile`). The full pipeline: `test, lint, format, vet, vulncheck, mod-tidy, build`. Race detector stays on (`go test -race ./...`).
 2. **`make build && ./bin/ralph-tui -n 1 -p <test-project>` renders correctly.**
    - Terminal tab title shows `ralph-tui — Initializing 1/<N>: <Name>` within 500ms of startup, updates on each phase transition, and ends on the final finalize step's line.
    - In-TUI rounded border top row shows the same string, rendered in light-gray.
@@ -717,18 +919,52 @@ However, the change is large enough in spirit — it swaps a whole TUI library a
 
 1. **Bubble Tea non-tty fallback behavior.** Glyph today exits cleanly when stdout is not a tty (because the raw-mode call fails gracefully). Bubble Tea's behavior with `tea.WithAltScreen()` and a non-tty stdout is a known edge case — we may need to detect and skip alt-screen when `!term.IsTerminal(int(os.Stdout.Fd()))`. Verify during implementation; not a blocker. (Adversarial validator noted Bubble Tea opens `/dev/tty` via `openInputTTY` when stdin isn't a terminal — behavior with `2>&1 | cat` was not validated.)
 2. **Version pinning.** The plan doesn't pin specific bubbletea/lipgloss/bubbles versions, but it does rely on specific behaviors confirmed against `bubbletea@v1.3.10`, `lipgloss@v1.1.0`, and `bubbles@v1.0.0`. Commit 1 pins these exact versions and the PR description records them. If the implementation needs to move to a newer version, re-verify the `program.Send` blocking semantics (section 1), `viewport.DefaultKeyMap` bindings (section 2), border rendering (section 5), and `ErrProgramKilled` behavior (section 6).
-3. **Phase banner width on resize.** Historical phase banners written into the log at width W remain at width W after a resize. Accepted limitation. If users complain, the fix is to store phase banner info as typed `logLineMsg` kinds and re-render them on `tea.WindowSizeMsg`.
+3. **Phase banner width on resize.** Historical phase banners written into the log at width W remain at width W after a resize. Accepted limitation. If users complain, the fix is to tag phase banners in the ring buffer and re-render them on `tea.WindowSizeMsg`.
 4. **`teatest` adoption.** Bubble Tea has a `teatest` package for higher-level TUI integration tests. This plan does not use it — model-level unit tests driving `Update` with synthetic messages are sufficient for the four-mode state machine and log append logic. Revisit if the `View()` output becomes complex enough to justify snapshot tests.
 5. **`headerProxy` coupling risk.** The proxy is a thin forwarder, but it does introduce a layer of indirection between `workflow.Run` and the real header state. If a test wants to assert on header state after `workflow.Run` returns, it now needs to drive the `headerModel.Update` directly or hold the `tea.Program` instance. The existing `run_test.go` uses a fake header already, so this is not a regression — it's a continuation of the same testing pattern.
-6. **Back-pressure drop rate.** Section 1 drops `logLineMsg` under backpressure when the buffered send-drain channel is full (4096 entries). Under the worst observed burst (claude CLI output during a code review step) the drop rate should be zero in practice, but if it's not, a rate-limited `[log panel] N lines dropped` synthetic line would be easy to add as a follow-up. Not a blocker.
+6. **Back-pressure drop rate.** Section 1 drops lines under backpressure when the buffered send-drain channel is full (4096 entries). The 10 ms coalescing drain combined with the 4096-deep buffer gives roughly 40 k lines of headroom per 100 ms window; under the worst observed burst (claude CLI output during a code review step) the drop rate should be zero in practice. If it's not, a rate-limited `[log panel] N lines dropped` synthetic line would be easy to add as a follow-up. Not a blocker.
 7. **Mouse events over non-mouse terminals.** `tea.WithMouseCellMotion()` enables mouse byte emission. Terminals without mouse support (or `TERM=dumb`) may render the raw escape sequences as text. If this shows up in the wild, gate the option on a TTY-capability check.
+
+7a. **`tea.WithMouseCellMotion()` breaks terminal drag-select-to-copy — accepted regression, documented.** Verified by reading `bubbletea@v1.3.10/standard_renderer.go:415-420` + `x/ansi@v0.10.1/mode.go:512`: the option emits `\x1b[?1002h` (xterm button-event mouse mode), which tells every mainstream terminal (iTerm2, Ghostty, Kitty, xterm) to forward mouse drags to the application instead of performing local text selection. Today's Glyph build does **not** enable any mouse mode — verified via grep for `?100[0-9]` in the Glyph source. **Impact:** users who today drag-select log-panel text to copy will, after the migration, need to hold Option (macOS) or Shift (Linux/Windows) to override the application's mouse capture. **Decision:** accept the regression (user approval 2026-04-11). Mouse-wheel scrolling is a high-value quality-of-life feature and the override gesture is one modifier key on every mainstream terminal. Document the Option/Shift workaround in `docs/how-to/reading-the-tui.md` as part of commit 8's doc updates — specifically, add a "Selecting log text to copy" section that explains the modifier-key override per platform. Also mention in `docs/how-to/getting-started.md` near the "reading the log panel" note so new users see it on first run. No code change is required beyond enabling `tea.WithMouseCellMotion()`.
+
+8. **Narrow-terminal rendering policy.** The plan specifies no minimum width. Consequences of rendering at < ~40 columns:
+   - **Checkbox grid** (`header.go:41-88`, 4 columns × `[ ▸name ]` cells): each cell is 5–15 chars wide; 4 columns require ~40 cols minimum; narrower terminals will force Lip Gloss to wrap or overflow.
+   - **Hand-built top border** (section 5): handled by the truncation fallback added in this iteration; degrades to plain-rule at very small widths.
+   - **Shortcut footer**: `"↑/k up  ↓/j down  n next step  q quit"` is 37 chars plus the version label pinned right; at 40 cols the version label overflows or clips.
+   - Today's Glyph build has the same undocumented narrow-width behavior, so the regression is "no worse than today." Not a blocker, but worth documenting with a floor: if `m.width < 40`, render a single-line placeholder ("ralph-tui: terminal too narrow (width N, minimum 40)") instead of the full layout. Decide during implementation.
+
+9. **`docs/notes/glyph-api-findings.md`** is named after the Glyph library. The plan's frozen-documents policy carves out `docs/adr/` and `docs/plans/` but not `docs/notes/`. The file is a historical research artifact (verified: opens with "Glyph API Findings — Issue #46" and contains only module-verification findings from the adoption of Glyph). Treat as frozen alongside ADRs and plans; add a one-line superseded-by note at the top pointing to this plan and the Bubble Tea ADR, but do not delete. Document this intent explicitly in commit 8.
 8. **Viewport custom KeyMap carries forward.** Section 2 strips `f`/`b`/`u`/`d`/`space` from the viewport KeyMap as a forward-compatibility guard. This is a deliberate choice — it prevents future silent key collisions — but it also means users who type-muscle-memory `space` for page down won't get it. Acceptable because `PgDn` still works and the shortcut line never advertised `space`.
 
 ## Iteration Summary
 
-This plan was refined through three iterations plus adversarial validation on 2026-04-11. All decisions below are evidence-based; file references are provided for every claim.
+This plan was refined through three iterations plus adversarial validation on 2026-04-11, followed by a second pass on 2026-04-11 that combined fresh iteration and full agent validation (evidence-based-investigator + adversarial-validator). All decisions below are evidence-based; file references are provided for every claim.
 
-### Iterations completed: 3 + adversarial validation
+### Iterations completed: 3 + adversarial validation (pass 1), then 3 + agent validation (pass 2)
+
+### Pass 2 findings that changed the plan structurally
+
+| # | Finding | Plan change |
+|---|---------|-------------|
+| P2-1 | Mode field race unmasked by migration (`SetMode` writes from workflow goroutine, `keysModel.Update` reads from Update goroutine) | Section 4: extended `KeyHandler.mu` to cover `mode` and `prevMode`; added `Mode()` accessor; renamed `updateShortcutLine` to `updateShortcutLineLocked`. `TestShortcutLine_ConcurrentRead_NoRace` retained and broadened. |
+| P2-2 | `run_test.go` has 5 direct `NewRunner`+`collectLines` call sites; plan incorrectly marked it "Unchanged" | Files-changed table corrected; section 8 documents the 5 specific LastCapture tests. |
+| P2-3 | Doc update list missing `docs/coding-standards/testing.md`, `docs/coding-standards/go-patterns.md`, `docs/features/file-logging.md` | Section 8 expanded to include all three with line references. |
+| P2-4 | Section 4's `TestShortcutLine_ConcurrentRead_NoRace` "delete" directive contradicted the section's new "retain and broaden" directive (BLOCKER) | Deletion directive withdrawn in the `ui_test.go` deletions block. |
+| P2-5 | Signal-path `ForceQuit` does not set `ModeQuitting`, contradicting the Goals "Must preserve: identical shutdown semantics" line | Section 4: moved the mode flip into `ForceQuit` itself so both the `y`-confirm and signal paths go through one primitive. `TestForceQuit_DoesNotAlterMode_*` tests flipped to assert the new symmetry. |
+| P2-6 | Hand-built top border had a truncation promise in the comment that the sketch did not implement | Section 5: sketch replaced with a version that uses `lipgloss.Style.MaxWidth` for truncation, handles `titleBudget < 0` (plain-rule fallback), and enumerates test cases. |
+| P2-7 | `bubbles/viewport.SetContent` is O(N) per call (verified against `bubbles@v1.0.0/viewport/viewport.go:125-133, 536-544`); single-line `logLineMsg` would produce O(N²) cost over a burst | Section 1: coalescing shape promoted from "optional optimization" to **required**; message type collapsed to `logLinesMsg{Lines []string}`; drain goroutine body specified; section 2's `logModel.Update` rewritten to batch. |
+| P2-8 | `runner.Terminate` blocks up to 3 s; `keysModel.handleNormal` would call it synchronously from the Update goroutine and freeze rendering | Section 4: handlers wrap cancel/ForceQuit in `tea.Cmd` closures so the blocking call runs off-goroutine. New `KeyHandler.Cancel()` accessor. |
+| P2-9 | `tea.WithMouseCellMotion()` (verified `?1002h` escape) breaks terminal drag-select-to-copy — a user-visible regression with no mention in the plan | Added as Open Question 7a with three mitigation options; flagged as "blocker for final sign-off". |
+| P2-10 | Narrow-terminal rendering policy unspecified | Added as Open Question 8 with concrete floor recommendation (`m.width < 40` → placeholder line). |
+| P2-11 | `docs/notes/glyph-api-findings.md` not covered by the frozen-documents carve-out | Added as Open Question 9; treat as frozen historical research, add superseded-by note in commit 8. |
+| P2-12 | `Makefile` is at the repository root, not `ralph-tui/` | Verification step 1 path clarified. |
+
+### Pass 2 false alarms (for traceability)
+
+- `tea.WithAltScreen()` scrollback loss — Glyph already uses `\x1b[?1049h` at `screen.go:152` and ralph-tui already goes through `EnterRawMode`. No regression.
+- `viewport.GotoBottom` cost — O(1) arithmetic; the O(N²) burst cost is entirely in `SetContent`.
+
+### Pass 1 assumptions and findings (retained from first iteration pass)
 
 ### Assumptions challenged and resolved
 
@@ -780,7 +1016,14 @@ Findings V7, V9, V10, V11, V12 were either already addressed, confirmed as laten
 
 ### Final state
 
-The plan is now load-bearing against all known failure modes of Bubble Tea's actual implementation at version 1.3.10 / bubbles 1.0.0 / lipgloss 1.1.0. Three risks remain open for verification during implementation (enumerated in "Open questions & risks"): non-TTY fallback behavior, back-pressure drop rate on real hardware, and mouse events on non-mouse terminals. None are blockers.
+The plan is now load-bearing against all known failure modes of Bubble Tea's actual implementation at version 1.3.10 / bubbles 1.0.0 / lipgloss 1.1.0. Risks open for verification during implementation (enumerated in "Open questions & risks"):
+
+1. Non-TTY fallback behavior (Open Q 1)
+2. Back-pressure drop rate on real hardware under claude-review bursts (Open Q 6)
+3. Mouse events on non-mouse terminals (Open Q 7)
+4. **Mouse drag-select regression on mainstream terminals (Open Q 7a)** — resolved 2026-04-11: accept the regression and document the Option/Shift override in `reading-the-tui.md` and `getting-started.md`. No code mitigation; proceed with `tea.WithMouseCellMotion()`.
+5. Narrow-terminal rendering policy (Open Q 8)
+6. Viewport custom KeyMap muscle-memory (Open Q existing)
 
 ## Related docs
 
