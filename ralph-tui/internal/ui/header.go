@@ -4,6 +4,27 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/kungfusheep/glyph"
+)
+
+// Status-header color scheme. These are package vars so main.go can bind
+// fixed colors by value for static widgets (iteration line, HRules, footer)
+// while the grid cells bind their per-cell color fields by pointer for
+// dynamic repaints as step state changes.
+var (
+	// LightGray is the default foreground color for the header and footer
+	// chrome: brackets, pending/done/failed/skipped markers, step names,
+	// iteration line, shortcut bar, version label, and the box border.
+	LightGray = glyph.PaletteColor(245)
+	// ActiveStepFG is the foreground color for the currently running
+	// step's brackets and name — white so the active row pops against
+	// the light-gray chrome.
+	ActiveStepFG = glyph.BrightWhite
+	// ActiveMarkerFG is the foreground color for the active step's
+	// marker glyph (▸) so the triangle reads as "this one is running"
+	// at a glance, independently of the rest of the cell text.
+	ActiveMarkerFG = glyph.BrightGreen
 )
 
 // StepState represents the display state of a single workflow step.
@@ -24,26 +45,46 @@ const HeaderCols = 4
 // Glyph reads the exported fields via pointer on each render cycle — callers
 // update state by mutating struct fields directly (e.g. RenderIterationLine, SetStepState).
 //
-// Layout:
+// Each checkbox cell is rendered as three adjacent Text widgets so the
+// marker glyph can be colored independently of the brackets and step
+// name. main.go wires them up as:
 //
-//	IterationLine    →  Text(&h.IterationLine)
-//	Rows[r][0..3]   →  HBox(Text(&h.Rows[r][0]), ..., Text(&h.Rows[r][3]))  // one row per HeaderCols steps
+//	HBox(
+//	    Text(&Prefixes[r][c]).FG(&NameColors[r][c]),   // "[" or ""
+//	    Text(&Markers[r][c]).FG(&MarkerColors[r][c]),  // " ▸ ✓ ✗ -" or ""
+//	    Text(&Suffixes[r][c]).FG(&NameColors[r][c]),   // "] <name>" or ""
+//	)
+//
+// Rows is kept in sync as the legacy single-string representation
+// ("[X] name") for existing test assertions; it is not read by the
+// Glyph render tree.
 type StatusHeader struct {
-	IterationLine string               // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
-	Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
-	stepNames     []string             // current phase's step name list
+	IterationLine string // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
+
+	Rows [][HeaderCols]string // legacy single-string labels ("[X] name") — test assertions only
+
+	// Split-cell fields: the checkbox grid is rendered from these.
+	Prefixes     [][HeaderCols]string
+	Markers      [][HeaderCols]string
+	Suffixes     [][HeaderCols]string
+	MarkerColors [][HeaderCols]glyph.Color
+	NameColors   [][HeaderCols]glyph.Color
+
+	stepNames []string // current phase's step name list
 }
 
 // NewStatusHeader constructs a header sized to fit the largest phase.
 // Call this once at startup, after validation, with the max step count across
 // all three phases (initialize, iteration, finalize).
 func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
-	rowCount := (maxStepsAcrossPhases + HeaderCols - 1) / HeaderCols // ceil division
-	if rowCount < 1 {
-		rowCount = 1
-	}
+	rowCount := max((maxStepsAcrossPhases+HeaderCols-1)/HeaderCols, 1) // ceil division, min 1
 	return &StatusHeader{
-		Rows: make([][HeaderCols]string, rowCount),
+		Rows:         make([][HeaderCols]string, rowCount),
+		Prefixes:     make([][HeaderCols]string, rowCount),
+		Markers:      make([][HeaderCols]string, rowCount),
+		Suffixes:     make([][HeaderCols]string, rowCount),
+		MarkerColors: make([][HeaderCols]glyph.Color, rowCount),
+		NameColors:   make([][HeaderCols]glyph.Color, rowCount),
 	}
 }
 
@@ -110,13 +151,13 @@ func (h *StatusHeader) SetPhaseSteps(names []string) {
 		panic(fmt.Sprintf("ui: phase has %d steps, exceeds allocated grid capacity %d", len(names), totalSlots))
 	}
 	h.stepNames = append(h.stepNames[:0], names...)
-	for r := 0; r < len(h.Rows); r++ {
-		for c := 0; c < HeaderCols; c++ {
+	for r := range len(h.Rows) {
+		for c := range HeaderCols {
 			idx := r*HeaderCols + c
 			if idx < len(names) {
-				h.Rows[r][c] = checkboxLabel(StepPending, names[idx])
+				h.writeCell(r, c, StepPending, names[idx])
 			} else {
-				h.Rows[r][c] = "" // trailing empty slots render as blank padding
+				h.clearCell(r, c)
 			}
 		}
 	}
@@ -129,20 +170,52 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 		return
 	}
 	r, c := idx/HeaderCols, idx%HeaderCols
-	h.Rows[r][c] = checkboxLabel(state, h.stepNames[idx])
+	h.writeCell(r, c, state, h.stepNames[idx])
 }
 
-func checkboxLabel(state StepState, name string) string {
+// writeCell populates every parallel field for a single grid slot that
+// has a step assigned to it. Kept private because callers should always
+// route through SetPhaseSteps / SetStepState, which provide the row/col
+// arithmetic and bounds guards.
+func (h *StatusHeader) writeCell(r, c int, state StepState, name string) {
+	marker, nameColor, markerColor := cellStyle(state)
+	h.Prefixes[r][c] = "["
+	h.Markers[r][c] = marker
+	h.Suffixes[r][c] = "] " + name
+	h.NameColors[r][c] = nameColor
+	h.MarkerColors[r][c] = markerColor
+	h.Rows[r][c] = "[" + marker + "] " + name
+}
+
+// clearCell blanks every parallel field for a trailing/unused slot. The
+// color fields are reset to LightGray so any transient render before the
+// next SetPhaseSteps picks up the chrome color rather than a stale
+// active/green/white from the previous phase.
+func (h *StatusHeader) clearCell(r, c int) {
+	h.Prefixes[r][c] = ""
+	h.Markers[r][c] = ""
+	h.Suffixes[r][c] = ""
+	h.NameColors[r][c] = LightGray
+	h.MarkerColors[r][c] = LightGray
+	h.Rows[r][c] = ""
+}
+
+// cellStyle returns the marker glyph and per-cell colors for a given step
+// state. Active steps get white brackets/name with a green marker so the
+// running row pops out of the light-gray chrome; every other state uses
+// LightGray for both marker and name. Unknown states fall through to the
+// pending default (a space marker with light-gray colors).
+func cellStyle(state StepState) (marker string, nameColor, markerColor glyph.Color) {
 	switch state {
 	case StepActive:
-		return fmt.Sprintf("[▸] %s", name)
+		return "▸", ActiveStepFG, ActiveMarkerFG
 	case StepDone:
-		return fmt.Sprintf("[✓] %s", name)
+		return "✓", LightGray, LightGray
 	case StepFailed:
-		return fmt.Sprintf("[✗] %s", name)
+		return "✗", LightGray, LightGray
 	case StepSkipped:
-		return fmt.Sprintf("[-] %s", name)
+		return "-", LightGray, LightGray
 	default:
-		return fmt.Sprintf("[ ] %s", name)
+		return " ", LightGray, LightGray
 	}
 }

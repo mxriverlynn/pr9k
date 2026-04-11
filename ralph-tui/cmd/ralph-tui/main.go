@@ -91,37 +91,49 @@ func main() {
 		app.Handle(k, func() { keyHandler.Handle(k) })
 	}
 
-	// Build checkpoint row widgets — one HBox per header row, HeaderCols Text widgets each.
+	// Build checkpoint row widgets — one HBox per header row, HeaderCols
+	// cells each, with each cell composed of three adjacent Text widgets
+	// so the marker glyph (▸/✓/✗/-) can be colored independently of the
+	// brackets and step name. The per-cell color fields are bound by
+	// pointer so state transitions (e.g. pending → active) repaint the
+	// cell on the next render cycle without rebuilding the widget tree.
 	rowWidgets := make([]any, len(header.Rows))
 	for r := range header.Rows {
 		cols := make([]any, ui.HeaderCols)
 		for c := range cols {
-			cols[c] = glyph.Text(&header.Rows[r][c])
+			cols[c] = glyph.HBox(
+				glyph.Text(&header.Prefixes[r][c]).FG(&header.NameColors[r][c]),
+				glyph.Text(&header.Markers[r][c]).FG(&header.MarkerColors[r][c]),
+				glyph.Text(&header.Suffixes[r][c]).FG(&header.NameColors[r][c]),
+			)
 		}
 		rowWidgets[r] = glyph.HBox(cols...)
 	}
 
-	// Assemble the full VBox layout tree. HRules separate the checkbox grid
-	// from the iteration status line, the status line from the log panel,
-	// and the log panel from the shortcut footer.
-	children := make([]any, 0, 5+len(rowWidgets)+2)
+	// Assemble the full VBox layout tree. The iteration status line sits
+	// at the top of the header with an HRule under it; the checkbox grid
+	// follows, then another HRule, the log panel, a final HRule, and the
+	// shortcut footer. The chrome (iteration line, HRules, footer text,
+	// and the outer rounded border) renders in LightGray so the active
+	// step's green marker and white brackets/name pop against it.
+	children := make([]any, 0, 6+len(rowWidgets))
+	children = append(children, glyph.Text(&header.IterationLine).FG(ui.LightGray))
+	children = append(children, glyph.HRule().FG(ui.LightGray))
 	children = append(children, rowWidgets...)
-	children = append(children, glyph.HRule())
-	children = append(children, glyph.Text(&header.IterationLine))
-	children = append(children, glyph.HRule())
+	children = append(children, glyph.HRule().FG(ui.LightGray))
 	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
-	children = append(children, glyph.HRule())
+	children = append(children, glyph.HRule().FG(ui.LightGray))
 	// Footer: shortcut bar on the left, app version pinned to the bottom-right.
 	// glyph.Space() is a flex spacer inside an HBox, pushing the version text
 	// against the right border of the VBox.
 	versionLabel := "ralph-tui v" + version.Version
 	children = append(children, glyph.HBox(
-		glyph.Text(keyHandler.ShortcutLinePtr()),
+		glyph.Text(keyHandler.ShortcutLinePtr()).FG(ui.LightGray),
 		glyph.Space(),
-		glyph.Text(&versionLabel),
+		glyph.Text(&versionLabel).FG(ui.LightGray),
 	))
 
-	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
+	app.SetView(glyph.VBox.Border(glyph.BorderRounded).BorderFG(ui.LightGray).Title("Ralph")(children...))
 
 	// logWidth sizes the full-width phase banner underline to fill the log
 	// panel. The panel sits inside a rounded VBox border, so we subtract 2
