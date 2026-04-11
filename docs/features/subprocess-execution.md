@@ -2,7 +2,7 @@
 
 Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination and per-step stdout capture.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-11
 - **Authors:**
   - River Bailey
 
@@ -79,7 +79,7 @@ Key files:
 ```go
 // Runner executes workflow steps and forwards subprocess output via a sendLine callback.
 type Runner struct {
-    mu         sync.Mutex     // protects sendLine
+    mu         sync.Mutex     // protects sendLine and lastCapture
     log        *logger.Logger // file logger
     workingDir string         // cmd.Dir for every subprocess
     sendLine   func(string)   // callback invoked for every forwarded line; never nil
@@ -92,6 +92,7 @@ type Runner struct {
 
     // lastCapture holds the last non-empty stdout line from the most recent
     // successful RunStep. Empty string if the last step failed or produced no output.
+    // Protected by mu; written by RunStep, read by LastCapture.
     lastCapture string
 }
 ```
@@ -174,6 +175,8 @@ After each successful `RunStep`, `Runner` stores the last non-empty stdout line.
 // successful RunStep call, stripped of trailing carriage returns and whitespace.
 // Returns "" if the last step failed or produced no non-empty stdout output.
 func (r *Runner) LastCapture() string {
+    r.mu.Lock()
+    defer r.mu.Unlock()
     return r.lastCapture
 }
 ```
@@ -264,6 +267,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 | Resource | Protection | Why |
 |----------|-----------|-----|
 | `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently with scanner goroutines reading it |
+| `lastCapture` | `mu sync.Mutex` | Written by `RunStep` after `wg.Wait()`, read by `LastCapture()`; both hold `mu` to prevent data races between concurrent callers |
 | `currentProc`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep (main goroutine) and Terminate (keyboard/signal goroutine) |
 | `WaitGroup` drain before `cmd.Wait()` | `sync.WaitGroup` | Ensures all pipe output is forwarded before the process exit status is collected |
 
@@ -293,6 +297,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestWriteToLog_DoesNotWriteToFileLogger` — verifies WriteToLog forwards to sendLine but does not write to the file logger
   - `TestNewRunner_WriteToLogWithoutSetSenderPanics*` — verifies that calling WriteToLog before SetSender panics with a descriptive message
   - `TestRunStep_ReturnsErrorForEmpty*` — verifies that RunStep returns an error for empty and nil command slices
+  - `TestCaptureOutput_ReturnsErrorForEmptyCommandSlice`, `TestCaptureOutput_ReturnsErrorForNilCommand` — verifies CaptureOutput returns an error for empty and nil command slices
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step
