@@ -474,6 +474,73 @@ func TestView_ZeroDimensions_NoPanic(t *testing.T) {
 	_ = m.View()
 }
 
+// --- TP-002, TP-003, TP-005: colorShortcutLine ---
+
+func TestColorShortcutLine_DefaultBranch_PreservesText(t *testing.T) {
+	result := colorShortcutLine(NormalShortcuts)
+	plain := stripANSI(result)
+	if plain != NormalShortcuts {
+		t.Errorf("plain text mismatch: want %q, got %q", NormalShortcuts, plain)
+	}
+}
+
+func TestColorShortcutLine_QuitConfirmPrompt_ContainsAppTitle(t *testing.T) {
+	result := colorShortcutLine(QuitConfirmPrompt)
+	plain := stripANSI(result)
+	if plain != QuitConfirmPrompt {
+		t.Errorf("plain text mismatch: want %q, got %q", QuitConfirmPrompt, plain)
+	}
+	if !strings.Contains(plain, AppTitle) {
+		t.Errorf("plain text missing AppTitle %q: %q", AppTitle, plain)
+	}
+}
+
+func TestColorShortcutLine_QuittingLine_PreservesText(t *testing.T) {
+	result := colorShortcutLine(QuittingLine)
+	plain := stripANSI(result)
+	if plain != QuittingLine {
+		t.Errorf("plain text mismatch: want %q, got %q", QuittingLine, plain)
+	}
+}
+
+// --- TP-004: colorTitle ---
+
+func TestColorTitle_WithSeparator_PreservesText(t *testing.T) {
+	title := "Power-Ralph.9000 — Iteration 2/5"
+	result := colorTitle(title)
+	plain := stripANSI(result)
+	if plain != title {
+		t.Errorf("plain text mismatch: want %q, got %q", title, plain)
+	}
+}
+
+func TestColorTitle_WithoutSeparator_PreservesText(t *testing.T) {
+	title := "Power-Ralph.9000"
+	result := colorTitle(title)
+	plain := stripANSI(result)
+	if plain != title {
+		t.Errorf("plain text mismatch: want %q, got %q", title, plain)
+	}
+}
+
+// --- TP-007: Mouse message forwarded to log ---
+
+func TestModel_MouseMsg_NoPanic(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Update panicked on tea.MouseMsg: %v", r)
+		}
+	}()
+
+	next, _ := m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown})
+	_ = next
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
