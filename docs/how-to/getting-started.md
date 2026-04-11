@@ -67,7 +67,7 @@ The project directory is where ralph-tui looks for `ralph-steps.json`, `prompts/
 
 ## What the TUI shows on first run
 
-The TUI has four regions stacked top to bottom, all inside a rounded border titled "Ralph":
+The TUI has four regions stacked top to bottom, inside a dynamic rounded border that embeds the current run state (e.g., `╭── ralph-tui — Iteration 1/3 ──...──╮`):
 
 1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) at the very top of the view
 2. **Iteration line** — directly below the grid: `"Initializing 1/2: Splash"`, `"Iteration 1/3 — Issue #42"`, or `"Finalizing 1/3: Deferred work"` depending on the current phase
@@ -105,7 +105,6 @@ For a detailed walk-through of the TUI layout and what each region means, see [R
 | Error (step failed) | `q` | Enter quit-confirm |
 | QuitConfirm | `y` | Confirm quit (footer flips to `Quitting...`) |
 | QuitConfirm | `n` or `Esc` | Cancel quit, return to previous mode |
-| Done (workflow complete) | any key | Exit |
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) and [Quitting Gracefully](quitting-gracefully.md) for the full interaction model.
 

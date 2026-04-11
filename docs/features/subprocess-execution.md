@@ -206,7 +206,7 @@ func (r *Runner) Terminate() {
 
 ### Direct Log Injection (WriteToLog)
 
-`WriteToLog` writes a single line directly via the `sendLine` callback and to the file logger, without running a subprocess. Used for step separator lines between subprocess outputs:
+`WriteToLog` writes a single line directly via the `sendLine` callback, without running a subprocess. Used for step separator lines between subprocess outputs. Note: lines written via `WriteToLog` appear in the TUI log panel but are **not** written to the file logger:
 
 ```go
 func (r *Runner) WriteToLog(line string) {
@@ -304,6 +304,6 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 - [Signal Handling & Shutdown](signal-handling.md) — How `Terminate` is triggered by OS signals
 - [File Logging](file-logging.md) — The logger that receives forwarded subprocess output
 - [CLI & Configuration](cli-configuration.md) — How `ProjectDir` sets the working directory for all subprocesses
-- [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected writes, WaitGroup drain, and io.Pipe streaming
+- [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected writes, WaitGroup drain, and sendLine callback patterns
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for scanner error checking and goroutine write error tracking
 - [Go Patterns](../coding-standards/go-patterns.md) — Coding standard for 256KB scanner buffer sizing

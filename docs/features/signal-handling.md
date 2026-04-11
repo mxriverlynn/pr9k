@@ -31,13 +31,16 @@ Key files:
        ▼
   signal handler goroutine:
   ┌──────────────────────────────────────────────┐
-  │  <-sigChan                                   │
-  │  close(signaled)         ← one-shot flag     │
-  │  keyHandler.ForceQuit()  ← terminate sub +  │
-  │                             inject ActionQuit│
-  │  app.Stop()              ← stop the TUI      │
-  │  wait on <-done or 2s timeout                │
-  │  os.Exit(1)              ← direct exit       │
+  │  select {                                    │
+  │  case <-sigChan:                             │
+  │    close(signaled)       ← one-shot flag     │
+  │    keyHandler.ForceQuit()  ← terminate sub + │
+  │                               inject ActionQuit│
+  │    wait on <-workflowDone or 2s timeout      │
+  │    program.Kill()        ← forced TUI stop   │
+  │  case <-workflowDone:                        │
+  │    return                ← workflow finished  │
+  │  }                                           │
   └──────────────────────────────────────────────┘
        │
        ├───▶ Runner.Terminate()     → SIGTERM subprocess, SIGKILL after 3s
@@ -52,22 +55,22 @@ Key files:
 
   workflow goroutine (normal completion path):
   ┌──────────────────────────┐
+  │  defer close(workflowDone)│
   │  workflow.Run(...)       │
   │  signal.Stop(sigChan)    │  ← deregister signal handler
   │  log.Close()             │  ← flush and close log file
-  │  app.Stop()              │  ← stop the TUI
-  │  close(done)             │
+  │  close(lineCh)           │  ← signal drain goroutine to exit
+  │  program.Quit()          │  ← stop the Bubble Tea TUI
   └──────────────────────────┘
 
-  main goroutine (after app.Run() returns):
+  main goroutine (after program.Run() returns):
   ┌─────────────────────────────────────────┐
-  │  wait on <-done or 2s timeout           │
+  │  wait on <-workflowDone or 2s timeout   │
   │                                         │
   │  select {                               │
   │  case <-signaled:                       │
-  │    os.Exit(1)   ← signal path (already │
-  │                    exited above, but    │
-  │                    defensive fallback)  │
+  │    os.Exit(1)   ← signal-initiated      │
+  │                    shutdown             │
   │  default:                               │
   │    os.Exit(0)   ← normal completion    │
   │  }                                      │
@@ -85,19 +88,22 @@ sigChan := make(chan os.Signal, 1)
 signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 signaled := make(chan struct{})
 go func() {
-    <-sigChan
-    close(signaled)
-    keyHandler.ForceQuit()
-    app.Stop()
     select {
-    case <-done:
-    case <-time.After(2 * time.Second):
+    case <-sigChan:
+        close(signaled)
+        keyHandler.ForceQuit()
+        // Give the workflow goroutine up to 2 seconds to exit cleanly.
+        select {
+        case <-workflowDone:
+        case <-time.After(2 * time.Second):
+            program.Kill()
+        }
+    case <-workflowDone:
     }
-    os.Exit(1)
 }()
 ```
 
-The `signaled` channel is a one-shot flag — once closed, it stays closed. The signal handler calls `app.Stop()` to tear down the Glyph TUI, waits up to 2 seconds for the workflow goroutine to finish (so the log is flushed), then calls `os.Exit(1)` directly.
+The `signaled` channel is a one-shot flag — once closed, it stays closed. The signal handler calls `keyHandler.ForceQuit()` to terminate the subprocess and inject `ActionQuit`, then waits up to 2 seconds for the workflow goroutine to unwind cleanly. If it doesn't, `program.Kill()` forces the Bubble Tea program to stop (returning `tea.ErrProgramKilled` from `program.Run()`). Exit code selection happens in the main goroutine after `program.Run()` returns, not inside the signal handler.
 
 ### ForceQuit Integration
 
@@ -130,15 +136,16 @@ This catches the `ActionQuit` injected by `ForceQuit` even if the signal arrives
 
 ### Workflow Goroutine Cleanup
 
-On normal workflow completion, `signal.Stop`, `log.Close`, and `app.Stop` all run inside the workflow goroutine before `done` is closed:
+On normal workflow completion, `signal.Stop`, `log.Close`, `close(lineCh)`, and `program.Quit()` all run inside the workflow goroutine before `workflowDone` is closed:
 
 ```go
 go func() {
-    defer close(done)
-    _ = workflow.Run(runner, header, keyHandler, runCfg)
+    defer close(workflowDone)
+    _ = workflow.Run(runner, proxy, keyHandler, runCfg)
     signal.Stop(sigChan)  // deregister signal handler
     _ = log.Close()       // flush and close the log file
-    app.Stop()            // stop the Glyph TUI
+    close(lineCh)         // signal drain goroutine to exit
+    program.Quit()        // stop the Bubble Tea TUI
 }()
 ```
 
@@ -146,23 +153,23 @@ Placing cleanup here ensures it always runs when the workflow finishes naturally
 
 ### Exit Code Selection
 
-After `app.Run()` returns, the main goroutine waits for the workflow goroutine and checks whether a signal was received:
+After `program.Run()` returns, the main goroutine waits for the workflow goroutine (which may still be finalizing log flush) and checks whether a signal was received:
 
 ```go
 select {
-case <-done:
+case <-workflowDone:
 case <-time.After(2 * time.Second):
 }
 
 select {
 case <-signaled:
-    os.Exit(1)  // signal-initiated shutdown (defensive; signal handler already exited)
+    os.Exit(1)  // signal-initiated shutdown
 default:
     os.Exit(0)  // normal completion
 }
 ```
 
-In the signal path, the signal handler goroutine already called `os.Exit(1)` directly. The exit code check in main is a defensive fallback for the case where `app.Run()` returns before the signal handler fires.
+`program.Run()` returns when `program.Quit()` (normal path) or `program.Kill()` (signal path) is called. `tea.ErrProgramKilled` is explicitly tolerated — it is a normal forced-exit return, not an error. The signal handler does not call `os.Exit` itself; exit code selection always happens here in the main goroutine.
 
 ## Testing
 

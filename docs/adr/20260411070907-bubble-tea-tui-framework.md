@@ -90,12 +90,12 @@ We specifically reject tview because its lack of first-class window-title suppor
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/cmd/ralph-tui/main.go` | Program entry point — currently constructs the Glyph `App`, wires keybindings, and calls `app.Run()` (lines 86-186). Becomes the `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen())` call site. |
-| `ralph-tui/internal/ui/header.go` | Pointer-mutable `StatusHeader` (lines 61-88). Becomes an immutable header struct with pure state transitions, rendered via Lip Gloss. |
-| `ralph-tui/internal/ui/ui.go` | Four-mode keyboard state machine `KeyHandler` (lines 36-181). The `Mode` enum and transition rules stay; dispatch moves from `app.Handle` callbacks to `Update(msg)` on `tea.KeyMsg`. |
-| `ralph-tui/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. The channel contract stays; only its producer side (keyboard) changes. |
-| `ralph-tui/internal/workflow/workflow.go` | Subprocess runner with `io.Pipe`-based streaming (lines 20-49, 97-176). Replace `LogReader()` with a line-forwarding goroutine that calls `tea.Program.Send(logLineMsg{line})`. |
-| `ralph-tui/go.mod` | Remove `github.com/kungfusheep/glyph`; add `bubbletea`, `lipgloss`, `bubbles`. |
+| `ralph-tui/cmd/ralph-tui/main.go` | Program entry point — constructs `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())`, wires the drain goroutine and signal handler, and calls `program.Run()`. |
+| `ralph-tui/internal/ui/header.go` | `StatusHeader` struct with per-cell Lip Gloss color arrays. Mutations are applied only via `headerModel.apply()` on the Bubble Tea Update goroutine. |
+| `ralph-tui/internal/ui/ui.go` | Four-mode keyboard state machine `KeyHandler`. The `Mode` enum and transition rules are unchanged; dispatch is handled by `keysModel.Update(msg tea.KeyMsg)` in `keys.go`. |
+| `ralph-tui/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. Interface unchanged. |
+| `ralph-tui/internal/workflow/workflow.go` | Subprocess runner using a `sendLine` callback (installed via `SetSender`) to forward lines non-blockingly into a buffered channel; a drain goroutine in `main.go` coalesces them into `LogLinesMsg` values sent via `program.Send`. No `io.Pipe` or `LogReader`. |
+| `ralph-tui/go.mod` | `github.com/kungfusheep/glyph` removed; `bubbletea`, `lipgloss`, `bubbles` added. |
 
 ### Cross-References
 

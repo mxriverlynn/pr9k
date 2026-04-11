@@ -2,7 +2,7 @@
 
 ralph-tui is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
 
-Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralph-tui streams subprocess output in real time through an `io.Pipe`, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, ralph-tui streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
 
 ## System Block Diagram
 
@@ -98,14 +98,15 @@ Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralp
        │                  │         │        │
        └──────────────────┘         │        │
               │                     ▼        ▼
-              │             ┌────────┐  ┌─────────┐
-              │             │io.Pipe │  │ Logger  │
-              │             │(→ TUI) │  │(→ file) │
-              │             └────────┘  └─────────┘
+              │             sendLine(line)  Logger
+              │             (snapshot-then-  (file)
+              │              unlock; via
+              │              SetSender)
               │                  │
-              │             sendLine(line)
-              │             (snapshot-then-unlock;
-              │              installed via SetSender)
+              │             buffered lineCh
+              │             → drain goroutine
+              │             → program.Send(LogLinesMsg)
+              │             → Bubble Tea TUI
               │
               ▼ LastCapture()
        ┌──────────────────┐
@@ -172,7 +173,7 @@ Loads workflow step definitions from `ralph-steps.json`, which contains initiali
 
 ### [Subprocess Execution & Streaming](features/subprocess-execution.md)
 
-The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time through an `io.Pipe` to the TUI and a file logger simultaneously. A `sendLine` callback (installed via `SetSender`) is also invoked for every forwarded line, enabling the TUI to receive lines directly without reading the pipe. Uses mutex-protected writes with snapshot-then-unlock for the callback, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback). After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`, which the orchestrator uses to bind `CaptureAs` variables into the `VarTable`. `ResolveCommand` (in `run.go`) applies `{{VAR}}` substitution and resolves relative script paths.
+The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time via a `sendLine` callback (installed via `SetSender`) to a buffered channel in `main.go`; a drain goroutine coalesces lines into batched `LogLinesMsg` values sent to the Bubble Tea program. Scanner output is also written to the file logger. Uses mutex-protected writes with snapshot-then-unlock for the callback, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback). After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`, which the orchestrator uses to bind `CaptureAs` variables into the `VarTable`. `ResolveCommand` (in `run.go`) applies `{{VAR}}` substitution and resolves relative script paths.
 
 **Package:** `internal/workflow/` (`workflow.go`, `run.go`)
 
@@ -184,7 +185,7 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 ### [TUI Status Header & Log Display](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). The log body is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback.
+A Bubble Tea `Model` assembled in `Model.View()`. Shows the current iteration/issue in the dynamic top border and on the iteration line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback.
 
 **Package:** `internal/ui/` (`header.go`, `log.go`, `terminal.go`)
 
@@ -240,8 +241,8 @@ cmd/ralph-tui/main.go
 ## Key Design Principles
 
 - **Narrow-reading principle**: Ralph-tui facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
-- **Streaming over buffering**: Subprocess output streams through `io.Pipe` in real time — no buffered collection and dump.
-- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `RenderInitializeLine`, `RenderIterationLine`, `RenderFinalizeLine`, `SetPhaseSteps`, and `SetStepState`. The completion summary is *not* a header method — it is written to the log body via `ui.CompletionSummary` so it scrolls with the rest of the run transcript.
+- **Streaming over buffering**: Subprocess output is forwarded line-by-line via the `sendLine` callback into a buffered channel; the drain goroutine coalesces lines before sending `LogLinesMsg` to the Bubble Tea program — no bulk buffering and dump.
+- **Message-passing state**: `StatusHeader` mutations are never applied directly by the orchestration goroutine. They are wrapped as typed messages by `HeaderProxy` and sent via `program.Send`, received on the Bubble Tea Update goroutine, and applied there — eliminating header data races. The completion summary is *not* a header method — it is written to the log body via `ui.CompletionSummary` so it scrolls with the rest of the run transcript.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
 - **Non-blocking sends for signal safety**: `ForceQuit` uses `select`/`default` to inject `ActionQuit` without blocking, making it safe to call from a signal handler goroutine.
 - **Interface-driven testability**: `StepRunner`, `StepHeader`, `StepExecutor`, and `RunHeader` interfaces decouple orchestration from concrete implementations.

@@ -4,10 +4,10 @@ Ralph-tui streams everything the workflow does into a single terminal view. This
 
 ## The four regions
 
-The screen is a single rounded-border `VBox` titled "Ralph" with these children in order:
+The screen is assembled in `Model.View()` with a dynamic top border that embeds the current run state. The four regions stack top to bottom:
 
 ```
-╭─ Ralph ─────────────────────────────────────────────╮
+╭── ralph-tui — Iteration 2/3 — Issue #42 ───────────╮
 │ [✓] Feature work      [✓] Test planning             │
 │ [▸] Test writing      [ ] Code review               │  ← checkbox grid
 │ [ ] Review fixes      [ ] Close issue               │
@@ -31,7 +31,7 @@ The screen is a single rounded-border `VBox` titled "Ralph" with these children 
 ╰─────────────────────────────────────────────────────╯
 ```
 
-All four regions are bound to pointers: Glyph reads them on every render cycle without any explicit refresh call, so state updates from the workflow goroutine appear on the next frame. The checkbox grid sits at the top of the VBox, with the iteration status line *below* it; both regions are part of the same header state but rendered on opposite sides of an `HRule`.
+State updates from the orchestration goroutine are sent as typed messages via `HeaderProxy` (which calls `program.Send`) and applied on the Bubble Tea Update goroutine — so header changes appear on the next `View()` render cycle without any shared-memory races. The checkbox grid sits at the top, with the iteration status line *below* it; both regions are part of the same header state but rendered on opposite sides of a horizontal rule.
 
 ## Region 1 — the checkbox grid
 
@@ -39,8 +39,8 @@ The topmost region. Step progress for the *current phase*, laid out as rows of 4
 
 The five possible states:
 
-| Glyph | Name | Meaning |
-|-------|------|---------|
+| Marker | Name | Meaning |
+|--------|------|---------|
 | `[ ] <name>` | Pending | Step hasn't started yet |
 | `[▸] <name>` | Active | Currently running |
 | `[✓] <name>` | Done | Completed successfully, or user-terminated with `n` (treated as a skip) |
@@ -65,9 +65,9 @@ After the finalize phase ends, the iteration line keeps its last finalize value 
 
 ## Region 3 — the log panel
 
-The bulk of the screen. This is a scrollable `glyph.Log` widget that caps at 500 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling. Content is streamed into it from three sources:
+The bulk of the screen. This is a `bubbles/viewport` sub-model that caps at 500 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
 
-1. **Subprocess stdout/stderr** — every line a running step emits, streamed in real time through an `io.Pipe`
+1. **Subprocess stdout/stderr** — every line a running step emits, streamed in real time via the `sendLine` callback through a buffered channel
 2. **Structural chrome** — phase banners, iteration separators, per-step banners, capture logs, and the completion summary, all written by `workflow.Run` or `ui.Orchestrate` via `executor.WriteToLog`
 3. **Error lines** — `Error preparing initialize step: ...`, `Error preparing steps: ...`, `Error preparing finalize step: ...` when `buildStep` fails
 
@@ -131,7 +131,7 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 | `── Iteration N ─────────────` | Marks the top of each iteration inside the iterations phase |
 | `Starting step: <name>` + `─` underline (matching width) | Marks the start of every individual step, in every phase |
 | `Captured VAR = "value"` | Logged after any step with `captureAs`, showing the bound value |
-| `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow waits for the "any key to exit" keypress |
+| `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine calls `program.Quit()` and exits |
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.
 
@@ -141,7 +141,7 @@ The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while 
 
 ## Region 4 — the shortcut footer
 
-A single line at the bottom of the VBox. It is actually an `HBox` with three children: the mode-dependent shortcut bar on the left, a flex spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
 
 The left-side shortcut bar is the clearest way to tell what state the handler is in:
 
