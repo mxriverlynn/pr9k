@@ -21,10 +21,16 @@ const (
 	ModeQuitting // entered after the user confirms a quit; footer shows "Quitting..."
 )
 
+// AppTitle is the canonical display name of the application. Use this
+// constant anywhere the app's name appears in user-facing text (top-border
+// title, quit-confirm prompt, etc.) rather than hardcoding the string —
+// renaming the app should require exactly one edit here.
+const AppTitle = "Power-Ralph.9000"
+
 const (
 	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
 	ErrorShortcuts    = "c continue  r retry  q quit"
-	QuitConfirmPrompt = "Quit ralph? (y/n, esc to cancel)"
+	QuitConfirmPrompt = "Quit " + AppTitle + "? (y/n, esc to cancel)"
 	QuittingLine      = "Quitting..."
 )
 

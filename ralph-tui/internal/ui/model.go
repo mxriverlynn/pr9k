@@ -196,14 +196,16 @@ func (m Model) View() string {
 	if shortcutWidth < 0 {
 		shortcutWidth = 0
 	}
-	shortcutTrunc := lipgloss.NewStyle().MaxWidth(shortcutWidth).Foreground(LightGray).Render(shortcut)
+	// Color the shortcut line (mapped keys white, descriptions gray), then
+	// truncate — MaxWidth is ANSI-aware so coloring survives truncation.
+	shortcutTrunc := lipgloss.NewStyle().MaxWidth(shortcutWidth).Render(colorShortcutLine(shortcut))
 	spacerWidth := footerWidth - lipgloss.Width(shortcutTrunc) - versionWidth
 	if spacerWidth < 0 {
 		spacerWidth = 0
 	}
 	footer := shortcutTrunc +
 		strings.Repeat(" ", spacerWidth) +
-		lipgloss.NewStyle().Foreground(LightGray).Render(m.versionLabel)
+		lipgloss.NewStyle().Foreground(White).Render(m.versionLabel)
 	inner.WriteString(footer)
 
 	// Wrap inner content in the border (sides + bottom, no top — we hand-built it).
@@ -216,9 +218,47 @@ func (m Model) View() string {
 // current header iteration line.
 func (m Model) titleString() string {
 	if m.header.iterLine() == "" {
-		return "Power-Ralph.9000"
+		return AppTitle
 	}
-	return "Power-Ralph.9000 — " + m.header.iterLine()
+	return AppTitle + " — " + m.header.iterLine()
+}
+
+// colorShortcutLine applies the footer shortcut bar's two-tone palette: the
+// mapped key token at the start of each "  "-separated group renders white,
+// and its trailing description renders gray. When the footer instead shows
+// a status message (quit-confirm prompt, quitting line) the whole string
+// renders white so it reads as a foreground message rather than key-mapping
+// chrome.
+func colorShortcutLine(s string) string {
+	white := lipgloss.NewStyle().Foreground(White)
+	if s == QuitConfirmPrompt || s == QuittingLine {
+		return white.Render(s)
+	}
+	gray := lipgloss.NewStyle().Foreground(LightGray)
+	groups := strings.Split(s, "  ")
+	for i, g := range groups {
+		if idx := strings.IndexByte(g, ' '); idx >= 0 {
+			groups[i] = white.Render(g[:idx]) + gray.Render(g[idx:])
+		} else {
+			groups[i] = white.Render(g)
+		}
+	}
+	return strings.Join(groups, gray.Render("  "))
+}
+
+// colorTitle applies the top-border title's two-tone palette: the app name
+// (everything before the first " — " separator) renders green, and the
+// iteration detail that follows renders white. When the title has no
+// separator (e.g. the bare app name before any iteration starts), the
+// whole string renders green.
+func colorTitle(title string) string {
+	const sep = " — "
+	green := lipgloss.NewStyle().Foreground(Green)
+	white := lipgloss.NewStyle().Foreground(White)
+	if idx := strings.Index(title, sep); idx >= 0 {
+		return green.Render(title[:idx]) + white.Render(title[idx:])
+	}
+	return green.Render(title)
 }
 
 // renderTopBorder constructs the hand-built top border row with the dynamic
@@ -237,23 +277,28 @@ func (m Model) renderTopBorder(title string) string {
 		return lipgloss.NewStyle().Foreground(LightGray).Render(tl + rule + tr)
 	}
 
-	titleSegment := " " + title + " "
-	titleWidth := lipgloss.Width(titleSegment)
+	// Do width math on the plain title, then apply coloring as the last
+	// step so the visible width stays accurate regardless of ANSI codes.
+	plainTitle := title
+	plainSegment := " " + plainTitle + " "
+	titleWidth := lipgloss.Width(plainSegment)
 	if titleWidth > titleBudget {
 		// Title overflows: truncate to titleBudget-2 (leave room for the two
 		// surrounding spaces) using Lip Gloss MaxWidth (rune-and-ANSI-aware),
 		// then re-wrap in the spacer pair.
-		inner := lipgloss.NewStyle().MaxWidth(titleBudget - 2).Render(title)
-		titleSegment = " " + inner + " "
-		titleWidth = lipgloss.Width(titleSegment)
+		plainTitle = lipgloss.NewStyle().MaxWidth(titleBudget - 2).Render(plainTitle)
+		plainSegment = " " + plainTitle + " "
+		titleWidth = lipgloss.Width(plainSegment)
 	}
+	titleSegment := " " + colorTitle(plainTitle) + " "
 
 	fillCount := innerWidth - leadDashes - titleWidth
 	if fillCount < 0 {
 		fillCount = 0
 	}
 
-	return lipgloss.NewStyle().Foreground(LightGray).Render(
-		tl + strings.Repeat(h, leadDashes) + titleSegment + strings.Repeat(h, fillCount) + tr,
-	)
+	grayStyle := lipgloss.NewStyle().Foreground(LightGray)
+	return grayStyle.Render(tl+strings.Repeat(h, leadDashes)) +
+		titleSegment +
+		grayStyle.Render(strings.Repeat(h, fillCount)+tr)
 }

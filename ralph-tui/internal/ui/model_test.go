@@ -182,8 +182,8 @@ func TestTitleString_EmptyIterationLine(t *testing.T) {
 	m.header.iterationLine = ""
 
 	got := m.titleString()
-	if got != "Power-Ralph.9000" {
-		t.Errorf("want %q, got %q", "Power-Ralph.9000", got)
+	if got != AppTitle {
+		t.Errorf("want %q, got %q", AppTitle, got)
 	}
 }
 
@@ -193,7 +193,7 @@ func TestTitleString_PopulatedIterationLine(t *testing.T) {
 	m.header.iterationLine = m.header.header.IterationLine
 
 	got := m.titleString()
-	want := "Power-Ralph.9000 — Iteration 2/5 — Issue #42"
+	want := AppTitle + " — Iteration 2/5 — Issue #42"
 	if got != want {
 		t.Errorf("want %q, got %q", want, got)
 	}
@@ -208,7 +208,7 @@ func TestRenderTopBorder_TitleFits(t *testing.T) {
 	m.header.iterationLine = m.header.header.IterationLine
 
 	got := m.renderTopBorder(m.titleString())
-	if !strings.Contains(got, "Power-Ralph.9000") {
+	if !strings.Contains(got, AppTitle) {
 		t.Errorf("expected title in border, got: %q", got)
 	}
 	// Must start with ╭ and end with ╮ (after stripping ANSI).
@@ -425,7 +425,7 @@ func TestTitleString_AfterIterationLineMsg(t *testing.T) {
 	next, _ := m.Update(headerIterationLineMsg{iter: 3, max: 10, issue: "99"})
 	m = next.(Model)
 
-	want := "Power-Ralph.9000 — Iteration 3/10 — Issue #99"
+	want := AppTitle + " — Iteration 3/10 — Issue #99"
 	if m.titleString() != want {
 		t.Errorf("titleString: want %q, got %q", want, m.titleString())
 	}

@@ -29,6 +29,10 @@ var (
 	// brighter than LightGray so streamed subprocess output stands out
 	// from the surrounding chrome.
 	White = lipgloss.Color("15")
+	// Green is the foreground color for the app name in the top-border
+	// title ("Power-Ralph.9000") so it reads as a brand/name glyph
+	// distinct from the white iteration detail that follows it.
+	Green = lipgloss.Color("10")
 )
 
 // StepState represents the display state of a single workflow step.
