@@ -256,6 +256,50 @@ func TestRun_UnlimitedIterations(t *testing.T) {
 	}
 }
 
+// TestRun_NegativeIterationsRunsZeroIterations verifies that a negative
+// Iterations value (e.g. -1) silently produces zero iterations because the
+// loop condition `cfg.Iterations == 0 || i <= cfg.Iterations` is false on
+// the very first evaluation: -1 != 0 and 1 <= -1 is false. Finalization still
+// executes. IterationsRun returns the last value of i that was committed, which
+// is 1 because the counter increments before the check fails — however, no step
+// actually runs during that iteration since we break immediately.
+//
+// Note: the caller is responsible for validating Iterations >= 0 before calling
+// Run. This test documents the current behaviour so that any future change to
+// the loop condition is noticed.
+func TestRun_NegativeIterationsRunsZeroIterations(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    -1, // invalid; loop condition is false immediately
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// No iteration step should have run.
+	for _, call := range executor.runStepCalls {
+		if call.name == "iter-step" {
+			t.Errorf("iter-step must not run when Iterations=-1, but it did")
+		}
+	}
+
+	// Finalization still runs.
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run even when Iterations=-1")
+	}
+}
+
 // TestRun_BreakLoopIfEmptyCapture verifies the loop exits when a step with
 // BreakLoopIfEmpty produces empty capture, and iterationsRun reflects the
 // iteration that triggered the break.
@@ -569,6 +613,62 @@ func TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization(t *testing.T
 	}
 	if !ranFinal {
 		t.Error("expected finalization to run after step build error")
+	}
+}
+
+// TestRun_StepBuildErrorAbortsAllRemainingIterations verifies that when
+// buildStep fails during the iteration loop with Iterations > 1, the entire
+// loop is aborted — not just the current iteration. This is distinct from the
+// initialize phase, which continues to the next step on a build error.
+func TestRun_StepBuildErrorAbortsAllRemainingIterations(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	badStep := steps.Step{
+		Name:       "bad-claude",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    3, // three iterations configured; error on first should abort all
+		Steps:         []steps.Step{badStep},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Iteration step must never have executed (build failed before RunStep).
+	for _, call := range executor.runStepCalls {
+		if call.name == "bad-claude" {
+			t.Errorf("bad-claude step should not have run (build error)")
+		}
+	}
+
+	// Finalization still runs.
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run after iteration build error")
+	}
+
+	// Only one "Error preparing steps" message should appear (iteration 1 aborts
+	// the loop; iterations 2 and 3 never start).
+	errCount := 0
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Error preparing steps") {
+			errCount++
+		}
+	}
+	if errCount != 1 {
+		t.Errorf("expected exactly 1 'Error preparing steps' log line (loop aborted after first iteration), got %d", errCount)
 	}
 }
 

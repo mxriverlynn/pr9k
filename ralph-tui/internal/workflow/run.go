@@ -71,8 +71,7 @@ type RunResult struct {
 }
 
 // Run is the main orchestration goroutine. It drives three config-defined phases
-// — initialize, iteration loop, finalize — via VarTable-based substitution, and
-// closes the executor when done.
+// — initialize, iteration loop, finalize — via VarTable-based substitution.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
@@ -265,6 +264,10 @@ func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phas
 
 	result := make([]string, len(command))
 	for i, arg := range command {
+		// vars.Substitute currently always returns a nil error; the blank
+		// identifier is intentional. If Substitute ever gains a strict mode that
+		// returns errors for unresolved variables, this site must propagate them
+		// rather than silently substituting the empty string.
 		substituted, _ := vars.Substitute(arg, vt, phase)
 		result[i] = substituted
 	}

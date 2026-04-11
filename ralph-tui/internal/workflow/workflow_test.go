@@ -427,6 +427,36 @@ func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
 	}
 }
 
+// TP-004 — CaptureOutput returns error for empty command slice
+func TestCaptureOutput_ReturnsErrorForEmptyCommandSlice(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	_, err := r.CaptureOutput([]string{})
+
+	if err == nil {
+		t.Fatal("expected error for empty command slice, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+}
+
+// TP-005 — CaptureOutput returns error for nil command (nil slice is zero-length)
+func TestCaptureOutput_ReturnsErrorForNilCommand(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	_, err := r.CaptureOutput(nil)
+
+	if err == nil {
+		t.Fatal("expected error for nil command, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+}
+
 // newIterVT creates a VarTable in Iteration phase with ISSUE_ID bound.
 func newIterVT(projectDir, issueID string) *vars.VarTable {
 	vt := vars.New(projectDir, 0)

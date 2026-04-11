@@ -190,11 +190,13 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	wg.Wait()
 	waitErr := cmd.Wait()
 
+	r.mu.Lock()
 	if waitErr == nil {
 		r.lastCapture = lastNonEmptyLine(capturedLines)
 	} else {
 		r.lastCapture = ""
 	}
+	r.mu.Unlock()
 
 	return waitErr
 }
@@ -203,6 +205,8 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 // successful RunStep call, stripped of trailing carriage returns and whitespace.
 // Returns "" if the last step failed or produced no non-empty stdout output.
 func (r *Runner) LastCapture() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.lastCapture
 }
 
