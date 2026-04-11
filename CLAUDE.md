@@ -85,8 +85,17 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 
 ## How-To Guides
 
+Problem-focused guides for users running ralph-tui against their own projects. When adding a new how-to, keep each guide focused on solving one specific problem or using one specific feature.
+
+- [`docs/how-to/getting-started.md`](docs/how-to/getting-started.md) — Install ralph-tui, point it at a target repo, and interpret the first run of the default workflow
+- [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (iteration line, checkbox grid, log panel, shortcut footer) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
-- [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
+- [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
+- [`docs/how-to/capturing-step-output.md`](docs/how-to/capturing-step-output.md) — How to use `captureAs` to bind a step's stdout to a variable for use in later steps, including initialize-vs-iteration scoping
+- [`docs/how-to/breaking-out-of-the-loop.md`](docs/how-to/breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically when a capture step returns nothing
+- [`docs/how-to/recovering-from-step-failures.md`](docs/how-to/recovering-from-step-failures.md) — Error mode keyboard controls (`c` continue, `r` retry, `q` quit) and when to use each
+- [`docs/how-to/quitting-gracefully.md`](docs/how-to/quitting-gracefully.md) — The `q`/`y` confirmation flow, Escape cancel, SIGINT/SIGTERM, `Quitting...` feedback, and exit codes
+- [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file, navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
 
 ## Project Discovery
 

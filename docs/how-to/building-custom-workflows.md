@@ -139,8 +139,13 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 
 ## Related Documentation
 
+- [Getting Started](getting-started.md) — Install, first run, and orientation
+- [Variable Output & Injection](variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved into prompts and commands
+- [Capturing Step Output](capturing-step-output.md) — How to use `captureAs` to bind step stdout to a variable
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
+- [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
+- [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures
 - [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `ralph-steps.json`, not Go code; includes documented exceptions
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Implementation details of step loading and prompt construction
-- [Variable Output & Injection](variable-output-and-injection.md) — How variables are injected into prompts and commands
 - [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
 - [Subprocess Execution](../features/subprocess-execution.md) — How steps are executed as subprocesses

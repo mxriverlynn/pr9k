@@ -151,7 +151,12 @@ To pass data between custom steps:
 
 ## Related Documentation
 
+- [Getting Started](getting-started.md) — Install, first run, and orientation
 - [Building Custom Workflows](building-custom-workflows.md) — Step configuration format and workflow structure
+- [Capturing Step Output](capturing-step-output.md) — The other direction: binding step stdout to a variable with `captureAs`
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` with capture steps
+- [Debugging a Run](debugging-a-run.md) — Reading capture logs in the log file to trace variable flow
+- [Variable State Management](../features/variable-state.md) — VarTable scopes, phase transitions, and `CaptureAs` binding
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Implementation details of `LoadSteps` and `BuildPrompt`
 - [Subprocess Execution](../features/subprocess-execution.md) — `ResolveCommand`, `CaptureOutput`, and `RunStep` implementation
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How the Run loop captures metadata and builds resolved steps
