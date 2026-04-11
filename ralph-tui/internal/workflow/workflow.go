@@ -108,7 +108,14 @@ func (r *Runner) Terminate() {
 // line is stored and retrievable via LastCapture. On failure, LastCapture is
 // set to "". A WaitGroup ensures both pipes are fully drained before cmd.Wait()
 // is called.
+//
+// RunStep returns an error if command is empty rather than panicking, so callers
+// that build commands dynamically get a clear failure instead of a runtime panic.
 func (r *Runner) RunStep(stepName string, command []string) error {
+	if len(command) == 0 {
+		return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
+	}
+
 	r.processMu.Lock()
 	r.terminated = false
 	r.processMu.Unlock()
@@ -219,14 +226,6 @@ func (r *Runner) WriteToLog(line string) {
 	send := r.sendLine
 	r.mu.Unlock()
 	send(line)
-}
-
-// Close is a no-op retained for interface compatibility with workflow.StepExecutor.
-// The io.Pipe has been removed in this migration; there is no pipe writer to close.
-// Call sites that previously relied on Close() to signal EOF to the UI pipe
-// should be migrated to use the sendLine / SetSender API instead.
-func (r *Runner) Close() error {
-	return nil
 }
 
 // CaptureOutput runs command in workingDir and returns its trimmed stdout.

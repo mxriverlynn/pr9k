@@ -15,7 +15,6 @@ import (
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
-	Close() error
 }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
@@ -131,7 +130,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		emitBlank()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
-			_ = executor.Close()
 			return RunResult{}
 		}
 		if s.CaptureAs != "" {
@@ -174,7 +172,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			th := &trackingOffsetIterHeader{h: header, idx: j}
 			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, th, keyHandler)
 			if action == ui.ActionQuit {
-				_ = executor.Close()
 				return RunResult{IterationsRun: iterationsRun}
 			}
 			captured := executor.LastCapture()
@@ -222,7 +219,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		emitBlank()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
-			_ = executor.Close()
 			return RunResult{IterationsRun: iterationsRun}
 		}
 	}
@@ -232,8 +228,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	emitBlank()
 	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
-	// 5. Close executor (sends EOF to log pipe).
-	_ = executor.Close()
 	return RunResult{IterationsRun: iterationsRun}
 }
 

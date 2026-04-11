@@ -77,6 +77,30 @@ func readLogFile(t *testing.T, log *logger.Logger, dir string) []string {
 
 // Unit tests
 
+// TestNewRunner_WriteToLogWithoutSetSenderPanics verifies that calling WriteToLog
+// on a newly-created Runner (before SetSender) panics with a descriptive message.
+// This catches missing-wire bugs (forgetting to call SetSender before RunStep)
+// early and loudly rather than silently dropping output.
+func TestNewRunner_WriteToLogWithoutSetSenderPanics(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, dir)
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Error("expected WriteToLog to panic without SetSender, but it did not")
+		}
+	}()
+
+	r.WriteToLog("this should panic")
+}
+
 func TestRunStep_StdoutArrivesInPipe(t *testing.T) {
 	r, log, drain := newCapturingRunner(t)
 
@@ -336,19 +360,6 @@ func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected step name 'my-named-step' in log file lines, got %v", logLines)
-	}
-}
-
-// T5 — Close is idempotent
-func TestClose_IsIdempotent(t *testing.T) {
-	r, log, _ := newCapturingRunner(t)
-
-	_ = log.Close()
-
-	// Second close should not panic and should return nil (io.PipeWriter behavior)
-	err := r.Close()
-	if err != nil {
-		t.Errorf("expected nil on second Close(), got %v", err)
 	}
 }
 

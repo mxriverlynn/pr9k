@@ -32,6 +32,12 @@ Fixing the root cause is almost always cheaper than the lifetime cost of the sup
 - If you find an existing suppression while working in a file, remove it and fix the real issue as part of your current change.
 - If `golangci-lint` itself is upgraded and new findings appear, fix them — do not pin to an older version to avoid the work.
 
+## Exception: tools-tagged dependency-pinning files
+
+A `//go:build tools` build tag in a standalone file (`tools.go`) that contains only blank imports is explicitly permitted. This pattern pins tool dependencies (e.g. `bubbles/viewport`) in `go.sum` without leaking them into the production binary. The tag is not hiding code from a linter — it is excluding the file from normal builds by design. Run `go vet -tags tools .` (or `make vet`) to verify the file is still correct.
+
+This exception does **not** extend to other uses of build tags. Using `//go:build ignore` or similar to hide code from linters remains prohibited.
+
 ## Additional Information
 
 - [Error Handling](error-handling.md) — Fixing `errcheck` findings usually means adding proper error wrapping, not suppression

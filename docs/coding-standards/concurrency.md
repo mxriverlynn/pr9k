@@ -238,7 +238,7 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine and Terminate snapshot-then-unlock, WaitGroup drain
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine and Terminate use mutex snapshot; WaitGroup pipe drain
 - [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access; tea.Cmd wrappers for Terminate and ForceQuit
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter; keysModel.Update as the canonical tea.Cmd blocking-wrap example
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit
