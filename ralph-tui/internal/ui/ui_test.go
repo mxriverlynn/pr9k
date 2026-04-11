@@ -56,10 +56,14 @@ func TestNormalMode_OtherKeys_Ignored(t *testing.T) {
 // --- Quit confirmation from normal mode ---
 
 func TestQuitConfirm_Y_SendsActionQuit(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+	h, cancelCalled, actions := newTestHandler(t)
 
 	h.Handle("q")
 	h.Handle("y")
+
+	if !*cancelCalled {
+		t.Error("expected cancel (subprocess terminate) to be called when confirming quit from normal mode")
+	}
 
 	select {
 	case action := <-actions:
@@ -222,11 +226,17 @@ func TestErrorMode_OtherKeys_Ignored(t *testing.T) {
 // --- Quit confirmation from error mode ---
 
 func TestQuitConfirm_Y_FromErrorMode_SendsActionQuit(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+	h, cancelCalled, actions := newTestHandler(t)
 	h.SetMode(ModeError)
 
 	h.Handle("q")
 	h.Handle("y")
+
+	// Terminate is a no-op at runtime when no subprocess is running, but the
+	// cancel hook should still fire so quit semantics are identical across modes.
+	if !*cancelCalled {
+		t.Error("expected cancel to be called when confirming quit from error mode")
+	}
 
 	select {
 	case action := <-actions:

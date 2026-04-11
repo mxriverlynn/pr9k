@@ -127,7 +127,7 @@ func (h *KeyHandler) handleError(key string) {
 func (h *KeyHandler) handleQuitConfirm(key string) {
 	switch key {
 	case "y":
-		h.Actions <- ActionQuit
+		h.ForceQuit()
 	case "n":
 		h.mode = h.prevMode
 		h.updateShortcutLine()
@@ -142,8 +142,9 @@ func (h *KeyHandler) handleDone(_ string) {
 }
 
 // ForceQuit terminates the current subprocess and injects ActionQuit into the
-// Actions channel so the orchestration goroutine exits cleanly. Safe to call
-// from a signal handler goroutine.
+// Actions channel so the orchestration goroutine exits cleanly. Called by the
+// OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm 'y' path, and safe
+// to call from any goroutine.
 func (h *KeyHandler) ForceQuit() {
 	if h.cancel != nil {
 		h.cancel()
