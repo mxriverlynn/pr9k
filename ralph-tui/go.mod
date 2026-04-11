@@ -1,6 +1,6 @@
 module github.com/mxriverlynn/pr9k/ralph-tui
 
-go 1.25.1
+go 1.26.2
 
 require (
 	github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b

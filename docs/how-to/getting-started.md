@@ -4,7 +4,7 @@ This guide walks you through installing ralph-tui, pointing it at a target repo,
 
 ## Prerequisites
 
-- **[Go 1.25+](https://go.dev/dl/)** — ralph-tui compiles to a single static binary
+- **[Go 1.26.2](https://go.dev/dl/)** — ralph-tui compiles to a single static binary
 - **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`)
 - **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`)
 - A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `ralph-steps.json`

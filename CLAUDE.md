@@ -106,7 +106,7 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 
 ### ralph-tui
 
-- Language: Go 1.25.1
+- Language: Go 1.26.2
 - Test: `cd ralph-tui && go test -race ./...` or `make test`
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
 - Lint: `make lint` (requires golangci-lint)

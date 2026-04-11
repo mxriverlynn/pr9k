@@ -10,7 +10,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ### Prerequisites
 
-- [Go 1.23+](https://go.dev/dl/) (for ralph-tui)
+- [Go 1.26.2](https://go.dev/dl/) (for ralph-tui)
 - [GitHub CLI (`gh`)](https://cli.github.com/) — authenticated with access to your target repo
 - [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) — installed and authenticated
 - A GitHub repo with issues labeled `ralph` assigned to your user
