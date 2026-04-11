@@ -484,6 +484,14 @@ func TestColorShortcutLine_DefaultBranch_PreservesText(t *testing.T) {
 	}
 }
 
+func TestColorShortcutLine_ErrorShortcuts_PreservesText(t *testing.T) {
+	result := colorShortcutLine(ErrorShortcuts)
+	plain := stripANSI(result)
+	if plain != ErrorShortcuts {
+		t.Errorf("plain text mismatch: want %q, got %q", ErrorShortcuts, plain)
+	}
+}
+
 func TestColorShortcutLine_QuitConfirmPrompt_ContainsAppTitle(t *testing.T) {
 	result := colorShortcutLine(QuitConfirmPrompt)
 	plain := stripANSI(result)
