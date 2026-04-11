@@ -101,9 +101,10 @@ The `signaled` channel is a one-shot flag — once closed, it stays closed. The 
 
 ### ForceQuit Integration
 
-`KeyHandler.ForceQuit()` does two things:
-1. Calls the `cancel` function (which is `Runner.Terminate()`) to stop the active subprocess
-2. Non-blocking sends `ActionQuit` to the `Actions` channel so the orchestration loop exits cleanly
+`KeyHandler.ForceQuit()` does three things:
+1. Flips mode to `ModeQuitting` and updates the shortcut bar (so the footer shows `"Quitting..."` immediately)
+2. Calls the `cancel` function (which is `Runner.Terminate()`) to stop the active subprocess
+3. Non-blocking sends `ActionQuit` to the `Actions` channel so the orchestration loop exits cleanly
 
 The non-blocking send (`select`/`default`) ensures `ForceQuit` never blocks, which is critical since it runs in a signal handler goroutine.
 

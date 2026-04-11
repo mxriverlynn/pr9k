@@ -116,7 +116,7 @@ type KeyHandler struct {
     prevMode     Mode           // restored when quit confirm is cancelled
     cancel       func()         // terminates the current subprocess
     Actions      chan StepAction // communicates decisions to orchestration
-    mu           sync.Mutex     // protects shortcutLine
+    mu           sync.Mutex     // protects mode, prevMode, and shortcutLine
     shortcutLine string         // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
 }
 ```
@@ -138,7 +138,11 @@ type KeyHandler struct {
 
 ```go
 func (h *KeyHandler) Handle(key string) {
-    switch h.mode {
+    h.mu.Lock()
+    mode := h.mode
+    h.mu.Unlock()
+
+    switch mode {
     case ModeNormal:      h.handleNormal(key)
     case ModeError:       h.handleError(key)
     case ModeQuitConfirm: h.handleQuitConfirm(key)
@@ -175,7 +179,7 @@ The flip to `ModeQuitting` happens **before** `ForceQuit` is called so the foote
 
 ### Quitting Mode
 
-Entered only by the QuitConfirm `y` path (never directly from Normal or Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
+Entered by the QuitConfirm `y` path or by `ForceQuit()` directly (which is called by the OS signal handler from any mode, including Normal and Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
 
 ### Normal Completion (no mode transition)
 
@@ -187,6 +191,11 @@ When the workflow finishes all iterations and finalize steps successfully, `Run`
 
 ```go
 func (h *KeyHandler) ForceQuit() {
+    h.mu.Lock()
+    h.mode = ModeQuitting
+    h.updateShortcutLineLocked()
+    h.mu.Unlock()
+
     if h.cancel != nil {
         h.cancel()
     }
@@ -221,13 +230,13 @@ func (h *KeyHandler) ShortcutLinePtr() *string {
 
 `ShortcutLinePtr()` is intended exclusively for Glyph's single-threaded event loop, which reads the pointer synchronously between write windows. It bypasses the mutex and must not be called from concurrent goroutines.
 
-The shortcut line is updated internally by `updateShortcutLine()` whenever the mode changes.
+The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes.
 
 > **Why Option Q?** Option P (exporting `ShortcutLine` as a field, dropping the mutex) was attempted first but `go test -race` detected a genuine race between the `Orchestrate` goroutine writing via `SetMode` and the test goroutine reading the field concurrently. Option Q retains the private field and mutex for `ShortcutLine()`, and adds `ShortcutLinePtr()` for Glyph's pointer-binding path.
 
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from both Normal and Error), `y` flipping to `ModeQuitting` with `QuittingLine` footer, `SetMode(ModeQuitting)` updating the shortcut bar, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, does-not-alter-mode from Normal or Error), ShortcutLine thread safety, ShortcutLinePtr (non-nil return, value tracking, stable address, agreement with ShortcutLine)
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from both Normal and Error), `y` flipping to `ModeQuitting` with `QuittingLine` footer, `SetMode(ModeQuitting)` updating the shortcut bar, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`), ShortcutLine thread safety, ShortcutLinePtr (non-nil return, value tracking, stable address, agreement with ShortcutLine)
 
 ## Additional Information
 

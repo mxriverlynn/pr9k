@@ -86,6 +86,12 @@ func (h *KeyHandler) Mode() Mode {
 // SetMode switches the handler to the given mode and updates ShortcutLine.
 // Use this when the orchestration goroutine changes workflow state
 // (e.g., a step fails → SetMode(ModeError)).
+//
+// ModeQuitConfirm should only be entered via Handle("q"), not via SetMode,
+// because Handle("q") saves prevMode so that Escape can restore it. Calling
+// SetMode(ModeQuitConfirm) directly leaves prevMode at its zero value
+// (ModeNormal), so Escape would always restore ModeNormal regardless of the
+// actual previous mode.
 func (h *KeyHandler) SetMode(mode Mode) {
 	h.mu.Lock()
 	h.mode = mode
@@ -95,6 +101,13 @@ func (h *KeyHandler) SetMode(mode Mode) {
 
 // Handle dispatches the key to the appropriate handler based on current mode.
 // key is a single character string (e.g., "n", "q", "y").
+//
+// The mode is snapshotted under the mutex and then released before the handler
+// runs. This is intentional: holding the lock through the full dispatch would
+// deadlock on the re-entrant lock acquisitions inside handleNormal,
+// handleError, and handleQuitConfirm. The TOCTOU window between the snapshot
+// and dispatch is accepted — the worst case is one extra action enqueued on
+// the channel after a concurrent ForceQuit.
 func (h *KeyHandler) Handle(key string) {
 	h.mu.Lock()
 	mode := h.mode
@@ -128,9 +141,14 @@ func (h *KeyHandler) handleNormal(key string) {
 func (h *KeyHandler) handleError(key string) {
 	switch key {
 	case "c":
+		// Blocking send: the orchestration goroutine is always blocked on
+		// <-h.Actions when in error mode, so this drains immediately. The
+		// channel capacity (10) provides a buffer against bursts from rapid
+		// key repeats, but the invariant is that only one error-mode action
+		// is in flight at a time.
 		h.Actions <- ActionContinue
 	case "r":
-		h.Actions <- ActionRetry
+		h.Actions <- ActionRetry // same blocking-send invariant as "c" above
 	case "q":
 		h.mu.Lock()
 		h.prevMode = h.mode
@@ -185,5 +203,9 @@ func (h *KeyHandler) updateShortcutLineLocked() {
 		h.shortcutLine = QuitConfirmPrompt
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
+	default:
+		// Unknown mode: reset to normal shortcuts so the shortcut bar stays
+		// usable if a future mode is added without updating this switch.
+		h.shortcutLine = NormalShortcuts
 	}
 }
