@@ -211,12 +211,36 @@ When adding any new blocking receive to orchestration code:
 2. Document which goroutine is responsible for sending to unblock the receive.
 3. Update tests to inject the required signal (see [Testing — Inject an additional signal for each new blocking receive](testing.md)).
 
+## Wrap blocking operations in tea.Cmd closures
+
+In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
+
+```go
+// Bad — Terminate() blocks up to 3 seconds; freezes the event loop
+func (m keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    m.handler.ForceQuit() // sets mode + cancel
+    m.handler.Terminate() // BLOCKS up to 3s — freezes all rendering
+    return m, nil
+}
+
+// Good — blocking call runs in a goroutine; Update returns immediately
+func (m keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    m.handler.ForceQuit()
+    return m, func() tea.Msg {
+        m.handler.Terminate() // runs off the Update goroutine
+        return tea.Quit()
+    }
+}
+```
+
+The same rule applies to `cancel()` context cancellations that trigger blocking waits, and to any channel send that might block. If it can take more than a few microseconds, it belongs in a cmd closure.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine and Terminate snapshot-then-unlock, WaitGroup drain
-- [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
+- [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access; tea.Cmd wrappers for Terminate and ForceQuit
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter; keysModel.Update as the canonical tea.Cmd blocking-wrap example
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Non-blocking drain before each orchestration step
 - [File Logging](../features/file-logging.md) — Mutex-protected concurrent writes from scanner goroutines

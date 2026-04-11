@@ -169,6 +169,44 @@ s = strings.ReplaceAll(s, "{{STEP_NAME}}", stepName)
 
 Keys not present in `vals` are left as-is by `strings.NewReplacer` — this is the correct contract for a template engine (missing keys stay visible as unresolved placeholders rather than silently becoming empty strings).
 
+## Restrict file and directory permissions for sensitive output
+
+When creating directories or files that contain sensitive output (log files, captured subprocess output), use restrictive permission bits. World-readable files leak information on shared or multi-user systems.
+
+```go
+// Log directory — owner read/write/execute only
+if err := os.MkdirAll(dir, 0o700); err != nil {
+    return fmt.Errorf("logger: create log dir %s: %w", dir, err)
+}
+
+// Log file — owner read/write only
+f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+```
+
+Apply `0o700` for directories and `0o600` for files whenever the content could reveal implementation details, user data, or captured credentials. The default `0o755`/`0o644` is appropriate only for intentionally public artifacts.
+
+## Pin tool dependencies with a tools.go build-tag file
+
+When a Go module needs to pin a tool-only dependency (e.g., a code generator or formatter) without including it in the compiled binary, use a `tools.go` file with a `//go:build tools` build tag and blank imports. Verify the file type-checks under its tag by passing `-tags tools` to `go vet`.
+
+```go
+//go:build tools
+
+package main
+
+import (
+    _ "github.com/charmbracelet/bubbletea"
+)
+```
+
+```makefile
+vet:
+    go vet ./...
+    go vet -tags tools .   # type-checks tools.go blank imports
+```
+
+The `//go:build tools` tag excludes the file from normal builds and `go build` (which fails by design — no `main` function). `go mod tidy` keeps the dependency pinned in `go.sum`. The `-tags tools` vet step catches import-path typos that `go mod tidy` would miss.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -176,6 +214,7 @@ Keys not present in `vals` are left as-is by `strings.NewReplacer` — this is t
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
 - [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run()
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
+- [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
 - [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests
 - [API Design](api-design.md) — Complementary standards for platform-scoped assumptions
