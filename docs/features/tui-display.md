@@ -224,11 +224,13 @@ for r := range header.Rows {
     rowWidgets[r] = glyph.HBox(cols...)
 }
 
-// Full layout: iteration line → checkbox rows → log panel → shortcut bar.
+// Full layout: iteration line → checkbox rows → HRule → log panel → HRule → shortcut bar.
 children := []any{
     glyph.Text(&header.IterationLine),
     // ...rowWidgets...
+    glyph.HRule(),
     glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav(),
+    glyph.HRule(),
     glyph.Text(keyHandler.ShortcutLinePtr()),
 }
 
@@ -238,6 +240,7 @@ app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 - `glyph.Log(...).Grow(1)` — the log panel expands to fill all remaining vertical space
 - `.MaxLines(500)` — caps the in-memory line buffer
 - `.BindVimNav()` — enables `↑`/`k` and `↓`/`j` scroll keys inside the log panel
+- `glyph.HRule()` widgets draw horizontal divider lines below the status header and above the shortcut footer so the three regions are visually separated
 - The shortcut bar is bound via `ShortcutLinePtr()` so mode changes update it in place without additional wiring
 
 ## Testing

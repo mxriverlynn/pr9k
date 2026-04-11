@@ -100,11 +100,14 @@ func main() {
 		rowWidgets[r] = glyph.HBox(cols...)
 	}
 
-	// Assemble the full VBox layout tree.
-	children := make([]any, 0, 2+len(rowWidgets)+2)
+	// Assemble the full VBox layout tree. HRules separate the status header
+	// from the log panel and the log panel from the shortcut footer.
+	children := make([]any, 0, 4+len(rowWidgets)+2)
 	children = append(children, glyph.Text(&header.IterationLine))
 	children = append(children, rowWidgets...)
+	children = append(children, glyph.HRule())
 	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
+	children = append(children, glyph.HRule())
 	children = append(children, glyph.Text(keyHandler.ShortcutLinePtr()))
 
 	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
