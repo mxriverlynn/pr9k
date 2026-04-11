@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -254,6 +255,10 @@ func TestNewKeyHandler_InitialState(t *testing.T) {
 	if h.Actions != actions {
 		t.Error("expected Actions to be the provided channel")
 	}
+	// TP-006: Mode() accessor must report ModeNormal at construction time.
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal initial mode, got %v", h.Mode())
+	}
 }
 
 func TestNewKeyHandler_NilCancel_NKey_NoAction_NoPanic(t *testing.T) {
@@ -311,6 +316,15 @@ func TestQuitConfirm_Y_FromErrorMode_SendsActionQuit(t *testing.T) {
 		}
 	default:
 		t.Error("expected ActionQuit to be sent on channel")
+	}
+
+	// TP-005: error-mode quit confirm must also flip mode and footer, mirroring
+	// the normal-mode path (TestQuitConfirm_Y_SetsQuittingFooter).
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after error-mode quit confirm, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine footer after error-mode quit confirm, got %q", h.ShortcutLine())
 	}
 }
 
@@ -553,6 +567,92 @@ func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
 			t.Errorf("mode %v: *ShortcutLinePtr() = %q, ShortcutLine() = %q", mode, got, want)
 		}
 	}
+}
+
+// --- SetMode completes the shortcut-line matrix ---
+
+// TP-003: SetMode(ModeNormal) sets NormalShortcuts (direct test through ShortcutLine accessor).
+func TestSetMode_Normal_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetMode(ModeError)
+
+	h.SetMode(ModeNormal)
+
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after SetMode(ModeNormal), got %q", h.ShortcutLine())
+	}
+}
+
+// TP-004: SetMode(ModeQuitConfirm) sets QuitConfirmPrompt.
+func TestSetMode_QuitConfirm_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeQuitConfirm)
+
+	if h.ShortcutLine() != QuitConfirmPrompt {
+		t.Errorf("expected QuitConfirmPrompt after SetMode(ModeQuitConfirm), got %q", h.ShortcutLine())
+	}
+}
+
+// --- ModeQuitting key handling ---
+
+// TP-001: All keys sent while in ModeQuitting are silently ignored — no mode
+// change, no new actions, no additional cancel calls.
+func TestModeQuitting_AllKeys_Ignored(t *testing.T) {
+	cancelCount := 0
+	actions := make(chan StepAction, 10)
+	h := NewKeyHandler(func() { cancelCount++ }, actions)
+
+	h.ForceQuit()
+	<-actions       // drain the ActionQuit injected by ForceQuit
+	cancelCount = 0 // reset so we only count post-quitting calls
+
+	for _, key := range []string{"q", "y", "n", "c", "r", "<Escape>", "x"} {
+		h.Handle(key)
+	}
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting to persist after all keys, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine to persist, got %q", h.ShortcutLine())
+	}
+	if len(actions) != 0 {
+		t.Errorf("expected no new actions during ModeQuitting, got %d", len(actions))
+	}
+	if cancelCount != 0 {
+		t.Errorf("expected cancel not called again during ModeQuitting, got %d calls", cancelCount)
+	}
+}
+
+// TP-002: Handle and ForceQuit may be called concurrently from different
+// goroutines (TUI event loop vs. OS signal handler). Run with -race.
+func TestHandle_ForceQuit_ConcurrentAccess_NoRace(t *testing.T) {
+	// Capacity large enough to absorb all non-blocking ForceQuit sends without
+	// the goroutines ever blocking on the channel.
+	actions := make(chan StepAction, 2000)
+	h := NewKeyHandler(func() {}, actions)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			h.Handle("q")
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			h.ForceQuit()
+		}
+	}()
+
+	wg.Wait()
+	// Pass means: no panic and go test -race found no data races.
 }
 
 // --- Keyboard dispatch routes correctly ---
