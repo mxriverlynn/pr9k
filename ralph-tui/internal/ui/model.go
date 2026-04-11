@@ -110,10 +110,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Chrome rows consumed: top border (1) + iteration line (1) + grid rows +
-		// first hrule (1) + bottom hrule (1) + footer (1) + bottom border (1).
+		// Chrome rows consumed: top border (1) + iteration line (1) +
+		// hrule above grid (1) + grid rows + hrule below grid (1) +
+		// hrule below log (1) + footer (1) + bottom border (1).
 		gridRows := len(m.header.header.Rows)
-		chromeRows := 1 + 1 + gridRows + 1 + 1 + 1 + 1
+		chromeRows := 1 + 1 + 1 + gridRows + 1 + 1 + 1 + 1
 		vpHeight := m.height - chromeRows
 		if vpHeight < 1 {
 			vpHeight = 1

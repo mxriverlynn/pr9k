@@ -6,7 +6,13 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+// logContentStyle is applied to every streamed log line so the main content
+// area renders in bright white, making subprocess output pop against the
+// light-gray chrome (border, hrules, iteration line, shortcut footer).
+var logContentStyle = lipgloss.NewStyle().Foreground(White)
 
 // logModel wraps a bubbles/viewport.Model and a 500-entry ring buffer for
 // streaming log lines. All mutations happen on the Bubble Tea Update goroutine.
@@ -67,7 +73,7 @@ func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
 			m.lines = m.lines[len(m.lines)-500:]
 		}
 		wasAtBottom := m.viewport.AtBottom()
-		m.viewport.SetContent(strings.Join(m.lines, "\n"))
+		m.viewport.SetContent(logContentStyle.Render(strings.Join(m.lines, "\n")))
 		if wasAtBottom {
 			m.viewport.GotoBottom()
 		}

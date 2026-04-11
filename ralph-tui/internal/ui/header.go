@@ -25,6 +25,10 @@ var (
 	// marker glyph (▸) so the triangle reads as "this one is running"
 	// at a glance, independently of the rest of the cell text.
 	ActiveMarkerFG = lipgloss.Color("10")
+	// White is the foreground color for the main log content area —
+	// brighter than LightGray so streamed subprocess output stands out
+	// from the surrounding chrome.
+	White = lipgloss.Color("15")
 )
 
 // StepState represents the display state of a single workflow step.
