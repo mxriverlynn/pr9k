@@ -1100,6 +1100,8 @@ func TestRunStep_ConcurrentSetSenderNoRace(t *testing.T) {
 	}()
 
 	<-swapDone
+	// Pragmatic shortcut: sleep gives the subprocess time to emit at least one line
+	// before we terminate; deterministic synchronization would require IPC from the shell.
 	time.Sleep(50 * time.Millisecond)
 	r.Terminate()
 
@@ -1160,6 +1162,8 @@ func TestRunStep_SendLineAfterTerminateNoPanic(t *testing.T) {
 		stepDone <- r.RunStep("chatty-step", []string{"sh", "-c", script})
 	}()
 
+	// Pragmatic shortcut: sleep gives the subprocess time to emit at least one line
+	// before we terminate; deterministic synchronization would require IPC from the shell.
 	time.Sleep(100 * time.Millisecond)
 	r.Terminate()
 
@@ -1263,6 +1267,58 @@ func TestWriteToLog_DefaultNoOpSendLineNoPanic(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected 'noop-test' in pipe output with default no-op sender, got %v", lines)
+	}
+}
+
+// TestLastNonEmptyLine_AllEmptyReturnsEmpty verifies that an all-whitespace/blank
+// input slice returns "" (T6).
+func TestLastNonEmptyLine_AllEmptyReturnsEmpty(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+	}{
+		{"spaces", []string{" ", "  "}},
+		{"carriage returns", []string{"\r", "\r\n"}},
+		{"mixed", []string{" ", "\r", "  \r"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastNonEmptyLine(tc.input); got != "" {
+				t.Errorf("lastNonEmptyLine(%v) = %q, want %q", tc.input, got, "")
+			}
+		})
+	}
+}
+
+// TestLastNonEmptyLine_NilOrEmptySliceReturnsEmpty verifies nil and empty slice
+// both return "" (T7).
+func TestLastNonEmptyLine_NilOrEmptySliceReturnsEmpty(t *testing.T) {
+	if got := lastNonEmptyLine(nil); got != "" {
+		t.Errorf("lastNonEmptyLine(nil) = %q, want %q", got, "")
+	}
+	if got := lastNonEmptyLine([]string{}); got != "" {
+		t.Errorf("lastNonEmptyLine([]) = %q, want %q", got, "")
+	}
+}
+
+// TestLastNonEmptyLine_TrailingEmptiesSkipped verifies that trailing blank lines
+// are skipped and the correct last non-empty line is returned (T8).
+func TestLastNonEmptyLine_TrailingEmptiesSkipped(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+		want  string
+	}{
+		{"single trailing empty", []string{"first", "second", ""}, "second"},
+		{"multiple trailing empties", []string{"alpha", " ", "\r", "  "}, "alpha"},
+		{"trailing carriage return lines", []string{"result", "\r", "\r\n"}, "result"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastNonEmptyLine(tc.input); got != tc.want {
+				t.Errorf("lastNonEmptyLine(%v) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
 	}
 }
 

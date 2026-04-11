@@ -9,7 +9,8 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 ## Overview
 
 - The `Runner` struct manages subprocess lifecycle: starting, streaming, terminating, and capturing output
-- Subprocess output streams through an `io.Pipe` — the write end receives forwarded stdout/stderr, the read end is passed to the Glyph TUI for real-time display
+- Subprocess output streams through an `io.Pipe` — the write end receives forwarded stdout/stderr, the read end is passed to the TUI for real-time display
+- A `sendLine` callback (installed via `SetSender`) is invoked for every forwarded line, enabling the Bubble Tea TUI to receive lines directly without reading the pipe
 - Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`; only the stdout goroutine captures lines for `LastCapture`
 - After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`; the orchestrator calls this to bind `CaptureAs` values into the `VarTable`
 - `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
@@ -23,43 +24,46 @@ Key files:
 ## Architecture
 
 ```
-                    ┌──────────────────────────┐
-                    │        Runner             │
-                    │                           │
-  RunStep()         │  ┌─────────────────────┐ │
-  ──────────────────┼─▶│   exec.Command()    │ │
-                    │  │   cmd.Dir = workDir  │ │
-                    │  └──────────┬──────────┘ │
-                    │             │             │
-                    │     ┌───────┴───────┐     │
-                    │     │               │     │
-                    │  ┌──▼──┐        ┌──▼──┐  │
-                    │  │stdout│       │stderr│  │
-                    │  │ pipe │       │ pipe │  │
-                    │  └──┬──┘        └──┬──┘  │
-                    │     │               │     │
-                    │  ┌──▼──────────────▼──┐  │
-                    │  │  scanner goroutines │  │
-                    │  │  capture=true(stdout│  │
-                    │  │  capture=false(stderr  │
-                    │  │  + sync.WaitGroup   │  │
-                    │  └──┬──────────────┬──┘  │
-                    │     │              │      │
-                    │     ▼              ▼      │
-                    │  ┌───────┐   ┌────────┐  │
-                    │  │io.Pipe│   │ Logger │  │
-  Terminate()       │  │(mutex)│   │(file)  │  │
-  ──────────────────┼─▶│       │   │        │  │
-  SIGTERM→SIGKILL   │  └───┬───┘   └────────┘  │
-                    │      │                    │
-                    │   lastCapture             │
-                    │   (stdout only,           │
-                    │    on success)            │
-                    └──────┼────────────────────┘
+                    ┌──────────────────────────────────┐
+                    │             Runner                │
+                    │                                   │
+  RunStep()         │  ┌─────────────────────────────┐ │
+  ──────────────────┼─▶│       exec.Command()        │ │
+                    │  │       cmd.Dir = workDir      │ │
+                    │  └──────────────┬──────────────┘ │
+                    │                 │                 │
+                    │         ┌───────┴───────┐         │
+                    │         │               │         │
+                    │      ┌──▼──┐        ┌──▼──┐      │
+                    │      │stdout│       │stderr│      │
+                    │      │ pipe │       │ pipe │      │
+                    │      └──┬──┘        └──┬──┘      │
+                    │         │               │         │
+                    │  ┌──────▼───────────────▼──────┐ │
+                    │  │      scanner goroutines      │ │
+                    │  │  capture=true (stdout)       │ │
+                    │  │  capture=false (stderr)      │ │
+                    │  │  + sync.WaitGroup            │ │
+                    │  └──────┬──────────┬────────────┘ │
+                    │         │          │               │
+                    │         ▼          ▼               │
+                    │  ┌───────┐   ┌────────┐           │
+                    │  │io.Pipe│   │ Logger │           │
+  Terminate()       │  │(mutex)│   │(file)  │           │
+  ──────────────────┼─▶│       │   │        │           │
+  SIGTERM→SIGKILL   │  └───┬───┘   └────────┘           │
+                    │      │                             │
+                    │      │        sendLine(line)       │
+                    │      │    ◀── (snapshot-then-      │
+                    │      │        unlock, per line)    │
+                    │   lastCapture                      │
+                    │   (stdout only,                    │
+                    │    on success)                     │
+                    └──────┼─────────────────────────────┘
                            │
                            ▼
-                     Glyph TUI
-                     (LogReader)
+                     Bubble Tea TUI
+                     (LogReader / SetSender)
 ```
 
 ## Key Files
@@ -68,7 +72,7 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
 | `ralph-tui/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
-| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close` |
+| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, and `SetSender` |
 | `ralph-tui/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
 
 ## Core Types
@@ -78,9 +82,10 @@ Key files:
 type Runner struct {
     logReader  *io.PipeReader  // read end → TUI
     logWriter  *io.PipeWriter  // write end ← scanner goroutines
-    mu         sync.Mutex      // protects logWriter writes
+    mu         sync.Mutex      // protects logWriter writes and sendLine
     log        *logger.Logger  // file logger
     workingDir string          // cmd.Dir for every subprocess
+    sendLine   func(string)    // callback invoked for every forwarded line; never nil
 
     processMu   sync.Mutex     // guards process state below
     currentProc *os.Process    // active subprocess (nil when idle)
@@ -89,6 +94,19 @@ type Runner struct {
 
     lastCapture string         // last non-empty stdout line from the most recent
                                // successful RunStep; "" on failure or no output
+}
+```
+
+`SetSender` installs a callback that is invoked for every line forwarded through `forwardPipe` and `WriteToLog`. If `send` is nil, a no-op is installed. The callback must not panic and must not block — it is called synchronously inside scanner goroutines, so a blocking callback stalls subprocess output and a panicking callback crashes the process:
+
+```go
+func (r *Runner) SetSender(send func(string)) {
+    if send == nil {
+        send = func(string) {}
+    }
+    r.mu.Lock()
+    r.sendLine = send
+    r.mu.Unlock()
 }
 ```
 
@@ -142,7 +160,7 @@ buf := make([]byte, 256*1024)
 scanner.Buffer(buf, 256*1024)
 ```
 
-Writes to the shared `io.PipeWriter` are mutex-protected because `io.PipeWriter` is not safe for concurrent use. The file logger is also written to under its own internal mutex.
+Writes to the shared `io.PipeWriter` are mutex-protected because `io.PipeWriter` is not safe for concurrent use. The `sendLine` callback is snapshotted under the same mutex and invoked after the lock is released (snapshot-then-unlock) to prevent TOCTOU races while keeping the critical section short. The file logger is also written to under its own internal mutex.
 
 ### Per-Step Stdout Capture (LastCapture)
 
@@ -195,7 +213,9 @@ func (r *Runner) Terminate() {
 func (r *Runner) WriteToLog(line string) {
     r.mu.Lock()
     _, _ = fmt.Fprintln(r.logWriter, line)
+    send := r.sendLine
     r.mu.Unlock()
+    send(line)
 }
 ```
 
@@ -239,6 +259,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 | Resource | Protection | Why |
 |----------|-----------|-----|
 | `logWriter` (io.PipeWriter) | `mu sync.Mutex` | Two scanner goroutines write concurrently; PipeWriter is not thread-safe |
+| `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently |
 | `currentProc`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep (main goroutine) and Terminate (keyboard/signal goroutine) |
 | `WaitGroup` drain before `cmd.Wait()` | `sync.WaitGroup` | Ensures all pipe output is forwarded before the process exit status is collected |
 
@@ -254,7 +275,18 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, and `ResolveCommand` (`TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough)
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, `ResolveCommand`, and `SetSender`:
+  - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
+  - `TestRunStep_SendLineReceivesStdout`, `TestRunStep_SendLineReceivesStderr` — sendLine receives stdout and stderr lines
+  - `TestRunStep_SendLineBurstOrdering` — lines arrive in order under burst load
+  - `TestRunStep_SetSenderNilInstallsNoOp` — nil sender installs a no-op
+  - `TestRunStep_SetSenderReplacementTakesEffect` — replacement is reflected immediately
+  - `TestWriteToLog_SendLineInvoked` — WriteToLog path invokes sendLine
+  - `TestRunStep_ConcurrentSetSenderNoRace`, `TestRunStep_ConcurrentStdoutStderrSenderNoRace` — race-detector tests for concurrent sender swaps and concurrent stdout/stderr goroutines
+  - `TestRunStep_SendLineAfterTerminateNoPanic` — sendLine calls survive Terminate without panic
+  - `TestRunStep_SendLineDefaultNoOp`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — default no-op installed by NewRunner does not panic
+  - `TestWriteToLog_AfterCloseSendLineStillInvoked` — sendLine fires even after Close
+  - `TestSetSender_AtomicReplacementViaWriteToLog` — atomic replacement via WriteToLog
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step

@@ -1469,6 +1469,88 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 	}
 }
 
+// TestCaptureOutput_ReturnsTrimmedStdout verifies CaptureOutput returns trimmed
+// stdout on success (T1).
+func TestCaptureOutput_ReturnsTrimmedStdout(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+	defer func() { _ = runner.Close() }()
+
+	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo '  hello  '"})
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("expected trimmed output %q, got %q", "hello", out)
+	}
+}
+
+// TestCaptureOutput_ReturnsErrorForFailingCommand verifies CaptureOutput returns
+// a non-nil error when the command exits with a non-zero status (T2).
+func TestCaptureOutput_ReturnsErrorForFailingCommand(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+	defer func() { _ = runner.Close() }()
+
+	_, err = runner.CaptureOutput([]string{"sh", "-c", "exit 1"})
+	if err == nil {
+		t.Error("expected non-nil error for failing command, got nil")
+	}
+}
+
+// TestCaptureOutput_ReturnsErrorForNonExistentCommand verifies CaptureOutput
+// returns a non-nil error when the command does not exist (T3).
+func TestCaptureOutput_ReturnsErrorForNonExistentCommand(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+	defer func() { _ = runner.Close() }()
+
+	_, err = runner.CaptureOutput([]string{"__no_such_binary_exists__"})
+	if err == nil {
+		t.Error("expected non-nil error for non-existent command, got nil")
+	}
+}
+
+// TestCaptureOutput_DiscardsStderr verifies CaptureOutput returns only stdout
+// and ignores stderr output (T4).
+func TestCaptureOutput_DiscardsStderr(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+	defer func() { _ = runner.Close() }()
+
+	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo stdout; echo stderr >&2"})
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "stdout" {
+		t.Errorf("expected only stdout %q, got %q", "stdout", out)
+	}
+}
+
 // TestLastCapture_LastNonEmptyStdoutLine verifies Runner.LastCapture returns
 // the last non-empty stdout line after a successful RunStep.
 func TestLastCapture_LastNonEmptyStdoutLine(t *testing.T) {

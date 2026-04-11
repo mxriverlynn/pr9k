@@ -53,6 +53,10 @@ func NewRunner(log *logger.Logger, workingDir string) *Runner {
 // SetSender installs a callback that is invoked for every line forwarded
 // through forwardPipe and WriteToLog. If send is nil, a no-op is installed
 // so callers can safely clear the sender between test cases.
+//
+// The callback must not panic and must not block. It is called synchronously
+// inside scanner goroutines; a blocking callback stalls subprocess output,
+// and a panicking callback crashes the process.
 func (r *Runner) SetSender(send func(string)) {
 	if send == nil {
 		send = func(string) {}
