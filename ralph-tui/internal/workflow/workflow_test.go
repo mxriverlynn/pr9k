@@ -2,16 +2,42 @@ package workflow
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
+
+// newCapturingRunner constructs a Runner with a mutex-guarded slice-append
+// sender installed via SetSender. The returned drain closure snapshots the
+// captured lines at call time. This is the helper the migration ticket will
+// standardize on.
+func newCapturingRunner(t *testing.T) (*Runner, *logger.Logger, func() []string) {
+	t.Helper()
+	r, log := newTestRunner(t)
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+	drain := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
+	return r, log, drain
+}
 
 // newTestRunner creates a Runner backed by a temp dir logger for testing.
 func newTestRunner(t *testing.T) (*Runner, *logger.Logger) {
@@ -842,6 +868,181 @@ func TestWriteToLog_AfterCloseNoPanic(t *testing.T) {
 
 	// Should not panic; write error is silently discarded.
 	r.WriteToLog("late line")
+}
+
+// SetSender tests
+
+// TestSetSender_ForwardsEveryStdoutLine verifies that the sendLine callback
+// receives every stdout line emitted by a subprocess.
+func TestSetSender_ForwardsEveryStdoutLine(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	script := "echo line1; echo line2; echo line3; echo line4; echo line5"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	want := []string{"line1", "line2", "line3", "line4", "line5"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestSetSender_ForwardsEveryStderrLine verifies that the sendLine callback
+// receives every stderr line emitted by a subprocess.
+func TestSetSender_ForwardsEveryStderrLine(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	script := "echo line1 >&2; echo line2 >&2; echo line3 >&2; echo line4 >&2; echo line5 >&2"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	want := []string{"line1", "line2", "line3", "line4", "line5"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestSetSender_BurstDoesNotDropOrReorder emits 200 stderr lines in a tight
+// loop and asserts all 200 arrive in order through drain().
+func TestSetSender_BurstDoesNotDropOrReorder(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	script := "for i in $(seq 1 200); do echo \"line $i\" >&2; done"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 200 {
+		t.Fatalf("expected 200 lines, got %d", len(got))
+	}
+	for i, line := range got {
+		want := fmt.Sprintf("line %d", i+1)
+		if line != want {
+			t.Errorf("line %d: want %q, got %q", i, want, line)
+		}
+	}
+}
+
+// TestSetSender_NilIsTreatedAsNoop verifies that SetSender(nil) installs a
+// no-op and the pipe path continues to deliver lines normally.
+func TestSetSender_NilIsTreatedAsNoop(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	// Clear the previously installed sender.
+	r.SetSender(nil)
+
+	if err := r.RunStep("test-step", []string{"echo", "pipe-line"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "pipe-line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'pipe-line' in pipe output after nil sender, got %v", lines)
+	}
+}
+
+// TestSetSender_CalledBeforeAndAfterRunStep verifies that each drain only
+// contains lines from the step that ran while its sender was installed.
+func TestSetSender_CalledBeforeAndAfterRunStep(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	var mu1 sync.Mutex
+	var cap1 []string
+	r.SetSender(func(line string) {
+		mu1.Lock()
+		cap1 = append(cap1, line)
+		mu1.Unlock()
+	})
+
+	if err := r.RunStep("step-one", []string{"echo", "step-one-output"}); err != nil {
+		t.Fatalf("RunStep step-one: %v", err)
+	}
+
+	var mu2 sync.Mutex
+	var cap2 []string
+	r.SetSender(func(line string) {
+		mu2.Lock()
+		cap2 = append(cap2, line)
+		mu2.Unlock()
+	})
+
+	if err := r.RunStep("step-two", []string{"echo", "step-two-output"}); err != nil {
+		t.Fatalf("RunStep step-two: %v", err)
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	mu1.Lock()
+	drain1 := append([]string{}, cap1...)
+	mu1.Unlock()
+
+	mu2.Lock()
+	drain2 := append([]string{}, cap2...)
+	mu2.Unlock()
+
+	if len(drain1) != 1 || drain1[0] != "step-one-output" {
+		t.Errorf("first drain: expected [step-one-output], got %v", drain1)
+	}
+	if len(drain2) != 1 || drain2[0] != "step-two-output" {
+		t.Errorf("second drain: expected [step-two-output], got %v", drain2)
+	}
+}
+
+// TestWriteToLog_ForwardsToSender verifies that WriteToLog forwards the line
+// to the installed sendLine callback.
+func TestWriteToLog_ForwardsToSender(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	r.WriteToLog("hello")
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 1 || got[0] != "hello" {
+		t.Errorf("expected [\"hello\"], got %v", got)
+	}
 }
 
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream

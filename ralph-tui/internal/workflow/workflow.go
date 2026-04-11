@@ -23,6 +23,7 @@ type Runner struct {
 	mu         sync.Mutex
 	log        *logger.Logger
 	workingDir string
+	sendLine   func(string) // callback invoked for every forwarded line; never nil
 
 	// processMu guards currentProc, procDone, and terminated.
 	processMu   sync.Mutex
@@ -45,7 +46,20 @@ func NewRunner(log *logger.Logger, workingDir string) *Runner {
 		logWriter:  w,
 		log:        log,
 		workingDir: workingDir,
+		sendLine:   func(string) {},
 	}
+}
+
+// SetSender installs a callback that is invoked for every line forwarded
+// through forwardPipe and WriteToLog. If send is nil, a no-op is installed
+// so callers can safely clear the sender between test cases.
+func (r *Runner) SetSender(send func(string)) {
+	if send == nil {
+		send = func(string) {}
+	}
+	r.mu.Lock()
+	r.sendLine = send
+	r.mu.Unlock()
 }
 
 // LogReader returns the read end of the pipe. Pass this to the UI log component
@@ -153,7 +167,9 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 			}
 			r.mu.Lock()
 			_, _ = fmt.Fprintln(r.logWriter, line)
+			send := r.sendLine
 			r.mu.Unlock()
+			send(line)
 		}
 		if err := scanner.Err(); err != nil {
 			_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
@@ -199,7 +215,9 @@ func lastNonEmptyLine(lines []string) string {
 func (r *Runner) WriteToLog(line string) {
 	r.mu.Lock()
 	_, _ = fmt.Fprintln(r.logWriter, line)
+	send := r.sendLine
 	r.mu.Unlock()
+	send(line)
 }
 
 // Close closes the logWriter, sending EOF to the reader. Call this after all
