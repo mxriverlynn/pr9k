@@ -36,17 +36,21 @@ cmd.Wait()
 
 ## Protect all shared io.Writer writes with sync.Mutex
 
-When multiple goroutines write to a shared `io.PipeWriter` (or any `io.Writer`), serialize every write under a mutex. Interleaved writes produce garbled output.
+When multiple goroutines write to a shared `io.Writer`, serialize every write under a mutex. Interleaved writes produce garbled output. The `Logger` is the canonical example: scanner goroutines call `log.Log` concurrently, and every write is serialized by the logger's internal mutex:
 
 ```go
-r.mu.Lock()
-fmt.Fprintln(r.logWriter, line)
-r.mu.Unlock()
+func (l *Logger) Log(stepName string, line string) error {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    // ...
+    _, err := fmt.Fprintln(l.writer, prefix+line)
+    return err
+}
 ```
 
 ## Use a sendLine callback for real-time subprocess streaming
 
-To stream subprocess output to a Bubble Tea TUI in real time, install a `sendLine` callback via `SetSender`. Scanner goroutines call the callback for each line; the callback writes to a buffered channel; a drain goroutine coalesces lines into `LogLinesMsg` batches and sends them to the program. This replaces the old `io.Pipe` path:
+To stream subprocess output to a Bubble Tea TUI in real time, install a `sendLine` callback via `SetSender`. Scanner goroutines call the callback for each line; the callback writes to a buffered channel; a drain goroutine coalesces lines into `LogLinesMsg` batches and sends them to the program:
 
 ```
 subprocess stdout/stderr → scanner goroutines → sendLine callback → buffered channel → drain goroutine → program.Send(LogLinesMsg)
@@ -181,7 +185,7 @@ func (h *KeyHandler) ShortcutLine() string {
 }
 ```
 
-In the Bubble Tea architecture, `View()` calls `ShortcutLine()` directly via the mutex-protected getter. There is no pointer-binding API (that was a Glyph requirement). All mode mutations happen on the Update goroutine, which serializes writes naturally; the mutex guards reads from other goroutines (signal handlers, test code).
+In the Bubble Tea architecture, `View()` calls `ShortcutLine()` directly via the mutex-protected getter. All mode mutations happen on the Update goroutine, which serializes writes naturally; the mutex guards reads from other goroutines (signal handlers, test code).
 
 ## Prime the channel before entering a blocking receive
 
@@ -210,7 +214,7 @@ When adding any new blocking receive to orchestration code:
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Mutex-protected io.Pipe writes, WaitGroup drain, and snapshot-then-unlock in Terminate
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine snapshot-then-unlock, WaitGroup drain, and snapshot-then-unlock in Terminate
 - [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit

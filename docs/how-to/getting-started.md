@@ -71,7 +71,7 @@ The TUI has four regions stacked top to bottom, inside a dynamic rounded border 
 
 1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) at the very top of the view
 2. **Iteration line** — directly below the grid: `"Initializing 1/2: Splash"`, `"Iteration 1/3 — Issue #42"`, or `"Finalizing 1/3: Deferred work"` depending on the current phase
-3. **Log panel** — streams subprocess output in real time, interleaved with phase banners, per-step banners, and capture logs
+3. **Log panel** — streams subprocess output in real time, interleaved with phase banners, per-step banners, and capture logs; supports mouse-wheel scrolling (to drag-select text, hold Option on macOS or Shift on Linux/Windows — see [Reading the TUI](reading-the-tui.md#selecting-log-text-to-copy))
 4. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `ralph-tui v<semver>` label pinned to the bottom-right
 
 Every started step writes a banner into the log panel before its subprocess output:

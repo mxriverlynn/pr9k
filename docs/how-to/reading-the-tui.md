@@ -137,7 +137,20 @@ Phase banners use `═` (double horizontal) and are full-width; per-step banners
 
 ### Scrolling
 
-The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead.
+The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel scrolling also works — ralph-tui enables `tea.WithMouseCellMotion()` so the viewport receives wheel events natively. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead.
+
+### Selecting log text to copy
+
+`tea.WithMouseCellMotion()` enables application mouse capture, which tells mainstream terminals (iTerm2, Ghostty, Kitty, xterm) to forward mouse drags to the application rather than performing local text selection. As a result, a plain drag no longer selects text in the log panel.
+
+To select and copy text from the log panel, hold the modifier key that overrides the application's mouse capture:
+
+| Platform | Override key | Gesture |
+|----------|-------------|---------|
+| macOS | `Option` | Hold Option, then drag to select |
+| Linux / Windows | `Shift` | Hold Shift, then drag to select |
+
+The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode.
 
 ## Region 4 — the shortcut footer
 

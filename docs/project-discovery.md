@@ -34,7 +34,7 @@
 ### Frameworks and Tooling
 
 - CLI: spf13/cobra v1.10.2 (ADR: [20260409135303-cobra-cli-framework](adr/20260409135303-cobra-cli-framework.md))
-- TUI: [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) — migrated from Glyph (see ADR below)
+- TUI: [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) (see ADR below)
 - Terminal size detection: `golang.org/x/sys/unix` (ioctl TIOCGWINSZ) for full-width phase banners
 - Task runner: Make (`Makefile` at repo root)
 - Linter: golangci-lint v2.11.4 (pinned in CI)

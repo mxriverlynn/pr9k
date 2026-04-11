@@ -241,7 +241,17 @@ func (h *KeyHandler) ShortcutLine() string {
 
 The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes. `Model.View()` calls `ShortcutLine()` directly to read the current text for the footer.
 
-> **Historical note:** A `ShortcutLinePtr()` accessor previously existed for Glyph's `Text(&...)` pointer-binding API. It was removed in the Bubble Tea migration because Bubble Tea's `View()` calls `ShortcutLine()` on the Update goroutine, which serializes reads naturally. The mutex-protected getter is sufficient for all callers.
+### Dual-Routing of tea.KeyMsg
+
+When a `tea.KeyMsg` arrives, `Model.Update` routes it to **both** the key handler and the viewport:
+
+```go
+case tea.KeyMsg:
+    m.keys, kcmd = m.keys.Update(msg)   // mode dispatch (n, q, c, r, y, Escape)
+    m.log, lcmd = m.log.Update(msg)     // viewport scroll (↑/k, ↓/j)
+```
+
+This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the viewport consumes them while the key handler ignores them. In Error and QuitConfirm modes, the key handler consumes the action keys but scroll keys still pass through to the viewport.
 
 ## Testing
 

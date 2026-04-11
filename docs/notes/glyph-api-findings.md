@@ -1,3 +1,5 @@
+> Superseded by the Bubble Tea migration — see [`docs/plans/use-bubble-tea.md`](../plans/use-bubble-tea.md) and [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](../adr/20260411070907-bubble-tea-tui-framework.md).
+
 # Glyph API Findings — Issue #46
 
 **Module:** `github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b`
