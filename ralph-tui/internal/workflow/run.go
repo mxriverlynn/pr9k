@@ -73,20 +73,16 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
 	// emitBlank writes a single blank line to the log body if one is needed
-	// to separate the next piece of content from the previous. Call before
-	// each iteration separator, each step's Orchestrate call, and the
-	// completion summary. Call suppressBlank after content that should not
-	// be followed by a leading blank (e.g. the iteration separator itself,
-	// which already introduces a visual break).
+	// to separate the next piece of content from the previous. It is called
+	// before each iteration separator, each step's Orchestrate call, and
+	// the completion summary. The first call in Run is a no-op so the log
+	// does not begin with a leading blank line.
 	needBlank := false
 	emitBlank := func() {
 		if needBlank {
 			executor.WriteToLog("")
 		}
 		needBlank = true
-	}
-	suppressBlank := func() {
-		needBlank = false
 	}
 
 	// 1. Initialize phase: run each step in order, binding captureAs results
@@ -129,9 +125,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 		emitBlank()
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
-		// The iteration separator already introduces visual separation; the
-		// first step in this iteration should not be preceded by a blank line.
-		suppressBlank()
 
 		breakOuter := false
 		for j, s := range cfg.Steps {
