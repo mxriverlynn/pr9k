@@ -107,6 +107,12 @@ The `signaled` channel is a one-shot flag — once closed, it stays closed. The 
 
 The non-blocking send (`select`/`default`) ensures `ForceQuit` never blocks, which is critical since it runs in a signal handler goroutine.
 
+`ForceQuit` is called from **two** places and both produce identical shutdown semantics:
+- The OS signal handler goroutine (this file)
+- The QuitConfirm `y` path in `KeyHandler.handleQuitConfirm` (see [Keyboard Input](keyboard-input.md))
+
+Unifying these paths means the signal-initiated and user-confirmed quit flows go through the same subprocess-termination + ActionQuit-injection sequence. A test harness that drives `y` from an error-mode step gets the same behavior as sending SIGINT at the terminal.
+
 ### Pre-Step Drain
 
 Before each step, `Orchestrate()` performs a non-blocking drain of the `Actions` channel:

@@ -113,26 +113,37 @@ Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralp
 ## Keyboard & Mode State Machine
 
 ```
-                  ┌─────────────┐
-                  │ ModeNormal  │
-                  │             │
-                  │ n → skip    │
-                  │ q ──────────┼──────┐
-                  └──────┬──────┘      │
-                         │             │
-                   step fails          │
-                         │             ▼
-                  ┌──────▼──────┐  ┌───────────────┐
-                  │ ModeError   │  │ModeQuitConfirm│
-                  │             │  │               │
-                  │ c → continue│  │ y → ActionQuit│
-                  │ r → retry   │  │ n → previous  │
-                  │ q ──────────┼─▶│    mode       │
-                  └─────────────┘  └───────────────┘
+                  ┌─────────────┐          ┌────────────┐
+                  │ ModeNormal  │          │ ModeDone   │
+                  │             │          │            │
+                  │ n → skip    │          │ any key →  │
+                  │ q ──────────┼──────┐   │ ActionQuit │
+                  └──────┬──────┘      │   └────────────┘
+                         │             │         ▲
+                   step fails          │         │
+                         │             │    workflow done
+                         ▼             ▼   (Run → ModeDone)
+                  ┌─────────────┐  ┌───────────────────┐
+                  │ ModeError   │  │ ModeQuitConfirm   │
+                  │             │  │                   │
+                  │ c → continue│  │ y → ModeQuitting  │
+                  │ r → retry   │  │     + ForceQuit   │
+                  │ q ──────────┼─▶│ n, Esc → prevMode │
+                  └─────────────┘  └─────────┬─────────┘
+                                             │ y
+                                             ▼
+                                    ┌─────────────────┐
+                                    │  ModeQuitting   │
+                                    │                 │
+                                    │ footer shows    │
+                                    │ "Quitting..."   │
+                                    │ (terminal)      │
+                                    └─────────────────┘
 
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
+    (unified with the QuitConfirm 'y' path)
 ```
 
 ## Features
@@ -163,15 +174,15 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 **Packages:** `internal/workflow/` (`run.go`), `internal/ui/` (`orchestrate.go`)
 
-### [TUI Status Header](features/tui-display.md)
+### [TUI Status Header & Log Display](features/tui-display.md)
 
-A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), or `[✗]` (failed). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize).
+A pointer-mutable status display that Glyph reads on each render cycle. Shows the current iteration/issue on one line — `Iteration N/M` in bounded mode or `Iteration N` (no total) when running unbounded (`--iterations 0`). Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). The log body is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback.
 
-**Package:** `internal/ui/` (`header.go`, `log.go`)
+**Package:** `internal/ui/` (`header.go`, `log.go`, `terminal.go`)
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A three-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` skips the current step and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. Each mode displays its own shortcut bar text.
+A five-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`, `ModeDone`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` skips the current step and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. After finalization, `ModeDone` waits for any key to exit. Each mode displays its own shortcut bar text.
 
 **Package:** `internal/ui/` (`ui.go`)
 
@@ -220,7 +231,7 @@ cmd/ralph-tui/main.go
 
 - **Narrow-reading principle**: Ralph-tui facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
 - **Streaming over buffering**: Subprocess output streams through `io.Pipe` in real time — no buffered collection and dump.
-- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `RenderInitializeLine`, `RenderIterationLine`, `RenderFinalizeLine`, `SetPhaseSteps`, and `SetStepState`.
+- **Pointer-mutable state**: The `StatusHeader` uses exported fields (`IterationLine`, `Rows`) that Glyph reads by pointer on each render; callers mutate in place via `RenderInitializeLine`, `RenderIterationLine`, `RenderFinalizeLine`, `SetPhaseSteps`, and `SetStepState`. The completion summary is *not* a header method — it is written to the log body via `ui.CompletionSummary` so it scrolls with the rest of the run transcript.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
 - **Non-blocking sends for signal safety**: `ForceQuit` uses `select`/`default` to inject `ActionQuit` without blocking, making it safe to call from a signal handler goroutine.
 - **Interface-driven testability**: `StepRunner`, `StepHeader`, `StepExecutor`, and `RunHeader` interfaces decouple orchestration from concrete implementations.

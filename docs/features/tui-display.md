@@ -1,8 +1,8 @@
 # TUI Status Header & Log Display
 
-Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, and step separator formatting.
+Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-10 (issue #52)
+- **Last Updated:** 2026-04-10
 - **Authors:**
   - River Bailey
 
@@ -13,13 +13,16 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
 - Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped
 - Switches between phases (initialize, iteration, finalize) by calling `SetPhaseSteps` with the new phase's step names
-- `StepSeparator` and `RetryStepSeparator` produce formatted separator lines written to the log pipe between steps
+- The log body is structured with phase banners, iteration separators, per-step "Starting step" banners, variable capture logs, and a final completion summary — all spaced with blank lines (helpers in `log.go`)
+- Terminal width for full-width phase banner underlines is detected via `ui.TerminalWidth()` (ioctl TIOCGWINSZ) with an 80-column fallback
+- The completion summary line is written to the log body (not the header) as the last non-blank line before `ModeDone`
 
 Key files:
-- `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, RenderCompletionLine, SetPhaseSteps, SetStepState
+- `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, SetPhaseSteps, SetStepState
 - `ralph-tui/internal/ui/header_test.go` — Unit tests for header state management
-- `ralph-tui/internal/ui/log.go` — StepSeparator, RetryStepSeparator
-- `ralph-tui/internal/ui/log_test.go` — Unit tests for separator formatting
+- `ralph-tui/internal/ui/log.go` — Log-body helpers: StepSeparator, RetryStepSeparator, StepStartBanner, PhaseBanner, CaptureLog, CompletionSummary
+- `ralph-tui/internal/ui/log_test.go` — Unit tests for log-body helper formatting
+- `ralph-tui/internal/ui/terminal.go` — TerminalWidth() and DefaultTerminalWidth for sizing full-width banners
 
 ## Architecture
 
@@ -58,8 +61,9 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/ui/header.go` | StatusHeader struct and state mutation methods |
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
-| `ralph-tui/internal/ui/log.go` | Step separator line formatting |
-| `ralph-tui/internal/ui/log_test.go` | Tests for separator string output |
+| `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
+| `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
+| `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
 
@@ -132,16 +136,14 @@ func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string)
 // RenderFinalizeLine: "Finalizing 1/3: Deferred work"
 func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string)
 
-// RenderCompletionLine: "Ralph completed after 3 iteration(s) and 2 finalizing tasks."
-// Overwrites IterationLine; called once after finalization completes.
-func (h *StatusHeader) RenderCompletionLine(iterationsRun, finalizeCount int)
-
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
     if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
     r, c := idx/HeaderCols, idx%HeaderCols
     h.Rows[r][c] = checkboxLabel(state, h.stepNames[idx])
 }
 ```
+
+The header has no "completion" render method — after the finalize phase finishes, `IterationLine` retains the final `"Finalizing N/M: <step name>"` value. The completion summary (`"Ralph completed after N iteration(s) and M finalizing tasks."`) is written to the **log body** via `executor.WriteToLog(ui.CompletionSummary(...))` as the last non-blank line before `ModeDone` blocks on the final keypress.
 
 ### Checkbox Label Formatting
 
@@ -157,21 +159,114 @@ func checkboxLabel(state StepState, name string) string {
 }
 ```
 
-### Step Separators
+### Log-Body Helpers
 
-Visual separator lines injected into the log pipe between steps:
+`ralph-tui/internal/ui/log.go` owns every helper that writes structured chrome into the log pipe. Every helper returns a plain string (or a tuple of strings) — the workflow loop calls `executor.WriteToLog()` with the result so writes go through the same `io.Pipe` path as subprocess output.
 
 ```go
+// Iteration separator: "── Iteration 1 ─────────────"
+// Written once per iteration at the top of the iteration body.
 func StepSeparator(stepName string) string {
     return fmt.Sprintf("── %s ─────────────", stepName)
 }
 
+// Retry separator: "── <step name> (retry) ─────────────"
+// Written by Orchestrate.runStepWithErrorHandling before a retry.
 func RetryStepSeparator(stepName string) string {
     return fmt.Sprintf("── %s (retry) ─────────────", stepName)
 }
+
+// StepStartBanner: returns the two-line "Starting step: <name>" heading and
+// a "─"-character underline whose rune count matches the heading width.
+// Orchestrate writes this (plus a trailing blank line) before every step.
+func StepStartBanner(stepName string) (heading, underline string)
+
+// PhaseBanner: returns the phase name plus a full-width "═"-character
+// underline `width` runes wide. Widths <= 0 are clamped to 1. Run writes
+// this on entering each phase (Initializing / Iterations / Finalizing).
+func PhaseBanner(phaseName string, width int) (heading, underline string)
+
+// CaptureLog: returns a single-line `Captured VAR = "value"` log entry,
+// %q-quoted so multi-line / whitespace-heavy captures stay on one log
+// line. Run writes this after any step with CaptureAs set.
+func CaptureLog(varName, value string) string
+
+// CompletionSummary: the final body line written before ModeDone.
+// Format: "Ralph completed after N iteration(s) and M finalizing tasks."
+func CompletionSummary(iterationsRun, finalizeCount int) string
 ```
 
-These are passed to `Runner.WriteToLog()` by the orchestration loop.
+### Log Body Rhythm
+
+`workflow.Run` interleaves helper output with subprocess streaming to produce a readable run log. A local `emitBlank` closure writes a single blank separator line before every content block (no-op on the very first content so the log does not begin with a blank line). The rhythm for a run with one init step, two iterations of two steps each, and two finalize steps — assuming the second iteration step in each iteration has `captureAs: "ISSUE_ID"` — is:
+
+```
+Initializing
+════════════════════════════════════════
+
+Starting step: Get GitHub user
+──────────────────────────────
+
+[init step output]
+
+════════════════════════════════════════
+Iterations
+════════════════════════════════════════
+
+── Iteration 1 ─────────────
+
+Starting step: Get next issue
+─────────────────────────────
+
+[step output]
+
+Captured ISSUE_ID = "42"
+
+Starting step: Feature work
+───────────────────────────
+
+[step output]
+
+── Iteration 2 ─────────────
+
+Starting step: Get next issue
+─────────────────────────────
+
+[step output]
+
+Captured ISSUE_ID = "43"
+
+Starting step: Feature work
+───────────────────────────
+
+[step output]
+
+Finalizing
+════════════════════════════════════════
+
+Starting step: Deferred work
+────────────────────────────
+
+[final step output]
+
+Starting step: Final git push
+─────────────────────────────
+
+[final step output]
+
+Ralph completed after 2 iteration(s) and 2 finalizing tasks.
+```
+
+Key properties:
+- Phase banners are full-width (`═` repeated `cfg.LogWidth` runes); the underline fills the log panel so phase transitions stand out
+- Iteration separators (`── Iteration N ─────────────`) are a fixed-width `StepSeparator`
+- Per-step banners (`Starting step: <name>` + `─` underline of matching width) are written by `Orchestrate` for every started step — initialize, iteration, and finalize phases all share this via `StepStartBanner`
+- Capture logs appear immediately after the step whose `captureAs` produced them, offset by a blank line for visual separation from raw subprocess output
+- The completion summary is the last non-blank line — readable as a terminal state even if the panel is scrolled to the bottom
+
+### Terminal Width Detection
+
+`ui.TerminalWidth()` wraps `unix.IoctlGetWinsize(stdout, TIOCGWINSZ)` to return the current terminal column count. Non-TTY or ioctl failure returns `ui.DefaultTerminalWidth` (80). `main.go` computes `LogWidth` once at startup from `ui.TerminalWidth() - 2` (subtracting the rounded-border glyphs) and passes it through `workflow.RunConfig.LogWidth`. `workflow.Run` re-derives the effective width each call, falling back to `DefaultTerminalWidth` when `LogWidth <= 0` so test doubles without a TTY still produce deterministic banners.
 
 ## First-Frame Pre-Population
 
@@ -245,8 +340,8 @@ app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 
 ## Testing
 
-- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine/RenderCompletionLine (bounded and unbounded modes, with/without issueID, substitute template correctness, completion summary format, overwrite of previous iteration line), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
-- `ralph-tui/internal/ui/log_test.go` — Tests for StepSeparator and RetryStepSeparator output
+- `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
+- `ralph-tui/internal/ui/log_test.go` — Tests for every log-body helper: StepSeparator / RetryStepSeparator formatting, StepStartBanner (ASCII/empty/Unicode rune-count assertions), PhaseBanner (width matching, clamp on non-positive width, `═` fill), CaptureLog (simple/empty/multi-line-escaped/embedded-quotes), CompletionSummary (format exactness)
 
 ## Additional Information
 
