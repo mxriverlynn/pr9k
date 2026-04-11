@@ -102,6 +102,10 @@ Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralp
               │             │io.Pipe │  │ Logger  │
               │             │(→ TUI) │  │(→ file) │
               │             └────────┘  └─────────┘
+              │                  │
+              │             sendLine(line)
+              │             (snapshot-then-unlock;
+              │              installed via SetSender)
               │
               ▼ LastCapture()
        ┌──────────────────┐
@@ -168,7 +172,7 @@ Loads workflow step definitions from `ralph-steps.json`, which contains initiali
 
 ### [Subprocess Execution & Streaming](features/subprocess-execution.md)
 
-The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time through an `io.Pipe` to the TUI and a file logger simultaneously. Uses mutex-protected writes, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback). After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`, which the orchestrator uses to bind `CaptureAs` variables into the `VarTable`. `ResolveCommand` (in `run.go`) applies `{{VAR}}` substitution and resolves relative script paths.
+The `Runner` executes workflow steps as subprocesses, streaming stdout/stderr in real time through an `io.Pipe` to the TUI and a file logger simultaneously. A `sendLine` callback (installed via `SetSender`) is also invoked for every forwarded line, enabling the TUI to receive lines directly without reading the pipe. Uses mutex-protected writes with snapshot-then-unlock for the callback, `sync.WaitGroup` for pipe draining, and a 256KB scanner buffer. Supports graceful termination (SIGTERM with 3-second SIGKILL fallback). After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`, which the orchestrator uses to bind `CaptureAs` variables into the `VarTable`. `ResolveCommand` (in `run.go`) applies `{{VAR}}` substitution and resolves relative script paths.
 
 **Package:** `internal/workflow/` (`workflow.go`, `run.go`)
 
@@ -192,7 +196,7 @@ A four-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQu
 
 ### [Signal Handling & Shutdown](features/signal-handling.md)
 
-Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHandler.ForceQuit()` which terminates the current subprocess and injects `ActionQuit` into the actions channel using a non-blocking send. The orchestration loop picks up the quit action before the next step starts, enabling clean shutdown. The main goroutine tracks whether a signal was received to choose the exit code (0 for normal, 1 for signaled).
+Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHandler.ForceQuit()` which first flips mode to `ModeQuitting` and updates the shortcut bar (so the footer shows `"Quitting..."` immediately), then terminates the current subprocess and injects `ActionQuit` into the actions channel using a non-blocking send. The orchestration loop picks up the quit action before the next step starts, enabling clean shutdown. The main goroutine tracks whether a signal was received to choose the exit code (0 for normal, 1 for signaled).
 
 **Package:** `cmd/ralph-tui/` (`main.go`)
 
