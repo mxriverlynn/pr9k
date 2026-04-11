@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -8,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kungfusheep/glyph"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -83,62 +84,20 @@ func main() {
 		}
 	}
 
-	app := glyph.NewApp()
-
-	// Wire keyboard dispatch: Glyph owns the tty and forwards each keypress to keyHandler.
-	for _, key := range []string{"n", "q", "y", "c", "r", "<Escape>"} {
-		k := key
-		app.Handle(k, func() { keyHandler.Handle(k) })
-	}
-
-	// Build checkpoint row widgets — one HBox per header row, HeaderCols
-	// cells each, with each cell composed of three adjacent Text widgets
-	// so the marker glyph (▸/✓/✗/-) can be colored independently of the
-	// brackets and step name. The per-cell color fields are bound by
-	// pointer so state transitions (e.g. pending → active) repaint the
-	// cell on the next render cycle without rebuilding the widget tree.
-	rowWidgets := make([]any, len(header.Rows))
-	for r := range header.Rows {
-		cols := make([]any, ui.HeaderCols)
-		for c := range cols {
-			cols[c] = glyph.HBox(
-				glyph.Text(&header.Prefixes[r][c]).FG(&header.NameColors[r][c]),
-				glyph.Text(&header.Markers[r][c]).FG(&header.MarkerColors[r][c]),
-				glyph.Text(&header.Suffixes[r][c]).FG(&header.NameColors[r][c]),
-			)
-		}
-		rowWidgets[r] = glyph.HBox(cols...)
-	}
-
-	// Assemble the full VBox layout tree. The iteration status line sits
-	// at the top of the header with an HRule under it; the checkbox grid
-	// follows, then another HRule, the log panel, a final HRule, and the
-	// shortcut footer. The chrome (iteration line, HRules, footer text,
-	// and the outer rounded border) renders in LightGray so the active
-	// step's green marker and white brackets/name pop against it.
-	children := make([]any, 0, 6+len(rowWidgets))
-	children = append(children, glyph.Text(&header.IterationLine).FG(ui.LightGray))
-	children = append(children, glyph.HRule().FG(ui.LightGray))
-	children = append(children, rowWidgets...)
-	children = append(children, glyph.HRule().FG(ui.LightGray))
-	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
-	children = append(children, glyph.HRule().FG(ui.LightGray))
-	// Footer: shortcut bar on the left, app version pinned to the bottom-right.
-	// glyph.Space() is a flex spacer inside an HBox, pushing the version text
-	// against the right border of the VBox.
 	versionLabel := "ralph-tui v" + version.Version
-	children = append(children, glyph.HBox(
-		glyph.Text(keyHandler.ShortcutLinePtr()).FG(ui.LightGray),
-		glyph.Space(),
-		glyph.Text(&versionLabel).FG(ui.LightGray),
-	))
+	model := ui.NewModel(header, keyHandler, versionLabel)
 
-	app.SetView(glyph.VBox.Border(glyph.BorderRounded).BorderFG(ui.LightGray).Title("Ralph")(children...))
+	program := tea.NewProgram(model,
+		tea.WithMouseCellMotion(),
+		tea.WithAltScreen(),
+		tea.WithoutSignalHandler(),
+	)
+
+	proxy := ui.NewHeaderProxy(program.Send)
 
 	// logWidth sizes the full-width phase banner underline to fill the log
-	// panel. The panel sits inside a rounded VBox border, so we subtract 2
-	// columns for the left and right border glyphs. A non-TTY stdout falls
-	// back to ui.DefaultTerminalWidth.
+	// panel. The panel sits inside a rounded border, so we subtract 2
+	// columns for the left and right border glyphs.
 	logWidth := ui.TerminalWidth() - 2
 	if logWidth < 1 {
 		logWidth = ui.DefaultTerminalWidth
@@ -153,43 +112,92 @@ func main() {
 		LogWidth:        logWidth,
 	}
 
-	// Set up OS signal handling for clean shutdown.
+	// Buffered channel between forwardPipe and the drain goroutine. Lines are
+	// written non-blockingly; drops are acceptable since the file logger still
+	// captures every line.
+	const senderBuffer = 4096
+	lineCh := make(chan string, senderBuffer)
+
+	// Drain goroutine: coalesces consecutive lines within a single scheduler
+	// wakeup into one LogLinesMsg, reducing SetContent calls by ~100x under
+	// burst load. Blocks on the first line of each batch, then non-blockingly
+	// drains any lines already queued before forwarding.
+	go func() {
+		for {
+			first, ok := <-lineCh
+			if !ok {
+				return
+			}
+			batch := []string{first}
+		drain:
+			for {
+				select {
+				case l, ok := <-lineCh:
+					if !ok {
+						program.Send(ui.LogLinesMsg{Lines: batch})
+						return
+					}
+					batch = append(batch, l)
+				default:
+					break drain
+				}
+			}
+			program.Send(ui.LogLinesMsg{Lines: batch})
+		}
+	}()
+
+	runner.SetSender(func(line string) {
+		select {
+		case lineCh <- line:
+		default:
+			// buffer full — drop; file logger still has the line
+		}
+	})
+
+	workflowDone := make(chan struct{})
+
+	// Signal handling: wait for SIGINT/SIGTERM or for the workflow to finish.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	signaled := make(chan struct{})
 	go func() {
-		<-sigChan
-		close(signaled)
-		keyHandler.ForceQuit()
-		// Give the workflow goroutine a moment to unwind and exit cleanly,
-		// then force-exit if it's still stuck.
-		time.Sleep(2 * time.Second)
-		_ = app.Screen().ExitRawMode()
-		os.Exit(1)
-	}()
-
-	// Run the workflow in the background; tear down the TUI and exit when
-	// it completes. We exit directly from this goroutine instead of going
-	// through app.Stop() because app.Stop() closes stdin from another
-	// goroutine, which does not reliably interrupt glyph's in-progress
-	// blocking read on a macOS raw-mode tty — the process would hang until
-	// the user pressed another key.
-	go func() {
-		_ = workflow.Run(runner, header, keyHandler, runCfg)
-		signal.Stop(sigChan)
-		_ = log.Close()
-		_ = app.Screen().ExitRawMode()
 		select {
-		case <-signaled:
-			os.Exit(1)
-		default:
-			os.Exit(0)
+		case <-sigChan:
+			close(signaled)
+			keyHandler.ForceQuit()
+			// Give the workflow goroutine up to 2 seconds to exit cleanly.
+			select {
+			case <-workflowDone:
+			case <-time.After(2 * time.Second):
+				program.Kill()
+			}
+		case <-workflowDone:
 		}
 	}()
 
-	if err := app.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "glyph:", err)
-		_ = app.Screen().ExitRawMode()
+	// Workflow goroutine: run the full workflow, then tear down cleanly.
+	go func() {
+		defer close(workflowDone)
+		_ = workflow.Run(runner, proxy, keyHandler, runCfg)
+		signal.Stop(sigChan)
+		_ = log.Close()
+		close(lineCh)
+		program.Quit()
+	}()
+
+	_, runErr := program.Run()
+	// program.Kill() (signal-path forced shutdown after 2s grace) causes Run
+	// to return tea.ErrProgramKilled. That is a normal forced-exit path, not
+	// a crash — don't print a scary error for it.
+	if runErr != nil && !errors.Is(runErr, tea.ErrProgramKilled) {
+		fmt.Fprintln(os.Stderr, "bubbletea:", runErr)
 		os.Exit(1)
+	}
+
+	select {
+	case <-signaled:
+		os.Exit(1)
+	default:
+		os.Exit(0)
 	}
 }

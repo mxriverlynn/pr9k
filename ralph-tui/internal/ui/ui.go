@@ -28,16 +28,18 @@ const (
 	QuittingLine      = "Quitting..."
 )
 
-// KeyHandler is a state machine that routes keypresses based on the current
-// mode (normal / error / quit-confirm) and communicates user decisions to the
-// orchestration goroutine via the Actions channel.
+// KeyHandler is a state machine that tracks keyboard mode
+// (normal / error / quit-confirm / quitting) and communicates user decisions
+// to the orchestration goroutine via the Actions channel.
+// Dispatch logic lives in keysModel (internal/ui/keys.go), which translates
+// tea.KeyMsg events into mode transitions and Actions sends.
 type KeyHandler struct {
 	mode         Mode   // protected by mu
 	prevMode     Mode   // protected by mu
 	cancel       func() // cancels the current subprocess (used by n in normal mode)
 	Actions      chan StepAction
 	mu           sync.Mutex
-	shortcutLine string // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
+	shortcutLine string // protected by mu; use ShortcutLine() to access
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -60,21 +62,6 @@ func (h *KeyHandler) ShortcutLine() string {
 	return h.shortcutLine
 }
 
-// ShortcutLinePtr returns a pointer to the underlying shortcut bar string so
-// that Glyph's Text(&...) widget can pointer-bind to it.
-//
-// Option Q fallback (issue #48, D14b V2): Option P (exported field, no mutex)
-// was attempted first but go test -race detected a genuine race between the
-// Orchestrate goroutine writing via SetMode and the test goroutine reading the
-// field concurrently. The mutex in updateShortcutLineLocked prevents that race for
-// reads through ShortcutLine(). ShortcutLinePtr() exposes the address for
-// Glyph's render loop, which accesses it synchronously between write windows
-// in the single TUI event loop — a pattern Glyph's binding model is designed
-// for, and one that the race detector does not flag in practice.
-func (h *KeyHandler) ShortcutLinePtr() *string {
-	return &h.shortcutLine
-}
-
 // Mode returns the current keyboard dispatch mode.
 // Safe to call from any goroutine.
 func (h *KeyHandler) Mode() Mode {
@@ -83,13 +70,22 @@ func (h *KeyHandler) Mode() Mode {
 	return h.mode
 }
 
+// Cancel returns the cancel function under h.mu so keysModel.handleNormal can
+// read it safely on the Update goroutine without racing the workflow goroutine
+// that may call NewKeyHandler or SetSender between steps.
+func (h *KeyHandler) Cancel() func() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.cancel
+}
+
 // SetMode switches the handler to the given mode and updates ShortcutLine.
 // Use this when the orchestration goroutine changes workflow state
 // (e.g., a step fails → SetMode(ModeError)).
 //
-// ModeQuitConfirm should only be entered via Handle("q"), not via SetMode,
-// because Handle("q") saves prevMode so that Escape can restore it. Calling
-// SetMode(ModeQuitConfirm) directly leaves prevMode at its zero value
+// ModeQuitConfirm should only be entered via keysModel's q handler, not via
+// SetMode, because the q handler saves prevMode so that Escape can restore it.
+// Calling SetMode(ModeQuitConfirm) directly leaves prevMode at its zero value
 // (ModeNormal), so Escape would always restore ModeNormal regardless of the
 // actual previous mode.
 func (h *KeyHandler) SetMode(mode Mode) {
@@ -97,78 +93,6 @@ func (h *KeyHandler) SetMode(mode Mode) {
 	h.mode = mode
 	h.updateShortcutLineLocked()
 	h.mu.Unlock()
-}
-
-// Handle dispatches the key to the appropriate handler based on current mode.
-// key is a single character string (e.g., "n", "q", "y").
-//
-// The mode is snapshotted under the mutex and then released before the handler
-// runs. This is intentional: holding the lock through the full dispatch would
-// deadlock on the re-entrant lock acquisitions inside handleNormal,
-// handleError, and handleQuitConfirm. The TOCTOU window between the snapshot
-// and dispatch is accepted — the worst case is one extra action enqueued on
-// the channel after a concurrent ForceQuit.
-func (h *KeyHandler) Handle(key string) {
-	h.mu.Lock()
-	mode := h.mode
-	h.mu.Unlock()
-
-	switch mode {
-	case ModeNormal:
-		h.handleNormal(key)
-	case ModeError:
-		h.handleError(key)
-	case ModeQuitConfirm:
-		h.handleQuitConfirm(key)
-	}
-}
-
-func (h *KeyHandler) handleNormal(key string) {
-	switch key {
-	case "n":
-		if h.cancel != nil {
-			h.cancel()
-		}
-	case "q":
-		h.mu.Lock()
-		h.prevMode = h.mode
-		h.mode = ModeQuitConfirm
-		h.updateShortcutLineLocked()
-		h.mu.Unlock()
-	}
-}
-
-func (h *KeyHandler) handleError(key string) {
-	switch key {
-	case "c":
-		// Blocking send: the orchestration goroutine is always blocked on
-		// <-h.Actions when in error mode, so this drains immediately. The
-		// channel capacity (10) provides a buffer against bursts from rapid
-		// key repeats, but the invariant is that only one error-mode action
-		// is in flight at a time.
-		h.Actions <- ActionContinue
-	case "r":
-		h.Actions <- ActionRetry // same blocking-send invariant as "c" above
-	case "q":
-		h.mu.Lock()
-		h.prevMode = h.mode
-		h.mode = ModeQuitConfirm
-		h.updateShortcutLineLocked()
-		h.mu.Unlock()
-	}
-}
-
-func (h *KeyHandler) handleQuitConfirm(key string) {
-	switch key {
-	case "y":
-		h.ForceQuit()
-	case "n", "<Escape>":
-		h.mu.Lock()
-		h.mode = h.prevMode
-		h.updateShortcutLineLocked()
-		h.mu.Unlock()
-		// all other keys are ignored
-	}
 }
 
 // ForceQuit terminates the current subprocess and injects ActionQuit into the

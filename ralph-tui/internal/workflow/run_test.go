@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1453,7 +1454,6 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, workingDir)
-	defer func() { _ = runner.Close() }()
 
 	out, err := runner.CaptureOutput([]string{"sh", "-c", "pwd"})
 	if err != nil {
@@ -1480,7 +1480,6 @@ func TestCaptureOutput_ReturnsTrimmedStdout(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, dir)
-	defer func() { _ = runner.Close() }()
 
 	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo '  hello  '"})
 	if err != nil {
@@ -1502,7 +1501,6 @@ func TestCaptureOutput_ReturnsErrorForFailingCommand(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, dir)
-	defer func() { _ = runner.Close() }()
 
 	_, err = runner.CaptureOutput([]string{"sh", "-c", "exit 1"})
 	if err == nil {
@@ -1521,7 +1519,6 @@ func TestCaptureOutput_ReturnsErrorForNonExistentCommand(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, dir)
-	defer func() { _ = runner.Close() }()
 
 	_, err = runner.CaptureOutput([]string{"__no_such_binary_exists__"})
 	if err == nil {
@@ -1540,7 +1537,6 @@ func TestCaptureOutput_DiscardsStderr(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, dir)
-	defer func() { _ = runner.Close() }()
 
 	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo stdout; echo stderr >&2"})
 	if err != nil {
@@ -1562,14 +1558,18 @@ func TestLastCapture_LastNonEmptyStdoutLine(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	// Print three lines; last non-empty should be "third".
 	if err := runner.RunStep("test", []string{"sh", "-c", "printf 'first\nsecond\nthird\n'"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "third" {
 		t.Errorf("LastCapture: got %q, want %q", got, "third")
@@ -1586,11 +1586,15 @@ func TestLastCapture_EmptyOnFailure(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	_ = runner.RunStep("test", []string{"sh", "-c", "echo something; exit 1"})
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "" {
 		t.Errorf("LastCapture after failure: got %q, want empty string", got)
@@ -1608,14 +1612,18 @@ func TestLastCapture_StripsTrailingCarriageReturn(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	// Print a line with a trailing \r (CRLF-style, common in some scripts).
 	if err := runner.RunStep("test", []string{"printf", "hello\r\n"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "hello" {
 		t.Errorf("LastCapture: got %q, want %q", got, "hello")
@@ -1634,13 +1642,17 @@ func TestLastCapture_StderrNotCaptured(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	if err := runner.RunStep("test", []string{"sh", "-c", "echo stderr-only >&2"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "" {
 		t.Errorf("LastCapture: got %q, want empty string (stderr should not be captured)", got)
@@ -1670,7 +1682,20 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	}
 
 	runner := NewRunner(log, workingDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
+	drain := func() []string {
+		captureMu.Lock()
+		defer captureMu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
 
 	// Actions channel for KeyHandler.
 	actions := make(chan ui.StepAction, 10)
@@ -1704,7 +1729,7 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	header := &fakeRunHeader{}
 	Run(runner, header, kh, cfg)
 
-	collected := collect()
+	collected := drain()
 	_ = log.Close()
 
 	checks := []struct {

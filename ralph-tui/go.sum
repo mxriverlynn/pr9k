@@ -1,5 +1,3 @@
-github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
-github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/charmbracelet/bubbles v1.0.0 h1:12J8/ak/uCZEMQ6KU7pcfwceyjLlWsDLAxB5fXonfvc=
@@ -27,12 +25,6 @@ github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f h1:Y/CXytFA4m6
 github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f/go.mod h1:vw97MGsxSvLiUE2X8qFplwetxpGLQrlU1Q9AUEIzCaM=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/junegunn/fzf v0.67.0 h1:naiOdIkV5/ZCfHgKQIV/f5YDWowl95G6yyOQqW8FeSo=
-github.com/junegunn/fzf v0.67.0/go.mod h1:xlXX2/rmsccKQUnr9QOXPDi5DyV9cM0UjKy/huScBeE=
-github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b h1:7zKk4W6tGT38ScT98B+84LkpnSK03InQpBl+szWuzj8=
-github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b/go.mod h1:jlGW9hYjGHpMGXDeoNk0i5rlI7BWt8hQhpuyAHq21gI=
-github.com/kungfusheep/riffkey v0.0.0-20260216102013-df19649e3a0d h1:ff9WvfadD7BXE1fFl42eeJ4+Gn8gZolx4zFdzoIZvXk=
-github.com/kungfusheep/riffkey v0.0.0-20260216102013-df19649e3a0d/go.mod h1:s+DoFavosJjxGBTgWlhrDKwpsDk0iL7lg3919Fmh6Ys=
 github.com/lucasb-eyer/go-colorful v1.3.0 h1:2/yBRLdWBZKrf7gB40FoiKfAWYQ0lqNcbuQwVHXptag=
 github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

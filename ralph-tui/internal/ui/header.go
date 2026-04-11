@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kungfusheep/glyph"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Status-header color scheme. These are package vars so main.go can bind
@@ -16,15 +16,15 @@ var (
 	// LightGray is the default foreground color for the header and footer
 	// chrome: brackets, pending/done/failed/skipped markers, step names,
 	// iteration line, shortcut bar, version label, and the box border.
-	LightGray = glyph.PaletteColor(245)
+	LightGray = lipgloss.Color("245")
 	// ActiveStepFG is the foreground color for the currently running
 	// step's brackets and name — white so the active row pops against
 	// the light-gray chrome.
-	ActiveStepFG = glyph.BrightWhite
+	ActiveStepFG = lipgloss.Color("15")
 	// ActiveMarkerFG is the foreground color for the active step's
 	// marker glyph (▸) so the triangle reads as "this one is running"
 	// at a glance, independently of the rest of the cell text.
-	ActiveMarkerFG = glyph.BrightGreen
+	ActiveMarkerFG = lipgloss.Color("10")
 )
 
 // StepState represents the display state of a single workflow step.
@@ -42,22 +42,12 @@ const (
 const HeaderCols = 4
 
 // StatusHeader manages the pointer-mutable string state for the TUI status header.
-// Glyph reads the exported fields via pointer on each render cycle — callers
-// update state by mutating struct fields directly (e.g. RenderIterationLine, SetStepState).
-//
-// Each checkbox cell is rendered as three adjacent Text widgets so the
+// Each checkbox cell is rendered as three adjacent Lip Gloss spans so the
 // marker glyph can be colored independently of the brackets and step
-// name. main.go wires them up as:
-//
-//	HBox(
-//	    Text(&Prefixes[r][c]).FG(&NameColors[r][c]),   // "[" or ""
-//	    Text(&Markers[r][c]).FG(&MarkerColors[r][c]),  // " ▸ ✓ ✗ -" or ""
-//	    Text(&Suffixes[r][c]).FG(&NameColors[r][c]),   // "] <name>" or ""
-//	)
+// name.
 //
 // Rows is kept in sync as the legacy single-string representation
-// ("[X] name") for existing test assertions; it is not read by the
-// Glyph render tree.
+// ("[X] name") for existing test assertions.
 type StatusHeader struct {
 	IterationLine string // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
 
@@ -67,8 +57,8 @@ type StatusHeader struct {
 	Prefixes     [][HeaderCols]string
 	Markers      [][HeaderCols]string
 	Suffixes     [][HeaderCols]string
-	MarkerColors [][HeaderCols]glyph.Color
-	NameColors   [][HeaderCols]glyph.Color
+	MarkerColors [][HeaderCols]lipgloss.Color
+	NameColors   [][HeaderCols]lipgloss.Color
 
 	stepNames []string // current phase's step name list
 }
@@ -83,8 +73,8 @@ func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
 		Prefixes:     make([][HeaderCols]string, rowCount),
 		Markers:      make([][HeaderCols]string, rowCount),
 		Suffixes:     make([][HeaderCols]string, rowCount),
-		MarkerColors: make([][HeaderCols]glyph.Color, rowCount),
-		NameColors:   make([][HeaderCols]glyph.Color, rowCount),
+		MarkerColors: make([][HeaderCols]lipgloss.Color, rowCount),
+		NameColors:   make([][HeaderCols]lipgloss.Color, rowCount),
 	}
 }
 
@@ -205,7 +195,7 @@ func (h *StatusHeader) clearCell(r, c int) {
 // running row pops out of the light-gray chrome; every other state uses
 // LightGray for both marker and name. Unknown states fall through to the
 // pending default (a space marker with light-gray colors).
-func cellStyle(state StepState) (marker string, nameColor, markerColor glyph.Color) {
+func cellStyle(state StepState) (marker string, nameColor, markerColor lipgloss.Color) {
 	switch state {
 	case StepActive:
 		return "▸", ActiveStepFG, ActiveMarkerFG

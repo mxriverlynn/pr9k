@@ -3,7 +3,6 @@ package workflow
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,12 +13,12 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 )
 
-// Runner executes workflow steps and streams subprocess output through an io.Pipe.
-// The read end of the pipe is passed to the UI component; the write end receives
-// forwarded stdout/stderr from each subprocess.
+// Runner executes workflow steps and forwards subprocess output to the TUI via
+// a caller-supplied sendLine callback. The io.Pipe from the earlier architecture
+// has been replaced by the sendLine callback path: each scanned line calls
+// sendLine directly, which allows the TUI's drain goroutine to batch lines into
+// LogLinesMsg messages without going through a pipe EOF dance.
 type Runner struct {
-	logReader  *io.PipeReader
-	logWriter  *io.PipeWriter
 	mu         sync.Mutex
 	log        *logger.Logger
 	workingDir string
@@ -37,16 +36,20 @@ type Runner struct {
 	lastCapture string
 }
 
-// NewRunner creates a Runner that streams subprocess output to log and through
-// an io.Pipe. workingDir is set as cmd.Dir for every subprocess.
+// NewRunner creates a Runner that streams subprocess output through the sendLine
+// callback (set via SetSender) and to the file logger. workingDir is set as
+// cmd.Dir for every subprocess.
+//
+// NewRunner initializes sendLine to a sentinel that panics with a descriptive
+// message so that missing-wire bugs (forgetting to call SetSender before
+// RunStep) fail loudly rather than silently dropping all output.
 func NewRunner(log *logger.Logger, workingDir string) *Runner {
-	r, w := io.Pipe()
 	return &Runner{
-		logReader:  r,
-		logWriter:  w,
 		log:        log,
 		workingDir: workingDir,
-		sendLine:   func(string) {},
+		sendLine: func(string) {
+			panic("workflow.Runner: sendLine not set — call SetSender before running steps")
+		},
 	}
 }
 
@@ -64,12 +67,6 @@ func (r *Runner) SetSender(send func(string)) {
 	r.mu.Lock()
 	r.sendLine = send
 	r.mu.Unlock()
-}
-
-// LogReader returns the read end of the pipe. Pass this to the UI log component
-// for real-time display.
-func (r *Runner) LogReader() *io.PipeReader {
-	return r.logReader
 }
 
 // WasTerminated reports whether the most recent RunStep was ended by a
@@ -106,12 +103,11 @@ func (r *Runner) Terminate() {
 }
 
 // RunStep executes command as a subprocess and streams its stdout and stderr in
-// real-time to both the pipe and the file logger. Stdout is also captured into
+// real-time to both sendLine and the file logger. Stdout is also captured into
 // an in-memory buffer; after the command succeeds, the last non-empty stdout
 // line is stored and retrievable via LastCapture. On failure, LastCapture is
 // set to "". A WaitGroup ensures both pipes are fully drained before cmd.Wait()
-// is called. Writes to the shared PipeWriter are mutex-protected because
-// io.PipeWriter is not safe for concurrent use.
+// is called.
 func (r *Runner) RunStep(stepName string, command []string) error {
 	r.processMu.Lock()
 	r.terminated = false
@@ -152,7 +148,7 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	// the stdout goroutine; read only after wg.Wait(), so no mutex is needed.
 	var capturedLines []string
 
-	forwardPipe := func(pipe io.Reader, capture bool) {
+	forwardPipe := func(pipe interface{ Read([]byte) (int, error) }, capture bool) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(pipe)
 		buf := make([]byte, 256*1024)
@@ -169,8 +165,9 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 					_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
 				}
 			}
+			// Snapshot sendLine outside r.mu is safe: program.Send is
+			// goroutine-safe and the channel adapter never blocks.
 			r.mu.Lock()
-			_, _ = fmt.Fprintln(r.logWriter, line)
 			send := r.sendLine
 			r.mu.Unlock()
 			send(line)
@@ -214,20 +211,22 @@ func lastNonEmptyLine(lines []string) string {
 	return ""
 }
 
-// WriteToLog writes a single line directly to the log pipe. Use this to
-// inject separator lines between subprocess outputs without running a command.
+// WriteToLog writes a single line directly via sendLine and to the file logger.
+// Use this to inject separator lines between subprocess outputs without running
+// a command.
 func (r *Runner) WriteToLog(line string) {
 	r.mu.Lock()
-	_, _ = fmt.Fprintln(r.logWriter, line)
 	send := r.sendLine
 	r.mu.Unlock()
 	send(line)
 }
 
-// Close closes the logWriter, sending EOF to the reader. Call this after all
-// steps complete.
+// Close is a no-op retained for interface compatibility with workflow.StepExecutor.
+// The io.Pipe has been removed in this migration; there is no pipe writer to close.
+// Call sites that previously relied on Close() to signal EOF to the UI pipe
+// should be migrated to use the sendLine / SetSender API instead.
 func (r *Runner) Close() error {
-	return r.logWriter.Close()
+	return nil
 }
 
 // CaptureOutput runs command in workingDir and returns its trimmed stdout.
