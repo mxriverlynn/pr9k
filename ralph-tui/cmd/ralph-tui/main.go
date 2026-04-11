@@ -101,18 +101,20 @@ func main() {
 		rowWidgets[r] = glyph.HBox(cols...)
 	}
 
-	// Assemble the full VBox layout tree. HRules separate the status header
-	// from the log panel and the log panel from the shortcut footer.
-	children := make([]any, 0, 4+len(rowWidgets)+2)
-	children = append(children, glyph.Text(&header.IterationLine))
+	// Assemble the full VBox layout tree. HRules separate the checkbox grid
+	// from the iteration status line, the status line from the log panel,
+	// and the log panel from the shortcut footer.
+	children := make([]any, 0, 5+len(rowWidgets)+2)
 	children = append(children, rowWidgets...)
+	children = append(children, glyph.HRule())
+	children = append(children, glyph.Text(&header.IterationLine))
 	children = append(children, glyph.HRule())
 	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
 	children = append(children, glyph.HRule())
 	// Footer: shortcut bar on the left, app version pinned to the bottom-right.
 	// glyph.Space() is a flex spacer inside an HBox, pushing the version text
 	// against the right border of the VBox.
-	versionLabel := "v" + version.Version
+	versionLabel := "ralph-tui v" + version.Version
 	children = append(children, glyph.HBox(
 		glyph.Text(keyHandler.ShortcutLinePtr()),
 		glyph.Space(),
