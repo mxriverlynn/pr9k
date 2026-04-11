@@ -1045,6 +1045,227 @@ func TestWriteToLog_ForwardsToSender(t *testing.T) {
 	}
 }
 
+// TP-001 — Default no-op sendLine works through forwardPipe (RunStep path).
+// A Runner that never calls SetSender should not panic when RunStep emits lines.
+func TestRunStep_DefaultNoOpSendLineNoPanic(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	// Never call SetSender — use the default no-op installed in NewRunner.
+	if err := r.RunStep("test-step", []string{"echo", "default-noop-line"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "default-noop-line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'default-noop-line' in pipe output, got %v", lines)
+	}
+}
+
+// TP-002 — Snapshot-then-unlock pattern is race-safe under concurrent SetSender calls.
+// A long-running subprocess emits lines while a goroutine repeatedly swaps the sender.
+// The -race flag detects any violation; this test asserts no panic and RunStep returns.
+func TestRunStep_ConcurrentSetSenderNoRace(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		script := "while true; do echo line; sleep 0.01; done"
+		stepDone <- r.RunStep("chatty-step", []string{"sh", "-c", script})
+	}()
+
+	// Concurrently swap the sender 50 times while lines are streaming.
+	swapDone := make(chan struct{})
+	go func() {
+		defer close(swapDone)
+		senderA := func(string) {}
+		senderB := func(string) {}
+		for i := 0; i < 50; i++ {
+			if i%2 == 0 {
+				r.SetSender(senderA)
+			} else {
+				r.SetSender(senderB)
+			}
+		}
+	}()
+
+	<-swapDone
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+}
+
+// TP-003 — stdout and stderr forwardPipe goroutines call sendLine concurrently.
+// Both goroutines share the same mutex-guarded sender; a race here drops lines.
+func TestRunStep_ConcurrentStdoutStderrSenderNoRace(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	script := "for i in $(seq 1 50); do echo \"out-$i\"; echo \"err-$i\" >&2; done"
+	if err := r.RunStep("interleaved-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 100 {
+		t.Fatalf("expected 100 lines (50 stdout + 50 stderr), got %d: %v", len(got), got)
+	}
+
+	lineSet := make(map[string]bool, 100)
+	for _, l := range got {
+		lineSet[l] = true
+	}
+	for i := 1; i <= 50; i++ {
+		outLine := fmt.Sprintf("out-%d", i)
+		errLine := fmt.Sprintf("err-%d", i)
+		if !lineSet[outLine] {
+			t.Errorf("missing expected stdout line %q", outLine)
+		}
+		if !lineSet[errLine] {
+			t.Errorf("missing expected stderr line %q", errLine)
+		}
+	}
+}
+
+// TP-004 — sendLine calls in progress survive Terminate() without panic or hang.
+func TestRunStep_SendLineAfterTerminateNoPanic(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		script := "while true; do echo line; sleep 0.01; done"
+		stepDone <- r.RunStep("chatty-step", []string{"sh", "-c", script})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	got := drain()
+	if len(got) == 0 {
+		t.Error("expected at least one line delivered to sender before Terminate")
+	}
+}
+
+// TP-005 — WriteToLog after Close still invokes sendLine without panic.
+// The pipe write fails silently; the sender should still receive the line.
+func TestWriteToLog_AfterCloseSendLineStillInvoked(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	collect := collectLines(t, r)
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	// Write after close: pipe write is silently discarded, sender should still fire.
+	r.WriteToLog("late")
+
+	got := drain()
+	if len(got) != 1 || got[0] != "late" {
+		t.Errorf("expected sender to receive [\"late\"] after Close, got %v", got)
+	}
+}
+
+// TP-006 — SetSender atomic replacement is reflected immediately in WriteToLog.
+// This is a synchronous test (no subprocess) so there is no timing ambiguity.
+func TestSetSender_AtomicReplacementViaWriteToLog(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	var muA sync.Mutex
+	var capA []string
+	r.SetSender(func(line string) {
+		muA.Lock()
+		capA = append(capA, line)
+		muA.Unlock()
+	})
+	r.WriteToLog("to-a")
+
+	var muB sync.Mutex
+	var capB []string
+	r.SetSender(func(line string) {
+		muB.Lock()
+		capB = append(capB, line)
+		muB.Unlock()
+	})
+	r.WriteToLog("to-b")
+
+	_ = r.Close()
+	_ = collect()
+	_ = log.Close()
+
+	muA.Lock()
+	drainA := append([]string{}, capA...)
+	muA.Unlock()
+
+	muB.Lock()
+	drainB := append([]string{}, capB...)
+	muB.Unlock()
+
+	if len(drainA) != 1 || drainA[0] != "to-a" {
+		t.Errorf("sender A: expected [\"to-a\"], got %v", drainA)
+	}
+	if len(drainB) != 1 || drainB[0] != "to-b" {
+		t.Errorf("sender B: expected [\"to-b\"], got %v", drainB)
+	}
+}
+
+// TP-007 — Default no-op sendLine works through WriteToLog path.
+// A Runner that never calls SetSender should not panic when WriteToLog is called.
+func TestWriteToLog_DefaultNoOpSendLineNoPanic(t *testing.T) {
+	r, log := newTestRunner(t)
+	collect := collectLines(t, r)
+
+	// Never call SetSender — use the default no-op installed in NewRunner.
+	r.WriteToLog("noop-test")
+	_ = r.Close()
+
+	lines := collect()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "noop-test" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'noop-test' in pipe output with default no-op sender, got %v", lines)
+	}
+}
+
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
