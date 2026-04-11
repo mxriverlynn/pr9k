@@ -25,6 +25,7 @@ format:
 
 vet:
 	cd ralph-tui && go vet ./...
+	cd ralph-tui && go vet -tags tools .
 
 vulncheck:
 	cd ralph-tui && govulncheck ./...
