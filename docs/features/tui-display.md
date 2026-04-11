@@ -334,11 +334,15 @@ The pre-population block runs immediately after `NewStatusHeader`:
 if len(stepFile.Initialize) > 0 {
     header.SetPhaseSteps(stepNames(stepFile.Initialize))
     header.SetStepState(0, ui.StepActive)
-    header.RenderInitializeLine(1, len(stepFile.Initialize), stepFile.Initialize[0].Name)
+    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
 } else {
     header.SetPhaseSteps(stepNames(stepFile.Iteration))
     header.SetStepState(0, ui.StepActive)
-    header.RenderIterationLine(1, cfg.Iterations, "")
+    if cfg.Iterations > 0 {
+        header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+    } else {
+        header.IterationLine = "Iteration 1"
+    }
 }
 ```
 

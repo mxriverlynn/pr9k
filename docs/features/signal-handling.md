@@ -169,7 +169,16 @@ default:
 }
 ```
 
-`program.Run()` returns when `program.Quit()` (normal path) or `program.Kill()` (signal path) is called. `tea.ErrProgramKilled` is explicitly tolerated — it is a normal forced-exit return, not an error. The signal handler does not call `os.Exit` itself; exit code selection always happens here in the main goroutine.
+`program.Run()` returns when `program.Quit()` (normal path) or `program.Kill()` (signal path) is called. Before exit code selection, any non-nil error from `program.Run()` is inspected:
+
+```go
+if runErr != nil && !errors.Is(runErr, tea.ErrProgramKilled) {
+    fmt.Fprintln(os.Stderr, "bubbletea:", runErr)
+    os.Exit(1)
+}
+```
+
+`tea.ErrProgramKilled` is explicitly tolerated — it is a normal forced-exit return from the signal path, not a crash. Any other non-nil error is an unexpected Bubble Tea failure: it is printed to stderr and the process exits immediately with code 1. The signal handler does not call `os.Exit` itself; exit code selection always happens here in the main goroutine.
 
 ## Testing
 

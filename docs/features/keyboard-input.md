@@ -161,10 +161,12 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
 
 The Bubble Tea program delivers all keypresses as `tea.KeyMsg` to `Model.Update`, which routes them to `keysModel.Update`. No separate key registration is required.
 
+> **Implementation note:** Mode transitions in `handleNormal`, `handleError`, and `handleQuitConfirm` access `KeyHandler`'s unexported fields directly (`handler.mu`, `handler.mode`, `handler.prevMode`, `handler.updateShortcutLineLocked()`). Both types live in the same `ui` package, so this is valid Go — `keysModel` is an intentional package-internal collaborator of `KeyHandler`, not a general caller.
+
 ### Normal Mode
 
 - `n` — calls the `cancel` function to terminate the current subprocess (step skip)
-- `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm`
+- `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm` (direct field write under `handler.mu`)
 - All other keys are ignored
 
 ### Error Mode
