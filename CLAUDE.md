@@ -81,6 +81,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, and non-blocking channel sends. Apply when working with goroutines, mutexes, channels, or any shared state.
 - [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, and scanner error checking. Apply to all error creation, wrapping, and propagation.
 - [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
+- [`docs/coding-standards/lint-and-tooling.md`](docs/coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited in any form (`//nolint`, `.golangci.yml` exclusions, disabled linters, etc.). Fix the root cause or escalate; never silence a finding. Apply to every commit and every PR review.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 
 ## How-To Guides
