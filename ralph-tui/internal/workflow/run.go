@@ -247,7 +247,7 @@ func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Ph
 		}
 		return ui.ResolvedStep{
 			Name:    s.Name,
-			Command: []string{"claude", "--permission-mode", "acceptEdits", "--model", s.Model, "-p", prompt},
+			Command: []string{"claude", "--permission-mode", "bypassPermissions", "--model", s.Model, "-p", prompt},
 		}, nil
 	}
 	return ui.ResolvedStep{

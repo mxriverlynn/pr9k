@@ -740,8 +740,8 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	if len(resolved.Command) < 7 || resolved.Command[0] != "claude" {
 		t.Fatalf("unexpected command: %v", resolved.Command)
 	}
-	if resolved.Command[1] != "--permission-mode" || resolved.Command[2] != "acceptEdits" {
-		t.Errorf("expected --permission-mode acceptEdits, got %v %v", resolved.Command[1], resolved.Command[2])
+	if resolved.Command[1] != "--permission-mode" || resolved.Command[2] != "bypassPermissions" {
+		t.Errorf("expected --permission-mode bypassPermissions, got %v %v", resolved.Command[1], resolved.Command[2])
 	}
 	if resolved.Command[3] != "--model" || resolved.Command[4] != "claude-opus-4-6" {
 		t.Errorf("expected --model claude-opus-4-6, got %v %v", resolved.Command[3], resolved.Command[4])
