@@ -214,7 +214,7 @@ When adding any new blocking receive to orchestration code:
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine snapshot-then-unlock, WaitGroup drain, and snapshot-then-unlock in Terminate
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine and Terminate snapshot-then-unlock, WaitGroup drain
 - [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit

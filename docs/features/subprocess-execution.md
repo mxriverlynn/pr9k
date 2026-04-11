@@ -284,6 +284,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestRunStep_SendLineDefaultNoOp`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — default no-op installed by NewRunner does not panic
   - `TestWriteToLog_AfterCloseSendLineStillInvoked` — sendLine fires even after Close
   - `TestSetSender_AtomicReplacementViaWriteToLog` — atomic replacement via WriteToLog
+  - `TestWriteToLog_DoesNotWriteToFileLogger` — verifies WriteToLog forwards to sendLine but does not write to the file logger
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step
