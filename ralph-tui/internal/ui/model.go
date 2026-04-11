@@ -184,6 +184,17 @@ func (m Model) View() string {
 
 	// Checkbox grid — the iteration line lives in the top border as the
 	// title, so the grid is the first row below the top border.
+	//
+	// Compute the maximum cell width across all grid slots so each column
+	// occupies the same width, distributing the step list evenly.
+	maxCellWidth := 0
+	for r := range m.header.header.Rows {
+		for c := range HeaderCols {
+			if w := lipgloss.Width(m.header.header.Rows[r][c]); w > maxCellWidth {
+				maxCellWidth = w
+			}
+		}
+	}
 	for r := range m.header.header.Rows {
 		var row strings.Builder
 		for c := range HeaderCols {
@@ -194,6 +205,10 @@ func (m Model) View() string {
 			marker := lipgloss.NewStyle().Foreground(m.header.header.MarkerColors[r][c]).Render(m.header.header.Markers[r][c])
 			suffix := lipgloss.NewStyle().Foreground(m.header.header.NameColors[r][c]).Render(m.header.header.Suffixes[r][c])
 			row.WriteString(prefix + marker + suffix)
+			// Pad to maxCellWidth so all 4 columns are equally wide.
+			if pad := maxCellWidth - lipgloss.Width(m.header.header.Rows[r][c]); pad > 0 {
+				row.WriteString(strings.Repeat(" ", pad))
+			}
 		}
 		sb.WriteString(wrapLine(row.String()))
 		sb.WriteString("\n")

@@ -541,6 +541,71 @@ func TestModel_MouseMsg_NoPanic(t *testing.T) {
 	_ = next
 }
 
+// --- Issue #74: step list evenly distributed across header cells ---
+
+// TestView_CheckboxGrid_EqualCellWidth verifies that all four columns in the
+// checkbox grid are padded to the same width when step names differ in length.
+// The longest name determines the cell width; shorter names are padded so that
+// each column starts at the same horizontal offset in the rendered row.
+func TestView_CheckboxGrid_EqualCellWidth(t *testing.T) {
+	// Four steps with deliberately different lengths; the longest is "very-long-step-name".
+	// Each cell is "[ ] <name>", so the widest cell is "[ ] very-long-step-name" = 23 runes.
+	// The expected cell width (cellWidth) = 23.  Cells are separated by "  " (2 spaces).
+	// So each step's label starts at offset:  col * (cellWidth + 2)  from the start of the
+	// inner content (after stripping the leading │ border character).
+	steps := []string{"short", "very-long-step-name", "mid", "x"}
+	header := NewStatusHeader(len(steps))
+	header.SetPhaseSteps(steps)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0")
+	m.width = 120
+	m.height = 24
+	m.log.SetSize(116, 10)
+
+	out := stripANSI(m.View())
+
+	// Find the grid line that contains the step names.
+	var gridLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ] short") {
+			gridLine = line
+			break
+		}
+	}
+	if gridLine == "" {
+		t.Fatalf("could not find checkbox grid line in View() output:\n%s", out)
+	}
+
+	// Strip the leading │ border to get the inner content as a rune slice
+	// so positions are measured in visible characters, not bytes.
+	runes := []rune(gridLine)
+	if len(runes) > 0 && runes[0] == '│' {
+		runes = runes[1:]
+	}
+
+	// cellWidth = len("[ ] very-long-step-name") = 23
+	cellWidth := len([]rune("[ ] very-long-step-name"))
+	stride := cellWidth + 2 // cell + "  " separator
+
+	// Each step name should appear at position col*stride+4 within runes
+	// ("+4" skips the "[ ] " prefix of each cell).
+	for col, name := range steps {
+		start := col*stride + 4 // skip "[ ] "
+		end := start + len([]rune(name))
+		if end > len(runes) {
+			t.Errorf("col %d: rune slice too short (len=%d) for name %q at [%d:%d]",
+				col, len(runes), name, start, end)
+			continue
+		}
+		got := string(runes[start:end])
+		if got != name {
+			t.Errorf("col %d: expected %q at rune offset %d, got %q (full inner: %q)",
+				col, name, start, got, string(runes))
+		}
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
