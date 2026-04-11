@@ -9,13 +9,15 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 ## Overview
 
 - `StatusHeader` is a struct that holds the checkbox grid state and iteration line; mutations are applied on the Bubble Tea Update goroutine via `headerProxy` message-passing
-- Displays the current iteration/issue on one line; shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
+- The iteration line is embedded into the top-border title (not rendered as a separate inner row); it shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
 - Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped; the active step marker (`▸`) is rendered in green; all other chrome is light gray
 - Switches between phases (initialize, iteration, finalize) by sending `headerPhaseStepsMsg` through `headerProxy`
 - The log body is structured with phase banners, iteration separators, per-step "Starting step" banners, variable capture logs, and a final completion summary — all spaced with blank lines (helpers in `log.go`)
 - Terminal width for full-width phase banner underlines is detected via `ui.TerminalWidth()` (ioctl TIOCGWINSZ) with an 80-column fallback
 - The completion summary line is written to the log body (not the header) as the last non-blank line before `Run` returns
+- `View()` hand-builds the entire rounded frame row-by-row (no `lipgloss.Border` wrapper) so the two horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders
+- The top-border title renders two-tone: the app name (from the `AppTitle` constant, `Power-Ralph.9000`) in green and the iteration detail after ` — ` in white; log body content renders in white; the version label renders in white; shortcut-bar keys render in white with gray descriptions
 
 Key files:
 - `ralph-tui/internal/ui/model.go` — Root Bubble Tea `Model`; `Update` routes messages to sub-models; `View` assembles the full TUI output
@@ -45,19 +47,18 @@ Key files:
   │  ├─ tea.KeyMsg           → keysModel.Update()    │
   │  └─ tea.WindowSizeMsg    → resize viewport        │
   │                                                   │
-  │  Model.View() assembles:                          │
+  │  Model.View() assembles (hand-built frame,       │
+  │  row-by-row, no lipgloss.Border wrapper):         │
   │  ┌──────────────────────────────────────────────┐│
-  │  │╭── ralph-tui — Iteration 2/5 ─── … ────────╮││  ← dynamic title in top border
-  │  │  Iteration 2/5 — Issue #42                  ││
-  │  │  ─────────────────────────────────────────  ││  ← HRule
-  │  │  [▸] Feature work   [ ] Test planning       ││  ← checkbox grid (per-cell color)
-  │  │  [ ] Test writing   [ ] Code review         ││
-  │  │  ─────────────────────────────────────────  ││  ← HRule
-  │  │  [log panel — bubbles/viewport]             ││  ← scrollable log viewport
-  │  │  ─────────────────────────────────────────  ││  ← HRule
-  │  │  ↑/k up  ↓/j down  n next  q quit          ││  ← shortcut footer (ShortcutLine)
-  │  │                     ralph-tui v0.2.0        ││  ← version label (right-aligned)
-  │  │╰──────────────────────────────────────────── ││  ← bottom border
+  │  │╭── Power-Ralph.9000 — Iteration 2/5 — … ──╮ ││  ← dynamic title in top border (green/white)
+  │  │ [▸] Feature work   [ ] Test planning      │ ││  ← checkbox grid (per-cell color)
+  │  │ [ ] Test writing   [ ] Code review        │ ││
+  │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
+  │  │ [log panel — bubbles/viewport]            │ ││  ← scrollable log viewport (white text)
+  │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
+  │  │ ↑/k up  ↓/j down  n next  q quit          │ ││  ← shortcut footer (ShortcutLine)
+  │  │                     ralph-tui v0.2.1      │ ││  ← version label (right-aligned, white)
+  │  │╰─────────────────────────────────────────╯  ││  ← bottom border
   │  └──────────────────────────────────────────────┘│
   └──────────────────────────────────────────────────┘
 ```
@@ -186,18 +187,23 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
 
 ### View Assembly
 
-`Model.View()` assembles the complete TUI output each render cycle:
+`Model.View()` hand-builds the complete TUI output row-by-row each render cycle, using a small `wrapLine` helper that wraps each content line in `│ … │` side borders with right-padding to `innerWidth` (and `MaxWidth` truncation for overflow):
 
-1. **Top border** — `renderTopBorder(titleString())` builds a hand-crafted `╭── ralph-tui — <iterationLine> ─ … ─╮` using `lipgloss.Width` for rune-aware truncation when the title overflows
-2. **Iteration line** — `m.header.header.IterationLine` rendered in light gray
-3. **HRule** — `strings.Repeat("─", innerWidth)` 
-4. **Checkbox grid** — each cell rendered as three adjacent Lip Gloss spans: `Prefix` + `Marker` + `Suffix`, each with its own `lipgloss.Color` from `NameColors`/`MarkerColors`. Active steps appear in white/green; all other states in light gray
-5. **HRule**
-6. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model
-7. **HRule**
-8. **Footer** — shortcut bar (left, from `m.keys.handler.ShortcutLine()`) + spacer + version label (right, from `m.versionLabel`)
+1. **Top border with title** — `renderTopBorder(titleString())` builds a hand-crafted `╭── Power-Ralph.9000 — <iterationLine> ─ … ─╮`. The title is two-tone colored via `colorTitle()`: the `AppTitle` constant (`Power-Ralph.9000`) renders in green (color 10) and the iteration detail after the ` — ` separator renders in white (color 15). `lipgloss.Width` provides rune-aware truncation when the title overflows.
+2. **Checkbox grid** — each cell rendered as three adjacent Lip Gloss spans: `Prefix` + `Marker` + `Suffix`, each with its own `lipgloss.Color` from `NameColors`/`MarkerColors`. Active steps appear in white/green; all other states in light gray. Each row is wrapped in sidebars via `wrapLine`.
+3. **HRule** — `gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")` uses T-junction glyphs so the rule visually connects to the `│` side borders at both ends.
+4. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model is split on `\n` and each resulting line is wrapped individually via `wrapLine`. The viewport content is set through `logContentStyle` (`White` foreground) so log body text pops against the gray chrome.
+5. **HRule** — same T-junction form as step 3.
+6. **Footer** — shortcut bar (left, from `m.keys.handler.ShortcutLine()`, passed through `colorShortcutLine` for per-key coloring) + spacer + version label (right, from `m.versionLabel`, rendered white), wrapped via `wrapLine`.
+7. **Bottom border** — `gray.Render("╰" + strings.Repeat("─", innerWidth) + "╯")`.
 
-The inner content is then wrapped by a `lipgloss.NewStyle().Border(lipgloss.RoundedBorder())` with `BorderTop(false)` to produce the left/right/bottom border, while the top border is the hand-built dynamic title line.
+There is **no** `lipgloss.Border` wrapper around the inner block. The previous approach (wrapping inner content in a `Border(RoundedBorder()).BorderTop(false)` style) was scrapped because it forced plain `─` on the hrule rows and left visual gaps at the side-border intersections; hand-building each row is what lets the hrules use the `├─┤` T-junction glyphs.
+
+### Shortcut Footer Coloring
+
+`colorShortcutLine()` applies the footer's per-key color scheme. For the key-mapping lines (`NormalShortcuts`, `ErrorShortcuts`), the string is split on `"  "` (double-space) into groups; within each group the first whitespace-separated token is the mapped key (rendered `White`) and the rest is its description (rendered `LightGray`). The `"  "` separators between groups remain `LightGray`.
+
+For status-message lines the whole string renders in `White`, with one exception: when the line is `QuitConfirmPrompt`, `colorShortcutLine` splits the string on the `AppTitle` substring and renders that substring in `Green` to match the top-border title's brand color, with the surrounding prompt text in `White`.
 
 ### Checkbox Label Formatting
 

@@ -2,19 +2,17 @@
 
 Ralph-tui streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
 
-## The four regions
+## The three inner regions
 
-The screen is assembled in `Model.View()` with a dynamic top border that embeds the current run state. The four regions stack top to bottom:
+The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded frame. The current run state — iteration number, issue ID, phase step — is embedded directly into the top border as the window title, so the inner content starts with the checkbox grid and there is no separate iteration-line row. The three inner regions stack top to bottom:
 
 ```
-╭── ralph-tui — Iteration 2/3 — Issue #42 ───────────╮
+╭── Power-Ralph.9000 — Iteration 2/3 — Issue #42 ─────╮  ← top border + title
 │ [✓] Feature work      [✓] Test planning             │
 │ [▸] Test writing      [ ] Code review               │  ← checkbox grid
 │ [ ] Review fixes      [ ] Close issue               │
 │ [ ] Update docs       [ ] Git push                  │
-│─────────────────────────────────────────────────────│  ← HRule
-│ Iteration 2/3 — Issue #42                           │  ← iteration line
-│─────────────────────────────────────────────────────│  ← HRule
+├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
 │                                                     │
 │ Iterations                                          │
 │ ═════════════════════════════════════════════════   │
@@ -26,12 +24,14 @@ The screen is assembled in `Model.View()` with a dynamic top border that embeds 
 │                                                     │
 │ [test-writing subprocess output streams here]       │
 │                                                     │
-│─────────────────────────────────────────────────────│  ← HRule
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.1.0 │  ← shortcut footer + version
+├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.2.1 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
-State updates from the orchestration goroutine are sent as typed messages via `HeaderProxy` (which calls `program.Send`) and applied on the Bubble Tea Update goroutine — so header changes appear on the next `View()` render cycle without any shared-memory races. The checkbox grid sits at the top, with the iteration status line *below* it; both regions are part of the same header state but rendered on opposite sides of a horizontal rule.
+The top border itself is a two-tone colored title: `Power-Ralph.9000` renders in **green** and the iteration detail that follows the ` — ` separator renders in **white**. The log body text renders in **white** to pop against the light-gray frame chrome. The two horizontal rules inside the frame use `├` and `┤` T-junction glyphs so they visually connect to the `│` side borders instead of leaving a gap.
+
+State updates from the orchestration goroutine are sent as typed messages via `HeaderProxy` (which calls `program.Send`) and applied on the Bubble Tea Update goroutine — so header changes appear on the next `View()` render cycle without any shared-memory races. The checkbox grid sits at the top of the inner content; the iteration detail it belongs to is rendered in the top border's title.
 
 ## Region 1 — the checkbox grid
 
@@ -49,21 +49,21 @@ The five possible states:
 
 **Note:** The initialize phase does not update the checkbox grid — it uses a `noopHeader` during `Orchestrate` so initialize step state isn't rendered. Only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
 
-## Region 2 — the iteration line
+## The iteration line (embedded in the top border title)
 
-A single line *below* the checkbox grid (separated from it by a horizontal rule) that tells you *what* the workflow is doing right now.
+The current phase/step text is rendered as part of the top border's title, not as a separate inner row. The same string that appears after the ` — ` separator in the border is also set as the OS window title via `tea.SetWindowTitle`.
 
-| Phase | Format | Example |
-|-------|--------|---------|
-| Initialize | `Initializing N/M: <step name>` | `Initializing 1/2: Splash` |
-| Iteration (bounded) | `Iteration N/M — Issue #<id>` (issue suffix appears after `ISSUE_ID` is bound) | `Iteration 2/5 — Issue #42` |
-| Iteration (unbounded) | `Iteration N — Issue #<id>` (no total when `--iterations 0`) | `Iteration 7 — Issue #91` |
-| Iteration (no issue yet) | `Iteration N/M` or `Iteration N` — issue suffix omitted | `Iteration 1/3` |
-| Finalize | `Finalizing N/M: <step name>` | `Finalizing 1/3: Deferred work` |
+| Phase | Format | Example (border title) |
+|-------|--------|------------------------|
+| Initialize | `Initializing N/M: <step name>` | `Power-Ralph.9000 — Initializing 1/2: Splash` |
+| Iteration (bounded) | `Iteration N/M — Issue #<id>` (issue suffix appears after `ISSUE_ID` is bound) | `Power-Ralph.9000 — Iteration 2/5 — Issue #42` |
+| Iteration (unbounded) | `Iteration N — Issue #<id>` (no total when `--iterations 0`) | `Power-Ralph.9000 — Iteration 7 — Issue #91` |
+| Iteration (no issue yet) | `Iteration N/M` or `Iteration N` — issue suffix omitted | `Power-Ralph.9000 — Iteration 1/3` |
+| Finalize | `Finalizing N/M: <step name>` | `Power-Ralph.9000 — Finalizing 1/3: Deferred work` |
 
-After the finalize phase ends, the iteration line keeps its last finalize value — **the completion summary is not in the header**, it's the last line of the log panel (see Region 3).
+After the finalize phase ends, the title keeps its last finalize value — **the completion summary is not in the header**, it's the last line of the log panel (see Region 2).
 
-## Region 3 — the log panel
+## Region 2 — the log panel
 
 The bulk of the screen. This is a `bubbles/viewport` sub-model that caps at 500 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
 
@@ -137,7 +137,7 @@ Phase banners use `═` (double horizontal) and are full-width; per-step banners
 
 ### Scrolling
 
-The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel scrolling also works — ralph-tui enables `tea.WithMouseCellMotion()` so the viewport receives wheel events natively. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead.
+The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — ralph-tui enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
 
 ### Selecting log text to copy
 
@@ -152,9 +152,11 @@ To select and copy text from the log panel, hold the modifier key that overrides
 
 The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode.
 
-## Region 4 — the shortcut footer
+## Region 3 — the shortcut footer
 
 A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+
+The footer uses a two-tone color scheme: the version label on the right renders in **white**. On the left, for the key-mapping lines (Normal and Error modes), each mapped key token (e.g. `↑/k`, `n`, `q`, `c`, `r`) renders in **white** and its trailing description (e.g. `up`, `next step`, `quit`) renders in **light gray**. For the status-message lines the whole line renders in **white** — with one exception: in the quit-confirm prompt, the embedded `Power-Ralph.9000` substring renders in **green** to match the top-border title's brand color, so the confirmation footer and the title line read as the same app.
 
 The left-side shortcut bar is the clearest way to tell what state the handler is in:
 
@@ -162,7 +164,7 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 |-------------|------|
 | `↑/k up  ↓/j down  n next step  q quit` | Normal — a step is running; you can scroll or skip |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
-| `Quit ralph? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for confirmation |
+| `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for confirmation |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
 When the workflow finishes normally, the completion summary is written to the log body and the process exits on its own — no final keypress required.

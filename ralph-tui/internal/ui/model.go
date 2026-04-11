@@ -256,10 +256,21 @@ func (m Model) titleString() string {
 // and its trailing description renders gray. When the footer instead shows
 // a status message (quit-confirm prompt, quitting line) the whole string
 // renders white so it reads as a foreground message rather than key-mapping
-// chrome.
+// chrome — with one exception: within the quit-confirm prompt, the embedded
+// AppTitle substring renders green to match the top-border title's brand
+// color.
 func colorShortcutLine(s string) string {
 	white := lipgloss.NewStyle().Foreground(White)
-	if s == QuitConfirmPrompt || s == QuittingLine {
+	if s == QuitConfirmPrompt {
+		green := lipgloss.NewStyle().Foreground(Green)
+		if idx := strings.Index(s, AppTitle); idx >= 0 {
+			return white.Render(s[:idx]) +
+				green.Render(AppTitle) +
+				white.Render(s[idx+len(AppTitle):])
+		}
+		return white.Render(s)
+	}
+	if s == QuittingLine {
 		return white.Render(s)
 	}
 	gray := lipgloss.NewStyle().Foreground(LightGray)

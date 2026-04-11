@@ -129,9 +129,10 @@ type KeyHandler struct {
 
 | Constant | Value | Description |
 |----------|-------|-------------|
+| `AppTitle` | `"Power-Ralph.9000"` | Canonical display name; single source of truth for the user-facing app name in titles and prompts |
 | `NormalShortcuts` | `"↑/k up  ↓/j down  n next step  q quit"` | Shortcut bar in normal mode |
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
-| `QuitConfirmPrompt` | `"Quit ralph? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
+| `QuitConfirmPrompt` | `"Quit " + AppTitle + "? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
 
 ## Implementation Details

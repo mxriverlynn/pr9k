@@ -64,7 +64,7 @@ Use `r` when:
 Start the quit confirmation flow.
 
 - Mode switches to `ModeQuitConfirm`
-- Footer changes to `Quit ralph? (y/n, esc to cancel)`
+- Footer changes to `Quit Power-Ralph.9000? (y/n, esc to cancel)`
 - Pressing `y` confirms and begins shutdown (footer → `Quitting...`)
 - Pressing `n` or `Esc` cancels and returns to `ModeError` so you can still pick `c` or `r`
 

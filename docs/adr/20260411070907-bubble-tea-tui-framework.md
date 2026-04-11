@@ -106,6 +106,6 @@ We specifically reject tview because its lack of first-class window-title suppor
 
 - [TUI Display Feature Doc](../features/tui-display.md) — documents the `StatusHeader` regions, the 500-line log cap, and the checkbox-based step progress that must be preserved
 - [Keyboard Input Feature Doc](../features/keyboard-input.md) — documents the four-mode state machine that must be preserved
-- [Reading the TUI](../how-to/reading-the-tui.md) — documents the four user-visible regions (checkbox grid, iteration line, log panel, shortcut footer) that must be preserved
+- [Reading the TUI](../how-to/reading-the-tui.md) — documents the user-visible regions (top border with embedded title, checkbox grid, log panel, shortcut footer) that must be preserved
 - [Architecture Overview](../architecture.md) — system-level architecture including the TUI rendering path
 - [Bubble Tea Migration Plan](../plans/use-bubble-tea.md) — the execution plan for this migration (to be written)

@@ -6,7 +6,7 @@ Ralph-tui always shuts down through the same path — whether you press `q`, hit
 
 | Entry point | Where it fires | What it does |
 |-------------|----------------|--------------|
-| `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...`, calls `ForceQuit` |
+| `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...` (white), calls `ForceQuit` |
 | `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Signal handler goroutine in `main.go` | Calls `ForceQuit`, waits up to 2s, then `program.Kill()` |
 | Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; calls `program.Quit()` |
 
@@ -20,11 +20,11 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
 [You press q]
        │
        ▼
-┌────────────────────────────┐
-│ Mode: QuitConfirm          │
-│ Footer: Quit ralph?        │
-│   (y/n, esc to cancel)     │
-└──────┬──────────┬──────────┘
+┌─────────────────────────────────────┐
+│ Mode: QuitConfirm                   │
+│ Footer: Quit Power-Ralph.9000?      │
+│   (y/n, esc to cancel)              │
+└──────┬──────────┬───────────────────┘
        │          │
     y  │          │  n or Esc
        ▼          ▼
@@ -37,7 +37,7 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
 
 ### Cancelling the quit
 
-Pressing `n` or `Esc` while the footer shows `Quit ralph? (y/n, esc to cancel)` restores your previous mode — Normal if you came from a running step, Error if you came from a failure pause — and puts the footer back to its previous shortcuts. No subprocess is touched, no action is injected.
+Pressing `n` or `Esc` while the footer shows `Quit Power-Ralph.9000? (y/n, esc to cancel)` restores your previous mode — Normal if you came from a running step, Error if you came from a failure pause — and puts the footer back to its previous shortcuts. No subprocess is touched, no action is injected.
 
 This is non-destructive: if you were paused in error mode deciding whether to retry, cancelling a quit drops you right back into the same `c / r / q` decision with the same failed step still marked `[✗]`.
 
@@ -104,7 +104,7 @@ Some interactions look like they might quit but don't:
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit ralph?`, `Quitting...`, etc.)
+- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.)
 - [Recovering from Step Failures](recovering-from-step-failures.md) — The `q` entry point from error mode
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `ModeQuitConfirm`, `ModeQuitting`, `ForceQuit`
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT/SIGTERM handler, exit code selection, cleanup ordering
