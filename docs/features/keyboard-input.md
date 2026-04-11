@@ -1,20 +1,21 @@
 # Keyboard Input & Error Recovery
 
-A five-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
+A four-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-11
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `KeyHandler` operates in five modes: Normal, Error, QuitConfirm, Quitting, and Done — each with its own keypress bindings and shortcut bar text
+- `KeyHandler` operates in four modes: Normal, Error, QuitConfirm, and Quitting — each with its own keypress bindings and shortcut bar text
 - User decisions are sent to the orchestration goroutine via a buffered `Actions` channel carrying `StepAction` values (Retry, Continue, Quit)
 - In Normal mode, `n` terminates the current subprocess (skip step) and `q` enters quit confirmation
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
 - In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel and restore the previous mode
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
+- When the workflow finishes normally, `Run` returns on its own (no "press any key to exit" state); the workflow goroutine in `main.go` restores the terminal and exits the process directly
 
 Key files:
 - `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode dispatch, ForceQuit
@@ -30,52 +31,59 @@ Key files:
                   │  KeyHandler  │
                   └──────┬───────┘
                          │
-         ┌───────────────┼──────────────────┐
-         │               │                  │
-         ▼               ▼                  ▼
-  ┌────────────┐   ┌────────────┐    ┌────────────┐
-  │ ModeNormal │   │ ModeError  │    │ ModeDone   │
-  │            │   │            │    │            │
-  │ n → cancel │   │ c → cont.  │    │ any key →  │
-  │   (skip)   │   │ r → retry  │    │ ActionQuit │
-  │ q ───┐     │   │ q ───┐     │    └────────────┘
-  └──────┼─────┘   └──────┼─────┘           ▲
-         │                │                  │
-         ▼                ▼           workflow complete
-     ┌───────────────────────┐        (set by Run after
-     │   ModeQuitConfirm     │         finalization)
-     │                       │
-     │  y → ModeQuitting +   │
-     │      ForceQuit        │
-     │  n, <Escape> → prev   │
-     └───────────┬───────────┘
-                 │
-                 │ y
-                 ▼
-          ┌──────────────┐
-          │ ModeQuitting │
-          │              │
-          │ footer shows │
-          │ "Quitting..."│
-          │ (terminal)   │
-          └──────┬───────┘
-                 │
-                 │ ForceQuit →
-                 ▼
-          ┌──────────────┐
-          │   Actions    │  buffered channel (cap 10)
-          │   channel    │
-          └──────┬───────┘
-                 │
-                 ▼
-          Orchestrate()
-          (workflow goroutine)
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+      ┌────────────┐           ┌────────────┐
+      │ ModeNormal │           │ ModeError  │
+      │            │           │            │
+      │ n → cancel │           │ c → cont.  │
+      │   (skip)   │           │ r → retry  │
+      │ q ───┐     │           │ q ───┐     │
+      └──────┼─────┘           └──────┼─────┘
+             │                        │
+             └──────────┬─────────────┘
+                        ▼
+            ┌───────────────────────┐
+            │   ModeQuitConfirm     │
+            │                       │
+            │  y → ModeQuitting +   │
+            │      ForceQuit        │
+            │  n, <Escape> → prev   │
+            └───────────┬───────────┘
+                        │
+                        │ y
+                        ▼
+                 ┌──────────────┐
+                 │ ModeQuitting │
+                 │              │
+                 │ footer shows │
+                 │ "Quitting..."│
+                 │ (terminal)   │
+                 └──────┬───────┘
+                        │
+                        │ ForceQuit →
+                        ▼
+                 ┌──────────────┐
+                 │   Actions    │  buffered channel (cap 10)
+                 │   channel    │
+                 └──────┬───────┘
+                        │
+                        ▼
+                 Orchestrate()
+                 (workflow goroutine)
 
   OS Signal (SIGINT/SIGTERM):
     → signal handler goroutine
     → keyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
     (unified with the QuitConfirm 'y' path)
+
+  Normal completion:
+    → Run returns on its own after writing the
+      completion summary to the log body
+    → workflow goroutine restores the terminal
+      and os.Exit(0)s directly
 ```
 
 ## Key Files
@@ -101,7 +109,6 @@ const (
     ModeError
     ModeQuitConfirm
     ModeQuitting    // confirmed quit; footer shows "Quitting..." during shutdown
-    ModeDone        // workflow complete; any key exits
 )
 
 type KeyHandler struct {
@@ -122,7 +129,6 @@ type KeyHandler struct {
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
 | `QuitConfirmPrompt` | `"Quit ralph? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
-| `DoneShortcuts` | `"done — press any key to exit"` | Shortcut bar in done mode |
 
 ## Implementation Details
 
@@ -136,7 +142,6 @@ func (h *KeyHandler) Handle(key string) {
     case ModeNormal:      h.handleNormal(key)
     case ModeError:       h.handleError(key)
     case ModeQuitConfirm: h.handleQuitConfirm(key)
-    case ModeDone:        h.handleDone(key)
     }
     // ModeQuitting is a terminal state — no handler; keypresses are ignored
     // while the shutdown unwinds.
@@ -170,15 +175,11 @@ The flip to `ModeQuitting` happens **before** `ForceQuit` is called so the foote
 
 ### Quitting Mode
 
-Entered only by the QuitConfirm `y` path (never directly from Normal or Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the process exits or `app.Stop()` tears down the TUI.
+Entered only by the QuitConfirm `y` path (never directly from Normal or Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
 
-### Done Mode
+### Normal Completion (no mode transition)
 
-Entered by `Run` after the finalization phase completes (via `h.SetMode(ModeDone)`):
-
-- Any key — sends `ActionQuit` to the `Actions` channel, causing `Run` to unblock and return
-- The completion sequence in `Run` blocks on `<-keyHandler.Actions` after entering `ModeDone`; the channel has capacity before this point so `handleDone`'s blocking send does not deadlock
-- Note: `ModeDone` is distinct from `ModeQuitting`. `ModeDone` is the "workflow finished normally, waiting for acknowledgement" state; `ModeQuitting` is the "user confirmed an early quit, shutdown in progress" state
+When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `app.Screen().ExitRawMode()` and `os.Exit(0)` directly. Exiting from the workflow goroutine rather than through `app.Run` avoids a macOS raw-tty quirk where closing stdin from another goroutine doesn't reliably unblock Glyph's in-progress `ReadKey`.
 
 ### ForceQuit
 

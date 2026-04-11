@@ -111,18 +111,12 @@ func (h *fakeRunHeader) SetStepState(idx int, state ui.StepState) {
 	h.stepStateCalls = append(h.stepStateCalls, stepStateCall{idx, state})
 }
 
-// newTestKeyHandler creates a KeyHandler suitable for tests where all steps succeed.
-// It injects ActionQuit asynchronously after a brief delay to unblock the
-// completion sequence's final blocking receive without interfering with
-// Orchestrate's non-blocking pre-step checks.
+// newTestKeyHandler creates a KeyHandler suitable for tests where all steps
+// succeed. Run() returns on its own once the workflow finishes, so the handler
+// simply provides a buffered actions channel that no one consumes.
 func newTestKeyHandler() *ui.KeyHandler {
 	actions := make(chan ui.StepAction, 10)
-	kh := ui.NewKeyHandler(func() {}, actions)
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		actions <- ui.ActionQuit
-	}()
-	return kh
+	return ui.NewKeyHandler(func() {}, actions)
 }
 
 // nonClaudeSteps creates simple non-claude steps with echo commands for testing.
@@ -1853,10 +1847,11 @@ func newCompletionObserver(completionSeen chan<- string) func(string) {
 	}
 }
 
-// TestRun_CompletionSummaryAndBlockForKeypress verifies that after all finalize
-// steps complete, Run() writes the completion summary as the final line of the
-// main body log, switches to ModeDone, and blocks until ActionQuit is received.
-func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
+// TestRun_CompletionSummaryAndReturnsImmediately verifies that after all
+// finalize steps complete, Run() writes the completion summary as the final
+// line of the main body log and returns on its own without waiting for a
+// keypress.
+func TestRun_CompletionSummaryAndReturnsImmediately(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
 
@@ -1889,23 +1884,14 @@ func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
 		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
-	// Verify Run() is still blocking (done has no result yet).
-	select {
-	case <-done:
-		t.Fatal("Run() should still be blocked waiting for keypress")
-	default:
-	}
-
-	// Inject ActionQuit to unblock the completion sequence.
-	actions <- ui.ActionQuit
-
+	// Run() must return on its own — no ActionQuit injection.
 	select {
 	case result := <-done:
 		if result.IterationsRun != 2 {
 			t.Errorf("expected IterationsRun=2, got %d", result.IterationsRun)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run() did not unblock after ActionQuit")
+		t.Fatal("Run() did not return after writing the completion summary")
 	}
 
 	// Sanity check: the completion summary is the last non-empty line in the
@@ -1950,19 +1936,11 @@ func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
-	// Verify Run() is still blocking.
-	select {
-	case <-done:
-		t.Fatal("Run() should still be blocked waiting for keypress")
-	default:
-	}
-
-	actions <- ui.ActionQuit
-
+	// Run() must return on its own after writing the completion summary.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run() did not unblock after ActionQuit")
+		t.Fatal("Run() did not return after writing the completion summary")
 	}
 }
 
@@ -2005,12 +1983,11 @@ func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
 		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
-	actions <- ui.ActionQuit
-
+	// Run() must return on its own after writing the completion summary.
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run() did not unblock after ActionQuit")
+		t.Fatal("Run() did not return after writing the completion summary")
 	}
 }
 

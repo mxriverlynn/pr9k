@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-11
 - **Authors:**
   - River Bailey
 
@@ -15,7 +15,7 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - `Run` writes full-width `PhaseBanner` headings (`Initializing`, `Iterations`, `Finalizing`) on entering each phase, and a `Captured VAR = "value"` line after any step with `captureAs` set
 - All steps — initialize, iteration, and finalize — are resolved per-phase via the `VarTable` using `{{VAR}}` substitution; there are no hardcoded script calls in `Run()`
 - The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
-- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header), switches to `ModeDone`, and blocks on one final keypress before closing the executor
+- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header), closes the executor, and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
 - `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
@@ -191,11 +191,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     }
     for j, s := range cfg.FinalizeSteps { ... }
 
-    // Phase 4: Completion — write summary to log body, wait for keypress
+    // Phase 4: Completion — write summary to log body and return
     emitBlank()
     executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
-    keyHandler.SetMode(ui.ModeDone)
-    <-keyHandler.Actions
 
     _ = executor.Close()
     return RunResult{IterationsRun: iterationsRun}
@@ -235,9 +233,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 **Phase 4 — Completion:** after finalize completes normally:
 - Calls `emitBlank` then writes `ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps))` — `"Ralph completed after N iteration(s) and M finalizing tasks."` — as the **last non-blank line of the log body**. The header's `IterationLine` retains the final `"Finalizing N/M: <step name>"` value from the last finalize step; there is no header-level completion line
-- Calls `keyHandler.SetMode(ui.ModeDone)` which updates the shortcut bar to `DoneShortcuts`
-- Blocks on `<-keyHandler.Actions` until `handleDone` injects `ActionQuit` (any key press)
-- Closes the executor and returns `RunResult{IterationsRun: iterationsRun}`
+- Closes the executor and returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
 
 ### Step Resolution
 

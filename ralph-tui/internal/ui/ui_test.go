@@ -442,7 +442,7 @@ func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 	}()
 
 	// Workflow goroutine: cycle through all modes.
-	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal, ModeDone}
+	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal}
 	for i := range 100 {
 		h.SetMode(modes[i%len(modes)])
 	}
@@ -503,7 +503,7 @@ func TestShortcutLinePtr_StableAddress(t *testing.T) {
 // T4: *ShortcutLinePtr() always agrees with ShortcutLine() after each SetMode.
 func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
 	h, _, _ := newTestHandler(t)
-	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeDone}
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm}
 
 	for _, mode := range modes {
 		h.SetMode(mode)
@@ -511,42 +511,6 @@ func TestShortcutLinePtr_AgreesWithShortcutLine(t *testing.T) {
 		want := h.ShortcutLine()
 		if got != want {
 			t.Errorf("mode %v: *ShortcutLinePtr() = %q, ShortcutLine() = %q", mode, got, want)
-		}
-	}
-}
-
-// --- Done mode ---
-
-// TestSetMode_Done_UpdatesShortcutLine verifies that SetMode(ModeDone) swaps
-// the shortcut bar to DoneShortcuts.
-func TestSetMode_Done_UpdatesShortcutLine(t *testing.T) {
-	h, _, _ := newTestHandler(t)
-
-	h.SetMode(ModeDone)
-
-	if h.ShortcutLine() != DoneShortcuts {
-		t.Errorf("expected DoneShortcuts, got %q", h.ShortcutLine())
-	}
-}
-
-// TestDoneMode_AnyKey_SendsActionQuit verifies that any key press in ModeDone
-// sends ActionQuit.
-func TestDoneMode_AnyKey_SendsActionQuit(t *testing.T) {
-	keys := []string{"q", "n", "y", "c", "r", " ", "x", "\r"}
-	for _, key := range keys {
-		actions := make(chan StepAction, 1)
-		h := NewKeyHandler(func() {}, actions)
-		h.SetMode(ModeDone)
-
-		h.Handle(key)
-
-		select {
-		case action := <-actions:
-			if action != ActionQuit {
-				t.Errorf("key %q: expected ActionQuit, got %v", key, action)
-			}
-		default:
-			t.Errorf("key %q: expected ActionQuit to be sent, but channel was empty", key)
 		}
 	}
 }

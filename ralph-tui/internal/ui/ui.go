@@ -19,7 +19,6 @@ const (
 	ModeError
 	ModeQuitConfirm
 	ModeQuitting // entered after the user confirms a quit; footer shows "Quitting..."
-	ModeDone
 )
 
 const (
@@ -27,7 +26,6 @@ const (
 	ErrorShortcuts    = "c continue  r retry  q quit"
 	QuitConfirmPrompt = "Quit ralph? (y/n, esc to cancel)"
 	QuittingLine      = "Quitting..."
-	DoneShortcuts     = "done — press any key to exit"
 )
 
 // KeyHandler is a state machine that routes keypresses based on the current
@@ -95,8 +93,6 @@ func (h *KeyHandler) Handle(key string) {
 		h.handleError(key)
 	case ModeQuitConfirm:
 		h.handleQuitConfirm(key)
-	case ModeDone:
-		h.handleDone(key)
 	}
 }
 
@@ -142,12 +138,6 @@ func (h *KeyHandler) handleQuitConfirm(key string) {
 	}
 }
 
-// handleDone handles keypresses in ModeDone. The key parameter is intentionally
-// ignored — any key exits.
-func (h *KeyHandler) handleDone(_ string) {
-	h.Actions <- ActionQuit
-}
-
 // ForceQuit terminates the current subprocess and injects ActionQuit into the
 // Actions channel so the orchestration goroutine exits cleanly. Called by the
 // OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm 'y' path, and safe
@@ -174,7 +164,5 @@ func (h *KeyHandler) updateShortcutLine() {
 		h.shortcutLine = QuitConfirmPrompt
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
-	case ModeDone:
-		h.shortcutLine = DoneShortcuts
 	}
 }

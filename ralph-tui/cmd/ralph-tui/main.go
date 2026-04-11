@@ -153,8 +153,6 @@ func main() {
 		LogWidth:        logWidth,
 	}
 
-	done := make(chan struct{})
-
 	// Set up OS signal handling for clean shutdown.
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -163,38 +161,35 @@ func main() {
 		<-sigChan
 		close(signaled)
 		keyHandler.ForceQuit()
-		app.Stop()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-		}
+		// Give the workflow goroutine a moment to unwind and exit cleanly,
+		// then force-exit if it's still stuck.
+		time.Sleep(2 * time.Second)
+		_ = app.Screen().ExitRawMode()
 		os.Exit(1)
 	}()
 
-	// Run the workflow in the background; stop the TUI when it completes.
+	// Run the workflow in the background; tear down the TUI and exit when
+	// it completes. We exit directly from this goroutine instead of going
+	// through app.Stop() because app.Stop() closes stdin from another
+	// goroutine, which does not reliably interrupt glyph's in-progress
+	// blocking read on a macOS raw-mode tty — the process would hang until
+	// the user pressed another key.
 	go func() {
-		defer close(done)
 		_ = workflow.Run(runner, header, keyHandler, runCfg)
 		signal.Stop(sigChan)
 		_ = log.Close()
-		app.Stop()
+		_ = app.Screen().ExitRawMode()
+		select {
+		case <-signaled:
+			os.Exit(1)
+		default:
+			os.Exit(0)
+		}
 	}()
 
 	if err := app.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "glyph:", err)
+		_ = app.Screen().ExitRawMode()
 		os.Exit(1)
-	}
-
-	// Wait for the workflow goroutine if app.Run returned before it finished.
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-	}
-
-	select {
-	case <-signaled:
-		os.Exit(1)
-	default:
-		os.Exit(0)
 	}
 }

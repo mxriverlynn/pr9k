@@ -151,7 +151,8 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
 | `Quit ralph? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for confirmation |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
-| `done — press any key to exit` | Done — workflow finished, waiting for final keypress |
+
+When the workflow finishes normally, the completion summary is written to the log body and the process exits on its own — no final keypress required.
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
 

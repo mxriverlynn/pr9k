@@ -228,11 +228,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 
 	// 4. Completion sequence: write summary as the last line of the main
-	// body log, flip to ModeDone, wait for one keypress.
+	// body log and return — the caller tears down the TUI.
 	emitBlank()
 	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
-	keyHandler.SetMode(ui.ModeDone)
-	<-keyHandler.Actions
 
 	// 5. Close executor (sends EOF to log pipe).
 	_ = executor.Close()

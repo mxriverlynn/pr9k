@@ -192,15 +192,15 @@ Document which accessor is appropriate for which caller. This pattern should be 
 
 When a goroutine transitions to a mode where it blocks on a channel receive (`<-ch`), ensure the channel is either buffered with a pending send already in it, or that a concurrent sender has been started before the blocking call. Entering a blocking receive with an empty channel and no ready sender is a deadlock.
 
-The completion sequence in `Run()` demonstrates the correct pattern: the channel is buffered, and any action the caller needs to send can be placed into it before or during `SetMode`. The completion handoff relies on the caller sending `ActionQuit` when the user presses a key — but if the key event had already fired before the blocking receive, the buffered channel absorbs it.
+The error-recovery path in `runStepWithErrorHandling` demonstrates the correct pattern: when a step fails, `Orchestrate` sets `ModeError` and then blocks on `<-h.Actions`. The channel is buffered (capacity 10) and the user's keypress (`c`, `r`, or `q`) is queued by the key handler goroutine before or during the blocking receive.
 
 ```go
 // Good — channel is buffered; a pending send can't be lost if it arrives
-// before the blocking receive. SetMode transitions to ModeDone; any key
-// event that fires at that moment is safely queued.
-header.RenderCompletionLine(iterationsRun, len(cfg.FinalizeSteps))
-keyHandler.SetMode(ui.ModeDone)
-<-keyHandler.Actions  // blocks until user presses a key
+// before the blocking receive. The keypress goroutine sends via the
+// KeyHandler; the buffered channel absorbs it whether the send happens
+// before or after the receive starts.
+h.SetMode(ModeError)
+action := <-h.Actions  // blocks until user presses c / r / q
 
 // Bad — unbuffered channel; a send that arrives before the receive is lost
 actions := make(chan StepAction) // unbuffered — race between sender and receiver
@@ -224,4 +224,4 @@ When adding any new blocking receive to orchestration code:
 - [API Design](api-design.md) — Complementary standards for unexported fields with protected getters
 - [Error Handling](error-handling.md) — Complementary standards for goroutine write error tracking
 - [Testing](testing.md) — Standards for test doubles with shared state needing mutexes; injecting signals for blocking receives
-- [TUI Display & Glyph Wiring](../features/tui-display.md) — ModeDone completion handoff as the canonical channel-priming example
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example

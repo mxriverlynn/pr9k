@@ -15,7 +15,7 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 - Switches between phases (initialize, iteration, finalize) by calling `SetPhaseSteps` with the new phase's step names
 - The log body is structured with phase banners, iteration separators, per-step "Starting step" banners, variable capture logs, and a final completion summary — all spaced with blank lines (helpers in `log.go`)
 - Terminal width for full-width phase banner underlines is detected via `ui.TerminalWidth()` (ioctl TIOCGWINSZ) with an 80-column fallback
-- The completion summary line is written to the log body (not the header) as the last non-blank line before `ModeDone`
+- The completion summary line is written to the log body (not the header) as the last non-blank line before `Run` returns
 
 Key files:
 - `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, SetPhaseSteps, SetStepState
@@ -143,7 +143,7 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 }
 ```
 
-The header has no "completion" render method — after the finalize phase finishes, `IterationLine` retains the final `"Finalizing N/M: <step name>"` value. The completion summary (`"Ralph completed after N iteration(s) and M finalizing tasks."`) is written to the **log body** via `executor.WriteToLog(ui.CompletionSummary(...))` as the last non-blank line before `ModeDone` blocks on the final keypress.
+The header has no "completion" render method — after the finalize phase finishes, `IterationLine` retains the final `"Finalizing N/M: <step name>"` value. The completion summary (`"Ralph completed after N iteration(s) and M finalizing tasks."`) is written to the **log body** via `executor.WriteToLog(ui.CompletionSummary(...))` as the last non-blank line before `Run` returns.
 
 ### Checkbox Label Formatting
 
@@ -191,7 +191,7 @@ func PhaseBanner(phaseName string, width int) (heading, underline string)
 // line. Run writes this after any step with CaptureAs set.
 func CaptureLog(varName, value string) string
 
-// CompletionSummary: the final body line written before ModeDone.
+// CompletionSummary: the final body line written before Run returns.
 // Format: "Ralph completed after N iteration(s) and M finalizing tasks."
 func CompletionSummary(iterationsRun, finalizeCount int) string
 ```

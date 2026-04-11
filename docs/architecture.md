@@ -113,16 +113,16 @@ Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralp
 ## Keyboard & Mode State Machine
 
 ```
-                  ┌─────────────┐          ┌────────────┐
-                  │ ModeNormal  │          │ ModeDone   │
-                  │             │          │            │
-                  │ n → skip    │          │ any key →  │
-                  │ q ──────────┼──────┐   │ ActionQuit │
-                  └──────┬──────┘      │   └────────────┘
-                         │             │         ▲
-                   step fails          │         │
-                         │             │    workflow done
-                         ▼             ▼   (Run → ModeDone)
+                  ┌─────────────┐
+                  │ ModeNormal  │
+                  │             │
+                  │ n → skip    │
+                  │ q ──────────┼──────┐
+                  └──────┬──────┘      │
+                         │             │
+                   step fails          │
+                         │             │
+                         ▼             ▼
                   ┌─────────────┐  ┌───────────────────┐
                   │ ModeError   │  │ ModeQuitConfirm   │
                   │             │  │                   │
@@ -144,6 +144,10 @@ Built with [Glyph](https://github.com/kungfusheep/glyph) for TUI rendering, ralp
     → KeyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
     (unified with the QuitConfirm 'y' path)
+
+  Normal completion:
+    → Run returns after writing the completion summary
+    → workflow goroutine restores the terminal and os.Exit(0)s
 ```
 
 ## Features
@@ -182,7 +186,7 @@ A pointer-mutable status display that Glyph reads on each render cycle. Shows th
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A five-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`, `ModeDone`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` skips the current step and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. After finalization, `ModeDone` waits for any key to exit. Each mode displays its own shortcut bar text.
+A four-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` skips the current step and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. When the workflow finishes normally, `Run` returns on its own and the workflow goroutine exits the process directly — no "press any key to exit" state. Each mode displays its own shortcut bar text.
 
 **Package:** `internal/ui/` (`ui.go`)
 
