@@ -195,3 +195,29 @@ func TestCaptureLog_ValueWithQuotes(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// --- TP-008: CompletionSummary ---
+
+func TestCompletionSummary_TypicalValues(t *testing.T) {
+	got := CompletionSummary(3, 2)
+	want := "Ralph completed after 3 iteration(s) and 2 finalizing tasks."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCompletionSummary_ZeroValues(t *testing.T) {
+	got := CompletionSummary(0, 0)
+	want := "Ralph completed after 0 iteration(s) and 0 finalizing tasks."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCompletionSummary_OneAndOne(t *testing.T) {
+	got := CompletionSummary(1, 1)
+	want := "Ralph completed after 1 iteration(s) and 1 finalizing tasks."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

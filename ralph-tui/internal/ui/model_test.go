@@ -274,6 +274,163 @@ func TestWindowSizeMsg_SetsWidthAndHeight(t *testing.T) {
 	}
 }
 
+// --- TP-013: Init() ---
+
+func TestModel_Init_ReturnsNil(t *testing.T) {
+	m := newTestModel(t)
+	if m.Init() != nil {
+		t.Error("expected Init() to return nil")
+	}
+}
+
+// --- TP-011: tea.QuitMsg ---
+
+func TestModel_Update_QuitMsg_ReturnsQuitCmd(t *testing.T) {
+	m := newTestModel(t)
+
+	_, cmd := m.Update(tea.QuitMsg{})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for QuitMsg")
+	}
+	// tea.Quit returns tea.QuitMsg when executed — check it returns a tea.Msg.
+	result := cmd()
+	if _, ok := result.(tea.QuitMsg); !ok {
+		t.Errorf("expected cmd() to return tea.QuitMsg, got %T", result)
+	}
+}
+
+// --- TP-005: header message routing ---
+
+func TestModel_Update_HeaderStepStateMsg_MutatesHeader(t *testing.T) {
+	m := newTestModel(t)
+
+	next, _ := m.Update(headerStepStateMsg{idx: 0, state: StepDone})
+	m = next.(Model)
+
+	if m.header.header.Rows[0][0] != "[✓] step-one" {
+		t.Errorf("expected step-one marked done, got %q", m.header.header.Rows[0][0])
+	}
+}
+
+func TestModel_Update_HeaderPhaseStepsMsg_MutatesHeader(t *testing.T) {
+	m := newTestModel(t)
+
+	next, _ := m.Update(headerPhaseStepsMsg{names: []string{"alpha", "beta"}})
+	m = next.(Model)
+
+	if m.header.header.Rows[0][0] != "[ ] alpha" {
+		t.Errorf("expected '[ ] alpha', got %q", m.header.header.Rows[0][0])
+	}
+	if m.header.header.Rows[0][1] != "[ ] beta" {
+		t.Errorf("expected '[ ] beta', got %q", m.header.header.Rows[0][1])
+	}
+}
+
+func TestModel_Update_HeaderIterationLineMsg_UpdatesIterationLine(t *testing.T) {
+	m := newTestModel(t)
+
+	next, cmd := m.Update(headerIterationLineMsg{iter: 2, max: 5, issue: "42"})
+	m = next.(Model)
+
+	want := "Iteration 2/5 — Issue #42"
+	if m.header.header.IterationLine != want {
+		t.Errorf("IterationLine: want %q, got %q", want, m.header.header.IterationLine)
+	}
+	// A title cmd must be returned when the line changes.
+	if cmd == nil {
+		t.Error("expected non-nil cmd (SetWindowTitle) when iteration line changes")
+	}
+}
+
+func TestModel_Update_HeaderIterationLineMsg_NoTitleCmd_WhenUnchanged(t *testing.T) {
+	m := newTestModel(t)
+	// Apply once to set the line.
+	m.header = m.header.apply(headerIterationLineMsg{iter: 1, max: 3, issue: "7"})
+
+	// Apply the same message again — line is unchanged, so no cmd expected.
+	_, cmd := m.Update(headerIterationLineMsg{iter: 1, max: 3, issue: "7"})
+	if cmd != nil {
+		// The batch cmd may be non-nil but contain only nils; execute to check.
+		result := cmd()
+		if result != nil {
+			t.Errorf("expected no meaningful cmd when iteration line unchanged, got: %T", result)
+		}
+	}
+}
+
+func TestModel_Update_HeaderInitializeLineMsg_UpdatesIterationLine(t *testing.T) {
+	m := newTestModel(t)
+
+	next, cmd := m.Update(headerInitializeLineMsg{stepNum: 1, stepCount: 2, stepName: "Setup"})
+	m = next.(Model)
+
+	want := "Initializing 1/2: Setup"
+	if m.header.header.IterationLine != want {
+		t.Errorf("IterationLine: want %q, got %q", want, m.header.header.IterationLine)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (SetWindowTitle) when initialize line changes")
+	}
+}
+
+func TestModel_Update_HeaderFinalizeLineMsg_UpdatesIterationLine(t *testing.T) {
+	m := newTestModel(t)
+
+	next, cmd := m.Update(headerFinalizeLineMsg{stepNum: 3, stepCount: 3, stepName: "Push"})
+	m = next.(Model)
+
+	want := "Finalizing 3/3: Push"
+	if m.header.header.IterationLine != want {
+		t.Errorf("IterationLine: want %q, got %q", want, m.header.header.IterationLine)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd (SetWindowTitle) when finalize line changes")
+	}
+}
+
+// --- TP-006: viewport clamping to minimum 1 ---
+
+func TestWindowSizeMsg_VerySmall_ViewportClampsToOne(t *testing.T) {
+	m := newTestModel(t)
+
+	// width=1, height=1 is extreme: vpHeight and vpWidth must both clamp to 1.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 1, Height: 1})
+	m = next.(Model)
+
+	if m.log.viewport.Width < 1 {
+		t.Errorf("vpWidth clamped below 1: got %d", m.log.viewport.Width)
+	}
+	if m.log.viewport.Height < 1 {
+		t.Errorf("vpHeight clamped below 1: got %d", m.log.viewport.Height)
+	}
+}
+
+func TestWindowSizeMsg_Width3_VpWidthClampsToOne(t *testing.T) {
+	m := newTestModel(t)
+
+	// width=3: inside border subtracts 2, leaving vpWidth=1.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 3, Height: 40})
+	m = next.(Model)
+
+	if m.log.viewport.Width < 1 {
+		t.Errorf("vpWidth clamped below 1 for width=3: got %d", m.log.viewport.Width)
+	}
+}
+
+// --- TP-009: titleString via headerIterationLineMsg ---
+
+func TestTitleString_AfterIterationLineMsg(t *testing.T) {
+	m := newTestModel(t)
+
+	next, _ := m.Update(headerIterationLineMsg{iter: 3, max: 10, issue: "99"})
+	m = next.(Model)
+
+	want := "ralph-tui — Iteration 3/10 — Issue #99"
+	if m.titleString() != want {
+		t.Errorf("titleString: want %q, got %q", want, m.titleString())
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder

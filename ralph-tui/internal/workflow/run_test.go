@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1285,6 +1286,53 @@ func TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine(t *testing.T) {
 	if got.stepNum != 2 || got.stepCount != 2 || got.stepName != "good-final" {
 		t.Errorf("expected {stepNum=2, stepCount=2, stepName=%q}, got {%d, %d, %q}",
 			"good-final", got.stepNum, got.stepCount, got.stepName)
+	}
+}
+
+// TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth verifies that when LogWidth
+// is 0 (or negative), Run uses ui.DefaultTerminalWidth for phase banner underlines.
+func TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth(t *testing.T) {
+	for _, logWidth := range []int{0, -1} {
+		t.Run(fmt.Sprintf("LogWidth=%d", logWidth), func(t *testing.T) {
+			executor := &fakeExecutor{}
+			header := &fakeRunHeader{}
+			kh := newTestKeyHandler()
+
+			cfg := RunConfig{
+				ProjectDir: t.TempDir(),
+				Iterations: 1,
+				Steps:      nonClaudeSteps("step1"),
+				LogWidth:   logWidth,
+			}
+
+			Run(executor, header, kh, cfg)
+
+			// Find the phase banner underline: a line composed entirely of '═' runes.
+			foundUnderline := false
+			for _, line := range executor.logLines {
+				if len(line) == 0 {
+					continue
+				}
+				allDouble := true
+				for _, r := range line {
+					if r != '═' {
+						allDouble = false
+						break
+					}
+				}
+				if allDouble {
+					got := len([]rune(line))
+					if got != ui.DefaultTerminalWidth {
+						t.Errorf("LogWidth=%d: phase banner underline rune count = %d, want %d (DefaultTerminalWidth)", logWidth, got, ui.DefaultTerminalWidth)
+					}
+					foundUnderline = true
+					break
+				}
+			}
+			if !foundUnderline {
+				t.Errorf("LogWidth=%d: no '═' phase banner underline found in log lines: %v", logWidth, executor.logLines)
+			}
+		})
 	}
 }
 
