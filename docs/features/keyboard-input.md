@@ -18,8 +18,10 @@ A four-mode state machine that routes keypresses and communicates user decisions
 - When the workflow finishes normally, `Run` returns on its own (no "press any key to exit" state); the workflow goroutine in `main.go` restores the terminal and exits the process directly
 
 Key files:
-- `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode dispatch, ForceQuit
-- `ralph-tui/internal/ui/ui_test.go` — Unit tests for all modes and transitions
+- `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode state, ForceQuit, ShortcutLine
+- `ralph-tui/internal/ui/keys.go` — keysModel Bubble Tea sub-model, Update dispatch to mode handlers
+- `ralph-tui/internal/ui/ui_test.go` — Unit tests for KeyHandler modes and transitions
+- `ralph-tui/internal/ui/keys_test.go` — Unit tests for keysModel.Update routing
 
 ## Architecture
 
@@ -90,8 +92,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode dispatch, ForceQuit, ShortcutLine, ShortcutLinePtr |
-| `ralph-tui/internal/ui/ui_test.go` | Tests for all modes, transitions, and ForceQuit |
+| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode state, ForceQuit, ShortcutLine |
+| `ralph-tui/internal/ui/keys.go` | keysModel Bubble Tea sub-model; Update dispatches tea.KeyMsg to mode handlers |
+| `ralph-tui/internal/ui/ui_test.go` | Tests for KeyHandler modes, transitions, and ForceQuit |
+| `ralph-tui/internal/ui/keys_test.go` | Tests for keysModel.Update routing (normal, error, quit-confirm, quitting) |
 
 ## Core Types
 
@@ -117,7 +121,7 @@ type KeyHandler struct {
     cancel       func()         // terminates the current subprocess
     Actions      chan StepAction // communicates decisions to orchestration
     mu           sync.Mutex     // protects mode, prevMode, and shortcutLine
-    shortcutLine string         // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
+    shortcutLine string         // protected by mu; use ShortcutLine() to access
 }
 ```
 
@@ -134,25 +138,28 @@ type KeyHandler struct {
 
 ### Mode Dispatch
 
-`Handle` routes keypresses to the appropriate mode handler:
+`keysModel.Update` (in `keys.go`) receives `tea.KeyMsg` events from the Bubble Tea event loop and routes them to the appropriate mode handler:
 
 ```go
-func (h *KeyHandler) Handle(key string) {
-    h.mu.Lock()
-    mode := h.mode
-    h.mu.Unlock()
-
-    switch mode {
-    case ModeNormal:      h.handleNormal(key)
-    case ModeError:       h.handleError(key)
-    case ModeQuitConfirm: h.handleQuitConfirm(key)
+func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
+    key, ok := msg.(tea.KeyMsg)
+    if !ok {
+        return m, nil
     }
-    // ModeQuitting is a terminal state — no handler; keypresses are ignored
-    // while the shutdown unwinds.
+    switch m.handler.Mode() {
+    case ModeNormal:      return m.handleNormal(key)
+    case ModeError:       return m.handleError(key)
+    case ModeQuitConfirm: return m.handleQuitConfirm(key)
+    case ModeQuitting:
+        // All keys silently ignored so a user mashing keys during shutdown
+        // can't inject a second ActionQuit or retrigger the cancel hook.
+        return m, nil
+    }
+    return m, nil
 }
 ```
 
-`main.go` registers these keys with Glyph: `"n"`, `"q"`, `"y"`, `"c"`, `"r"`, and `"<Escape>"`. Each registered key forwards to `keyHandler.Handle(key)`.
+The Bubble Tea program delivers all keypresses as `tea.KeyMsg` to `Model.Update`, which routes them to `keysModel.Update`. No separate key registration is required.
 
 ### Normal Mode
 
@@ -183,7 +190,7 @@ Entered by the QuitConfirm `y` path or by `ForceQuit()` directly (which is calle
 
 ### Normal Completion (no mode transition)
 
-When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `app.Screen().ExitRawMode()` and `os.Exit(0)` directly. Exiting from the workflow goroutine rather than through `app.Run` avoids a macOS raw-tty quirk where closing stdin from another goroutine doesn't reliably unblock Glyph's in-progress `ReadKey`.
+When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `program.Quit()` after `workflow.Run` returns, which causes `program.Run()` to return cleanly in `main`.
 
 ### ForceQuit
 
@@ -222,9 +229,7 @@ Used by tests to assert mode transitions without accessing private fields, and m
 
 ### ShortcutLine Thread Safety
 
-Two accessors expose the shortcut bar text for different callers:
-
-**`ShortcutLine()`** is a mutex-protected getter, safe to call from any goroutine (e.g., the orchestration goroutine, the signal handler):
+**`ShortcutLine()`** is a mutex-protected getter, safe to call from any goroutine (e.g., the signal handler, test goroutines, and `Model.View()` on the Bubble Tea Update goroutine):
 
 ```go
 func (h *KeyHandler) ShortcutLine() string {
@@ -234,19 +239,9 @@ func (h *KeyHandler) ShortcutLine() string {
 }
 ```
 
-**`ShortcutLinePtr()`** returns a `*string` pointing to the underlying field for Glyph's `Text(&...)` pointer-binding API:
+The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes. `Model.View()` calls `ShortcutLine()` directly to read the current text for the footer.
 
-```go
-func (h *KeyHandler) ShortcutLinePtr() *string {
-    return &h.shortcutLine
-}
-```
-
-`ShortcutLinePtr()` is intended exclusively for Glyph's single-threaded event loop, which reads the pointer synchronously between write windows. It bypasses the mutex and must not be called from concurrent goroutines.
-
-The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes.
-
-> **Why Option Q?** Option P (exporting `ShortcutLine` as a field, dropping the mutex) was attempted first but `go test -race` detected a genuine race between the `Orchestrate` goroutine writing via `SetMode` and the test goroutine reading the field concurrently. Option Q retains the private field and mutex for `ShortcutLine()`, and adds `ShortcutLinePtr()` for Glyph's pointer-binding path.
+> **Historical note:** A `ShortcutLinePtr()` accessor previously existed for Glyph's `Text(&...)` pointer-binding API. It was removed in the Bubble Tea migration because Bubble Tea's `View()` calls `ShortcutLine()` on the Update goroutine, which serializes reads naturally. The mutex-protected getter is sufficient for all callers.
 
 ## Testing
 

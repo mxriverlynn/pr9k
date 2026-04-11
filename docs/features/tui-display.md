@@ -2,23 +2,25 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-10 23:25
+- **Last Updated:** 2026-04-11
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `StatusHeader` is a pointer-mutable struct that Glyph reads on each render cycle — callers update state by mutating fields directly
+- `StatusHeader` is a struct that holds the checkbox grid state and iteration line; mutations are applied on the Bubble Tea Update goroutine via `headerProxy` message-passing
 - Displays the current iteration/issue on one line; shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
-- Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped
-- Switches between phases (initialize, iteration, finalize) by calling `SetPhaseSteps` with the new phase's step names
+- Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped; the active step marker (`▸`) is rendered in green; all other chrome is light gray
+- Switches between phases (initialize, iteration, finalize) by sending `headerPhaseStepsMsg` through `headerProxy`
 - The log body is structured with phase banners, iteration separators, per-step "Starting step" banners, variable capture logs, and a final completion summary — all spaced with blank lines (helpers in `log.go`)
 - Terminal width for full-width phase banner underlines is detected via `ui.TerminalWidth()` (ioctl TIOCGWINSZ) with an 80-column fallback
 - The completion summary line is written to the log body (not the header) as the last non-blank line before `Run` returns
 
 Key files:
+- `ralph-tui/internal/ui/model.go` — Root Bubble Tea `Model`; `Update` routes messages to sub-models; `View` assembles the full TUI output
 - `ralph-tui/internal/ui/header.go` — StatusHeader struct, RenderInitializeLine, RenderIterationLine, RenderFinalizeLine, SetPhaseSteps, SetStepState
+- `ralph-tui/internal/ui/header_proxy.go` — `HeaderProxy` — sends header mutations as messages via `program.Send`
 - `ralph-tui/internal/ui/header_test.go` — Unit tests for header state management
 - `ralph-tui/internal/ui/log.go` — Log-body helpers: StepSeparator, RetryStepSeparator, StepStartBanner, PhaseBanner, CaptureLog, CompletionSummary
 - `ralph-tui/internal/ui/log_test.go` — Unit tests for log-body helper formatting
@@ -27,39 +29,46 @@ Key files:
 ## Architecture
 
 ```
-  Glyph TUI (reads by pointer each render cycle)
-       │
-       ▼
-  ┌─────────────────────────────────────────────────┐
-  │                 StatusHeader                     │
-  │                                                  │
-  │  Rows[0]: [▸] Feature work  [✓] Test planning   │  ← checkbox grid
-  │           [ ] Test writing   [ ] Code review     │     (top of VBox)
-  │                                                  │
-  │  Rows[1]: [ ] Review fixes   [ ] Close issue     │
-  │           [ ] Update docs    [ ] Git push        │
-  │  ───────────────────────────────────────────     │  ← HRule
-  │  IterationLine: "Iteration 1/3 — Issue #42"     │  ← bounded (maxIter > 0)
-  │  IterationLine: "Iteration 1 — Issue #42"       │  ← unbounded (maxIter == 0)
-  └─────────────────────────────────────────────────┘
-
-  After SetPhaseSteps called with finalize step names:
-
-  ┌─────────────────────────────────────────────────┐
-  │  Rows[0]: [▸] Deferred work  [ ] Lessons learned│
-  │           [ ] Final git push                     │
-  │                                                  │
-  │  Rows[1]: (empty — trailing slots cleared)      │
-  │  ───────────────────────────────────────────     │  ← HRule
-  │  IterationLine: (set by caller)                 │
-  └─────────────────────────────────────────────────┘
+  Orchestration goroutine
+  (calls headerProxy methods)
+         │
+         │  program.Send(headerMsg)
+         ▼
+  ┌──────────────────────────────────────────────────┐
+  │            Bubble Tea Update goroutine            │
+  │                                                   │
+  │  Model.Update(msg) dispatches:                    │
+  │  ├─ headerStepStateMsg   → headerModel.apply()   │
+  │  ├─ headerPhaseStepsMsg  → headerModel.apply()   │
+  │  ├─ headerIterationLineMsg → apply + SetWindowTitle│
+  │  ├─ LogLinesMsg          → logModel.Update()     │
+  │  ├─ tea.KeyMsg           → keysModel.Update()    │
+  │  └─ tea.WindowSizeMsg    → resize viewport        │
+  │                                                   │
+  │  Model.View() assembles:                          │
+  │  ┌──────────────────────────────────────────────┐│
+  │  │╭── ralph-tui — Iteration 2/5 ─── … ────────╮││  ← dynamic title in top border
+  │  │  Iteration 2/5 — Issue #42                  ││
+  │  │  ─────────────────────────────────────────  ││  ← HRule
+  │  │  [▸] Feature work   [ ] Test planning       ││  ← checkbox grid (per-cell color)
+  │  │  [ ] Test writing   [ ] Code review         ││
+  │  │  ─────────────────────────────────────────  ││  ← HRule
+  │  │  [log panel — bubbles/viewport]             ││  ← scrollable log viewport
+  │  │  ─────────────────────────────────────────  ││  ← HRule
+  │  │  ↑/k up  ↓/j down  n next  q quit          ││  ← shortcut footer (ShortcutLine)
+  │  │                     ralph-tui v0.2.0        ││  ← version label (right-aligned)
+  │  │╰──────────────────────────────────────────── ││  ← bottom border
+  │  └──────────────────────────────────────────────┘│
+  └──────────────────────────────────────────────────┘
 ```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
+| `ralph-tui/internal/ui/model.go` | Root Bubble Tea Model: Update message routing, View assembly, renderTopBorder |
 | `ralph-tui/internal/ui/header.go` | StatusHeader struct and state mutation methods |
+| `ralph-tui/internal/ui/header_proxy.go` | HeaderProxy — sends header mutations via program.Send |
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
 | `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
 | `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
@@ -82,12 +91,22 @@ const (
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
 const HeaderCols = 4
 
-// StatusHeader manages pointer-mutable string state for the TUI.
-// Glyph reads exported fields via pointer on each render cycle.
+// StatusHeader manages the checkbox grid state and iteration line.
+// Each cell stores its content split across parallel Prefixes/Markers/Suffixes/Colors
+// fields so the marker glyph can be colored independently from the brackets and name.
 type StatusHeader struct {
-    IterationLine string               // e.g. "Iteration 2/5 — Issue #42", "Initializing 1/2: Splash", "Finalizing 1/3: Deferred work"
-    Rows          [][HeaderCols]string // row count computed at startup; each row has HeaderCols slots
-    stepNames     []string             // current phase's step name list
+    IterationLine string               // e.g. "Iteration 2/5 — Issue #42"
+
+    Rows          [][HeaderCols]string // legacy single-string labels ("[X] name") — test assertions only
+
+    // Split-cell fields: the checkbox grid is rendered from these.
+    Prefixes     [][HeaderCols]string
+    Markers      [][HeaderCols]string
+    Suffixes     [][HeaderCols]string
+    MarkerColors [][HeaderCols]lipgloss.Color
+    NameColors   [][HeaderCols]lipgloss.Color
+
+    stepNames []string // current phase's step name list
 }
 ```
 
@@ -95,35 +114,37 @@ type StatusHeader struct {
 
 ### Startup Sizing
 
-`NewStatusHeader` takes the maximum step count across all phases and sizes the `Rows` grid to fit. The row count is computed via ceiling division so all steps fit without overflow:
+`NewStatusHeader` takes the maximum step count across all phases and sizes the grid to fit. The row count is computed via ceiling division so all steps fit without overflow:
 
 ```go
 func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
-    rowCount := (maxStepsAcrossPhases + HeaderCols - 1) / HeaderCols // ceil division
-    if rowCount < 1 {
-        rowCount = 1
-    }
+    rowCount := max((maxStepsAcrossPhases+HeaderCols-1)/HeaderCols, 1) // ceil division, min 1
     return &StatusHeader{
-        Rows: make([][HeaderCols]string, rowCount),
+        Rows:         make([][HeaderCols]string, rowCount),
+        Prefixes:     make([][HeaderCols]string, rowCount),
+        Markers:      make([][HeaderCols]string, rowCount),
+        Suffixes:     make([][HeaderCols]string, rowCount),
+        MarkerColors: make([][HeaderCols]lipgloss.Color, rowCount),
+        NameColors:   make([][HeaderCols]lipgloss.Color, rowCount),
     }
 }
 ```
 
 ### Phase Switching
 
-`SetPhaseSteps` replaces the current step name list and re-renders all checkbox slots. Call this at the start of each phase to swap the header to the new phase's step set. Trailing slots beyond the current phase's step count are cleared to empty string. Panics if `len(names)` exceeds the grid capacity — this is a programming error (caller passed wrong max to constructor), not a user-reachable path:
+`SetPhaseSteps` replaces the current step name list and re-renders all checkbox slots. Call this at the start of each phase to swap the header to the new phase's step set. Trailing slots beyond the current phase's step count are cleared. Panics if `len(names)` exceeds the grid capacity — this is a programming error, not a user-reachable path:
 
 ```go
 func (h *StatusHeader) SetPhaseSteps(names []string) {
     // panics if len(names) > len(h.Rows)*HeaderCols
     h.stepNames = append(h.stepNames[:0], names...)  // copy — does not alias input
-    // fills Rows[r][c] with pending checkboxes; clears trailing slots
+    // fills each slot with pending state; clears trailing slots
 }
 ```
 
 ### Iteration Line and Step State
 
-Three phase-specific render methods update `IterationLine`. A local `substitute` helper replaces `{{KEY}}` tokens for the initialize and finalize formats; `RenderIterationLine` uses a `strings.Builder` because its output is conditional (bounded/unbounded, with/without issueID). `SetStepState` updates individual step checkboxes (0-indexed within the current phase's step list):
+Three phase-specific render methods update `IterationLine`. `SetStepState` updates individual step checkboxes (0-indexed within the current phase's step list):
 
 ```go
 // RenderInitializeLine: "Initializing 1/2: Splash"
@@ -139,56 +160,81 @@ func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName strin
 func (h *StatusHeader) SetStepState(idx int, state StepState) {
     if idx < 0 || idx >= len(h.stepNames) { return }  // bounds guard
     r, c := idx/HeaderCols, idx%HeaderCols
-    h.Rows[r][c] = checkboxLabel(state, h.stepNames[idx])
+    h.writeCell(r, c, state, h.stepNames[idx])
 }
 ```
 
-The header has no "completion" render method — after the finalize phase finishes, `IterationLine` retains the final `"Finalizing N/M: <step name>"` value. The completion summary (`"Ralph completed after N iteration(s) and M finalizing tasks."`) is written to the **log body** via `executor.WriteToLog(ui.CompletionSummary(...))` as the last non-blank line before `Run` returns.
+### headerProxy Message Passing
+
+The orchestration goroutine never mutates `StatusHeader` directly. Instead, it calls methods on `HeaderProxy`, which wraps each mutation as a typed message and sends it via `program.Send`. The Bubble Tea `Update` goroutine receives the message and calls `headerModel.apply()`, which performs the actual mutation on the `StatusHeader`. This eliminates data races that previously existed when goroutines wrote to header fields directly.
+
+```go
+// HeaderProxy funnels all StatusHeader mutations through program.Send.
+type HeaderProxy struct {
+    send func(tea.Msg)
+}
+
+func NewHeaderProxy(send func(tea.Msg)) *HeaderProxy {
+    return &HeaderProxy{send: send}
+}
+
+func (p *HeaderProxy) SetStepState(idx int, state StepState) {
+    p.send(headerStepStateMsg{idx: idx, state: state})
+}
+// ... RenderIterationLine, SetPhaseSteps, etc. similarly
+```
+
+### View Assembly
+
+`Model.View()` assembles the complete TUI output each render cycle:
+
+1. **Top border** — `renderTopBorder(titleString())` builds a hand-crafted `╭── ralph-tui — <iterationLine> ─ … ─╮` using `lipgloss.Width` for rune-aware truncation when the title overflows
+2. **Iteration line** — `m.header.header.IterationLine` rendered in light gray
+3. **HRule** — `strings.Repeat("─", innerWidth)` 
+4. **Checkbox grid** — each cell rendered as three adjacent Lip Gloss spans: `Prefix` + `Marker` + `Suffix`, each with its own `lipgloss.Color` from `NameColors`/`MarkerColors`. Active steps appear in white/green; all other states in light gray
+5. **HRule**
+6. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model
+7. **HRule**
+8. **Footer** — shortcut bar (left, from `m.keys.handler.ShortcutLine()`) + spacer + version label (right, from `m.versionLabel`)
+
+The inner content is then wrapped by a `lipgloss.NewStyle().Border(lipgloss.RoundedBorder())` with `BorderTop(false)` to produce the left/right/bottom border, while the top border is the hand-built dynamic title line.
 
 ### Checkbox Label Formatting
 
+Each cell is split into three adjacent spans using the split-cell fields. `cellStyle` returns the marker glyph and per-cell colors for a given step state:
+
 ```go
-func checkboxLabel(state StepState, name string) string {
+func cellStyle(state StepState) (marker string, nameColor, markerColor lipgloss.Color) {
     switch state {
-    case StepActive:  return fmt.Sprintf("[▸] %s", name)
-    case StepDone:    return fmt.Sprintf("[✓] %s", name)
-    case StepFailed:  return fmt.Sprintf("[✗] %s", name)
-    case StepSkipped: return fmt.Sprintf("[-] %s", name)
-    default:          return fmt.Sprintf("[ ] %s", name)
+    case StepActive:  return "▸", ActiveStepFG, ActiveMarkerFG  // white name, green marker
+    case StepDone:    return "✓", LightGray, LightGray
+    case StepFailed:  return "✗", LightGray, LightGray
+    case StepSkipped: return "-", LightGray, LightGray
+    default:          return " ", LightGray, LightGray           // pending
     }
 }
 ```
 
 ### Log-Body Helpers
 
-`ralph-tui/internal/ui/log.go` owns every helper that writes structured chrome into the log pipe. Every helper returns a plain string (or a tuple of strings) — the workflow loop calls `executor.WriteToLog()` with the result so writes go through the same `io.Pipe` path as subprocess output.
+`ralph-tui/internal/ui/log.go` owns every helper that writes structured chrome into the log body. Every helper returns a plain string (or a tuple of strings) — the workflow loop calls `executor.WriteToLog()` with the result.
 
 ```go
 // Iteration separator: "── Iteration 1 ─────────────"
-// Written once per iteration at the top of the iteration body.
-func StepSeparator(stepName string) string {
-    return fmt.Sprintf("── %s ─────────────", stepName)
-}
+func StepSeparator(stepName string) string
 
 // Retry separator: "── <step name> (retry) ─────────────"
-// Written by Orchestrate.runStepWithErrorHandling before a retry.
-func RetryStepSeparator(stepName string) string {
-    return fmt.Sprintf("── %s (retry) ─────────────", stepName)
-}
+func RetryStepSeparator(stepName string) string
 
 // StepStartBanner: returns the two-line "Starting step: <name>" heading and
 // a "─"-character underline whose rune count matches the heading width.
-// Orchestrate writes this (plus a trailing blank line) before every step.
 func StepStartBanner(stepName string) (heading, underline string)
 
 // PhaseBanner: returns the phase name plus a full-width "═"-character
-// underline `width` runes wide. Widths <= 0 are clamped to 1. Run writes
-// this on entering each phase (Initializing / Iterations / Finalizing).
+// underline `width` runes wide. Widths <= 0 are clamped to 1.
 func PhaseBanner(phaseName string, width int) (heading, underline string)
 
-// CaptureLog: returns a single-line `Captured VAR = "value"` log entry,
-// %q-quoted so multi-line / whitespace-heavy captures stay on one log
-// line. Run writes this after any step with CaptureAs set.
+// CaptureLog: returns a single-line `Captured VAR = "value"` log entry.
 func CaptureLog(varName, value string) string
 
 // CompletionSummary: the final body line written before Run returns.
@@ -270,7 +316,7 @@ Key properties:
 
 ## First-Frame Pre-Population
 
-Before `app.Run()` is called, `main()` pre-populates the header so the first rendered frame shows real content instead of empty slots. A `stepNames()` helper (in `main.go`) extracts `Step.Name` from a step slice:
+Before `program.Run()` is called, `main()` pre-populates the header so the first rendered frame shows real content instead of empty slots. A `stepNames()` helper (in `main.go`) extracts `Step.Name` from a step slice:
 
 ```go
 func stepNames(ss []steps.Step) []string {
@@ -288,80 +334,30 @@ The pre-population block runs immediately after `NewStatusHeader`:
 if len(stepFile.Initialize) > 0 {
     header.SetPhaseSteps(stepNames(stepFile.Initialize))
     header.SetStepState(0, ui.StepActive)
-    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+    header.RenderInitializeLine(1, len(stepFile.Initialize), stepFile.Initialize[0].Name)
 } else {
     header.SetPhaseSteps(stepNames(stepFile.Iteration))
     header.SetStepState(0, ui.StepActive)
-    if cfg.Iterations > 0 {
-        header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
-    } else {
-        header.IterationLine = "Iteration 1"
-    }
+    header.RenderIterationLine(1, cfg.Iterations, "")
 }
 ```
 
 - If an initialize phase exists, the header is set to that phase with the first step marked active and `IterationLine` showing `Initializing 1/N: <step name>`
 - Otherwise the header starts on the iteration phase with `Iteration 1/M` (bounded) or `Iteration 1` (unbounded)
-- The workflow goroutine then calls `SetPhaseSteps` / `SetStepState` / `RenderIterationLine` (and `RenderInitializeLine`/`RenderFinalizeLine` for those phases) as it progresses, overwriting this initial state
-
-## Glyph Layout Assembly
-
-`main.go` assembles the full `StatusHeader` into Glyph's widget tree. Each `Rows[r][c]` cell is bound via `glyph.Text(&header.Rows[r][c])`, so Glyph reads the current string on every render cycle without any explicit refresh calls:
-
-```go
-// One HBox per row, one Text widget per column slot.
-rowWidgets := make([]any, len(header.Rows))
-for r := range header.Rows {
-    cols := make([]any, ui.HeaderCols)
-    for c := range cols {
-        cols[c] = glyph.Text(&header.Rows[r][c])
-    }
-    rowWidgets[r] = glyph.HBox(cols...)
-}
-
-// Full layout: checkbox rows → HRule → iteration line → HRule → log panel → HRule → footer HBox.
-children := make([]any, 0, 5+len(rowWidgets)+2)
-children = append(children, rowWidgets...)
-children = append(children, glyph.HRule())
-children = append(children, glyph.Text(&header.IterationLine))
-children = append(children, glyph.HRule())
-children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
-children = append(children, glyph.HRule())
-
-// Footer: shortcut bar on the left, app version pinned to the bottom-right.
-// glyph.Space() is a flex spacer inside the HBox that pushes the version
-// label against the right border of the enclosing VBox.
-versionLabel := "ralph-tui v" + version.Version
-children = append(children, glyph.HBox(
-    glyph.Text(keyHandler.ShortcutLinePtr()),
-    glyph.Space(),
-    glyph.Text(&versionLabel),
-))
-
-app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
-```
-
-- The checkbox grid is the **top** of the VBox — phase steps are the first thing on screen
-- An `HRule` separates the grid from the iteration status line, which sits **below** the grid rather than above it
-- A second `HRule` separates the status line from the log panel
-- `glyph.Log(...).Grow(1)` — the log panel expands to fill all remaining vertical space
-- `.MaxLines(500)` — caps the in-memory line buffer
-- `.BindVimNav()` — enables `↑`/`k` and `↓`/`j` scroll keys inside the log panel
-- A third `HRule` separates the log panel from the footer
-- The footer is an `HBox` containing the shortcut bar, a `glyph.Space()` flex spacer, and the version label (`"ralph-tui v" + version.Version`) pinned to the right edge
-- The shortcut bar is bound via `ShortcutLinePtr()` so mode changes update it in place without additional wiring
-- The version label is sourced from `internal/version.Version` — see [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule
+- The workflow goroutine then sends header messages via `headerProxy` as it progresses, which the Update goroutine applies to the `StatusHeader`
 
 ## Testing
 
 - `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for every log-body helper: StepSeparator / RetryStepSeparator formatting, StepStartBanner (ASCII/empty/Unicode rune-count assertions), PhaseBanner (width matching, clamp on non-positive width, `═` fill), CaptureLog (simple/empty/multi-line-escaped/embedded-quotes), CompletionSummary (format exactness)
+- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping
+- `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how the header fits into the TUI
 - [Workflow Orchestration](workflow-orchestration.md) — How step state transitions are triggered during orchestration
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How the shortcut bar text changes with keyboard modes
-- [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log pipe
+- [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log stream
 - [Step Definitions & Prompt Building](step-definitions.md) — Where step names displayed in the header originate
 - [API Design](../coding-standards/api-design.md) — Coding standards for bounds guards on array indexers (used by SetStepState)

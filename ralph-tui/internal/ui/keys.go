@@ -97,12 +97,7 @@ func (m keysModel) handleQuitConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {
 			m.handler.ForceQuit()
 			return nil
 		}
-	case "n":
-		m.handler.mu.Lock()
-		m.handler.mode = m.handler.prevMode
-		m.handler.updateShortcutLineLocked()
-		m.handler.mu.Unlock()
-	case "esc":
+	case "n", "esc":
 		m.handler.mu.Lock()
 		m.handler.mode = m.handler.prevMode
 		m.handler.updateShortcutLineLocked()

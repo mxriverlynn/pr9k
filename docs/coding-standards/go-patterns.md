@@ -117,25 +117,25 @@ if cfg == nil {
 
 Do not treat `(nil, nil)` as an error — it is the documented --help path.
 
-## Pre-populate TUI widget state before starting the event loop
+## Pre-populate TUI model state before starting the event loop
 
-When a TUI framework renders widgets by reading from pointer-bound fields, populate those fields before calling the blocking event-loop start function (e.g., `app.Run()`). The first rendered frame reads from those pointers immediately. Uninitialized values produce blank or misleading content on the first frame.
+Populate the Bubble Tea model's initial state before calling `program.Run()`. The first rendered frame calls `View()` immediately, so uninitialized state produces blank or misleading content on the first frame.
 
 ```go
-// Pre-populate before app.Run() so the first frame shows real content.
+// Pre-populate before program.Run() so the first frame shows real content.
 if len(stepFile.Initialize) > 0 {
     header.SetPhaseSteps(stepNames(stepFile.Initialize))
     header.SetStepState(0, ui.StepActive)
-    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
+    header.RenderInitializeLine(1, len(stepFile.Initialize), stepFile.Initialize[0].Name)
 } else {
     header.SetPhaseSteps(stepNames(stepFile.Iteration))
     header.SetStepState(0, ui.StepActive)
-    header.IterationLine = "Iteration 1"
+    header.RenderIterationLine(1, cfg.Iterations, "")
 }
 
-app := glyph.NewApp()
-// ... bind widgets to header fields ...
-app.Run() // first frame renders from already-populated state
+model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+program := tea.NewProgram(model, ...)
+program.Run() // first frame renders from already-populated state
 ```
 
 This mirrors the general principle that display state should be initialized before the display is activated, not after.
@@ -174,11 +174,11 @@ Keys not present in `vals` are left as-is by `strings.NewReplacer` — this is t
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
-- [TUI Display & Glyph Wiring](../features/tui-display.md) — Pre-populate TUI widget state before app.Run() (issue #50)
+- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run()
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
 - [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests
 - [API Design](api-design.md) — Complementary standards for platform-scoped assumptions
 - [Concurrency](concurrency.md) — Complementary concurrency patterns
 - [Error Handling](error-handling.md) — Complementary error handling conventions
-- [TUI Display & Glyph Wiring](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example
+- [TUI Display](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example

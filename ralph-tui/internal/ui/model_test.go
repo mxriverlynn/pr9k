@@ -431,6 +431,49 @@ func TestTitleString_AfterIterationLineMsg(t *testing.T) {
 	}
 }
 
+// --- WARN-004: Model.View() smoke test ---
+
+func TestView_NonEmpty_ContainsVersionAndStepName(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"Feature work"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "ralph-tui v0.2.0")
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	out := m.View()
+
+	if out == "" {
+		t.Fatal("View() returned empty string")
+	}
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "ralph-tui v0.2.0") {
+		t.Errorf("View() output missing version label; got:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Feature work") {
+		t.Errorf("View() output missing step name; got:\n%s", plain)
+	}
+}
+
+// --- WARN-005: Model.View() panic-safety with zero dimensions ---
+
+func TestView_ZeroDimensions_NoPanic(t *testing.T) {
+	m := newTestModel(t)
+
+	// Must not panic with zero width/height.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 0, Height: 0})
+	m = next.(Model)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("View() panicked with zero dimensions: %v", r)
+		}
+	}()
+	_ = m.View()
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder

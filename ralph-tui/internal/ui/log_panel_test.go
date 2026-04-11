@@ -71,6 +71,94 @@ func TestLogModel_Update_EndKey_GotoBottom(t *testing.T) {
 	}
 }
 
+// --- SUGG-003: ring buffer boundary at exactly 500 and 501 lines ---
+
+func TestLogModel_RingBuffer_500Lines_NoTrim(t *testing.T) {
+	m := newLogModel(80, 10)
+
+	lines := make([]string, 500)
+	for i := range 500 {
+		lines[i] = "line"
+	}
+	m, _ = m.Update(LogLinesMsg{Lines: lines})
+
+	if len(m.lines) != 500 {
+		t.Fatalf("expected exactly 500 lines, got %d", len(m.lines))
+	}
+}
+
+func TestLogModel_RingBuffer_501Lines_TrimsToLast500(t *testing.T) {
+	m := newLogModel(80, 10)
+
+	lines := make([]string, 501)
+	for i := range 501 {
+		lines[i] = "line"
+	}
+	m, _ = m.Update(LogLinesMsg{Lines: lines})
+
+	if len(m.lines) != 500 {
+		t.Fatalf("expected 500 lines after trim, got %d", len(m.lines))
+	}
+}
+
+// --- SUGG-004: direct auto-scroll tests on logModel ---
+
+func TestLogModel_AutoScroll_AtBottom_StaysAtBottom(t *testing.T) {
+	m := newLogModel(80, 5)
+
+	// Fill past viewport height.
+	fill := make([]string, 20)
+	for i := range fill {
+		fill[i] = "line"
+	}
+	m, _ = m.Update(LogLinesMsg{Lines: fill})
+	m.viewport.GotoBottom()
+
+	// Send more lines while at bottom.
+	more := LogLinesMsg{Lines: []string{"extra1", "extra2"}}
+	m, _ = m.Update(more)
+
+	if !m.viewport.AtBottom() {
+		t.Error("expected viewport to remain at bottom when wasAtBottom=true")
+	}
+}
+
+func TestLogModel_AutoScroll_ScrolledUp_DoesNotAutoScroll(t *testing.T) {
+	m := newLogModel(80, 5)
+
+	fill := make([]string, 20)
+	for i := range fill {
+		fill[i] = "line"
+	}
+	m, _ = m.Update(LogLinesMsg{Lines: fill})
+
+	// Scroll to top to simulate user scrolling up.
+	m.viewport.GotoTop()
+	positionBefore := m.viewport.YOffset
+
+	// Send more lines — position should not change.
+	m, _ = m.Update(LogLinesMsg{Lines: []string{"new1", "new2"}})
+
+	if m.viewport.YOffset != positionBefore {
+		t.Errorf("expected position unchanged when scrolled up: before=%d after=%d", positionBefore, m.viewport.YOffset)
+	}
+}
+
+// --- SUGG-005: direct SetSize test ---
+
+func TestLogModel_SetSize_UpdatesViewportDimensions(t *testing.T) {
+	m := newLogModel(80, 10)
+
+	m.SetSize(120, 30)
+
+	if m.viewport.Width != 120 {
+		t.Errorf("Width: want 120, got %d", m.viewport.Width)
+	}
+	if m.viewport.Height != 30 {
+		t.Errorf("Height: want 30, got %d", m.viewport.Height)
+	}
+}
+
 func TestLogModel_Update_UnknownKey_ForwardedToViewport(t *testing.T) {
 	m := newLogModel(80, 10)
 

@@ -9,8 +9,7 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 ## Overview
 
 - The `Runner` struct manages subprocess lifecycle: starting, streaming, terminating, and capturing output
-- Subprocess output streams through an `io.Pipe` — the write end receives forwarded stdout/stderr, the read end is passed to the TUI for real-time display
-- A `sendLine` callback (installed via `SetSender`) is invoked for every forwarded line, enabling the Bubble Tea TUI to receive lines directly without reading the pipe
+- Subprocess output is forwarded line-by-line via a `sendLine` callback (installed via `SetSender`); the callback writes to a buffered channel consumed by a drain goroutine in `main.go` that batches lines into `LogLinesMsg` messages for the Bubble Tea TUI
 - Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`; only the stdout goroutine captures lines for `LastCapture`
 - After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`; the orchestrator calls this to bind `CaptureAs` values into the `VarTable`
 - `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
@@ -47,23 +46,23 @@ Key files:
                     │  └──────┬──────────┬────────────┘ │
                     │         │          │               │
                     │         ▼          ▼               │
-                    │  ┌───────┐   ┌────────┐           │
-                    │  │io.Pipe│   │ Logger │           │
-  Terminate()       │  │(mutex)│   │(file)  │           │
-  ──────────────────┼─▶│       │   │        │           │
-  SIGTERM→SIGKILL   │  └───┬───┘   └────────┘           │
-                    │      │                             │
-                    │      │        sendLine(line)       │
-                    │      │    ◀── (snapshot-then-      │
-                    │      │        unlock, per line)    │
+                    │  sendLine(line)  Logger            │
+  Terminate()       │  (mu snapshot-   (file)            │
+  ──────────────────┼─▶ then-unlock)                    │
+  SIGTERM→SIGKILL   │                                   │
                     │   lastCapture                      │
                     │   (stdout only,                    │
                     │    on success)                     │
                     └──────┼─────────────────────────────┘
                            │
                            ▼
-                     Bubble Tea TUI
-                     (LogReader / SetSender)
+                     buffered channel → drain goroutine
+                           │
+                           ▼
+                     program.Send(LogLinesMsg)
+                           │
+                           ▼
+                     Bubble Tea TUI (SetSender)
 ```
 
 ## Key Files
@@ -78,22 +77,22 @@ Key files:
 ## Core Types
 
 ```go
-// Runner executes workflow steps and streams subprocess output through an io.Pipe.
+// Runner executes workflow steps and forwards subprocess output via a sendLine callback.
 type Runner struct {
-    logReader  *io.PipeReader  // read end → TUI
-    logWriter  *io.PipeWriter  // write end ← scanner goroutines
-    mu         sync.Mutex      // protects logWriter writes and sendLine
-    log        *logger.Logger  // file logger
-    workingDir string          // cmd.Dir for every subprocess
-    sendLine   func(string)    // callback invoked for every forwarded line; never nil
+    mu         sync.Mutex     // protects sendLine
+    log        *logger.Logger // file logger
+    workingDir string         // cmd.Dir for every subprocess
+    sendLine   func(string)   // callback invoked for every forwarded line; never nil
 
-    processMu   sync.Mutex     // guards process state below
-    currentProc *os.Process    // active subprocess (nil when idle)
-    procDone    chan struct{}   // closed when subprocess exits
-    terminated  bool           // set by Terminate(), reset at start of RunStep
+    // processMu guards currentProc, procDone, and terminated.
+    processMu   sync.Mutex
+    currentProc *os.Process
+    procDone    chan struct{} // closed when subprocess exits
+    terminated  bool         // set by Terminate(), reset at start of RunStep
 
-    lastCapture string         // last non-empty stdout line from the most recent
-                               // successful RunStep; "" on failure or no output
+    // lastCapture holds the last non-empty stdout line from the most recent
+    // successful RunStep. Empty string if the last step failed or produced no output.
+    lastCapture string
 }
 ```
 
@@ -160,7 +159,7 @@ buf := make([]byte, 256*1024)
 scanner.Buffer(buf, 256*1024)
 ```
 
-Writes to the shared `io.PipeWriter` are mutex-protected because `io.PipeWriter` is not safe for concurrent use. The `sendLine` callback is snapshotted under the same mutex and invoked after the lock is released (snapshot-then-unlock) to prevent TOCTOU races while keeping the critical section short. The file logger is also written to under its own internal mutex.
+The `sendLine` callback is snapshotted under `r.mu` and invoked after the lock is released (snapshot-then-unlock) to prevent TOCTOU races while keeping the critical section short. The file logger is written to under its own internal mutex.
 
 ### Per-Step Stdout Capture (LastCapture)
 
@@ -207,12 +206,11 @@ func (r *Runner) Terminate() {
 
 ### Direct Log Injection (WriteToLog)
 
-`WriteToLog` writes a single line directly to the log pipe without running a subprocess. Used for step separator lines between subprocess outputs:
+`WriteToLog` writes a single line directly via the `sendLine` callback and to the file logger, without running a subprocess. Used for step separator lines between subprocess outputs:
 
 ```go
 func (r *Runner) WriteToLog(line string) {
     r.mu.Lock()
-    _, _ = fmt.Fprintln(r.logWriter, line)
     send := r.sendLine
     r.mu.Unlock()
     send(line)
@@ -258,8 +256,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 | Resource | Protection | Why |
 |----------|-----------|-----|
-| `logWriter` (io.PipeWriter) | `mu sync.Mutex` | Two scanner goroutines write concurrently; PipeWriter is not thread-safe |
-| `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently |
+| `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently with scanner goroutines reading it |
 | `currentProc`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep (main goroutine) and Terminate (keyboard/signal goroutine) |
 | `WaitGroup` drain before `cmd.Wait()` | `sync.WaitGroup` | Ensures all pipe output is forwarded before the process exit status is collected |
 

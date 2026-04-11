@@ -36,9 +36,9 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
-## ralph-tui (Go/Glyph)
+## ralph-tui (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+The Go TUI orchestrator lives in `ralph-tui/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
 
 ### Build and run
 

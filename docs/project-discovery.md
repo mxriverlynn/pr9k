@@ -28,13 +28,13 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- Current version: `0.1.0` (single source of truth: `ralph-tui/internal/version/version.go`)
-- External dependencies: `github.com/kungfusheep/glyph` (current TUI), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0; pinned but not yet integrated: `github.com/charmbracelet/bubbletea` v1.3.10, `github.com/charmbracelet/lipgloss` v1.1.0, `github.com/charmbracelet/bubbles` v1.0.0
+- Current version: `0.2.0` (single source of truth: `ralph-tui/internal/version/version.go`)
+- External dependencies: `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
 
 - CLI: spf13/cobra v1.10.2 (ADR: [20260409135303-cobra-cli-framework](adr/20260409135303-cobra-cli-framework.md))
-- TUI: [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`) — current; migration to Bubble Tea + Lip Gloss + bubbles planned (see ADR below)
+- TUI: [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) — migrated from Glyph (see ADR below)
 - Terminal size detection: `golang.org/x/sys/unix` (ioctl TIOCGWINSZ) for full-width phase banners
 - Task runner: Make (`Makefile` at repo root)
 - Linter: golangci-lint v2.11.4 (pinned in CI)
