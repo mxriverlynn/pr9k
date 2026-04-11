@@ -125,7 +125,7 @@ After modifying configs or prompts, rebuild with `make build` to copy everything
 
 ## TUI Display Constraints
 
-The TUI status header displays steps as two rows of 4 checkboxes (8 slots total). If your workflow has more than 8 iteration steps, the extra steps will execute but won't appear in the header. The same 8-slot layout applies to finalization steps.
+The TUI status header displays steps as a dynamic grid of 4 columns per row, sized at startup to fit the largest phase (initialize, iteration, or finalize). If your iteration phase has 6 steps, the grid has 2 rows; 9 steps gives 3 rows; and so on. Each row's cells are padded to a uniform width so the step list is distributed evenly across the header. If any phase has more steps than the grid was sized to hold (which cannot happen with a correct config — the grid is sized to the maximum across all phases), extra steps will execute but won't appear in the header.
 
 ## Error Recovery
 
