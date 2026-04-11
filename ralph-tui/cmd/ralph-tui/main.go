@@ -14,6 +14,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/workflow"
 )
 
@@ -108,7 +109,15 @@ func main() {
 	children = append(children, glyph.HRule())
 	children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
 	children = append(children, glyph.HRule())
-	children = append(children, glyph.Text(keyHandler.ShortcutLinePtr()))
+	// Footer: shortcut bar on the left, app version pinned to the bottom-right.
+	// glyph.Space() is a flex spacer inside an HBox, pushing the version text
+	// against the right border of the VBox.
+	versionLabel := "v" + version.Version
+	children = append(children, glyph.HBox(
+		glyph.Text(keyHandler.ShortcutLinePtr()),
+		glyph.Space(),
+		glyph.Text(&versionLabel),
+	))
 
 	app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 

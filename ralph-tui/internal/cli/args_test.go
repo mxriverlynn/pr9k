@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
 // helper: build a NewCommand with a fresh Config and set args on it.
@@ -206,5 +209,46 @@ func TestNewCommand_LargeIterations(t *testing.T) {
 	}
 	if cfg.Iterations != 1000 {
 		t.Errorf("expected iterations=1000, got %d", cfg.Iterations)
+	}
+}
+
+// 17. --version → RunE does not execute, cobra prints the version, no error.
+// Guarantees the flag exits without starting the workflow.
+func TestNewCommand_VersionFlag(t *testing.T) {
+	cfg := &Config{}
+	var ranE bool
+	cmd := newCommandImpl(cfg, &ranE)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error for --version: %v", err)
+	}
+	if ranE {
+		t.Error("RunE should not have executed for --version")
+	}
+	if !strings.Contains(out.String(), version.Version) {
+		t.Errorf("expected --version output to contain %q, got %q", version.Version, out.String())
+	}
+}
+
+// 18. -v (short) behaves the same as --version.
+func TestNewCommand_VersionShortFlag(t *testing.T) {
+	cfg := &Config{}
+	var ranE bool
+	cmd := newCommandImpl(cfg, &ranE)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"-v"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error for -v: %v", err)
+	}
+	if ranE {
+		t.Error("RunE should not have executed for -v")
+	}
+	if !strings.Contains(out.String(), version.Version) {
+		t.Errorf("expected -v output to contain %q, got %q", version.Version, out.String())
 	}
 }

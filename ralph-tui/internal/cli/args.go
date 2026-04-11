@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
 // Config holds parsed CLI arguments.
@@ -35,6 +37,7 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 		Use:           "ralph-tui [flags]",
 		Short:         "Automated development workflow orchestrator",
 		Long:          `ralph-tui drives the claude CLI through multi-step coding loops. By default, it picks up GitHub issues labeled "ralph", implements features, writes tests, runs code reviews, and pushes — all unattended. Custom workflow definitions can be provided to tailor the steps to your needs.`,
+		Version:       version.Version,
 		Args:          cobra.NoArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
