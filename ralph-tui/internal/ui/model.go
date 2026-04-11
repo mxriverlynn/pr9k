@@ -136,7 +136,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View assembles the complete TUI output.
+// View assembles the complete TUI output. The frame is hand-built row by
+// row (rather than wrapped in a single lipgloss border) so the horizontal
+// rules between grid/log and log/footer can use ├─┤ T-junction glyphs
+// that visually connect to the │ side borders.
 func (m Model) View() string {
 	title := m.titleString()
 	innerWidth := m.width - 2
@@ -144,12 +147,26 @@ func (m Model) View() string {
 		innerWidth = 0
 	}
 
-	borderStyle := lipgloss.NewStyle().
-		Foreground(LightGray).
-		Border(lipgloss.RoundedBorder()).
-		BorderTop(false).
-		BorderForeground(LightGray).
-		Width(innerWidth)
+	gray := lipgloss.NewStyle().Foreground(LightGray)
+	vbar := gray.Render("│")
+
+	// wrapLine wraps a single content line in side borders, truncating to
+	// innerWidth and right-padding with spaces so the right border stays
+	// vertically aligned across all rows.
+	wrapLine := func(content string) string {
+		if innerWidth <= 0 {
+			return vbar + vbar
+		}
+		truncated := lipgloss.NewStyle().MaxWidth(innerWidth).Render(content)
+		pad := innerWidth - lipgloss.Width(truncated)
+		if pad < 0 {
+			pad = 0
+		}
+		return vbar + truncated + strings.Repeat(" ", pad) + vbar
+	}
+
+	hruleLine := gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")
+	bottomBorder := gray.Render("╰" + strings.Repeat("─", innerWidth) + "╯")
 
 	var sb strings.Builder
 
@@ -157,36 +174,38 @@ func (m Model) View() string {
 	sb.WriteString(m.renderTopBorder(title))
 	sb.WriteString("\n")
 
-	// Inner content: assembled as a string, then wrapped in the partial border.
-	// The iteration line lives in the top border as the title, so the inner
-	// content starts directly with the checkbox grid.
-	var inner strings.Builder
-
-	// Checkbox grid.
+	// Checkbox grid — the iteration line lives in the top border as the
+	// title, so the grid is the first row below the top border.
 	for r := range m.header.header.Rows {
+		var row strings.Builder
 		for c := range HeaderCols {
 			if c > 0 {
-				inner.WriteString("  ")
+				row.WriteString("  ")
 			}
 			prefix := lipgloss.NewStyle().Foreground(m.header.header.NameColors[r][c]).Render(m.header.header.Prefixes[r][c])
 			marker := lipgloss.NewStyle().Foreground(m.header.header.MarkerColors[r][c]).Render(m.header.header.Markers[r][c])
 			suffix := lipgloss.NewStyle().Foreground(m.header.header.NameColors[r][c]).Render(m.header.header.Suffixes[r][c])
-			inner.WriteString(prefix + marker + suffix)
+			row.WriteString(prefix + marker + suffix)
 		}
-		inner.WriteString("\n")
+		sb.WriteString(wrapLine(row.String()))
+		sb.WriteString("\n")
 	}
 
-	// HRule.
-	inner.WriteString(lipgloss.NewStyle().Foreground(LightGray).Render(strings.Repeat("─", innerWidth)))
-	inner.WriteString("\n")
+	// HRule between grid and log.
+	sb.WriteString(hruleLine)
+	sb.WriteString("\n")
 
-	// Log panel (viewport).
-	inner.WriteString(m.log.View())
-	inner.WriteString("\n")
+	// Log panel (viewport) — split into lines and wrap each in sidebars.
+	// bubbles/viewport pads its output to the configured Height, so we get
+	// exactly vpHeight rows here.
+	for _, line := range strings.Split(m.log.View(), "\n") {
+		sb.WriteString(wrapLine(line))
+		sb.WriteString("\n")
+	}
 
-	// HRule.
-	inner.WriteString(lipgloss.NewStyle().Foreground(LightGray).Render(strings.Repeat("─", innerWidth)))
-	inner.WriteString("\n")
+	// HRule between log and footer.
+	sb.WriteString(hruleLine)
+	sb.WriteString("\n")
 
 	// Shortcut footer: shortcut bar on the left, version label on the right.
 	shortcut := m.keys.handler.ShortcutLine()
@@ -206,10 +225,11 @@ func (m Model) View() string {
 	footer := shortcutTrunc +
 		strings.Repeat(" ", spacerWidth) +
 		lipgloss.NewStyle().Foreground(White).Render(m.versionLabel)
-	inner.WriteString(footer)
+	sb.WriteString(wrapLine(footer))
+	sb.WriteString("\n")
 
-	// Wrap inner content in the border (sides + bottom, no top — we hand-built it).
-	sb.WriteString(borderStyle.Render(inner.String()))
+	// Bottom border.
+	sb.WriteString(bottomBorder)
 
 	return sb.String()
 }
