@@ -24,7 +24,6 @@ type RunHeader interface {
 	RenderInitializeLine(stepNum, stepCount int, stepName string)
 	RenderIterationLine(iter, maxIter int, issueID string)
 	RenderFinalizeLine(stepNum, stepCount int, stepName string)
-	RenderCompletionLine(iterationsRun, finalizeCount int)
 	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
 }
@@ -73,6 +72,23 @@ type RunResult struct {
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
 
+	// emitBlank writes a single blank line to the log body if one is needed
+	// to separate the next piece of content from the previous. Call before
+	// each iteration separator, each step's Orchestrate call, and the
+	// completion summary. Call suppressBlank after content that should not
+	// be followed by a leading blank (e.g. the iteration separator itself,
+	// which already introduces a visual break).
+	needBlank := false
+	emitBlank := func() {
+		if needBlank {
+			executor.WriteToLog("")
+		}
+		needBlank = true
+	}
+	suppressBlank := func() {
+		needBlank = false
+	}
+
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)
@@ -84,6 +100,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			continue
 		}
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
+		emitBlank()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
@@ -110,7 +127,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 		header.SetPhaseSteps(iterStepNames)
 
+		emitBlank()
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
+		// The iteration separator already introduces visual separation; the
+		// first step in this iteration should not be preceded by a blank line.
+		suppressBlank()
 
 		breakOuter := false
 		for j, s := range cfg.Steps {
@@ -121,6 +142,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				breakOuter = true
 				break
 			}
+			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
 			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, th, keyHandler)
 			if action == ui.ActionQuit {
@@ -165,6 +187,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			continue
 		}
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
+		emitBlank()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			_ = executor.Close()
@@ -172,8 +195,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 	}
 
-	// 4. Completion sequence: write summary, flip to ModeDone, wait for one keypress.
-	header.RenderCompletionLine(iterationsRun, len(cfg.FinalizeSteps))
+	// 4. Completion sequence: write summary as the last line of the main
+	// body log, flip to ModeDone, wait for one keypress.
+	emitBlank()
+	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 	keyHandler.SetMode(ui.ModeDone)
 	<-keyHandler.Actions
 

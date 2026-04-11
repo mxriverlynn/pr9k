@@ -23,6 +23,11 @@ type fakeExecutor struct {
 	lastCapture     string
 	logLines        []string
 	closed          bool
+	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
+	// Tests use it to observe the log stream from another goroutine without
+	// racing on logLines. The callback runs synchronously on the writer
+	// goroutine, so happens-before the receiver of any channel it sends to.
+	onLog func(line string)
 }
 
 type runStepCall struct {
@@ -49,6 +54,9 @@ func (f *fakeExecutor) WasTerminated() bool { return false }
 
 func (f *fakeExecutor) WriteToLog(line string) {
 	f.logLines = append(f.logLines, line)
+	if f.onLog != nil {
+		f.onLog(line)
+	}
 }
 
 func (f *fakeExecutor) LastCapture() string {
@@ -60,22 +68,12 @@ func (f *fakeExecutor) Close() error {
 	return nil
 }
 
-type completionLineCall struct {
-	iterationsRun, finalizeCount int
-}
-
 type fakeRunHeader struct {
 	renderInitializeCalls []renderPhaseCall
 	renderIterationCalls  []renderIterCall
 	renderFinalizeCalls   []renderPhaseCall
-	renderCompletionCalls []completionLineCall
 	stepStateCalls        []stepStateCall
 	phaseStepsCalls       [][]string
-	// completionStarted, when non-nil, receives the completionLineCall value
-	// as soon as RenderCompletionLine is called. The channel send happens-after
-	// the append, so receivers are guaranteed to see the written data. Tests
-	// that need to observe the completion sequence set this before starting Run.
-	completionStarted chan completionLineCall
 }
 
 type renderPhaseCall struct {
@@ -101,16 +99,6 @@ func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 }
 func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.renderFinalizeCalls = append(h.renderFinalizeCalls, renderPhaseCall{stepNum, stepCount, stepName})
-}
-func (h *fakeRunHeader) RenderCompletionLine(iterationsRun, finalizeCount int) {
-	call := completionLineCall{iterationsRun, finalizeCount}
-	h.renderCompletionCalls = append(h.renderCompletionCalls, call)
-	if h.completionStarted != nil {
-		select {
-		case h.completionStarted <- call:
-		default:
-		}
-	}
 }
 
 func (h *fakeRunHeader) SetPhaseSteps(names []string) {
@@ -1850,22 +1838,31 @@ func TestRun_BreakLoopIfEmpty_FailedStepNoSkips(t *testing.T) {
 	}
 }
 
+// newCompletionObserver returns a fakeExecutor onLog callback that signals
+// on completionSeen as soon as the completion summary line is written to the
+// log. The callback runs synchronously on the writer goroutine, so the send
+// happens-before the receiving test goroutine observes the log slice.
+func newCompletionObserver(completionSeen chan<- string) func(string) {
+	return func(line string) {
+		if strings.HasPrefix(line, "Ralph completed after ") {
+			select {
+			case completionSeen <- line:
+			default:
+			}
+		}
+	}
+}
+
 // TestRun_CompletionSummaryAndBlockForKeypress verifies that after all finalize
-// steps complete, Run() writes the completion summary to the header, switches to
-// ModeDone, and blocks until ActionQuit is received.
-//
-// Synchronization: header.completionStarted receives the completion call data
-// immediately after the append inside RenderCompletionLine. Per Go's memory
-// model a channel send happens-before the corresponding receive, so reading the
-// received value is race-free. The done channel is used to synchronize the
-// final result check.
+// steps complete, Run() writes the completion summary as the final line of the
+// main body log, switches to ModeDone, and blocks until ActionQuit is received.
 func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
 
-	executor := &fakeExecutor{}
-	completionCh := make(chan completionLineCall, 1)
-	header := &fakeRunHeader{completionStarted: completionCh}
+	completionSeen := make(chan string, 1)
+	executor := &fakeExecutor{onLog: newCompletionObserver(completionSeen)}
+	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
 		ProjectDir:    t.TempDir(),
@@ -1879,20 +1876,17 @@ func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
 		done <- Run(executor, header, kh, cfg)
 	}()
 
-	// Wait for RenderCompletionLine to be called; the channel send happens-after
-	// the append, so reading the received value is synchronized.
-	var got completionLineCall
+	// Wait for the completion summary line to be written to the log body.
+	var got string
 	select {
-	case got = <-completionCh:
+	case got = <-completionSeen:
 	case <-time.After(5 * time.Second):
-		t.Fatal("completion sequence did not start")
+		t.Fatal("completion summary was not written to the log body")
 	}
 
-	if got.iterationsRun != 2 {
-		t.Errorf("completion: want iterationsRun=2, got %d", got.iterationsRun)
-	}
-	if got.finalizeCount != 2 {
-		t.Errorf("completion: want finalizeCount=2, got %d", got.finalizeCount)
+	want := ui.CompletionSummary(2, 2)
+	if got != want {
+		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
 	// Verify Run() is still blocking (done has no result yet).
@@ -1913,17 +1907,24 @@ func TestRun_CompletionSummaryAndBlockForKeypress(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not unblock after ActionQuit")
 	}
+
+	// Sanity check: the completion summary is the last non-empty line in the
+	// main body log (trailing blank separators are allowed).
+	last := lastNonBlankLine(executor.logLines)
+	if last != want {
+		t.Errorf("last non-blank log line: got %q, want %q", last, want)
+	}
 }
 
 // TestRun_CompletionSummaryWithEmptyFinalize verifies that the completion
-// sequence fires with finalizeCount=0 when FinalizeSteps is empty.
+// summary reports finalizeCount=0 when FinalizeSteps is empty.
 func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
 
-	executor := &fakeExecutor{}
-	completionCh := make(chan completionLineCall, 1)
-	header := &fakeRunHeader{completionStarted: completionCh}
+	completionSeen := make(chan string, 1)
+	executor := &fakeExecutor{onLog: newCompletionObserver(completionSeen)}
+	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
 		ProjectDir: t.TempDir(),
@@ -1937,18 +1938,16 @@ func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 		done <- Run(executor, header, kh, cfg)
 	}()
 
-	var got completionLineCall
+	var got string
 	select {
-	case got = <-completionCh:
+	case got = <-completionSeen:
 	case <-time.After(5 * time.Second):
-		t.Fatal("completion sequence did not start")
+		t.Fatal("completion summary was not written to the log body")
 	}
 
-	if got.iterationsRun != 1 {
-		t.Errorf("completion: want iterationsRun=1, got %d", got.iterationsRun)
-	}
-	if got.finalizeCount != 0 {
-		t.Errorf("completion: want finalizeCount=0 (empty finalize), got %d", got.finalizeCount)
+	want := ui.CompletionSummary(1, 0)
+	if got != want {
+		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
 	// Verify Run() is still blocking.
@@ -1969,17 +1968,18 @@ func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 
 // TestRun_CompletionSummary_AfterBreakLoopIfEmpty verifies that when the loop
 // exits early via breakLoopIfEmpty (on the first iteration of a 3-iteration
-// config), the completion sequence reports iterationsRun=1 and the correct
+// config), the completion summary reports iterationsRun=1 and the correct
 // finalizeCount.
 func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
 
+	completionSeen := make(chan string, 1)
 	executor := &fakeExecutor{
 		runStepCaptures: []string{""},
+		onLog:           newCompletionObserver(completionSeen),
 	}
-	completionCh := make(chan completionLineCall, 1)
-	header := &fakeRunHeader{completionStarted: completionCh}
+	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
 		ProjectDir:    t.TempDir(),
@@ -1993,18 +1993,16 @@ func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
 		done <- Run(executor, header, kh, cfg)
 	}()
 
-	var got completionLineCall
+	var got string
 	select {
-	case got = <-completionCh:
+	case got = <-completionSeen:
 	case <-time.After(5 * time.Second):
-		t.Fatal("completion sequence did not start after breakLoopIfEmpty")
+		t.Fatal("completion summary was not written to the log body after breakLoopIfEmpty")
 	}
 
-	if got.iterationsRun != 1 {
-		t.Errorf("completion: want iterationsRun=1 (broke on first iter), got %d", got.iterationsRun)
-	}
-	if got.finalizeCount != 2 {
-		t.Errorf("completion: want finalizeCount=2, got %d", got.finalizeCount)
+	want := ui.CompletionSummary(1, 2)
+	if got != want {
+		t.Errorf("completion summary: got %q, want %q", got, want)
 	}
 
 	actions <- ui.ActionQuit
@@ -2014,4 +2012,14 @@ func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not unblock after ActionQuit")
 	}
+}
+
+// lastNonBlankLine returns the last non-empty entry in lines, or "" if none.
+func lastNonBlankLine(lines []string) string {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if lines[i] != "" {
+			return lines[i]
+		}
+	}
+	return ""
 }
