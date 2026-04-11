@@ -206,6 +206,20 @@ func (h *KeyHandler) ForceQuit() {
 }
 ```
 
+### Mode Accessor
+
+**`Mode()`** is a mutex-protected getter that returns the current dispatch mode, safe to call from any goroutine:
+
+```go
+func (h *KeyHandler) Mode() Mode {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.mode
+}
+```
+
+Used by tests to assert mode transitions without accessing private fields, and may be used by any goroutine that needs to inspect handler state (e.g., to gate UI rendering decisions).
+
 ### ShortcutLine Thread Safety
 
 Two accessors expose the shortcut bar text for different callers:

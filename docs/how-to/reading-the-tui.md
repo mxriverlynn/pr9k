@@ -160,7 +160,7 @@ See [Recovering from Step Failures](recovering-from-step-failures.md) for the Er
 
 - [Getting Started](getting-started.md) — Install and first-run walk-through
 - [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Five-mode state machine that drives the footer
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Four-mode state machine that drives the footer
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
 - [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT

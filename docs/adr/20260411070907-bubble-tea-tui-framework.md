@@ -92,7 +92,7 @@ We specifically reject tview because its lack of first-class window-title suppor
 |------|---------|
 | `ralph-tui/cmd/ralph-tui/main.go` | Program entry point — currently constructs the Glyph `App`, wires keybindings, and calls `app.Run()` (lines 86-186). Becomes the `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen())` call site. |
 | `ralph-tui/internal/ui/header.go` | Pointer-mutable `StatusHeader` (lines 61-88). Becomes an immutable header struct with pure state transitions, rendered via Lip Gloss. |
-| `ralph-tui/internal/ui/ui.go` | Five-mode keyboard state machine `KeyHandler` (lines 36-181). The `Mode` enum and transition rules stay; dispatch moves from `app.Handle` callbacks to `Update(msg)` on `tea.KeyMsg`. |
+| `ralph-tui/internal/ui/ui.go` | Four-mode keyboard state machine `KeyHandler` (lines 36-181). The `Mode` enum and transition rules stay; dispatch moves from `app.Handle` callbacks to `Update(msg)` on `tea.KeyMsg`. |
 | `ralph-tui/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. The channel contract stays; only its producer side (keyboard) changes. |
 | `ralph-tui/internal/workflow/workflow.go` | Subprocess runner with `io.Pipe`-based streaming (lines 20-49, 97-176). Replace `LogReader()` with a line-forwarding goroutine that calls `tea.Program.Send(logLineMsg{line})`. |
 | `ralph-tui/go.mod` | Remove `github.com/kungfusheep/glyph`; add `bubbletea`, `lipgloss`, `bubbles`. |

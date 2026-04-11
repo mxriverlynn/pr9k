@@ -2,7 +2,7 @@
 
 Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the ralph-tui workflow, terminating the active subprocess and exiting with the appropriate status code.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-11
 - **Authors:**
   - River Bailey
 
