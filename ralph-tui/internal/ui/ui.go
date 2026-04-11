@@ -32,8 +32,8 @@ const (
 // mode (normal / error / quit-confirm) and communicates user decisions to the
 // orchestration goroutine via the Actions channel.
 type KeyHandler struct {
-	mode         Mode
-	prevMode     Mode
+	mode         Mode   // protected by mu
+	prevMode     Mode   // protected by mu
 	cancel       func() // cancels the current subprocess (used by n in normal mode)
 	Actions      chan StepAction
 	mu           sync.Mutex
@@ -66,7 +66,7 @@ func (h *KeyHandler) ShortcutLine() string {
 // Option Q fallback (issue #48, D14b V2): Option P (exported field, no mutex)
 // was attempted first but go test -race detected a genuine race between the
 // Orchestrate goroutine writing via SetMode and the test goroutine reading the
-// field concurrently. The mutex in updateShortcutLine prevents that race for
+// field concurrently. The mutex in updateShortcutLineLocked prevents that race for
 // reads through ShortcutLine(). ShortcutLinePtr() exposes the address for
 // Glyph's render loop, which accesses it synchronously between write windows
 // in the single TUI event loop — a pattern Glyph's binding model is designed
@@ -75,18 +75,32 @@ func (h *KeyHandler) ShortcutLinePtr() *string {
 	return &h.shortcutLine
 }
 
+// Mode returns the current keyboard dispatch mode.
+// Safe to call from any goroutine.
+func (h *KeyHandler) Mode() Mode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.mode
+}
+
 // SetMode switches the handler to the given mode and updates ShortcutLine.
 // Use this when the orchestration goroutine changes workflow state
 // (e.g., a step fails → SetMode(ModeError)).
 func (h *KeyHandler) SetMode(mode Mode) {
+	h.mu.Lock()
 	h.mode = mode
-	h.updateShortcutLine()
+	h.updateShortcutLineLocked()
+	h.mu.Unlock()
 }
 
 // Handle dispatches the key to the appropriate handler based on current mode.
 // key is a single character string (e.g., "n", "q", "y").
 func (h *KeyHandler) Handle(key string) {
-	switch h.mode {
+	h.mu.Lock()
+	mode := h.mode
+	h.mu.Unlock()
+
+	switch mode {
 	case ModeNormal:
 		h.handleNormal(key)
 	case ModeError:
@@ -103,9 +117,11 @@ func (h *KeyHandler) handleNormal(key string) {
 			h.cancel()
 		}
 	case "q":
+		h.mu.Lock()
 		h.prevMode = h.mode
 		h.mode = ModeQuitConfirm
-		h.updateShortcutLine()
+		h.updateShortcutLineLocked()
+		h.mu.Unlock()
 	}
 }
 
@@ -116,24 +132,23 @@ func (h *KeyHandler) handleError(key string) {
 	case "r":
 		h.Actions <- ActionRetry
 	case "q":
+		h.mu.Lock()
 		h.prevMode = h.mode
 		h.mode = ModeQuitConfirm
-		h.updateShortcutLine()
+		h.updateShortcutLineLocked()
+		h.mu.Unlock()
 	}
 }
 
 func (h *KeyHandler) handleQuitConfirm(key string) {
 	switch key {
 	case "y":
-		// Flip to ModeQuitting first so the footer immediately shows the
-		// "Quitting..." feedback line; then inject ActionQuit to unwind
-		// the orchestration goroutine.
-		h.mode = ModeQuitting
-		h.updateShortcutLine()
 		h.ForceQuit()
 	case "n", "<Escape>":
+		h.mu.Lock()
 		h.mode = h.prevMode
-		h.updateShortcutLine()
+		h.updateShortcutLineLocked()
+		h.mu.Unlock()
 		// all other keys are ignored
 	}
 }
@@ -141,8 +156,14 @@ func (h *KeyHandler) handleQuitConfirm(key string) {
 // ForceQuit terminates the current subprocess and injects ActionQuit into the
 // Actions channel so the orchestration goroutine exits cleanly. Called by the
 // OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm 'y' path, and safe
-// to call from any goroutine.
+// to call from any goroutine. Always flips mode to ModeQuitting so the footer
+// shows "Quitting..." regardless of the call path.
 func (h *KeyHandler) ForceQuit() {
+	h.mu.Lock()
+	h.mode = ModeQuitting
+	h.updateShortcutLineLocked()
+	h.mu.Unlock()
+
 	if h.cancel != nil {
 		h.cancel()
 	}
@@ -152,9 +173,9 @@ func (h *KeyHandler) ForceQuit() {
 	}
 }
 
-func (h *KeyHandler) updateShortcutLine() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+// updateShortcutLineLocked updates h.shortcutLine based on the current mode.
+// Precondition: caller must hold h.mu.
+func (h *KeyHandler) updateShortcutLineLocked() {
 	switch h.mode {
 	case ModeNormal:
 		h.shortcutLine = NormalShortcuts

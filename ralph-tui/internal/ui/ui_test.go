@@ -335,6 +335,10 @@ func TestForceQuit_CallsCancelAndInjectsActionQuit(t *testing.T) {
 	default:
 		t.Error("expected ActionQuit to be in Actions channel after ForceQuit")
 	}
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit, got %v", h.Mode())
+	}
 }
 
 // TestForceQuit_NilCancel_NoPanic verifies that ForceQuit is safe when cancel is nil.
@@ -364,34 +368,34 @@ func TestForceQuit_FullChannel_NoPanic(t *testing.T) {
 	h.ForceQuit() // must not block or panic
 }
 
-// T1 — ForceQuit does not mutate mode from ModeNormal.
-func TestForceQuit_DoesNotAlterMode_WhenNormal(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+// TestForceQuit_SetsModeQuitting_FromNormal verifies that ForceQuit flips mode to
+// ModeQuitting and updates the footer even when called from ModeNormal (the signal path).
+func TestForceQuit_SetsModeQuitting_FromNormal(t *testing.T) {
+	h, _, _ := newTestHandler(t)
 
 	h.ForceQuit()
-	<-actions // drain so the channel is empty
 
-	if h.mode != ModeNormal {
-		t.Errorf("expected ModeNormal after ForceQuit, got %v", h.mode)
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit, got %v", h.Mode())
 	}
-	if h.ShortcutLine() != NormalShortcuts {
-		t.Errorf("expected NormalShortcuts after ForceQuit, got %q", h.ShortcutLine())
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine after ForceQuit, got %q", h.ShortcutLine())
 	}
 }
 
-// T1 (cont.) — ForceQuit does not mutate mode from ModeError.
-func TestForceQuit_DoesNotAlterMode_WhenError(t *testing.T) {
-	h, _, actions := newTestHandler(t)
+// TestForceQuit_SetsModeQuitting_FromError verifies that ForceQuit flips mode to
+// ModeQuitting and updates the footer even when called from ModeError (the signal path).
+func TestForceQuit_SetsModeQuitting_FromError(t *testing.T) {
+	h, _, _ := newTestHandler(t)
 	h.SetMode(ModeError)
 
 	h.ForceQuit()
-	<-actions // drain so the channel is empty
 
-	if h.mode != ModeError {
-		t.Errorf("expected ModeError after ForceQuit, got %v", h.mode)
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit, got %v", h.Mode())
 	}
-	if h.ShortcutLine() != ErrorShortcuts {
-		t.Errorf("expected ErrorShortcuts after ForceQuit, got %q", h.ShortcutLine())
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine after ForceQuit, got %q", h.ShortcutLine())
 	}
 }
 
@@ -423,7 +427,8 @@ func TestForceQuit_Idempotent_CalledTwice(t *testing.T) {
 
 // TestShortcutLine_ConcurrentRead_NoRace simulates Glyph's render goroutine
 // reading ShortcutLine (via the mutex-protected accessor) concurrently while
-// the workflow goroutine cycles modes. Verifies Option Q is race-free.
+// the workflow goroutine cycles modes. A second goroutine concurrently reads
+// via Mode(). Verifies Option Q is race-free under go test -race.
 // Run with: go test -race ./...
 func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 	h, _, _ := newTestHandler(t)
@@ -440,14 +445,49 @@ func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 			}
 		}
 	}()
+	// Second concurrent reader via Mode accessor.
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_ = h.Mode()
+			}
+		}
+	}()
 
-	// Workflow goroutine: cycle through all modes.
-	modes := []Mode{ModeError, ModeQuitConfirm, ModeNormal}
-	for i := range 100 {
+	// Workflow goroutine: cycle through all four modes for ≥500 iterations.
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeQuitting}
+	for i := range 500 {
 		h.SetMode(modes[i%len(modes)])
 	}
 
 	close(stop)
+}
+
+// TestForceQuit_FromSignalPath_FootersShowQuitting simulates the OS signal path
+// (SIGINT/SIGTERM) calling ForceQuit from a background goroutine while the
+// handler starts in ModeNormal. The footer must show "Quitting..." after the
+// call, matching the q→y confirmation path. Race-detector-safe.
+func TestForceQuit_FromSignalPath_FootersShowQuitting(t *testing.T) {
+	h, _, actions := newTestHandler(t)
+	done := make(chan struct{})
+
+	go func() {
+		h.ForceQuit()
+		close(done)
+	}()
+
+	<-done
+	<-actions // drain ActionQuit injected by ForceQuit
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after signal-path ForceQuit, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine after signal-path ForceQuit, got %q", h.ShortcutLine())
+	}
 }
 
 // --- ShortcutLinePtr ---
