@@ -211,9 +211,9 @@ func lastNonEmptyLine(lines []string) string {
 	return ""
 }
 
-// WriteToLog writes a single line directly via sendLine and to the file logger.
-// Use this to inject separator lines between subprocess outputs without running
-// a command.
+// WriteToLog writes a single line directly via the sendLine callback, without
+// running a subprocess. Use this to inject separator lines between subprocess
+// outputs without running a command.
 func (r *Runner) WriteToLog(line string) {
 	r.mu.Lock()
 	send := r.sendLine

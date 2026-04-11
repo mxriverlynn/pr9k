@@ -1226,6 +1226,52 @@ func TestLastNonEmptyLine_TrailingEmptiesSkipped(t *testing.T) {
 	}
 }
 
+// TP-001 — WriteToLog does not write to the file logger.
+// The updated subprocess-execution.md documents that WriteToLog forwards the
+// line via sendLine only and does not call r.log.Log(). This test enforces that
+// behavioral contract so that an accidental r.log.Log() call would be caught.
+func TestWriteToLog_DoesNotWriteToFileLogger(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	r := NewRunner(log, dir)
+
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+
+	r.WriteToLog("test line")
+
+	// readLogFile calls log.Close() internally before reading.
+	logLines := readLogFile(t, log, dir)
+	for _, l := range logLines {
+		if strings.Contains(l, "test line") {
+			t.Errorf("WriteToLog must not write to the file logger; found %q in log file", l)
+		}
+	}
+
+	mu.Lock()
+	senderLines := make([]string, len(captured))
+	copy(senderLines, captured)
+	mu.Unlock()
+
+	found := false
+	for _, l := range senderLines {
+		if l == "test line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("WriteToLog must forward line to sendLine; sender received %v", senderLines)
+	}
+}
+
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
