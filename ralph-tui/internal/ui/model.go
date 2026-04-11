@@ -96,6 +96,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
 
+	case tea.MouseMsg:
+		// Forward mouse events (wheel up/down, etc.) to the log viewport.
+		// bubbles/viewport enables MouseWheelEnabled by default, so wheel
+		// press events scroll the log body by MouseWheelDelta (3) lines.
+		var lcmd tea.Cmd
+		m.log, lcmd = m.log.Update(msg)
+		cmds = append(cmds, lcmd)
+
 	case headerStepStateMsg, headerPhaseStepsMsg:
 		m.header = m.header.apply(msg)
 
