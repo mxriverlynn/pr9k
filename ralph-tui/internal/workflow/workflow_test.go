@@ -1,17 +1,42 @@
 package workflow
 
 import (
-	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
+
+// newCapturingRunner constructs a Runner with a mutex-guarded slice-append
+// sender installed via SetSender. The returned drain closure snapshots the
+// captured lines at call time. This is the helper the migration ticket will
+// standardize on.
+func newCapturingRunner(t *testing.T) (*Runner, *logger.Logger, func() []string) {
+	t.Helper()
+	r, log := newTestRunner(t)
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+	drain := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
+	return r, log, drain
+}
 
 // newTestRunner creates a Runner backed by a temp dir logger for testing.
 func newTestRunner(t *testing.T) (*Runner, *logger.Logger) {
@@ -22,27 +47,6 @@ func newTestRunner(t *testing.T) (*Runner, *logger.Logger) {
 		t.Fatalf("NewLogger: %v", err)
 	}
 	return NewRunner(log, dir), log
-}
-
-// collectLines starts a goroutine that reads all lines from r.LogReader() until
-// EOF. The returned function blocks until EOF and returns the collected lines.
-func collectLines(t *testing.T, r *Runner) func() []string {
-	t.Helper()
-	ch := make(chan string, 1000)
-	go func() {
-		defer close(ch)
-		scanner := bufio.NewScanner(r.LogReader())
-		for scanner.Scan() {
-			ch <- scanner.Text()
-		}
-	}()
-	return func() []string {
-		var lines []string
-		for line := range ch {
-			lines = append(lines, line)
-		}
-		return lines
-	}
 }
 
 // readLogFile returns all non-empty lines from the single log file written by log.
@@ -74,15 +78,13 @@ func readLogFile(t *testing.T, log *logger.Logger, dir string) []string {
 // Unit tests
 
 func TestRunStep_StdoutArrivesInPipe(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	if err := r.RunStep("test-step", []string{"echo", "hello from stdout"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	found := false
 	for _, l := range lines {
 		if l == "hello from stdout" {
@@ -96,15 +98,13 @@ func TestRunStep_StdoutArrivesInPipe(t *testing.T) {
 }
 
 func TestRunStep_StderrArrivesInPipe(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	if err := r.RunStep("test-step", []string{"sh", "-c", "echo 'hello from stderr' >&2"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	found := false
 	for _, l := range lines {
 		if l == "hello from stderr" {
@@ -118,15 +118,13 @@ func TestRunStep_StderrArrivesInPipe(t *testing.T) {
 }
 
 func TestRunStep_StdoutAndStderrBothArriveInPipe(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	if err := r.RunStep("test-step", []string{"sh", "-c", "echo 'out line'; echo 'err line' >&2"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	sorted := append([]string{}, lines...)
 	sort.Strings(sorted)
 
@@ -147,16 +145,14 @@ func TestRunStep_StdoutAndStderrBothArriveInPipe(t *testing.T) {
 func TestRunStep_AllLinesArrivedBeforeCmdWait(t *testing.T) {
 	// Produce 200 lines on stderr; verify all arrive. This implicitly tests that
 	// the WaitGroup drains both pipes before cmd.Wait() returns.
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	script := "for i in $(seq 1 200); do echo \"line $i\" >&2; done"
 	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	if len(lines) != 200 {
 		t.Errorf("expected 200 lines, got %d", len(lines))
 	}
@@ -173,14 +169,26 @@ func TestRunStep_IntegrationStdoutInPipeAndLogFile(t *testing.T) {
 	}
 
 	r := NewRunner(log, dir)
-	collect := collectLines(t, r)
+	var captureMu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
+	drain := func() []string {
+		captureMu.Lock()
+		defer captureMu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
 
 	if err := r.RunStep("integration-step", []string{"echo", "integration hello"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	pipeLines := collect()
+	pipeLines := drain()
 
 	// Verify pipe
 	foundInPipe := false
@@ -214,14 +222,26 @@ func TestRunStep_IntegrationStderrInPipe(t *testing.T) {
 	}
 
 	r := NewRunner(log, dir)
-	collect := collectLines(t, r)
+	var captureMu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
+	drain := func() []string {
+		captureMu.Lock()
+		defer captureMu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
 
 	if err := r.RunStep("integration-step", []string{"sh", "-c", "echo 'integration err' >&2"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	found := false
 	for _, l := range lines {
 		if l == "integration err" {
@@ -236,12 +256,9 @@ func TestRunStep_IntegrationStderrInPipe(t *testing.T) {
 
 // T1 — RunStep returns error on command failure
 func TestRunStep_ReturnsErrorOnNonZeroExit(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	err := r.RunStep("test-step", []string{"sh", "-c", "exit 1"})
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 
 	if err == nil {
@@ -251,12 +268,9 @@ func TestRunStep_ReturnsErrorOnNonZeroExit(t *testing.T) {
 
 // T2 — RunStep returns error for non-existent command
 func TestRunStep_ReturnsErrorForNonExistentCommand(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	err := r.RunStep("test-step", []string{"nonexistent-binary-xyz"})
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 
 	if err == nil {
@@ -269,8 +283,7 @@ func TestRunStep_ReturnsErrorForNonExistentCommand(t *testing.T) {
 
 // T3 — Multiple sequential RunStep calls share the same pipe
 func TestRunStep_MultipleSequentialCallsSharePipe(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	if err := r.RunStep("step-one", []string{"echo", "output from step one"}); err != nil {
 		t.Fatalf("RunStep step-one: %v", err)
@@ -278,9 +291,8 @@ func TestRunStep_MultipleSequentialCallsSharePipe(t *testing.T) {
 	if err := r.RunStep("step-two", []string{"echo", "output from step two"}); err != nil {
 		t.Fatalf("RunStep step-two: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	foundOne, foundTwo := false, false
@@ -309,13 +321,11 @@ func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
 	}
 
 	r := NewRunner(log, dir)
-	collect := collectLines(t, r)
+	r.SetSender(func(string) {}) // no-op sender; test only checks the log file
 
 	if err := r.RunStep("my-named-step", []string{"echo", "some output"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
-	_ = collect()
 
 	logLines := readLogFile(t, log, dir)
 	found := false
@@ -331,11 +341,8 @@ func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
 
 // T5 — Close is idempotent
 func TestClose_IsIdempotent(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 
 	// Second close should not panic and should return nil (io.PipeWriter behavior)
@@ -482,8 +489,7 @@ func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
 // TestTerminate_RunStepReturnsWithinTimeout starts a long-running subprocess,
 // requests termination, and verifies RunStep returns within 5 seconds.
 func TestTerminate_RunStepReturnsWithinTimeout(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	stepDone := make(chan error, 1)
 	go func() {
@@ -500,8 +506,6 @@ func TestTerminate_RunStepReturnsWithinTimeout(t *testing.T) {
 		t.Fatal("RunStep did not return within 5 seconds after Terminate")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
@@ -509,8 +513,7 @@ func TestTerminate_RunStepReturnsWithinTimeout(t *testing.T) {
 // termination the subprocess pipes are closed so scanner goroutines inside
 // RunStep exit naturally (evidenced by RunStep returning).
 func TestTerminate_ScannerGoroutinesExitAfterPipesClose(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	stepDone := make(chan struct{})
 	go func() {
@@ -528,16 +531,13 @@ func TestTerminate_ScannerGoroutinesExitAfterPipesClose(t *testing.T) {
 		t.Fatal("RunStep did not return after Terminate; scanner goroutines may still be blocked")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
 // TestTerminate_SIGTERMSentBeforeSIGKILL uses a subprocess that traps SIGTERM
 // and writes a marker line before exiting, confirming SIGTERM arrives first.
 func TestTerminate_SIGTERMSentBeforeSIGKILL(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	script := `trap 'echo received-sigterm; exit 0' TERM; while true; do sleep 0.05; done`
 
@@ -555,8 +555,7 @@ func TestTerminate_SIGTERMSentBeforeSIGKILL(t *testing.T) {
 		t.Fatal("RunStep did not return within 5 seconds after Terminate")
 	}
 
-	_ = r.Close()
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	found := false
@@ -574,8 +573,7 @@ func TestTerminate_SIGTERMSentBeforeSIGKILL(t *testing.T) {
 // traps and ignores SIGTERM, calls Terminate(), and verifies RunStep returns
 // within 5 seconds (SIGKILL fires after the 3-second timeout).
 func TestTerminate_SIGKILLFallbackWhenSIGTERMIgnored(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	// trap '' TERM ignores SIGTERM entirely; the process will only die via SIGKILL.
 	script := `trap '' TERM; while true; do sleep 0.1; done`
@@ -595,16 +593,13 @@ func TestTerminate_SIGKILLFallbackWhenSIGTERMIgnored(t *testing.T) {
 		t.Fatal("RunStep did not return within 5 seconds; SIGKILL fallback may be broken")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
 // TestTerminate_NoOpWhenNoSubprocessRunning verifies that calling Terminate()
 // when no subprocess is running does not panic and returns without blocking.
 func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	// Should not panic and should return immediately.
 	done := make(chan struct{})
@@ -620,8 +615,6 @@ func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
 		t.Fatal("Terminate() blocked when no subprocess was running")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
@@ -629,29 +622,23 @@ func TestTerminate_NoOpWhenNoSubprocessRunning(t *testing.T) {
 
 // Gap 6 — WasTerminated returns false on a fresh Runner before any RunStep call.
 func TestWasTerminated_FalseOnFreshRunner(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	if r.WasTerminated() {
 		t.Error("WasTerminated should be false on a freshly constructed Runner")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
 // TestWasTerminated_FalseBeforeTerminate verifies the flag is false when
 // Terminate has not been called.
 func TestWasTerminated_FalseBeforeTerminate(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	if err := r.RunStep("step", []string{"echo", "ok"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 
 	if r.WasTerminated() {
@@ -662,8 +649,7 @@ func TestWasTerminated_FalseBeforeTerminate(t *testing.T) {
 // TestWasTerminated_TrueAfterTerminate verifies the flag is true when
 // Terminate() is called while a step is running.
 func TestWasTerminated_TrueAfterTerminate(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	stepDone := make(chan error, 1)
 	go func() {
@@ -683,16 +669,13 @@ func TestWasTerminated_TrueAfterTerminate(t *testing.T) {
 		t.Error("WasTerminated should be true after Terminate was called")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
 // TestWasTerminated_ResetOnNextRunStep verifies the flag is reset when the
 // next RunStep begins.
 func TestWasTerminated_ResetOnNextRunStep(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	stepDone := make(chan error, 1)
 	go func() {
@@ -712,16 +695,13 @@ func TestWasTerminated_ResetOnNextRunStep(t *testing.T) {
 		t.Error("WasTerminated should be false after a normal step follows a terminated one")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
 // TestTerminate_AfterSubprocessAlreadyExited runs a fast command, waits for it
 // to finish, then calls Terminate() and verifies no panic and no hang.
 func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
 	if err := r.RunStep("fast-step", []string{"echo", "done"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
@@ -741,8 +721,6 @@ func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {
 		t.Fatal("Terminate() blocked after subprocess already exited")
 	}
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 }
 
@@ -750,13 +728,11 @@ func TestTerminate_AfterSubprocessAlreadyExited(t *testing.T) {
 
 // T1 — WriteToLog line appears in pipe output
 func TestWriteToLog_LineAppearsInPipe(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	r.WriteToLog("injected line")
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	found := false
@@ -772,8 +748,7 @@ func TestWriteToLog_LineAppearsInPipe(t *testing.T) {
 
 // T2 — WriteToLog interleaves correctly with RunStep output
 func TestWriteToLog_InterleaveWithRunStep(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	if err := r.RunStep("step-before", []string{"echo", "before"}); err != nil {
 		t.Fatalf("RunStep before: %v", err)
@@ -782,9 +757,8 @@ func TestWriteToLog_InterleaveWithRunStep(t *testing.T) {
 	if err := r.RunStep("step-after", []string{"echo", "after"}); err != nil {
 		t.Fatalf("RunStep after: %v", err)
 	}
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	foundBefore, foundSep, foundAfter := false, false, false
@@ -811,15 +785,13 @@ func TestWriteToLog_InterleaveWithRunStep(t *testing.T) {
 
 // T3 — WriteToLog with empty string writes a blank line (no panic, no no-op)
 func TestWriteToLog_EmptyString(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	r.WriteToLog("before")
 	r.WriteToLog("")
 	r.WriteToLog("after")
-	_ = r.Close()
 
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	// Expect three lines: "before", "", "after"
@@ -833,22 +805,477 @@ func TestWriteToLog_EmptyString(t *testing.T) {
 
 // T6 — WriteToLog after Close does not panic
 func TestWriteToLog_AfterCloseNoPanic(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, _ := newCapturingRunner(t)
 
-	_ = r.Close()
-	_ = collect()
 	_ = log.Close()
 
 	// Should not panic; write error is silently discarded.
 	r.WriteToLog("late line")
 }
 
+// SetSender tests
+
+// TestSetSender_ForwardsEveryStdoutLine verifies that the sendLine callback
+// receives every stdout line emitted by a subprocess.
+func TestSetSender_ForwardsEveryStdoutLine(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	script := "echo line1; echo line2; echo line3; echo line4; echo line5"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = log.Close()
+
+	got := drain()
+	want := []string{"line1", "line2", "line3", "line4", "line5"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestSetSender_ForwardsEveryStderrLine verifies that the sendLine callback
+// receives every stderr line emitted by a subprocess.
+func TestSetSender_ForwardsEveryStderrLine(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	script := "echo line1 >&2; echo line2 >&2; echo line3 >&2; echo line4 >&2; echo line5 >&2"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = log.Close()
+
+	got := drain()
+	want := []string{"line1", "line2", "line3", "line4", "line5"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d lines, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("line %d: want %q, got %q", i, w, got[i])
+		}
+	}
+}
+
+// TestSetSender_BurstDoesNotDropOrReorder emits 200 stderr lines in a tight
+// loop and asserts all 200 arrive in order through drain().
+func TestSetSender_BurstDoesNotDropOrReorder(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	script := "for i in $(seq 1 200); do echo \"line $i\" >&2; done"
+	if err := r.RunStep("test-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 200 {
+		t.Fatalf("expected 200 lines, got %d", len(got))
+	}
+	for i, line := range got {
+		want := fmt.Sprintf("line %d", i+1)
+		if line != want {
+			t.Errorf("line %d: want %q, got %q", i, want, line)
+		}
+	}
+}
+
+// TestSetSender_NilIsTreatedAsNoop verifies that SetSender(nil) installs a
+// no-op sender so subsequent RunStep calls don't panic. Lines no longer
+// arrive at the previously-installed capturing drain (it was replaced).
+func TestSetSender_NilIsTreatedAsNoop(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	// Replace the capturing sender with a no-op via SetSender(nil).
+	r.SetSender(nil)
+
+	// RunStep must not panic even though the capture sender was cleared.
+	if err := r.RunStep("test-step", []string{"echo", "pipe-line"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+
+	// drain() captures nothing because the sender was replaced with a no-op.
+	lines := drain()
+	_ = log.Close()
+
+	if len(lines) != 0 {
+		t.Errorf("expected no lines in old drain after SetSender(nil), got %v", lines)
+	}
+}
+
+// TestSetSender_CalledBeforeAndAfterRunStep verifies that each drain only
+// contains lines from the step that ran while its sender was installed.
+func TestSetSender_CalledBeforeAndAfterRunStep(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	var mu1 sync.Mutex
+	var cap1 []string
+	r.SetSender(func(line string) {
+		mu1.Lock()
+		cap1 = append(cap1, line)
+		mu1.Unlock()
+	})
+
+	if err := r.RunStep("step-one", []string{"echo", "step-one-output"}); err != nil {
+		t.Fatalf("RunStep step-one: %v", err)
+	}
+
+	var mu2 sync.Mutex
+	var cap2 []string
+	r.SetSender(func(line string) {
+		mu2.Lock()
+		cap2 = append(cap2, line)
+		mu2.Unlock()
+	})
+
+	if err := r.RunStep("step-two", []string{"echo", "step-two-output"}); err != nil {
+		t.Fatalf("RunStep step-two: %v", err)
+	}
+
+	_ = log.Close()
+
+	mu1.Lock()
+	drain1 := append([]string{}, cap1...)
+	mu1.Unlock()
+
+	mu2.Lock()
+	drain2 := append([]string{}, cap2...)
+	mu2.Unlock()
+
+	if len(drain1) != 1 || drain1[0] != "step-one-output" {
+		t.Errorf("first drain: expected [step-one-output], got %v", drain1)
+	}
+	if len(drain2) != 1 || drain2[0] != "step-two-output" {
+		t.Errorf("second drain: expected [step-two-output], got %v", drain2)
+	}
+}
+
+// TestWriteToLog_ForwardsToSender verifies that WriteToLog forwards the line
+// to the installed sendLine callback.
+func TestWriteToLog_ForwardsToSender(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	r.WriteToLog("hello")
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 1 || got[0] != "hello" {
+		t.Errorf("expected [\"hello\"], got %v", got)
+	}
+}
+
+// TP-001 — Default no-op sendLine works through forwardPipe (RunStep path).
+// A Runner that never calls SetSender should not panic when RunStep emits lines.
+func TestRunStep_DefaultNoOpSendLineNoPanic(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	// Never call SetSender — use the default no-op installed in NewRunner.
+	if err := r.RunStep("test-step", []string{"echo", "default-noop-line"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+
+	lines := drain()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "default-noop-line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'default-noop-line' in pipe output, got %v", lines)
+	}
+}
+
+// TP-002 — Snapshot-then-unlock pattern is race-safe under concurrent SetSender calls.
+// A long-running subprocess emits lines while a goroutine repeatedly swaps the sender.
+// The -race flag detects any violation; this test asserts no panic and RunStep returns.
+func TestRunStep_ConcurrentSetSenderNoRace(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		script := "while true; do echo line; sleep 0.01; done"
+		stepDone <- r.RunStep("chatty-step", []string{"sh", "-c", script})
+	}()
+
+	// Concurrently swap the sender 50 times while lines are streaming.
+	swapDone := make(chan struct{})
+	go func() {
+		defer close(swapDone)
+		senderA := func(string) {}
+		senderB := func(string) {}
+		for i := 0; i < 50; i++ {
+			if i%2 == 0 {
+				r.SetSender(senderA)
+			} else {
+				r.SetSender(senderB)
+			}
+		}
+	}()
+
+	<-swapDone
+	// Pragmatic shortcut: sleep gives the subprocess time to emit at least one line
+	// before we terminate; deterministic synchronization would require IPC from the shell.
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = log.Close()
+}
+
+// TP-003 — stdout and stderr forwardPipe goroutines call sendLine concurrently.
+// Both goroutines share the same mutex-guarded sender; a race here drops lines.
+func TestRunStep_ConcurrentStdoutStderrSenderNoRace(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	script := "for i in $(seq 1 50); do echo \"out-$i\"; echo \"err-$i\" >&2; done"
+	if err := r.RunStep("interleaved-step", []string{"sh", "-c", script}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+	_ = log.Close()
+
+	got := drain()
+	if len(got) != 100 {
+		t.Fatalf("expected 100 lines (50 stdout + 50 stderr), got %d: %v", len(got), got)
+	}
+
+	lineSet := make(map[string]bool, 100)
+	for _, l := range got {
+		lineSet[l] = true
+	}
+	for i := 1; i <= 50; i++ {
+		outLine := fmt.Sprintf("out-%d", i)
+		errLine := fmt.Sprintf("err-%d", i)
+		if !lineSet[outLine] {
+			t.Errorf("missing expected stdout line %q", outLine)
+		}
+		if !lineSet[errLine] {
+			t.Errorf("missing expected stderr line %q", errLine)
+		}
+	}
+}
+
+// TP-004 — sendLine calls in progress survive Terminate() without panic or hang.
+func TestRunStep_SendLineAfterTerminateNoPanic(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	stepDone := make(chan error, 1)
+	go func() {
+		script := "while true; do echo line; sleep 0.01; done"
+		stepDone <- r.RunStep("chatty-step", []string{"sh", "-c", script})
+	}()
+
+	// Pragmatic shortcut: sleep gives the subprocess time to emit at least one line
+	// before we terminate; deterministic synchronization would require IPC from the shell.
+	time.Sleep(100 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds after Terminate")
+	}
+
+	_ = log.Close()
+
+	got := drain()
+	if len(got) == 0 {
+		t.Error("expected at least one line delivered to sender before Terminate")
+	}
+}
+
+// TP-005 — WriteToLog after Close still invokes sendLine without panic.
+// The pipe write fails silently; the sender should still receive the line.
+func TestWriteToLog_AfterCloseSendLineStillInvoked(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	_ = log.Close()
+
+	// Write after close: pipe write is silently discarded, sender should still fire.
+	r.WriteToLog("late")
+
+	got := drain()
+	if len(got) != 1 || got[0] != "late" {
+		t.Errorf("expected sender to receive [\"late\"] after Close, got %v", got)
+	}
+}
+
+// TP-006 — SetSender atomic replacement is reflected immediately in WriteToLog.
+// This is a synchronous test (no subprocess) so there is no timing ambiguity.
+func TestSetSender_AtomicReplacementViaWriteToLog(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	var muA sync.Mutex
+	var capA []string
+	r.SetSender(func(line string) {
+		muA.Lock()
+		capA = append(capA, line)
+		muA.Unlock()
+	})
+	r.WriteToLog("to-a")
+
+	var muB sync.Mutex
+	var capB []string
+	r.SetSender(func(line string) {
+		muB.Lock()
+		capB = append(capB, line)
+		muB.Unlock()
+	})
+	r.WriteToLog("to-b")
+
+	_ = log.Close()
+
+	muA.Lock()
+	drainA := append([]string{}, capA...)
+	muA.Unlock()
+
+	muB.Lock()
+	drainB := append([]string{}, capB...)
+	muB.Unlock()
+
+	if len(drainA) != 1 || drainA[0] != "to-a" {
+		t.Errorf("sender A: expected [\"to-a\"], got %v", drainA)
+	}
+	if len(drainB) != 1 || drainB[0] != "to-b" {
+		t.Errorf("sender B: expected [\"to-b\"], got %v", drainB)
+	}
+}
+
+// TP-007 — Default no-op sendLine works through WriteToLog path.
+// A Runner that never calls SetSender should not panic when WriteToLog is called.
+func TestWriteToLog_DefaultNoOpSendLineNoPanic(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+
+	// Never call SetSender — use the default no-op installed in NewRunner.
+	r.WriteToLog("noop-test")
+
+	lines := drain()
+	_ = log.Close()
+
+	found := false
+	for _, l := range lines {
+		if l == "noop-test" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'noop-test' in pipe output with default no-op sender, got %v", lines)
+	}
+}
+
+// TestLastNonEmptyLine_AllEmptyReturnsEmpty verifies that an all-whitespace/blank
+// input slice returns "" (T6).
+func TestLastNonEmptyLine_AllEmptyReturnsEmpty(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+	}{
+		{"spaces", []string{" ", "  "}},
+		{"carriage returns", []string{"\r", "\r\n"}},
+		{"mixed", []string{" ", "\r", "  \r"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastNonEmptyLine(tc.input); got != "" {
+				t.Errorf("lastNonEmptyLine(%v) = %q, want %q", tc.input, got, "")
+			}
+		})
+	}
+}
+
+// TestLastNonEmptyLine_NilOrEmptySliceReturnsEmpty verifies nil and empty slice
+// both return "" (T7).
+func TestLastNonEmptyLine_NilOrEmptySliceReturnsEmpty(t *testing.T) {
+	if got := lastNonEmptyLine(nil); got != "" {
+		t.Errorf("lastNonEmptyLine(nil) = %q, want %q", got, "")
+	}
+	if got := lastNonEmptyLine([]string{}); got != "" {
+		t.Errorf("lastNonEmptyLine([]) = %q, want %q", got, "")
+	}
+}
+
+// TestLastNonEmptyLine_TrailingEmptiesSkipped verifies that trailing blank lines
+// are skipped and the correct last non-empty line is returned (T8).
+func TestLastNonEmptyLine_TrailingEmptiesSkipped(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+		want  string
+	}{
+		{"single trailing empty", []string{"first", "second", ""}, "second"},
+		{"multiple trailing empties", []string{"alpha", " ", "\r", "  "}, "alpha"},
+		{"trailing carriage return lines", []string{"result", "\r", "\r\n"}, "result"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastNonEmptyLine(tc.input); got != tc.want {
+				t.Errorf("lastNonEmptyLine(%v) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TP-001 — WriteToLog does not write to the file logger.
+// The updated subprocess-execution.md documents that WriteToLog forwards the
+// line via sendLine only and does not call r.log.Log(). This test enforces that
+// behavioral contract so that an accidental r.log.Log() call would be caught.
+func TestWriteToLog_DoesNotWriteToFileLogger(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	r := NewRunner(log, dir)
+
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+
+	r.WriteToLog("test line")
+
+	// readLogFile calls log.Close() internally before reading.
+	logLines := readLogFile(t, log, dir)
+	for _, l := range logLines {
+		if strings.Contains(l, "test line") {
+			t.Errorf("WriteToLog must not write to the file logger; found %q in log file", l)
+		}
+	}
+
+	mu.Lock()
+	senderLines := make([]string, len(captured))
+	copy(senderLines, captured)
+	mu.Unlock()
+
+	found := false
+	for _, l := range senderLines {
+		if l == "test line" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("WriteToLog must forward line to sendLine; sender received %v", senderLines)
+	}
+}
+
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
-	r, log := newTestRunner(t)
-	collect := collectLines(t, r)
+	r, log, drain := newCapturingRunner(t)
 
 	firstDone := make(chan error, 1)
 	go func() {
@@ -876,8 +1303,7 @@ func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
 		t.Fatal("next step did not return; orchestration is stuck after Terminate")
 	}
 
-	_ = r.Close()
-	lines := collect()
+	lines := drain()
 	_ = log.Close()
 
 	found := false

@@ -6,9 +6,9 @@ Ralph-tui always shuts down through the same path — whether you press `q`, hit
 
 | Entry point | Where it fires | What it does |
 |-------------|----------------|--------------|
-| `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...`, calls `ForceQuit` |
-| `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Signal handler goroutine in `main.go` | Calls `ForceQuit`, tears down the TUI, exits 1 |
-| Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; `ExitRawMode` + `os.Exit(0)` |
+| `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...` (white), calls `ForceQuit` |
+| `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Signal handler goroutine in `main.go` | Calls `ForceQuit`, waits up to 2s, then `program.Kill()` |
+| Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; calls `program.Quit()` |
 
 The two interactive paths go through `KeyHandler.ForceQuit()` to unify subprocess termination and `ActionQuit` injection — you get the same shutdown semantics whether you press `y` or hit Ctrl+C. The normal-completion path doesn't need `ForceQuit` because there's nothing to cancel.
 
@@ -20,11 +20,11 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
 [You press q]
        │
        ▼
-┌────────────────────────────┐
-│ Mode: QuitConfirm          │
-│ Footer: Quit ralph?        │
-│   (y/n, esc to cancel)     │
-└──────┬──────────┬──────────┘
+┌─────────────────────────────────────┐
+│ Mode: QuitConfirm                   │
+│ Footer: Quit Power-Ralph.9000?      │
+│   (y/n, esc to cancel)              │
+└──────┬──────────┬───────────────────┘
        │          │
     y  │          │  n or Esc
        ▼          ▼
@@ -37,7 +37,7 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
 
 ### Cancelling the quit
 
-Pressing `n` or `Esc` while the footer shows `Quit ralph? (y/n, esc to cancel)` restores your previous mode — Normal if you came from a running step, Error if you came from a failure pause — and puts the footer back to its previous shortcuts. No subprocess is touched, no action is injected.
+Pressing `n` or `Esc` while the footer shows `Quit Power-Ralph.9000? (y/n, esc to cancel)` restores your previous mode — Normal if you came from a running step, Error if you came from a failure pause — and puts the footer back to its previous shortcuts. No subprocess is touched, no action is injected.
 
 This is non-destructive: if you were paused in error mode deciding whether to retry, cancelling a quit drops you right back into the same `c / r / q` decision with the same failed step still marked `[✗]`.
 
@@ -57,11 +57,11 @@ The workflow goroutine picks up `ActionQuit` at its next drain point (before eac
 
 The OS signal handler in `main.go` listens for SIGINT and SIGTERM on a buffered channel. When a signal arrives, the handler goroutine:
 
-1. Closes a `signaled` one-shot channel (checked by the workflow goroutine on exit)
+1. Closes a `signaled` one-shot channel (checked after `program.Run()` returns to select the exit code)
 2. Calls `keyHandler.ForceQuit()` — same call as the `y` path, so the subprocess gets terminated and `ActionQuit` gets injected
 3. Waits up to 2 seconds for the workflow goroutine to unwind on its own
-4. Calls `app.Screen().ExitRawMode()` to restore the terminal (alt screen, cursor, termios)
-5. Calls `os.Exit(1)` directly
+4. If the workflow goroutine hasn't finished, calls `program.Kill()` to force the Bubble Tea program to stop
+5. After `program.Run()` returns in main, the exit code is selected: `os.Exit(1)` because `signaled` is closed
 
 Because the signal handler calls `ForceQuit`, **the signal path and the `q`→`y` path produce identical behavior from the workflow's perspective.** The only difference is the exit code: SIGINT/SIGTERM exits 1, a normal `q`→`y` shutdown exits 0.
 
@@ -69,9 +69,7 @@ The signal handler also runs whether or not the TUI is currently in Normal, Erro
 
 ## The normal-completion path
 
-When `Run` finishes all iterations and finalize steps, it writes the completion summary to the log body and returns on its own — no keypress required. The workflow goroutine in `main.go` then restores the terminal with `app.Screen().ExitRawMode()` and calls `os.Exit(0)` directly.
-
-Exiting from the workflow goroutine rather than letting `app.Run` unwind naturally sidesteps a macOS raw-tty quirk: closing stdin from another goroutine doesn't reliably unblock Glyph's in-progress `ReadKey`, which used to leave the process hanging until the user pressed one last key.
+When `Run` finishes all iterations and finalize steps, it writes the completion summary to the log body and returns on its own — no keypress required. The workflow goroutine in `main.go` then calls `signal.Stop`, flushes the log, closes the drain channel, and calls `program.Quit()`. This causes `program.Run()` to return cleanly in main, which then selects the exit code and calls `os.Exit(0)`.
 
 ## Exit codes
 
@@ -82,7 +80,7 @@ Exiting from the workflow goroutine rather than letting `app.Run` unwind natural
 | SIGINT / SIGTERM | `1` |
 | `buildStep` error at startup (no valid config) | `1` |
 | Validator errors before the TUI starts | `1` |
-| Glyph returned an error from `app.Run` | `1` |
+| Bubble Tea `program.Run()` returned an unexpected error | `1` |
 
 If you're scripting ralph-tui, only `0` means "ran to completion". Any non-zero means "something interrupted us or broke before we started". The workflow goroutine checks the `signaled` channel before deciding between `os.Exit(0)` and `os.Exit(1)` so a signal that arrives while the workflow is already finishing still produces the correct exit code.
 
@@ -106,7 +104,7 @@ Some interactions look like they might quit but don't:
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit ralph?`, `Quitting...`, etc.)
+- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.)
 - [Recovering from Step Failures](recovering-from-step-failures.md) — The `q` entry point from error mode
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `ModeQuitConfirm`, `ModeQuitting`, `ForceQuit`
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT/SIGTERM handler, exit code selection, cleanup ordering

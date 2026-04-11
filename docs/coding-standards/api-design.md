@@ -120,6 +120,54 @@ type StepExecutor interface {
 
 When reviewing a PR that removes a method from concrete callers: check whether the method should also be removed from the interface.
 
+## Name private helpers with a `Locked` suffix when caller must hold the mutex
+
+When an unexported helper method requires the caller to already hold a mutex, append `Locked` to its name. The suffix communicates the precondition at the declaration site, so reviewers and future callers can immediately see the contract without reading the body.
+
+```go
+// Good — name signals the precondition; callers know they must hold h.mu
+func (h *KeyHandler) updateShortcutLineLocked() {
+    // h.mu must be held by caller
+    switch h.mode {
+    case ModeNormal:
+        h.shortcutLine = NormalShortcuts
+    // ...
+    }
+}
+
+// Callers are explicit about the requirement:
+h.mu.Lock()
+h.mode = ModeNormal
+h.updateShortcutLineLocked()
+h.mu.Unlock()
+
+// Bad — nothing at the call site signals the mutex requirement
+func (h *KeyHandler) updateShortcutLine() { ... }
+```
+
+Apply this naming convention to any unexported method that documents "caller holds X lock" in its comment or body.
+
+## Install a panicking sentinel for required callbacks
+
+When a type requires a callback (e.g., `sendLine`) to be installed via a setter before certain methods are called, initialize the field to a panicking closure at construction time — not `nil`. This fails loudly with a clear message instead of silently no-oping or nil-panicking with no context.
+
+```go
+func NewRunner(...) *Runner {
+    r := &Runner{
+        // Panicking sentinel: callers must call SetSender before RunStep.
+        // NewRunner provides this default so a missing SetSender fails loudly
+        // in tests and integration rather than silently discarding output.
+        sendLine: func(string) {
+            panic("workflow: SetSender must be called before RunStep")
+        },
+    }
+    // ...
+    return r
+}
+```
+
+This differs from precondition validation (which checks user input and returns an error). Use panicking sentinels for programming errors — misconfigured callers that omit required setup — where a panic is appropriate because the problem is always a code bug, not a runtime condition.
+
 ## Document platform-scoped assumptions
 
 If a function uses platform-specific behavior (e.g., `/` as the path separator to detect script paths vs. bare commands), document the assumption at the call site so future maintainers know it is intentional, not an oversight.
@@ -137,7 +185,8 @@ if strings.Contains(command[0], "/") {
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup; RunHeader phase-specific render methods as the canonical phase-splitting example
 - [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState; SetPhaseSteps panic-on-overflow as the appropriate choice for programming errors
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand; panicking sentinel in NewRunner for missing SetSender
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `updateShortcutLineLocked` as the canonical `Locked`-suffix example
 - [Error Handling](error-handling.md) — Complementary standards for error message formatting
 - [Concurrency](concurrency.md) — Complementary standards for mutex-protected getters (unexported fields)
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns

@@ -233,11 +233,13 @@ Signs that code falls into this category:
 - Extracting the wiring into a function would exist solely to make it testable, not because it is reused.
 
 ```go
-// Example: assembling a Glyph layout from tested components.
+// Example: assembling a Bubble Tea program from tested components.
 // StatusHeader, KeyHandler, Runner, and workflow.Run all have thorough tests.
-// The wiring itself — building the VBox tree, calling app.Run — is framework usage,
-// not application logic. Adding a test here would test Glyph, not ralph-tui.
-app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
+// The wiring itself — constructing the Model, calling program.Run — is framework usage,
+// not application logic. Adding a test here would test Bubble Tea, not ralph-tui.
+model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+program := tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())
+_, err = program.Run()
 ```
 
 This standard applies to `func main()` and to any analogous one-time assembly function that exclusively assembles tested components without adding new behavior.

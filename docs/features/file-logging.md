@@ -165,7 +165,7 @@ func (l *Logger) Close() error {
 
 ## Additional Information
 
-- [Architecture Overview](../architecture.md) — Data flow showing logger alongside io.Pipe
+- [Architecture Overview](../architecture.md) — Data flow showing logger alongside the `sendLine` streaming path
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How scanner goroutines write to the logger
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir determines the log file location
 - [Workflow Orchestration](workflow-orchestration.md) — Where log context (iteration number) is set during the run loop

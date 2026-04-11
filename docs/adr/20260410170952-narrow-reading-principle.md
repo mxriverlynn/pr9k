@@ -31,7 +31,7 @@ Ralph-tui **facilitates** the workflow; it does not **define** it. The specific 
 - The `-n` / `--iterations` CLI flag and loop bound.
 - The generic `breakLoopIfEmpty` rule (the only workflow-termination rule ralph-tui understands).
 - Generic `{{VAR}}` template substitution inside command argv and prompt file contents.
-- Glyph app lifecycle.
+- TUI app lifecycle.
 - Status header chrome (iteration counter, step checkboxes, shortcut bar).
 - Validation of `ralph-steps.json` against the schema.
 

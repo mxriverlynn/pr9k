@@ -50,7 +50,7 @@ To check which version you are running without launching the workflow:
 
 ```bash
 /path/to/pr9k/bin/ralph-tui --version
-# ralph-tui version 0.1.0
+# ralph-tui version 0.2.1
 ```
 
 `-v` is accepted as a short alias. See [Versioning](../coding-standards/versioning.md) for the repo's semver rules.
@@ -67,12 +67,13 @@ The project directory is where ralph-tui looks for `ralph-steps.json`, `prompts/
 
 ## What the TUI shows on first run
 
-The TUI has four regions stacked top to bottom, all inside a rounded border titled "Ralph":
+The TUI is a hand-built rounded frame with three inner regions. The current run state (phase, iteration number, issue ID, active step) is embedded directly into the top border as the window title, which renders with the app name `Power-Ralph.9000` in green and the iteration detail after the ` — ` in white (e.g., `╭── Power-Ralph.9000 — Iteration 1/3 — Issue #42 ──...──╮`):
 
-1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) at the very top of the view
-2. **Iteration line** — directly below the grid: `"Initializing 1/2: Splash"`, `"Iteration 1/3 — Issue #42"`, or `"Finalizing 1/3: Deferred work"` depending on the current phase
-3. **Log panel** — streams subprocess output in real time, interleaved with phase banners, per-step banners, and capture logs
-4. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `ralph-tui v<semver>` label pinned to the bottom-right
+1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) immediately below the top border
+2. **Log panel** — streams subprocess output in real time (rendered in white), interleaved with phase banners, per-step banners, and capture logs; supports keyboard arrow/vim keys and mouse-wheel/trackpad scrolling (to drag-select text, hold Option on macOS or Shift on Linux/Windows — see [Reading the TUI](reading-the-tui.md#selecting-log-text-to-copy))
+3. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `ralph-tui v<semver>` label pinned to the bottom-right. Mapped key tokens and the version label render in white; descriptions render in light gray
+
+The two horizontal rules separating these regions use T-junction glyphs (`├`, `┤`) so they visually connect to the `│` side borders.
 
 Every started step writes a banner into the log panel before its subprocess output:
 
@@ -105,7 +106,6 @@ For a detailed walk-through of the TUI layout and what each region means, see [R
 | Error (step failed) | `q` | Enter quit-confirm |
 | QuitConfirm | `y` | Confirm quit (footer flips to `Quitting...`) |
 | QuitConfirm | `n` or `Esc` | Cancel quit, return to previous mode |
-| Done (workflow complete) | any key | Exit |
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) and [Quitting Gracefully](quitting-gracefully.md) for the full interaction model.
 

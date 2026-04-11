@@ -2,9 +2,11 @@ package workflow
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -740,8 +742,8 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	if len(resolved.Command) < 7 || resolved.Command[0] != "claude" {
 		t.Fatalf("unexpected command: %v", resolved.Command)
 	}
-	if resolved.Command[1] != "--permission-mode" || resolved.Command[2] != "acceptEdits" {
-		t.Errorf("expected --permission-mode acceptEdits, got %v %v", resolved.Command[1], resolved.Command[2])
+	if resolved.Command[1] != "--permission-mode" || resolved.Command[2] != "bypassPermissions" {
+		t.Errorf("expected --permission-mode bypassPermissions, got %v %v", resolved.Command[1], resolved.Command[2])
 	}
 	if resolved.Command[3] != "--model" || resolved.Command[4] != "claude-opus-4-6" {
 		t.Errorf("expected --model claude-opus-4-6, got %v %v", resolved.Command[3], resolved.Command[4])
@@ -1287,6 +1289,53 @@ func TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine(t *testing.T) {
 	}
 }
 
+// TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth verifies that when LogWidth
+// is 0 (or negative), Run uses ui.DefaultTerminalWidth for phase banner underlines.
+func TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth(t *testing.T) {
+	for _, logWidth := range []int{0, -1} {
+		t.Run(fmt.Sprintf("LogWidth=%d", logWidth), func(t *testing.T) {
+			executor := &fakeExecutor{}
+			header := &fakeRunHeader{}
+			kh := newTestKeyHandler()
+
+			cfg := RunConfig{
+				ProjectDir: t.TempDir(),
+				Iterations: 1,
+				Steps:      nonClaudeSteps("step1"),
+				LogWidth:   logWidth,
+			}
+
+			Run(executor, header, kh, cfg)
+
+			// Find the phase banner underline: a line composed entirely of '═' runes.
+			foundUnderline := false
+			for _, line := range executor.logLines {
+				if len(line) == 0 {
+					continue
+				}
+				allDouble := true
+				for _, r := range line {
+					if r != '═' {
+						allDouble = false
+						break
+					}
+				}
+				if allDouble {
+					got := len([]rune(line))
+					if got != ui.DefaultTerminalWidth {
+						t.Errorf("LogWidth=%d: phase banner underline rune count = %d, want %d (DefaultTerminalWidth)", logWidth, got, ui.DefaultTerminalWidth)
+					}
+					foundUnderline = true
+					break
+				}
+			}
+			if !foundUnderline {
+				t.Errorf("LogWidth=%d: no '═' phase banner underline found in log lines: %v", logWidth, executor.logLines)
+			}
+		})
+	}
+}
+
 // TestRun_CaptureAsNonIssueIDProducesEmptyIssueIDInHeader verifies that when a
 // captureAs step binds a variable other than "ISSUE_ID", the re-render of the
 // iteration header still uses an empty issueID (because the lookup key is
@@ -1453,7 +1502,6 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, workingDir)
-	defer func() { _ = runner.Close() }()
 
 	out, err := runner.CaptureOutput([]string{"sh", "-c", "pwd"})
 	if err != nil {
@@ -1469,6 +1517,84 @@ func TestCaptureOutput_UsesWorkingDir(t *testing.T) {
 	}
 }
 
+// TestCaptureOutput_ReturnsTrimmedStdout verifies CaptureOutput returns trimmed
+// stdout on success (T1).
+func TestCaptureOutput_ReturnsTrimmedStdout(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+
+	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo '  hello  '"})
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "hello" {
+		t.Errorf("expected trimmed output %q, got %q", "hello", out)
+	}
+}
+
+// TestCaptureOutput_ReturnsErrorForFailingCommand verifies CaptureOutput returns
+// a non-nil error when the command exits with a non-zero status (T2).
+func TestCaptureOutput_ReturnsErrorForFailingCommand(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+
+	_, err = runner.CaptureOutput([]string{"sh", "-c", "exit 1"})
+	if err == nil {
+		t.Error("expected non-nil error for failing command, got nil")
+	}
+}
+
+// TestCaptureOutput_ReturnsErrorForNonExistentCommand verifies CaptureOutput
+// returns a non-nil error when the command does not exist (T3).
+func TestCaptureOutput_ReturnsErrorForNonExistentCommand(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+
+	_, err = runner.CaptureOutput([]string{"__no_such_binary_exists__"})
+	if err == nil {
+		t.Error("expected non-nil error for non-existent command, got nil")
+	}
+}
+
+// TestCaptureOutput_DiscardsStderr verifies CaptureOutput returns only stdout
+// and ignores stderr output (T4).
+func TestCaptureOutput_DiscardsStderr(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, dir)
+
+	out, err := runner.CaptureOutput([]string{"sh", "-c", "echo stdout; echo stderr >&2"})
+	if err != nil {
+		t.Fatalf("CaptureOutput: %v", err)
+	}
+	if out != "stdout" {
+		t.Errorf("expected only stdout %q, got %q", "stdout", out)
+	}
+}
+
 // TestLastCapture_LastNonEmptyStdoutLine verifies Runner.LastCapture returns
 // the last non-empty stdout line after a successful RunStep.
 func TestLastCapture_LastNonEmptyStdoutLine(t *testing.T) {
@@ -1480,14 +1606,18 @@ func TestLastCapture_LastNonEmptyStdoutLine(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	// Print three lines; last non-empty should be "third".
 	if err := runner.RunStep("test", []string{"sh", "-c", "printf 'first\nsecond\nthird\n'"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "third" {
 		t.Errorf("LastCapture: got %q, want %q", got, "third")
@@ -1504,11 +1634,15 @@ func TestLastCapture_EmptyOnFailure(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	_ = runner.RunStep("test", []string{"sh", "-c", "echo something; exit 1"})
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "" {
 		t.Errorf("LastCapture after failure: got %q, want empty string", got)
@@ -1526,14 +1660,18 @@ func TestLastCapture_StripsTrailingCarriageReturn(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	// Print a line with a trailing \r (CRLF-style, common in some scripts).
 	if err := runner.RunStep("test", []string{"printf", "hello\r\n"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "hello" {
 		t.Errorf("LastCapture: got %q, want %q", got, "hello")
@@ -1552,13 +1690,17 @@ func TestLastCapture_StderrNotCaptured(t *testing.T) {
 	defer func() { _ = log.Close() }()
 
 	runner := NewRunner(log, logDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
 
 	if err := runner.RunStep("test", []string{"sh", "-c", "echo stderr-only >&2"}); err != nil {
 		t.Fatalf("RunStep: %v", err)
 	}
-	_ = runner.Close()
-	_ = collect()
 
 	if got := runner.LastCapture(); got != "" {
 		t.Errorf("LastCapture: got %q, want empty string (stderr should not be captured)", got)
@@ -1588,7 +1730,20 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	}
 
 	runner := NewRunner(log, workingDir)
-	collect := collectLines(t, runner)
+	var captureMu sync.Mutex
+	var captured []string
+	runner.SetSender(func(line string) {
+		captureMu.Lock()
+		captured = append(captured, line)
+		captureMu.Unlock()
+	})
+	drain := func() []string {
+		captureMu.Lock()
+		defer captureMu.Unlock()
+		out := make([]string, len(captured))
+		copy(out, captured)
+		return out
+	}
 
 	// Actions channel for KeyHandler.
 	actions := make(chan ui.StepAction, 10)
@@ -1622,7 +1777,7 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	header := &fakeRunHeader{}
 	Run(runner, header, kh, cfg)
 
-	collected := collect()
+	collected := drain()
 	_ = log.Close()
 
 	checks := []struct {

@@ -18,8 +18,10 @@ A four-mode state machine that routes keypresses and communicates user decisions
 - When the workflow finishes normally, `Run` returns on its own (no "press any key to exit" state); the workflow goroutine in `main.go` restores the terminal and exits the process directly
 
 Key files:
-- `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode dispatch, ForceQuit
-- `ralph-tui/internal/ui/ui_test.go` — Unit tests for all modes and transitions
+- `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode state, ForceQuit, ShortcutLine
+- `ralph-tui/internal/ui/keys.go` — keysModel Bubble Tea sub-model, Update dispatch to mode handlers
+- `ralph-tui/internal/ui/ui_test.go` — Unit tests for KeyHandler modes and transitions
+- `ralph-tui/internal/ui/keys_test.go` — Unit tests for keysModel.Update routing
 
 ## Architecture
 
@@ -90,8 +92,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode dispatch, ForceQuit, ShortcutLine, ShortcutLinePtr |
-| `ralph-tui/internal/ui/ui_test.go` | Tests for all modes, transitions, and ForceQuit |
+| `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode state, ForceQuit, ShortcutLine |
+| `ralph-tui/internal/ui/keys.go` | keysModel Bubble Tea sub-model; Update dispatches tea.KeyMsg to mode handlers |
+| `ralph-tui/internal/ui/ui_test.go` | Tests for KeyHandler modes, transitions, and ForceQuit |
+| `ralph-tui/internal/ui/keys_test.go` | Tests for keysModel.Update routing (normal, error, quit-confirm, quitting) |
 
 ## Core Types
 
@@ -116,8 +120,8 @@ type KeyHandler struct {
     prevMode     Mode           // restored when quit confirm is cancelled
     cancel       func()         // terminates the current subprocess
     Actions      chan StepAction // communicates decisions to orchestration
-    mu           sync.Mutex     // protects shortcutLine
-    shortcutLine string         // protected by mu; use ShortcutLine() or ShortcutLinePtr() to access
+    mu           sync.Mutex     // protects mode, prevMode, and shortcutLine
+    shortcutLine string         // protected by mu; use ShortcutLine() to access
 }
 ```
 
@@ -125,35 +129,45 @@ type KeyHandler struct {
 
 | Constant | Value | Description |
 |----------|-------|-------------|
+| `AppTitle` | `"Power-Ralph.9000"` | Canonical display name; single source of truth for the user-facing app name in titles and prompts |
 | `NormalShortcuts` | `"↑/k up  ↓/j down  n next step  q quit"` | Shortcut bar in normal mode |
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
-| `QuitConfirmPrompt` | `"Quit ralph? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
+| `QuitConfirmPrompt` | `"Quit " + AppTitle + "? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
 
 ## Implementation Details
 
 ### Mode Dispatch
 
-`Handle` routes keypresses to the appropriate mode handler:
+`keysModel.Update` (in `keys.go`) receives `tea.KeyMsg` events from the Bubble Tea event loop and routes them to the appropriate mode handler:
 
 ```go
-func (h *KeyHandler) Handle(key string) {
-    switch h.mode {
-    case ModeNormal:      h.handleNormal(key)
-    case ModeError:       h.handleError(key)
-    case ModeQuitConfirm: h.handleQuitConfirm(key)
+func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
+    key, ok := msg.(tea.KeyMsg)
+    if !ok {
+        return m, nil
     }
-    // ModeQuitting is a terminal state — no handler; keypresses are ignored
-    // while the shutdown unwinds.
+    switch m.handler.Mode() {
+    case ModeNormal:      return m.handleNormal(key)
+    case ModeError:       return m.handleError(key)
+    case ModeQuitConfirm: return m.handleQuitConfirm(key)
+    case ModeQuitting:
+        // All keys silently ignored so a user mashing keys during shutdown
+        // can't inject a second ActionQuit or retrigger the cancel hook.
+        return m, nil
+    }
+    return m, nil
 }
 ```
 
-`main.go` registers these keys with Glyph: `"n"`, `"q"`, `"y"`, `"c"`, `"r"`, and `"<Escape>"`. Each registered key forwards to `keyHandler.Handle(key)`.
+The Bubble Tea program delivers all keypresses as `tea.KeyMsg` to `Model.Update`, which routes them to `keysModel.Update`. No separate key registration is required.
+
+> **Implementation note:** Mode transitions in `handleNormal`, `handleError`, and `handleQuitConfirm` access `KeyHandler`'s unexported fields directly (`handler.mu`, `handler.mode`, `handler.prevMode`, `handler.updateShortcutLineLocked()`). Both types live in the same `ui` package, so this is valid Go — `keysModel` is an intentional package-internal collaborator of `KeyHandler`, not a general caller.
 
 ### Normal Mode
 
 - `n` — calls the `cancel` function to terminate the current subprocess (step skip)
-- `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm`
+- `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm` (direct field write under `handler.mu`)
 - All other keys are ignored
 
 ### Error Mode
@@ -175,11 +189,11 @@ The flip to `ModeQuitting` happens **before** `ForceQuit` is called so the foote
 
 ### Quitting Mode
 
-Entered only by the QuitConfirm `y` path (never directly from Normal or Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
+Entered by the QuitConfirm `y` path or by `ForceQuit()` directly (which is called by the OS signal handler from any mode, including Normal and Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
 
 ### Normal Completion (no mode transition)
 
-When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `app.Screen().ExitRawMode()` and `os.Exit(0)` directly. Exiting from the workflow goroutine rather than through `app.Run` avoids a macOS raw-tty quirk where closing stdin from another goroutine doesn't reliably unblock Glyph's in-progress `ReadKey`.
+When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `program.Quit()` after `workflow.Run` returns, which causes `program.Run()` to return cleanly in `main`.
 
 ### ForceQuit
 
@@ -187,6 +201,11 @@ When the workflow finishes all iterations and finalize steps successfully, `Run`
 
 ```go
 func (h *KeyHandler) ForceQuit() {
+    h.mu.Lock()
+    h.mode = ModeQuitting
+    h.updateShortcutLineLocked()
+    h.mu.Unlock()
+
     if h.cancel != nil {
         h.cancel()
     }
@@ -197,11 +216,23 @@ func (h *KeyHandler) ForceQuit() {
 }
 ```
 
+### Mode Accessor
+
+**`Mode()`** is a mutex-protected getter that returns the current dispatch mode, safe to call from any goroutine:
+
+```go
+func (h *KeyHandler) Mode() Mode {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.mode
+}
+```
+
+Used by tests to assert mode transitions without accessing private fields, and may be used by any goroutine that needs to inspect handler state (e.g., to gate UI rendering decisions).
+
 ### ShortcutLine Thread Safety
 
-Two accessors expose the shortcut bar text for different callers:
-
-**`ShortcutLine()`** is a mutex-protected getter, safe to call from any goroutine (e.g., the orchestration goroutine, the signal handler):
+**`ShortcutLine()`** is a mutex-protected getter, safe to call from any goroutine (e.g., the signal handler, test goroutines, and `Model.View()` on the Bubble Tea Update goroutine):
 
 ```go
 func (h *KeyHandler) ShortcutLine() string {
@@ -211,23 +242,23 @@ func (h *KeyHandler) ShortcutLine() string {
 }
 ```
 
-**`ShortcutLinePtr()`** returns a `*string` pointing to the underlying field for Glyph's `Text(&...)` pointer-binding API:
+The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes. `Model.View()` calls `ShortcutLine()` directly to read the current text for the footer.
+
+### Dual-Routing of tea.KeyMsg
+
+When a `tea.KeyMsg` arrives, `Model.Update` routes it to **both** the key handler and the viewport:
 
 ```go
-func (h *KeyHandler) ShortcutLinePtr() *string {
-    return &h.shortcutLine
-}
+case tea.KeyMsg:
+    m.keys, kcmd = m.keys.Update(msg)   // mode dispatch (n, q, c, r, y, Escape)
+    m.log, lcmd = m.log.Update(msg)     // viewport scroll (↑/k, ↓/j)
 ```
 
-`ShortcutLinePtr()` is intended exclusively for Glyph's single-threaded event loop, which reads the pointer synchronously between write windows. It bypasses the mutex and must not be called from concurrent goroutines.
-
-The shortcut line is updated internally by `updateShortcutLine()` whenever the mode changes.
-
-> **Why Option Q?** Option P (exporting `ShortcutLine` as a field, dropping the mutex) was attempted first but `go test -race` detected a genuine race between the `Orchestrate` goroutine writing via `SetMode` and the test goroutine reading the field concurrently. Option Q retains the private field and mutex for `ShortcutLine()`, and adds `ShortcutLinePtr()` for Glyph's pointer-binding path.
+This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the viewport consumes them while the key handler ignores them. In Error and QuitConfirm modes, the key handler consumes the action keys but scroll keys still pass through to the viewport.
 
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from both Normal and Error), `y` flipping to `ModeQuitting` with `QuittingLine` footer, `SetMode(ModeQuitting)` updating the shortcut bar, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, does-not-alter-mode from Normal or Error), ShortcutLine thread safety, ShortcutLinePtr (non-nil return, value tracking, stable address, agreement with ShortcutLine)
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from both Normal and Error), `y` flipping to `ModeQuitting` with `QuittingLine` footer, `SetMode(ModeQuitting)` updating the shortcut bar, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`), ShortcutLine thread safety
 
 ## Additional Information
 

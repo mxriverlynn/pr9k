@@ -121,7 +121,7 @@ scripts/get_next_issue "$GITHUB_USER"
 Or invoke `claude` with the same command the orchestrator would construct:
 
 ```bash
-claude --permission-mode acceptEdits --model sonnet -p "$(cat prompts/feature-work.md | sed 's/{{ISSUE_ID}}/42/g')"
+claude --permission-mode bypassPermissions --model sonnet -p "$(cat prompts/feature-work.md | sed 's/{{ISSUE_ID}}/42/g')"
 ```
 
 ## Handoff files

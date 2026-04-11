@@ -31,7 +31,7 @@ Each step object has the following fields:
 A Claude step invokes the `claude` CLI with a prompt file. At runtime, the orchestrator builds the full command:
 
 ```
-claude --permission-mode acceptEdits --model <model> -p <prompt-content>
+claude --permission-mode bypassPermissions --model <model> -p <prompt-content>
 ```
 
 The prompt content is read from `prompts/<promptFile>` and all `{{VAR_NAME}}` tokens are substituted at runtime. Use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other built-in variables to inject iteration context (see [Variable Output & Injection](variable-output-and-injection.md) for the full variable list).

@@ -156,8 +156,8 @@ const (
 
 After all iterations complete, the orchestration goroutine runs three finalization steps (not part of the per-iteration step list):
 
-1. **Deferred work** — `claude --permission-mode acceptEdits --model sonnet -p <deferred-work.md>` (no ISSUENUMBER/STARTINGSHA prepended)
-2. **Lessons learned** — `claude --permission-mode acceptEdits --model sonnet -p <lessons-learned.md>` (no ISSUENUMBER/STARTINGSHA prepended)
+1. **Deferred work** — `claude --permission-mode bypassPermissions --model sonnet -p <deferred-work.md>` (no ISSUENUMBER/STARTINGSHA prepended)
+2. **Lessons learned** — `claude --permission-mode bypassPermissions --model sonnet -p <lessons-learned.md>` (no ISSUENUMBER/STARTINGSHA prepended)
 3. **Final git push** — `git push`
 
 During finalization, the status header switches to show `Finalizing 1/3`, `2/3`, `3/3` instead of an iteration number. The step tracker row is replaced with the three finalization step names.
@@ -200,7 +200,7 @@ All subprocesses (`claude`, `git push`, scripts) must run with `cmd.Dir` set to 
 var logMu sync.Mutex  // protects writes to logWriter
 
 ctx, cancel := context.WithCancel(context.Background())
-cmd := exec.CommandContext(ctx, "claude", "--permission-mode", "acceptEdits", "--verbose", "--model", model, "-p", prompt)
+cmd := exec.CommandContext(ctx, "claude", "--permission-mode", "bypassPermissions", "--verbose", "--model", model, "-p", prompt)
 cmd.Dir = workingDir  // must run in the target repo, not in ralph-tui/
 
 // Capture both stdout and stderr via separate pipes, merged by two goroutines

@@ -36,9 +36,9 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
-## ralph-tui (Go/Glyph)
+## ralph-tui (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `ralph-tui/`, using [Glyph](https://useglyph.sh/) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+The Go TUI orchestrator lives in `ralph-tui/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
 
 ### Build and run
 
@@ -61,10 +61,10 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
 - [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`, `--version`/`-v`) and project directory resolution from the executable path
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
-- [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming, graceful SIGTERM/SIGKILL termination, and output capture
+- [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming and sendLine callback (SetSender), graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
 - [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
-- [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Five-mode keyboard state machine (Normal/Error/QuitConfirm/Quitting/Done) and channel-based action dispatch
+- [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Four-mode keyboard state machine (Normal/Error/QuitConfirm/Quitting) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
 - [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with buffered I/O
 - [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
@@ -74,6 +74,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 
 - [`docs/adr/20260409135303-cobra-cli-framework.md`](docs/adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing (POSIX flags, subcommands). Apply when modifying CLI argument handling or adding new commands.
 - [`docs/adr/20260410170952-narrow-reading-principle.md`](docs/adr/20260410170952-narrow-reading-principle.md) — Narrow-reading principle: ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code. Apply when evaluating any PR that adds Ralph-specific knowledge to Go code.
+- [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](docs/adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate the TUI from Glyph to Bubble Tea + Lip Gloss + bubbles/viewport for dynamic window title, mouse-wheel scrolling, and long-term ecosystem stability. Apply when modifying any TUI rendering, keyboard dispatch, or subprocess-streaming code.
 
 ## Coding Standards
 

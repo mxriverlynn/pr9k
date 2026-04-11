@@ -23,14 +23,14 @@ type Logger struct {
 // under projectDir. The logs/ directory is created if it does not exist.
 func NewLogger(projectDir string) (*Logger, error) {
 	logsDir := filepath.Join(projectDir, "logs")
-	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
 	}
 
 	filename := time.Now().Format("ralph-2006-01-02-150405.log")
 	logPath := filepath.Join(logsDir, filename)
 
-	f, err := os.Create(logPath)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("logger: could not create log file: %w", err)
 	}

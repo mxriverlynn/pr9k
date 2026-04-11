@@ -36,20 +36,24 @@ cmd.Wait()
 
 ## Protect all shared io.Writer writes with sync.Mutex
 
-When multiple goroutines write to a shared `io.PipeWriter` (or any `io.Writer`), serialize every write under a mutex. Interleaved writes produce garbled output.
+When multiple goroutines write to a shared `io.Writer`, serialize every write under a mutex. Interleaved writes produce garbled output. The `Logger` is the canonical example: scanner goroutines call `log.Log` concurrently, and every write is serialized by the logger's internal mutex:
 
 ```go
-r.mu.Lock()
-fmt.Fprintln(r.logWriter, line)
-r.mu.Unlock()
+func (l *Logger) Log(stepName string, line string) error {
+    l.mu.Lock()
+    defer l.mu.Unlock()
+    // ...
+    _, err := fmt.Fprintln(l.writer, prefix+line)
+    return err
+}
 ```
 
-## Use io.Pipe for real-time subprocess streaming
+## Use a sendLine callback for real-time subprocess streaming
 
-To stream subprocess output to a UI component in real time, connect subprocess stdout/stderr through an `io.Pipe`. The Glyph `Log` component takes an `io.Reader`; the subprocess side writes to the `io.PipeWriter`.
+To stream subprocess output to a Bubble Tea TUI in real time, install a `sendLine` callback via `SetSender`. Scanner goroutines call the callback for each line; the callback writes to a buffered channel; a drain goroutine coalesces lines into `LogLinesMsg` batches and sends them to the program:
 
 ```
-subprocess stdout/stderr → goroutines → io.PipeWriter → io.PipeReader → Glyph Log
+subprocess stdout/stderr → scanner goroutines → sendLine callback → buffered channel → drain goroutine → program.Send(LogLinesMsg)
 ```
 
 ## Channel-based action dispatch for UI events
@@ -117,59 +121,60 @@ for _, step := range steps {
 }
 ```
 
-## Both shutdown paths must call terminal restore
+## Signal path and completion path must converge cleanly
 
-When a TUI app has two paths that cause the event loop to stop — a signal path (SIGINT/SIGTERM) and a normal completion path — both must call the terminal restore function (`app.Stop()`). Missing it on either path leaves the terminal in raw mode after the process exits.
+When a Bubble Tea TUI app has two paths that cause the program to stop — a signal path (SIGINT/SIGTERM) and a normal completion path — both must trigger clean shutdown via `program.Quit()` or `program.Kill()`. Missing one path leaves the program running or leaves the terminal in a bad state.
 
 ```go
 // Signal path — triggered by SIGINT/SIGTERM
 go func() {
-    <-sigChan
-    keyHandler.ForceQuit()
-    app.Stop() // must be here
-    // ...
+    select {
+    case <-sigChan:
+        keyHandler.ForceQuit()
+        select {
+        case <-workflowDone:
+        case <-time.After(2 * time.Second):
+            program.Kill() // force if workflow doesn't unwind
+        }
+    case <-workflowDone:
+    }
 }()
 
-// Normal completion path — triggered when the workflow goroutine finishes
+// Normal completion path — workflow goroutine calls program.Quit() itself
 go func() {
-    defer close(done)
+    defer close(workflowDone)
     _ = workflow.Run(...)
-    app.Stop() // must also be here
+    program.Quit() // signals Bubble Tea to stop its event loop
 }()
 ```
 
-If `app.Stop()` is only in the signal handler, normal exits corrupt the terminal. If it is only in the completion goroutine, signal exits corrupt the terminal.
+The workflow goroutine calls `program.Quit()` on normal completion. The signal path calls `ForceQuit()` (which unwinds orchestration) and waits for the workflow goroutine with a 2-second grace period before `program.Kill()`.
 
-## Drain background goroutines after the event loop exits
+## Wait for background goroutines after program.Run() returns
 
-After a blocking event loop call (e.g., `app.Run()`) returns, use a `select` with a timeout to wait for background goroutines. The event loop may return before the workflow goroutine finishes — especially when `app.Stop()` is called from inside that goroutine.
+After `program.Run()` returns (Bubble Tea's blocking event loop), use a `select` with a timeout to wait for the workflow goroutine to finish cleanup. The program may stop before the workflow goroutine flushes logs or closes channels.
 
 ```go
-if err := app.Run(); err != nil {
-    fmt.Fprintln(os.Stderr, "glyph:", err)
-    os.Exit(1)
-}
+_, runErr := program.Run()
+// ...
 
-// app.Run() may return before the workflow goroutine closes done.
+// program.Run() may return before the workflow goroutine closes workflowDone.
 select {
-case <-done:
+case <-workflowDone:
 case <-time.After(2 * time.Second):
 }
 ```
 
-Choose a timeout that is long enough to cover cleanup (flushing logs, deregistering signals) but short enough that a hung goroutine does not stall the process indefinitely. Two seconds is a reasonable default for in-process cleanup.
+Choose a timeout long enough for cleanup (flushing logs, deregistering signals) but short enough that a hung goroutine does not stall the process indefinitely.
 
-## Split pointer/mutex access for single-threaded event loop frameworks
+## Unexported field + mutex-protected getter for shortcut bar text
 
-When a UI framework reads a field via a pointer binding (e.g., Glyph's `Text(&field)`) and the same field is written by other goroutines, use two accessors with different safety contracts:
-
-- **Pointer method** — returns `*string` for the framework's render loop. Safe because the event loop reads synchronously between write windows and the race detector does not flag this access pattern.
-- **Mutex-protected method** — returns a copy for all other goroutines.
+The shortcut bar string is written by mode transitions (on the Update goroutine) and read by `View()` (also on the Update goroutine via `ShortcutLine()`). Keep it unexported and expose it only through a mutex-protected getter so that signal handlers and test goroutines can also read it safely without races:
 
 ```go
 type KeyHandler struct {
     mu           sync.Mutex
-    shortcutLine string // protected by mu for concurrent callers
+    shortcutLine string
 }
 
 // ShortcutLine is safe to call from any goroutine.
@@ -178,15 +183,9 @@ func (h *KeyHandler) ShortcutLine() string {
     defer h.mu.Unlock()
     return h.shortcutLine
 }
-
-// ShortcutLinePtr returns a pointer for Glyph's Text(&...) widget binding.
-// Use only from code that runs inside the Glyph event loop — not from other goroutines.
-func (h *KeyHandler) ShortcutLinePtr() *string {
-    return &h.shortcutLine
-}
 ```
 
-Document which accessor is appropriate for which caller. This pattern should be attempted only after verifying that the exported-field approach (Option P) produces a real data race under `go test -race`.
+In the Bubble Tea architecture, `View()` calls `ShortcutLine()` directly via the mutex-protected getter. All mode mutations happen on the Update goroutine, which serializes writes naturally; the mutex guards reads from other goroutines (signal handlers, test code).
 
 ## Prime the channel before entering a blocking receive
 
@@ -212,12 +211,36 @@ When adding any new blocking receive to orchestration code:
 2. Document which goroutine is responsible for sending to unblock the receive.
 3. Update tests to inject the required signal (see [Testing — Inject an additional signal for each new blocking receive](testing.md)).
 
+## Wrap blocking operations in tea.Cmd closures
+
+In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
+
+```go
+// Bad — Terminate() blocks up to 3 seconds; freezes the event loop
+func (m keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    m.handler.ForceQuit() // sets mode + cancel
+    m.handler.Terminate() // BLOCKS up to 3s — freezes all rendering
+    return m, nil
+}
+
+// Good — blocking call runs in a goroutine; Update returns immediately
+func (m keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    m.handler.ForceQuit()
+    return m, func() tea.Msg {
+        m.handler.Terminate() // runs off the Update goroutine
+        return tea.Quit()
+    }
+}
+```
+
+The same rule applies to `cancel()` context cancellations that trigger blocking waits, and to any channel send that might block. If it can take more than a few microseconds, it belongs in a cmd closure.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Mutex-protected io.Pipe writes, WaitGroup drain, and snapshot-then-unlock in Terminate
-- [TUI Display & Glyph Wiring](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and split pointer/mutex access for ShortcutLinePtr
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — sendLine and Terminate snapshot-then-unlock, WaitGroup drain
+- [TUI Display](../features/tui-display.md) — Dual-path shutdown, post-event-loop drain, and mutex-protected ShortcutLine access; tea.Cmd wrappers for Terminate and ForceQuit
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Channel-based action dispatch, non-blocking sends in ForceQuit, and mutex-protected ShortcutLine getter; keysModel.Update as the canonical tea.Cmd blocking-wrap example
 - [Signal Handling & Shutdown](../features/signal-handling.md) — Non-blocking send for signal-safe ForceQuit
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Non-blocking drain before each orchestration step
 - [File Logging](../features/file-logging.md) — Mutex-protected concurrent writes from scanner goroutines
