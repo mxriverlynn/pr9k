@@ -1,6 +1,6 @@
 # Project Discovery
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-11
 
 ## Repository
 
@@ -29,12 +29,12 @@
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
 - Current version: `0.1.0` (single source of truth: `ralph-tui/internal/version/version.go`)
-- External dependencies: `github.com/kungfusheep/glyph`, `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
+- External dependencies: `github.com/kungfusheep/glyph` (current TUI), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0; pinned but not yet integrated: `github.com/charmbracelet/bubbletea` v1.3.10, `github.com/charmbracelet/lipgloss` v1.1.0, `github.com/charmbracelet/bubbles` v1.0.0
 
 ### Frameworks and Tooling
 
 - CLI: spf13/cobra v1.10.2 (ADR: [20260409135303-cobra-cli-framework](adr/20260409135303-cobra-cli-framework.md))
-- TUI: [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`)
+- TUI: [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`) — current; migration to Bubble Tea + Lip Gloss + bubbles planned (see ADR below)
 - Terminal size detection: `golang.org/x/sys/unix` (ioctl TIOCGWINSZ) for full-width phase banners
 - Task runner: Make (`Makefile` at repo root)
 - Linter: golangci-lint v2.11.4 (pinned in CI)
@@ -43,6 +43,7 @@
 
 - [Cobra CLI Framework](adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing
 - [Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md) — Ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code
+- [Bubble Tea TUI Framework](adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate from Glyph to Bubble Tea + Lip Gloss + bubbles for dynamic window title, mouse-wheel scrolling, and ecosystem stability
 
 ### Commands and Tests
 
@@ -61,6 +62,7 @@
 
 - Step definitions: `ralph-tui/ralph-steps.json`
 - Claude Code settings: `.claude/settings.json`, `.claude/settings.local.json`
+- Dependency pinning: `ralph-tui/tools.go` — blank imports under `//go:build tools` to pin Bubble Tea dependencies before production code imports them; verified via `go vet -tags tools .` (as `make vet` does)
 
 ## Additional Information
 
