@@ -110,11 +110,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Chrome rows consumed: top border (1) + iteration line (1) +
-		// hrule above grid (1) + grid rows + hrule below grid (1) +
-		// hrule below log (1) + footer (1) + bottom border (1).
+		// Chrome rows consumed: top border (1) + grid rows +
+		// hrule below grid (1) + hrule below log (1) + footer (1) +
+		// bottom border (1). The iteration line is rendered inside the
+		// top border as the title, so it does not consume an inner row.
 		gridRows := len(m.header.header.Rows)
-		chromeRows := 1 + 1 + 1 + gridRows + 1 + 1 + 1 + 1
+		chromeRows := 1 + gridRows + 1 + 1 + 1 + 1
 		vpHeight := m.height - chromeRows
 		if vpHeight < 1 {
 			vpHeight = 1
@@ -157,15 +158,9 @@ func (m Model) View() string {
 	sb.WriteString("\n")
 
 	// Inner content: assembled as a string, then wrapped in the partial border.
+	// The iteration line lives in the top border as the title, so the inner
+	// content starts directly with the checkbox grid.
 	var inner strings.Builder
-
-	// Iteration line.
-	inner.WriteString(lipgloss.NewStyle().Foreground(LightGray).Render(m.header.header.IterationLine))
-	inner.WriteString("\n")
-
-	// HRule.
-	inner.WriteString(lipgloss.NewStyle().Foreground(LightGray).Render(strings.Repeat("─", innerWidth)))
-	inner.WriteString("\n")
 
 	// Checkbox grid.
 	for r := range m.header.header.Rows {
@@ -221,16 +216,16 @@ func (m Model) View() string {
 // current header iteration line.
 func (m Model) titleString() string {
 	if m.header.iterLine() == "" {
-		return "ralph-tui"
+		return "Power-Ralph.9000"
 	}
-	return "ralph-tui — " + m.header.iterLine()
+	return "Power-Ralph.9000 — " + m.header.iterLine()
 }
 
 // renderTopBorder constructs the hand-built top border row with the dynamic
 // title embedded. When the terminal is too narrow to fit even the corners,
 // a plain rule is returned.
 //
-// Target shape: "╭── ralph-tui — Iteration 2/5 — Issue #42 ─ … ─╮"
+// Target shape: "╭── Power-Ralph.9000 — Iteration 2/5 — Issue #42 ─ … ─╮"
 func (m Model) renderTopBorder(title string) string {
 	const tl, tr, h = "╭", "╮", "─"
 	innerWidth := m.width - 2 // subtract corner glyphs
