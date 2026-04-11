@@ -1285,6 +1285,17 @@ func TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine(t *testing.T) {
 		t.Errorf("expected {stepNum=2, stepCount=2, stepName=%q}, got {%d, %d, %q}",
 			"good-final", got.stepNum, got.stepCount, got.stepName)
 	}
+
+	foundGoodFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "good-final" {
+			foundGoodFinal = true
+			break
+		}
+	}
+	if !foundGoodFinal {
+		t.Errorf("expected 'good-final' step to execute via RunStep after bad step, got calls: %v", executor.runStepCalls)
+	}
 }
 
 // TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth verifies that when LogWidth

@@ -71,7 +71,7 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
 | `ralph-tui/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
-| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, and `SetSender` |
+| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, and `SetSender` |
 | `ralph-tui/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
 
 ## Core Types
@@ -272,7 +272,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, `ResolveCommand`, and `SetSender`:
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and `RunStep` empty-command guard:
   - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
   - `TestRunStep_SendLineReceivesStdout`, `TestRunStep_SendLineReceivesStderr` — sendLine receives stdout and stderr lines
   - `TestRunStep_SendLineBurstOrdering` — lines arrive in order under burst load
@@ -282,9 +282,10 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestRunStep_ConcurrentSetSenderNoRace`, `TestRunStep_ConcurrentStdoutStderrSenderNoRace` — race-detector tests for concurrent sender swaps and concurrent stdout/stderr goroutines
   - `TestRunStep_SendLineAfterTerminateNoPanic` — sendLine calls survive Terminate without panic
   - `TestRunStep_SendLineDefaultNoOp`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — default no-op installed by NewRunner does not panic
-  - `TestWriteToLog_AfterCloseSendLineStillInvoked` — sendLine fires even after Close
   - `TestSetSender_AtomicReplacementViaWriteToLog` — atomic replacement via WriteToLog
   - `TestWriteToLog_DoesNotWriteToFileLogger` — verifies WriteToLog forwards to sendLine but does not write to the file logger
+  - `TestNewRunner_WriteToLogWithoutSetSenderPanics*` — verifies that calling WriteToLog before SetSender panics with a descriptive message
+  - `TestRunStep_ReturnsErrorForEmpty*` — verifies that RunStep returns an error for empty and nil command slices
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step

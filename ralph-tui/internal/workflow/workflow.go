@@ -232,6 +232,9 @@ func (r *Runner) WriteToLog(line string) {
 // Stderr is discarded. Use this for commands that return a single value
 // (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
 func (r *Runner) CaptureOutput(command []string) (string, error) {
+	if len(command) == 0 {
+		return "", fmt.Errorf("workflow: CaptureOutput: empty command")
+	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.workingDir
 	out, err := cmd.Output()
