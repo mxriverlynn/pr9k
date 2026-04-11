@@ -59,12 +59,12 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 ## Architecture & Feature Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
-- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`) and project directory resolution from the executable path
+- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`, `--version`/`-v`) and project directory resolution from the executable path
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming, graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
 - [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
-- [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Three-mode keyboard state machine (Normal/Error/QuitConfirm) and channel-based action dispatch
+- [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Five-mode keyboard state machine (Normal/Error/QuitConfirm/Quitting/Done) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
 - [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with buffered I/O
 - [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
@@ -90,7 +90,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 Problem-focused guides for users running ralph-tui against their own projects. When adding a new how-to, keep each guide focused on solving one specific problem or using one specific feature.
 
 - [`docs/how-to/getting-started.md`](docs/how-to/getting-started.md) — Install ralph-tui, point it at a target repo, and interpret the first run of the default workflow
-- [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (iteration line, checkbox grid, log panel, shortcut footer) and the phase/step/capture chrome rhythm written into the log body
+- [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (checkbox grid, iteration line, log panel, shortcut footer with version label) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
 - [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
 - [`docs/how-to/capturing-step-output.md`](docs/how-to/capturing-step-output.md) — How to use `captureAs` to bind a step's stdout to a variable for use in later steps, including initialize-vs-iteration scoping

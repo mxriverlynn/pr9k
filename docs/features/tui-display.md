@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-10 23:25
 - **Authors:**
   - River Bailey
 
@@ -30,29 +30,29 @@ Key files:
   Glyph TUI (reads by pointer each render cycle)
        │
        ▼
-  ┌─────────────────────────────────────────────┐
-  │              StatusHeader                    │
-  │                                              │
-  │  IterationLine: "Iteration 1/3 — Issue #42" │  ← bounded (maxIter > 0)
-  │  IterationLine: "Iteration 1 — Issue #42"   │  ← unbounded (maxIter == 0)
-  │                                              │
-  │  Rows[0]: [▸] Feature work  [✓] Test planning│
-  │           [ ] Test writing   [ ] Code review  │
-  │                                              │
-  │  Rows[1]: [ ] Review fixes   [ ] Close issue  │
-  │           [ ] Update docs    [ ] Git push     │
-  └─────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────┐
+  │                 StatusHeader                     │
+  │                                                  │
+  │  Rows[0]: [▸] Feature work  [✓] Test planning   │  ← checkbox grid
+  │           [ ] Test writing   [ ] Code review     │     (top of VBox)
+  │                                                  │
+  │  Rows[1]: [ ] Review fixes   [ ] Close issue     │
+  │           [ ] Update docs    [ ] Git push        │
+  │  ───────────────────────────────────────────     │  ← HRule
+  │  IterationLine: "Iteration 1/3 — Issue #42"     │  ← bounded (maxIter > 0)
+  │  IterationLine: "Iteration 1 — Issue #42"       │  ← unbounded (maxIter == 0)
+  └─────────────────────────────────────────────────┘
 
   After SetPhaseSteps called with finalize step names:
 
-  ┌─────────────────────────────────────────────┐
-  │  IterationLine: (set by caller)             │
-  │                                              │
+  ┌─────────────────────────────────────────────────┐
   │  Rows[0]: [▸] Deferred work  [ ] Lessons learned│
-  │           [ ] Final git push                 │
-  │                                              │
-  │  Rows[1]: (empty — trailing slots cleared)  │
-  └─────────────────────────────────────────────┘
+  │           [ ] Final git push                     │
+  │                                                  │
+  │  Rows[1]: (empty — trailing slots cleared)      │
+  │  ───────────────────────────────────────────     │  ← HRule
+  │  IterationLine: (set by caller)                 │
+  └─────────────────────────────────────────────────┘
 ```
 
 ## Key Files
@@ -319,24 +319,38 @@ for r := range header.Rows {
     rowWidgets[r] = glyph.HBox(cols...)
 }
 
-// Full layout: iteration line → checkbox rows → HRule → log panel → HRule → shortcut bar.
-children := []any{
-    glyph.Text(&header.IterationLine),
-    // ...rowWidgets...
-    glyph.HRule(),
-    glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav(),
-    glyph.HRule(),
+// Full layout: checkbox rows → HRule → iteration line → HRule → log panel → HRule → footer HBox.
+children := make([]any, 0, 5+len(rowWidgets)+2)
+children = append(children, rowWidgets...)
+children = append(children, glyph.HRule())
+children = append(children, glyph.Text(&header.IterationLine))
+children = append(children, glyph.HRule())
+children = append(children, glyph.Log(runner.LogReader()).Grow(1).MaxLines(500).BindVimNav())
+children = append(children, glyph.HRule())
+
+// Footer: shortcut bar on the left, app version pinned to the bottom-right.
+// glyph.Space() is a flex spacer inside the HBox that pushes the version
+// label against the right border of the enclosing VBox.
+versionLabel := "ralph-tui v" + version.Version
+children = append(children, glyph.HBox(
     glyph.Text(keyHandler.ShortcutLinePtr()),
-}
+    glyph.Space(),
+    glyph.Text(&versionLabel),
+))
 
 app.SetView(glyph.VBox.Border(glyph.BorderRounded).Title("Ralph")(children...))
 ```
 
+- The checkbox grid is the **top** of the VBox — phase steps are the first thing on screen
+- An `HRule` separates the grid from the iteration status line, which sits **below** the grid rather than above it
+- A second `HRule` separates the status line from the log panel
 - `glyph.Log(...).Grow(1)` — the log panel expands to fill all remaining vertical space
 - `.MaxLines(500)` — caps the in-memory line buffer
 - `.BindVimNav()` — enables `↑`/`k` and `↓`/`j` scroll keys inside the log panel
-- `glyph.HRule()` widgets draw horizontal divider lines below the status header and above the shortcut footer so the three regions are visually separated
+- A third `HRule` separates the log panel from the footer
+- The footer is an `HBox` containing the shortcut bar, a `glyph.Space()` flex spacer, and the version label (`"ralph-tui v" + version.Version`) pinned to the right edge
 - The shortcut bar is bound via `ShortcutLinePtr()` so mode changes update it in place without additional wiring
+- The version label is sourced from `internal/version.Version` — see [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule
 
 ## Testing
 

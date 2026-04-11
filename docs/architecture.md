@@ -152,9 +152,9 @@ Each feature is documented in detail in its own file under [`docs/features/`](fe
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line flags (`--iterations`/`-n` and `--project-dir`/`-p`) using [spf13/cobra](https://github.com/spf13/cobra) and resolves the project directory. Iterations defaults to 0 (run until done). Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when `--project-dir` is not given.
+Parses command-line flags (`--iterations`/`-n`, `--project-dir`/`-p`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra) and resolves the project directory. Iterations defaults to 0 (run until done). Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when `--project-dir` is not given. The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
-**Package:** `internal/cli/`
+**Packages:** `internal/cli/`, `internal/version/`
 
 ### [Step Definitions & Prompt Building](features/step-definitions.md)
 
@@ -215,12 +215,14 @@ Validates `ralph-steps.json` against all eight D13 categories in a single pass, 
 ```
 cmd/ralph-tui/main.go
     ├── internal/cli        (argument parsing)
+    │       └── internal/version
     ├── internal/logger     (file logging)
     ├── internal/steps      (step loading)
     ├── internal/ui         (key handling, header, orchestration)
     ├── internal/validator  (config validation)
     │       └── internal/vars
     ├── internal/vars       (runtime variable state)
+    ├── internal/version    (compile-time Version constant)
     └── internal/workflow   (subprocess execution, run loop)
             ├── internal/logger
             ├── internal/steps
@@ -249,3 +251,5 @@ cmd/ralph-tui/main.go
   - [API Design](coding-standards/api-design.md) — Bounds guards, precondition validation, adapter types, platform assumptions
   - [Go Patterns](coding-standards/go-patterns.md) — Symlink-safe paths, slice immutability, scanner buffers
   - [Testing](coding-standards/testing.md) — Race detector, idempotent close, bounds testing, test doubles with mutexes
+  - [Lint and Tooling](coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited; fix the root cause or escalate
+  - [Versioning](coding-standards/versioning.md) — Semver rules specific to ralph-tui, the `version.Version` single source of truth, and what counts as the app's public API

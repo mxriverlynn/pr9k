@@ -8,11 +8,12 @@ The screen is a single rounded-border `VBox` titled "Ralph" with these children 
 
 ```
 ╭─ Ralph ─────────────────────────────────────────────╮
-│ Iteration 2/3 — Issue #42                           │  ← iteration line
 │ [✓] Feature work      [✓] Test planning             │
 │ [▸] Test writing      [ ] Code review               │  ← checkbox grid
 │ [ ] Review fixes      [ ] Close issue               │
 │ [ ] Update docs       [ ] Git push                  │
+│─────────────────────────────────────────────────────│  ← HRule
+│ Iteration 2/3 — Issue #42                           │  ← iteration line
 │─────────────────────────────────────────────────────│  ← HRule
 │                                                     │
 │ Iterations                                          │
@@ -26,29 +27,15 @@ The screen is a single rounded-border `VBox` titled "Ralph" with these children 
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 │─────────────────────────────────────────────────────│  ← HRule
-│ ↑/k up  ↓/j down  n next step  q quit               │  ← shortcut footer
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.1.0 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
-All four regions are bound to pointers: Glyph reads them on every render cycle without any explicit refresh call, so state updates from the workflow goroutine appear on the next frame.
+All four regions are bound to pointers: Glyph reads them on every render cycle without any explicit refresh call, so state updates from the workflow goroutine appear on the next frame. The checkbox grid sits at the top of the VBox, with the iteration status line *below* it; both regions are part of the same header state but rendered on opposite sides of an `HRule`.
 
-## Region 1 — the iteration line
+## Region 1 — the checkbox grid
 
-A single line above the checkbox grid that tells you *what* the workflow is doing right now.
-
-| Phase | Format | Example |
-|-------|--------|---------|
-| Initialize | `Initializing N/M: <step name>` | `Initializing 1/2: Splash` |
-| Iteration (bounded) | `Iteration N/M — Issue #<id>` (issue suffix appears after `ISSUE_ID` is bound) | `Iteration 2/5 — Issue #42` |
-| Iteration (unbounded) | `Iteration N — Issue #<id>` (no total when `--iterations 0`) | `Iteration 7 — Issue #91` |
-| Iteration (no issue yet) | `Iteration N/M` or `Iteration N` — issue suffix omitted | `Iteration 1/3` |
-| Finalize | `Finalizing N/M: <step name>` | `Finalizing 1/3: Deferred work` |
-
-After the finalize phase ends, the iteration line keeps its last finalize value — **the completion summary is not in the header**, it's the last line of the log panel (see Region 3).
-
-## Region 2 — the checkbox grid
-
-Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, `SetPhaseSteps` swaps the step names into the same slots and trailing slots clear to empty.
+The topmost region. Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, `SetPhaseSteps` swaps the step names into the same slots and trailing slots clear to empty.
 
 The five possible states:
 
@@ -61,6 +48,20 @@ The five possible states:
 | `[-] <name>` | Skipped | Marked skipped because an earlier step with `breakLoopIfEmpty` exited the iteration |
 
 **Note:** The initialize phase does not update the checkbox grid — it uses a `noopHeader` during `Orchestrate` so initialize step state isn't rendered. Only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
+
+## Region 2 — the iteration line
+
+A single line *below* the checkbox grid (separated from it by a horizontal rule) that tells you *what* the workflow is doing right now.
+
+| Phase | Format | Example |
+|-------|--------|---------|
+| Initialize | `Initializing N/M: <step name>` | `Initializing 1/2: Splash` |
+| Iteration (bounded) | `Iteration N/M — Issue #<id>` (issue suffix appears after `ISSUE_ID` is bound) | `Iteration 2/5 — Issue #42` |
+| Iteration (unbounded) | `Iteration N — Issue #<id>` (no total when `--iterations 0`) | `Iteration 7 — Issue #91` |
+| Iteration (no issue yet) | `Iteration N/M` or `Iteration N` — issue suffix omitted | `Iteration 1/3` |
+| Finalize | `Finalizing N/M: <step name>` | `Finalizing 1/3: Deferred work` |
+
+After the finalize phase ends, the iteration line keeps its last finalize value — **the completion summary is not in the header**, it's the last line of the log panel (see Region 3).
 
 ## Region 3 — the log panel
 
@@ -140,7 +141,9 @@ The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while 
 
 ## Region 4 — the shortcut footer
 
-A single line at the bottom showing the shortcut bar for the current mode. This is the clearest way to tell what state the handler is in:
+A single line at the bottom of the VBox. It is actually an `HBox` with three children: the mode-dependent shortcut bar on the left, a flex spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+
+The left-side shortcut bar is the clearest way to tell what state the handler is in:
 
 | Footer text | Mode |
 |-------------|------|

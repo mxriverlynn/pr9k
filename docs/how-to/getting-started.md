@@ -46,6 +46,15 @@ From the **target repo's working directory** (not pr9k's — ralph-tui runs subp
 
 With `-n 0` (the default), ralph-tui runs until `scripts/get_next_issue` returns an empty string (no more open issues). With `-n N`, it caps the loop at N iterations regardless of remaining issues.
 
+To check which version you are running without launching the workflow:
+
+```bash
+/path/to/pr9k/bin/ralph-tui --version
+# ralph-tui version 0.1.0
+```
+
+`-v` is accepted as a short alias. See [Versioning](../coding-standards/versioning.md) for the repo's semver rules.
+
 ## Pointing at a different project
 
 If your pr9k install lives somewhere other than the current directory's resolved binary path — for example, if you're testing a feature branch of ralph-tui itself — pass `-p` to override the project directory:
@@ -60,10 +69,10 @@ The project directory is where ralph-tui looks for `ralph-steps.json`, `prompts/
 
 The TUI has four regions stacked top to bottom, all inside a rounded border titled "Ralph":
 
-1. **Iteration line** — `"Initializing 1/2: Splash"`, `"Iteration 1/3 — Issue #42"`, or `"Finalizing 1/3: Deferred work"` depending on the current phase
-2. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped)
+1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) at the very top of the view
+2. **Iteration line** — directly below the grid: `"Initializing 1/2: Splash"`, `"Iteration 1/3 — Issue #42"`, or `"Finalizing 1/3: Deferred work"` depending on the current phase
 3. **Log panel** — streams subprocess output in real time, interleaved with phase banners, per-step banners, and capture logs
-4. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode)
+4. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `ralph-tui v<semver>` label pinned to the bottom-right
 
 Every started step writes a banner into the log panel before its subprocess output:
 

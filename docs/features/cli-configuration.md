@@ -2,20 +2,22 @@
 
 Parses command-line flags and resolves the project directory that anchors all relative path resolution throughout ralph-tui.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-10 23:25
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- ralph-tui accepts an optional `--iterations` / `-n` flag (default 0 = run until done) and an optional `--project-dir` / `-p` flag
+- ralph-tui accepts an optional `--iterations` / `-n` flag (default 0 = run until done), an optional `--project-dir` / `-p` flag, and a `--version` / `-v` flag that prints the version and exits
 - Built on [spf13/cobra](https://github.com/spf13/cobra), which handles POSIX-style flags in any position — no custom reordering needed
 - When `--project-dir` is not provided, the project directory is resolved from the executable's real path via `os.Executable()` + `filepath.EvalSymlinks` (symlink-safe)
 - `ProjectDir` fans out to every subsystem: logger, step loader, prompt builder, command resolver, and the workflow runner
+- The version string is sourced from `internal/version.Version` — the single source of truth for both the `--version` output and the TUI footer label. See [Versioning](../coding-standards/versioning.md).
 
 Key files:
 - `ralph-tui/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveProjectDir`
-- `ralph-tui/internal/cli/args_test.go` — 16 test cases covering all argument parsing branches
+- `ralph-tui/internal/cli/args_test.go` — 18 test cases covering all argument parsing branches (including `--version` and `-v`)
+- `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
 - `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
 
 ## Architecture
@@ -101,12 +103,21 @@ Return values:
 
 ### Argument Parsing
 
-`newCommandImpl` builds the cobra command with `cobra.NoArgs` (positional arguments are rejected) and defines two flags:
+`newCommandImpl` builds the cobra command with `cobra.NoArgs` (positional arguments are rejected), sets `cmd.Version` to the compile-time constant (which enables cobra's built-in `--version` / `-v` handling), and defines the two user flags:
 
 ```go
+cmd := &cobra.Command{
+    Use:     "ralph-tui [flags]",
+    Short:   "Automated development workflow orchestrator",
+    Version: version.Version,  // enables --version / -v
+    Args:    cobra.NoArgs,
+    // ...
+}
 cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
 cmd.Flags().StringVarP(&cfg.ProjectDir, "project-dir", "p", "", "path to the project directory (default: resolved from executable)")
 ```
+
+When `--version` or `-v` is passed, cobra prints `ralph-tui version <semver>` to stdout and exits **without invoking `RunE`** — the `ranE` sentinel stays `false`, `Execute` returns `(nil, nil)`, and `main` exits cleanly without starting the workflow. This is the contract that the `--version` public-API surface in the [Versioning](../coding-standards/versioning.md) standard commits to.
 
 RunE validates and resolves:
 
@@ -175,16 +186,19 @@ All errors are written to stderr followed by a `Run 'ralph-tui --help' for usage
 |------|-------|-------------|---------|
 | `--iterations` | `-n` | Number of iterations to run (0 = run until done) | `0` |
 | `--project-dir` | `-p` | Path to the project root directory | Resolved from executable location |
+| `--version` | `-v` | Print `ralph-tui version <semver>` and exit without running the workflow | — |
+| `--help` | `-h` | Print cobra-generated usage and exit without running the workflow | — |
 
 **Usage:**
 
 ```
 ralph-tui [--iterations <n>] [--project-dir <path>]
+ralph-tui --version
 ```
 
 ## Testing
 
-- `ralph-tui/internal/cli/args_test.go` — 16 test cases covering all `NewCommand` and `Execute` branches
+- `ralph-tui/internal/cli/args_test.go` — 18 test cases covering all `NewCommand` and `Execute` branches
 
 ### Test Cases
 
@@ -206,15 +220,21 @@ ralph-tui [--iterations <n>] [--project-dir <path>]
 | `TestNewCommand_ArgsAfterSeparatorRejected` | `-- extraarg` → error from cobra.NoArgs |
 | `TestNewCommand_ExplicitZeroIterations` | `-n 0` → iterations=0 (until-done mode) |
 | `TestNewCommand_LargeIterations` | `-n 1000` → accepted |
+| `TestNewCommand_VersionFlag` | `--version` → RunE not invoked, output contains `version.Version`, no error |
+| `TestNewCommand_VersionShortFlag` | `-v` → behaves identically to `--version` |
+
+The two version tests read the expected string from `version.Version` rather than hardcoding `"0.1.0"` — the pattern required by [Versioning](../coding-standards/versioning.md) so a version bump does not require touching the test file.
 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
 - [ADR: Use Cobra for CLI Argument Parsing](../adr/20260409135303-cobra-cli-framework.md) — Decision rationale for replacing stdlib `flag` with cobra
+- [Versioning](../coding-standards/versioning.md) — Single-source-of-truth rule for `version.Version`, what counts as ralph-tui's public API (CLI flags, `--version` output format), and how to bump the version
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How ProjectDir affects config and prompt file resolution
 - [Step Definitions & Prompt Building](step-definitions.md) — How ProjectDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
 - [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries ProjectDir and Iterations into the Run loop
+- [TUI Status Header & Log Display](tui-display.md) — Where the `version.Version` constant is rendered as the footer label
 - [File Logging](file-logging.md) — How ProjectDir determines the log file location
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including CLI design decisions
 - [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for symlink-safe path resolution
