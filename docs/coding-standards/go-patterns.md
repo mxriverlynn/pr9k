@@ -207,12 +207,41 @@ vet:
 
 The `//go:build tools` tag excludes the file from normal builds and `go build` (which fails by design — no `main` function). `go mod tidy` keeps the dependency pinned in `go.sum`. The `-tags tools` vet step catches import-path typos that `go mod tidy` would miss.
 
+## Two-pass layout for uniform column width
+
+When rendering a multi-column grid where all columns must be the same width, compute the global maximum cell width in a first pass across all rows and columns, then apply padding in a second pass. Computing the max per-row instead of globally causes rows with shorter content to produce narrower columns, misaligning the grid across rows.
+
+```go
+// First pass — measure globally across all rows and columns.
+maxCellWidth := 0
+for r := range grid.Rows {
+    for c := range numCols {
+        if w := lipgloss.Width(grid.Rows[r][c]); w > maxCellWidth {
+            maxCellWidth = w
+        }
+    }
+}
+
+// Second pass — render with uniform padding.
+for r := range grid.Rows {
+    var row strings.Builder
+    for c := range numCols {
+        row.WriteString(renderCell(grid.Rows[r][c]))
+        if pad := maxCellWidth - lipgloss.Width(grid.Rows[r][c]); pad > 0 {
+            row.WriteString(strings.Repeat(" ", pad))
+        }
+    }
+}
+```
+
+Apply this pattern any time a grid or table must keep columns aligned across rows. A single-pass approach that computes per-row max will fail as soon as a later row contains a wider cell than the first row.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
-- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run()
+- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
