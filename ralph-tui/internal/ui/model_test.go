@@ -554,10 +554,11 @@ func TestModel_MouseMsg_NoPanic(t *testing.T) {
 // each column starts at the same horizontal offset in the rendered row.
 func TestView_CheckboxGrid_EqualCellWidth(t *testing.T) {
 	// Four steps with deliberately different lengths; the longest is "very-long-step-name".
-	// Each cell is "[ ] <name>", so the widest cell is "[ ] very-long-step-name" = 23 runes.
-	// The expected cell width (cellWidth) = 23.  Cells are separated by "  " (2 spaces).
-	// So each step's label starts at offset:  col * (cellWidth + 2)  from the start of the
-	// inner content (after stripping the leading │ border character).
+	// Cell width is derived from the terminal width so the grid fills edge-to-edge:
+	//   innerWidth = 120 - 2 = 118
+	//   separatorWidth = 3 * 2 = 6
+	//   cellWidth = (118 - 6) / 4 = 28
+	//   stride = 28 + 2 = 30
 	steps := []string{"short", "very-long-step-name", "mid", "x"}
 	header := NewStatusHeader(len(steps))
 	header.SetPhaseSteps(steps)
@@ -589,8 +590,8 @@ func TestView_CheckboxGrid_EqualCellWidth(t *testing.T) {
 		runes = runes[1:]
 	}
 
-	// cellWidth = len("[ ] very-long-step-name") = 23
-	cellWidth := len([]rune("[ ] very-long-step-name"))
+	// cellWidth derived from terminal: (118 - 6) / 4 = 28
+	cellWidth := (m.width - 2 - (HeaderCols-1)*2) / HeaderCols
 	stride := cellWidth + 2 // cell + "  " separator
 
 	// Each step name should appear at position col*stride+4 within runes
@@ -618,7 +619,9 @@ func TestView_CheckboxGrid_EqualCellWidth(t *testing.T) {
 // row 1; both rows must use the stride derived from that name.
 func TestView_CheckboxGrid_MultiRow_GlobalMaxCellWidth(t *testing.T) {
 	// 8 steps: row 0 has short names, row 1 has the longest name first.
-	// Longest cell: "[ ] longest-name" = 16 runes → maxCellWidth = 16, stride = 18.
+	// Cell width is derived from terminal width:
+	//   innerWidth = 160 - 2 = 158, separators = 6, cellWidth = (158-6)/4 = 38
+	// Both rows must use the same stride (38 + 2 = 40).
 	steps := []string{"aa", "bb", "cc", "dd", "longest-name", "e", "f", "g"}
 	header := NewStatusHeader(len(steps))
 	header.SetPhaseSteps(steps)
@@ -642,8 +645,8 @@ func TestView_CheckboxGrid_MultiRow_GlobalMaxCellWidth(t *testing.T) {
 		t.Fatalf("expected 2 grid rows, found %d:\n%s", len(gridLines), out)
 	}
 
-	cellWidth := len([]rune("[ ] longest-name")) // 16
-	stride := cellWidth + 2                      // 18
+	cellWidth := (m.width - 2 - (HeaderCols-1)*2) / HeaderCols // 38
+	stride := cellWidth + 2                                    // 40
 
 	// Row 0: steps "aa", "bb", "cc", "dd"
 	row0Names := []string{"aa", "bb", "cc", "dd"}
@@ -745,7 +748,10 @@ func TestView_CheckboxGrid_EmptyTrailingCells_AlignWithFilledRow(t *testing.T) {
 // when all step names have the same length, the pad>0 guard prevents any
 // extra spaces from being injected within each cell.
 func TestView_CheckboxGrid_EqualWidthNames_NoPaddingWithinCells(t *testing.T) {
-	// 4 steps each 3 chars: "[ ] aaa" = 7 runes. stride = 9.
+	// 4 steps each 3 chars: "[ ] aaa" = 7 runes.
+	// Cell width is derived from terminal: (118-6)/4 = 28. stride = 30.
+	// Each cell content starts with "[ ] <name>" and is then padded to
+	// cellWidth with spaces, so the separator always follows the padding.
 	steps := []string{"aaa", "bbb", "ccc", "ddd"}
 	header := NewStatusHeader(len(steps))
 	header.SetPhaseSteps(steps)
@@ -774,12 +780,12 @@ func TestView_CheckboxGrid_EqualWidthNames_NoPaddingWithinCells(t *testing.T) {
 		runes = runes[1:]
 	}
 
-	cellWidth := len([]rune("[ ] aaa")) // 7
-	stride := cellWidth + 2             // 9
+	cellWidth := (m.width - 2 - (HeaderCols-1)*2) / HeaderCols // 28
+	stride := cellWidth + 2                                    // 30
 
 	for col, name := range steps {
 		start := col * stride
-		// Verify exactly "[ ] <name>" at the cell start with no extra space before separator.
+		// Verify exactly "[ ] <name>" at the cell start.
 		want := "[ ] " + name
 		end := start + len([]rune(want))
 		if end > len(runes) {

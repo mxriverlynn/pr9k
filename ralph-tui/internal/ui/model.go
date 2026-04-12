@@ -180,16 +180,23 @@ func (m Model) View() string {
 	// Checkbox grid — the iteration line lives in the top border as the
 	// title, so the grid is the first row below the top border.
 	//
-	// Compute the maximum cell width across all grid slots so each column
-	// occupies the same width, distributing the step list evenly.
-	maxCellWidth := 0
+	// Compute cell width so the grid fills the full terminal width.
+	// Each row has HeaderCols cells separated by 2-space gaps.  The cell
+	// width is derived from innerWidth so the grid stretches edge-to-edge,
+	// falling back to the widest content width when the terminal is too
+	// narrow to hold all cells.
+	contentMaxWidth := 0
 	for r := range m.header.header.Rows {
 		for c := range HeaderCols {
-			if w := lipgloss.Width(m.header.header.Rows[r][c]); w > maxCellWidth {
-				maxCellWidth = w
+			if w := lipgloss.Width(m.header.header.Rows[r][c]); w > contentMaxWidth {
+				contentMaxWidth = w
 			}
 		}
 	}
+	separatorWidth := (HeaderCols - 1) * 2
+	termCellWidth := (innerWidth - separatorWidth) / HeaderCols
+	cellWidth := max(termCellWidth, contentMaxWidth)
+
 	for r := range m.header.header.Rows {
 		var row strings.Builder
 		for c := range HeaderCols {
@@ -200,8 +207,9 @@ func (m Model) View() string {
 			marker := lipgloss.NewStyle().Foreground(m.header.header.MarkerColors[r][c]).Render(m.header.header.Markers[r][c])
 			suffix := lipgloss.NewStyle().Foreground(m.header.header.NameColors[r][c]).Render(m.header.header.Suffixes[r][c])
 			row.WriteString(prefix + marker + suffix)
-			// Pad to maxCellWidth so all 4 columns are equally wide.
-			if pad := maxCellWidth - lipgloss.Width(m.header.header.Rows[r][c]); pad > 0 {
+			// Pad to cellWidth so all columns are equally wide and
+			// the grid fills the terminal width.
+			if pad := cellWidth - lipgloss.Width(m.header.header.Rows[r][c]); pad > 0 {
 				row.WriteString(strings.Repeat(" ", pad))
 			}
 		}
