@@ -179,7 +179,6 @@ func TestModeQuitting_AllKeys_NoActions_NoCancel(t *testing.T) {
 func TestTitleString_EmptyIterationLine(t *testing.T) {
 	m := newTestModel(t)
 	m.header.header.IterationLine = ""
-	m.header.iterationLine = ""
 
 	got := m.titleString()
 	if got != AppTitle {
@@ -190,7 +189,6 @@ func TestTitleString_EmptyIterationLine(t *testing.T) {
 func TestTitleString_PopulatedIterationLine(t *testing.T) {
 	m := newTestModel(t)
 	m.header.header.IterationLine = "Iteration 2/5 — Issue #42"
-	m.header.iterationLine = m.header.header.IterationLine
 
 	got := m.titleString()
 	want := AppTitle + " — Iteration 2/5 — Issue #42"
@@ -205,7 +203,6 @@ func TestRenderTopBorder_TitleFits(t *testing.T) {
 	m := newTestModel(t)
 	m.width = 80
 	m.header.header.IterationLine = "Iteration 1/3: step"
-	m.header.iterationLine = m.header.header.IterationLine
 
 	got := m.renderTopBorder(m.titleString())
 	if !strings.Contains(got, AppTitle) {

@@ -10,14 +10,12 @@ import (
 // headerModel wraps StatusHeader and applies header messages from the
 // orchestration goroutine (sent via headerProxy → program.Send).
 type headerModel struct {
-	header        *StatusHeader
-	iterationLine string // mirrored from header.IterationLine for title tracking
+	header *StatusHeader
 }
 
 func newHeaderModel(h *StatusHeader) headerModel {
 	return headerModel{
-		header:        h,
-		iterationLine: h.IterationLine,
+		header: h,
 	}
 }
 
@@ -29,13 +27,10 @@ func (m headerModel) apply(msg tea.Msg) headerModel {
 		m.header.SetStepState(msg.idx, msg.state)
 	case headerIterationLineMsg:
 		m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
-		m.iterationLine = m.header.IterationLine
 	case headerInitializeLineMsg:
 		m.header.RenderInitializeLine(msg.stepNum, msg.stepCount, msg.stepName)
-		m.iterationLine = m.header.IterationLine
 	case headerFinalizeLineMsg:
 		m.header.RenderFinalizeLine(msg.stepNum, msg.stepCount, msg.stepName)
-		m.iterationLine = m.header.IterationLine
 	case headerPhaseStepsMsg:
 		m.header.SetPhaseSteps(msg.names)
 	}
