@@ -2,7 +2,7 @@
 
 Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination and per-step stdout capture.
 
-- **Last Updated:** 2026-04-11
+- **Last Updated:** 2026-04-12
 - **Authors:**
   - River Bailey
 
@@ -18,7 +18,7 @@ Key files:
 - `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
 - `ralph-tui/internal/workflow/run.go` — `ResolveCommand` ({{VAR}} substitution + script path resolution)
 - `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution
-- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture`, `CaptureOutput`, and `ResolveCommand`
+- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture` and `CaptureOutput`
 
 ## Architecture
 
@@ -246,6 +246,10 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 
 ```go
 func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+    if len(command) == 0 {
+        return command
+    }
+
     result := make([]string, len(command))
     for i, arg := range command {
         substituted, _ := vars.Substitute(arg, vt, phase)
@@ -285,14 +289,14 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 - `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and `RunStep` empty-command guard:
   - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
-  - `TestRunStep_SendLineReceivesStdout`, `TestRunStep_SendLineReceivesStderr` — sendLine receives stdout and stderr lines
-  - `TestRunStep_SendLineBurstOrdering` — lines arrive in order under burst load
-  - `TestRunStep_SetSenderNilInstallsNoOp` — nil sender installs a no-op
-  - `TestRunStep_SetSenderReplacementTakesEffect` — replacement is reflected immediately
-  - `TestWriteToLog_SendLineInvoked` — WriteToLog path invokes sendLine
+  - `TestSetSender_ForwardsEveryStdoutLine`, `TestSetSender_ForwardsEveryStderrLine` — sendLine receives stdout and stderr lines
+  - `TestSetSender_BurstDoesNotDropOrReorder` — lines arrive in order under burst load
+  - `TestSetSender_NilIsTreatedAsNoop` — nil sender installs a no-op
+  - `TestSetSender_CalledBeforeAndAfterRunStep` — replacement is reflected immediately
+  - `TestWriteToLog_ForwardsToSender` — WriteToLog path invokes sendLine
   - `TestRunStep_ConcurrentSetSenderNoRace`, `TestRunStep_ConcurrentStdoutStderrSenderNoRace` — race-detector tests for concurrent sender swaps and concurrent stdout/stderr goroutines
   - `TestRunStep_SendLineAfterTerminateNoPanic` — sendLine calls survive Terminate without panic
-  - `TestRunStep_SendLineDefaultNoOp`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — default no-op installed by NewRunner does not panic
+  - `TestRunStep_DefaultNoOpSendLineNoPanic`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — after `SetSender(nil)` the no-op sender does not panic
   - `TestSetSender_AtomicReplacementViaWriteToLog` — atomic replacement via WriteToLog
   - `TestWriteToLog_DoesNotWriteToFileLogger` — verifies WriteToLog forwards to sendLine but does not write to the file logger
   - `TestNewRunner_WriteToLogWithoutSetSenderPanics*` — verifies that calling WriteToLog before SetSender panics with a descriptive message
@@ -304,7 +308,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestLastCapture_StripsTrailingCarriageReturn` — verifies trailing `\r` is stripped
   - `TestLastCapture_StderrNotCaptured` — verifies stderr output does not appear in `LastCapture`
   - `TestCaptureOutput_UsesWorkingDir` — verifies `CaptureOutput` sets `cmd.Dir`
-  - `TestBuildStep_*` — tests for `buildStep` including Claude and shell step variants
+  - `TestBuildStep_*` — tests for `buildStep` including Claude step variants (iteration, var substitution, missing prompt file, finalize phase)
 
 ## Additional Information
 

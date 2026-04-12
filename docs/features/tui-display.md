@@ -73,6 +73,8 @@ Key files:
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
 | `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
 | `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
+| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 500-entry ring buffer, auto-scroll, logContentStyle |
+| `ralph-tui/internal/ui/log_panel_test.go` | Tests for logModel ring buffer, auto-scroll, Home/End key handling |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -190,7 +192,7 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
 `Model.View()` hand-builds the complete TUI output row-by-row each render cycle, using a small `wrapLine` helper that wraps each content line in `│ … │` side borders with right-padding to `innerWidth` (and `MaxWidth` truncation for overflow):
 
 1. **Top border with title** — `renderTopBorder(titleString())` builds a hand-crafted `╭── Power-Ralph.9000 — <iterationLine> ─ … ─╮`. The title is two-tone colored via `colorTitle()`: the `AppTitle` constant (`Power-Ralph.9000`) renders in green (color 10) and the iteration detail after the ` — ` separator renders in white (color 15). `lipgloss.Width` provides rune-aware truncation when the title overflows.
-2. **Checkbox grid** — before rendering, a first pass computes `maxCellWidth` by calling `lipgloss.Width` on every cell across all rows and columns, establishing a global maximum. A second pass renders each cell as three adjacent Lip Gloss spans: `Prefix` + `Marker` + `Suffix`, each with its own `lipgloss.Color` from `NameColors`/`MarkerColors`. After the three spans are written, trailing spaces are appended until the cell reaches `maxCellWidth`, so all four columns occupy the same visual width and the step list is distributed evenly across the header. Active steps appear in white/green; all other states in light gray. Each row is wrapped in sidebars via `wrapLine`.
+2. **Checkbox grid** — before rendering, a first pass computes `contentMaxWidth` by calling `lipgloss.Width` on every `Rows[r][c]` value across all rows and columns. A terminal-derived `termCellWidth` is also computed as `(innerWidth - separatorWidth) / HeaderCols`, and `cellWidth = max(termCellWidth, contentMaxWidth)` takes whichever is larger — this makes the grid fill the terminal edge-to-edge on wide terminals and fall back to content-width on narrow ones. A second pass renders each cell as three adjacent Lip Gloss spans: `Prefix` + `Marker` + `Suffix`, each with its own `lipgloss.Color` from `NameColors`/`MarkerColors`. After the three spans are written, trailing spaces are appended until the cell reaches `cellWidth`, so all four columns occupy the same visual width and the step list is distributed evenly across the header. Active steps appear in white/green; all other states in light gray. Each row is wrapped in sidebars via `wrapLine`.
 3. **HRule** — `gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")` uses T-junction glyphs so the rule visually connects to the `│` side borders at both ends.
 4. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model is split on `\n` and each resulting line is wrapped individually via `wrapLine`. The viewport content is set through `logContentStyle` (`White` foreground) so log body text pops against the gray chrome.
 5. **HRule** — same T-junction form as step 3.

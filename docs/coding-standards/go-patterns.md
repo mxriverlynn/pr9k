@@ -41,27 +41,28 @@ func ResolveCommand(projectDir string, command []string, issueID string) []strin
 When scanning subprocess stdout/stderr, set the scanner buffer to 256KB. The default 64KB buffer causes `token too long` errors on tools that emit long lines (e.g., minified output, base64 blobs).
 
 ```go
-const scanBufSize = 256 * 1024
+buf := make([]byte, 256*1024)
 scanner := bufio.NewScanner(pipe)
-scanner.Buffer(make([]byte, scanBufSize), scanBufSize)
+scanner.Buffer(buf, 256*1024)
 ```
 
 ## Extract conditional format strings to a named pure helper
 
 When the same conditional formatting decision (e.g., bounded vs. unbounded, singular vs. plural) appears in multiple log or UI call sites, extract it as a named unexported function rather than repeating the condition inline. This makes the formatting logic independently testable and keeps the condition in one place.
 
-```go
-// iterationLabel returns "Iteration N/M" for bounded mode or "Iteration N" for unbounded (total == 0).
-func iterationLabel(i, total int) string {
-    if total > 0 {
-        return fmt.Sprintf("Iteration %d/%d", i, total)
-    }
-    return fmt.Sprintf("Iteration %d", i)
-}
+In this codebase the `substitute` helper in `header.go` handles this for iteration/phase lines via template strings (`iterationHeaderBoundedFormat`, `iterationHeaderUnboundedFormat`, etc.), so the conditional logic lives in `RenderIterationLine` and the formatting in the templates.
 
-// Call sites stay readable and stay in sync automatically:
-executor.WriteToLog(fmt.Sprintf("%s — No issue found.", iterationLabel(i, cfg.Iterations)))
-executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("%s — Issue #%s", iterationLabel(i, cfg.Iterations), issueID)))
+```go
+// Phase-specific render methods each select the right template and call substitute:
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+    vals := map[string]string{"ITER": strconv.Itoa(iter), "ISSUE_ID": issueID}
+    if maxIter > 0 {
+        vals["MAX_ITER"] = strconv.Itoa(maxIter)
+        h.IterationLine = substitute(iterationHeaderBoundedFormat, vals)
+    } else {
+        h.IterationLine = substitute(iterationHeaderUnboundedFormat, vals)
+    }
+}
 ```
 
 ## Cobra: share command definition with an unexported impl helper
@@ -107,7 +108,7 @@ func Execute() (*Config, error) {
 // In main:
 cfg, err := cli.Execute()
 if err != nil {
-    fmt.Fprintf(os.Stderr, "Error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+    fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
     os.Exit(1)
 }
 if cfg == nil {
@@ -126,14 +127,19 @@ Populate the Bubble Tea model's initial state before calling `program.Run()`. Th
 if len(stepFile.Initialize) > 0 {
     header.SetPhaseSteps(stepNames(stepFile.Initialize))
     header.SetStepState(0, ui.StepActive)
-    header.RenderInitializeLine(1, len(stepFile.Initialize), stepFile.Initialize[0].Name)
+    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
 } else {
     header.SetPhaseSteps(stepNames(stepFile.Iteration))
     header.SetStepState(0, ui.StepActive)
-    header.RenderIterationLine(1, cfg.Iterations, "")
+    if cfg.Iterations > 0 {
+        header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+    } else {
+        header.IterationLine = "Iteration 1"
+    }
 }
 
-model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+versionLabel := "ralph-tui v" + version.Version
+model := ui.NewModel(header, keyHandler, versionLabel)
 program := tea.NewProgram(model, ...)
 program.Run() // first frame renders from already-populated state
 ```
@@ -195,7 +201,9 @@ When a Go module needs to pin a tool-only dependency (e.g., a code generator or 
 package main
 
 import (
+    _ "github.com/charmbracelet/bubbles"
     _ "github.com/charmbracelet/bubbletea"
+    _ "github.com/charmbracelet/lipgloss"
 )
 ```
 
@@ -284,7 +292,7 @@ When reviewing a struct, look for fields that appear only on the left side of as
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
-- [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Phase-specific render methods using `substitute` for conditional format strings
 - [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid; write-only `iterationLine` field removed from `headerModel` (issue #75)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger

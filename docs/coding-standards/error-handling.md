@@ -6,7 +6,7 @@ Wrap errors with `%w` and prefix the message with the package name. This makes i
 
 ```go
 // Good
-return fmt.Errorf("logger: failed to create log file: %w", err)
+return fmt.Errorf("logger: could not create log file: %w", err)
 return fmt.Errorf("workflow: start: %w", err)
 return fmt.Errorf("steps: PromptFile must not be empty")
 
@@ -20,7 +20,7 @@ return err
 When an error originates from file I/O, include the file path in the message so the caller can act on it without re-deriving the path.
 
 ```go
-return fmt.Errorf("steps: read prompt file %s: %w", path, err)
+return fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
 ```
 
 ## Explicit precondition validation

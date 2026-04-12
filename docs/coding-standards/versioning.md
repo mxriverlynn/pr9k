@@ -31,10 +31,10 @@ When you are about to make a change, ask: "does this break one of the four items
 
 ## `0.y.z` — initial development
 
-The current release is `0.1.0`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
+The current release is `0.2.2`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
-- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.1.0` → `0.2.0`), not the major.
-- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.1.0` → `0.1.1`).
+- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.2.2` → `0.3.0`), not the major.
+- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.2.2` → `0.2.2`).
 - The first `1.0.0` release is the commitment that the four "public API" items above are stable and will be governed by the full semver rules going forward. Do not bump to `1.0.0` casually — it should be a deliberate decision with a corresponding entry in the repo's plans or ADRs.
 
 ## How to bump the version

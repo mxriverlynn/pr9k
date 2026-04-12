@@ -65,8 +65,6 @@ Key files:
 
   main goroutine (after program.Run() returns):
   ┌─────────────────────────────────────────┐
-  │  wait on <-workflowDone or 2s timeout   │
-  │                                         │
   │  select {                               │
   │  case <-signaled:                       │
   │    os.Exit(1)   ← signal-initiated      │
@@ -153,14 +151,9 @@ Placing cleanup here ensures it always runs when the workflow finishes naturally
 
 ### Exit Code Selection
 
-After `program.Run()` returns, the main goroutine waits for the workflow goroutine (which may still be finalizing log flush) and checks whether a signal was received:
+After `program.Run()` returns, the main goroutine checks whether a signal was received:
 
 ```go
-select {
-case <-workflowDone:
-case <-time.After(2 * time.Second):
-}
-
 select {
 case <-signaled:
     os.Exit(1)  // signal-initiated shutdown

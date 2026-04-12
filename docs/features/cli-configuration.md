@@ -19,6 +19,7 @@ Key files:
 - `ralph-tui/internal/cli/args_test.go` — 18 test cases covering all argument parsing branches (including `--version` and `-v`)
 - `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
 - `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
+- `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper function
 
 ## Architecture
 
@@ -162,6 +163,7 @@ After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`
 |----------|---------------|
 | `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
 | `steps.LoadSteps(projectDir)` | `{projectDir}/ralph-steps.json` |
+| `validator.Validate(projectDir)` | Validates `ralph-steps.json` relative to `{projectDir}` |
 | `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.ProjectDir` | Scripts, prompt files, command resolution |
 
