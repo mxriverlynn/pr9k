@@ -236,12 +236,56 @@ for r := range grid.Rows {
 
 Apply this pattern any time a grid or table must keep columns aligned across rows. A single-pass approach that computes per-row max will fail as soon as a later row contains a wider cell than the first row.
 
+## Delete write-only fields — don't cache through a pointer
+
+When a wrapper struct holds a pointer to another struct and exposes an accessor that reads through that pointer, do not also cache the pointed-to value as a separate field. A field that is written at every update site but never read is a write-only field — it creates synchronization burden (every update site must dual-write) and divergence risk (if any update site is missed, the cache and the pointer drift apart).
+
+```go
+// Bad — iterationLine is written at every update site but never read;
+// iterLine() already reads header.IterationLine directly.
+type headerModel struct {
+    header        *StatusHeader
+    iterationLine string // written but never read — vestigial cache
+}
+
+func (m headerModel) apply(msg tea.Msg) headerModel {
+    case headerIterationLineMsg:
+        m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
+        m.iterationLine = m.header.IterationLine // redundant write
+    // ...
+}
+
+func (m headerModel) iterLine() string {
+    return m.header.IterationLine // reads through pointer — the only reader
+}
+```
+
+```go
+// Good — remove the cache field; the accessor reads through the pointer.
+type headerModel struct {
+    header *StatusHeader
+}
+
+func (m headerModel) apply(msg tea.Msg) headerModel {
+    case headerIterationLineMsg:
+        m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
+        // no cache to maintain
+    // ...
+}
+
+func (m headerModel) iterLine() string {
+    return m.header.IterationLine
+}
+```
+
+When reviewing a struct, look for fields that appear only on the left side of assignments (`m.field = ...`) and never in expressions. Those are candidates for deletion. If a pointer accessor already provides the same value, the cached field is always redundant.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
-- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid
+- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid; write-only `iterationLine` field removed from `headerModel` (issue #75)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
