@@ -259,6 +259,35 @@ func TestLogFormatWithoutIterationContext(t *testing.T) {
 	}
 }
 
+// TP-001: 3-bracket format when iteration context is set.
+func TestLogFormatWithIterationContext(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+
+	l.SetContext("Iteration 1/3", "")
+	if err := l.Log("Feature work", "content"); err != nil {
+		t.Fatalf("Log: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	lines := readLogLines(t, dir)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d", len(lines))
+	}
+	line := lines[0]
+
+	// Must match exactly 3 bracket groups: [timestamp] [iteration] [stepName]
+	threeGroupRe := regexp.MustCompile(`^\[.*\] \[Iteration 1/3\] \[Feature work\] content$`)
+	if !threeGroupRe.MatchString(line) {
+		t.Errorf("line does not match expected three-group format: %q", line)
+	}
+}
+
 func TestSetContextSecondParameterIsUnused(t *testing.T) {
 	dir := t.TempDir()
 	l, err := NewLogger(dir)

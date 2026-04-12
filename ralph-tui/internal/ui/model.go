@@ -10,14 +10,12 @@ import (
 // headerModel wraps StatusHeader and applies header messages from the
 // orchestration goroutine (sent via headerProxy → program.Send).
 type headerModel struct {
-	header        *StatusHeader
-	iterationLine string // mirrored from header.IterationLine for title tracking
+	header *StatusHeader
 }
 
 func newHeaderModel(h *StatusHeader) headerModel {
 	return headerModel{
-		header:        h,
-		iterationLine: h.IterationLine,
+		header: h,
 	}
 }
 
@@ -29,13 +27,10 @@ func (m headerModel) apply(msg tea.Msg) headerModel {
 		m.header.SetStepState(msg.idx, msg.state)
 	case headerIterationLineMsg:
 		m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
-		m.iterationLine = m.header.IterationLine
 	case headerInitializeLineMsg:
 		m.header.RenderInitializeLine(msg.stepNum, msg.stepCount, msg.stepName)
-		m.iterationLine = m.header.IterationLine
 	case headerFinalizeLineMsg:
 		m.header.RenderFinalizeLine(msg.stepNum, msg.stepCount, msg.stepName)
-		m.iterationLine = m.header.IterationLine
 	case headerPhaseStepsMsg:
 		m.header.SetPhaseSteps(msg.names)
 	}
@@ -184,6 +179,24 @@ func (m Model) View() string {
 
 	// Checkbox grid — the iteration line lives in the top border as the
 	// title, so the grid is the first row below the top border.
+	//
+	// Compute cell width so the grid fills the full terminal width.
+	// Each row has HeaderCols cells separated by 2-space gaps.  The cell
+	// width is derived from innerWidth so the grid stretches edge-to-edge,
+	// falling back to the widest content width when the terminal is too
+	// narrow to hold all cells.
+	contentMaxWidth := 0
+	for r := range m.header.header.Rows {
+		for c := range HeaderCols {
+			if w := lipgloss.Width(m.header.header.Rows[r][c]); w > contentMaxWidth {
+				contentMaxWidth = w
+			}
+		}
+	}
+	separatorWidth := (HeaderCols - 1) * 2
+	termCellWidth := (innerWidth - separatorWidth) / HeaderCols
+	cellWidth := max(termCellWidth, contentMaxWidth)
+
 	for r := range m.header.header.Rows {
 		var row strings.Builder
 		for c := range HeaderCols {
@@ -194,6 +207,11 @@ func (m Model) View() string {
 			marker := lipgloss.NewStyle().Foreground(m.header.header.MarkerColors[r][c]).Render(m.header.header.Markers[r][c])
 			suffix := lipgloss.NewStyle().Foreground(m.header.header.NameColors[r][c]).Render(m.header.header.Suffixes[r][c])
 			row.WriteString(prefix + marker + suffix)
+			// Pad to cellWidth so all columns are equally wide and
+			// the grid fills the terminal width.
+			if pad := cellWidth - lipgloss.Width(m.header.header.Rows[r][c]); pad > 0 {
+				row.WriteString(strings.Repeat(" ", pad))
+			}
 		}
 		sb.WriteString(wrapLine(row.String()))
 		sb.WriteString("\n")

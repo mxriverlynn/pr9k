@@ -108,7 +108,14 @@ func (r *Runner) Terminate() {
 // line is stored and retrievable via LastCapture. On failure, LastCapture is
 // set to "". A WaitGroup ensures both pipes are fully drained before cmd.Wait()
 // is called.
+//
+// RunStep returns an error if command is empty rather than panicking, so callers
+// that build commands dynamically get a clear failure instead of a runtime panic.
 func (r *Runner) RunStep(stepName string, command []string) error {
+	if len(command) == 0 {
+		return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
+	}
+
 	r.processMu.Lock()
 	r.terminated = false
 	r.processMu.Unlock()
@@ -183,11 +190,13 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	wg.Wait()
 	waitErr := cmd.Wait()
 
+	r.mu.Lock()
 	if waitErr == nil {
 		r.lastCapture = lastNonEmptyLine(capturedLines)
 	} else {
 		r.lastCapture = ""
 	}
+	r.mu.Unlock()
 
 	return waitErr
 }
@@ -196,6 +205,8 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 // successful RunStep call, stripped of trailing carriage returns and whitespace.
 // Returns "" if the last step failed or produced no non-empty stdout output.
 func (r *Runner) LastCapture() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.lastCapture
 }
 
@@ -221,18 +232,13 @@ func (r *Runner) WriteToLog(line string) {
 	send(line)
 }
 
-// Close is a no-op retained for interface compatibility with workflow.StepExecutor.
-// The io.Pipe has been removed in this migration; there is no pipe writer to close.
-// Call sites that previously relied on Close() to signal EOF to the UI pipe
-// should be migrated to use the sendLine / SetSender API instead.
-func (r *Runner) Close() error {
-	return nil
-}
-
 // CaptureOutput runs command in workingDir and returns its trimmed stdout.
 // Stderr is discarded. Use this for commands that return a single value
 // (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
 func (r *Runner) CaptureOutput(command []string) (string, error) {
+	if len(command) == 0 {
+		return "", fmt.Errorf("workflow: CaptureOutput: empty command")
+	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.workingDir
 	out, err := cmd.Output()

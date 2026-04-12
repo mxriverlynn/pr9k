@@ -41,27 +41,28 @@ func ResolveCommand(projectDir string, command []string, issueID string) []strin
 When scanning subprocess stdout/stderr, set the scanner buffer to 256KB. The default 64KB buffer causes `token too long` errors on tools that emit long lines (e.g., minified output, base64 blobs).
 
 ```go
-const scanBufSize = 256 * 1024
+buf := make([]byte, 256*1024)
 scanner := bufio.NewScanner(pipe)
-scanner.Buffer(make([]byte, scanBufSize), scanBufSize)
+scanner.Buffer(buf, 256*1024)
 ```
 
 ## Extract conditional format strings to a named pure helper
 
 When the same conditional formatting decision (e.g., bounded vs. unbounded, singular vs. plural) appears in multiple log or UI call sites, extract it as a named unexported function rather than repeating the condition inline. This makes the formatting logic independently testable and keeps the condition in one place.
 
-```go
-// iterationLabel returns "Iteration N/M" for bounded mode or "Iteration N" for unbounded (total == 0).
-func iterationLabel(i, total int) string {
-    if total > 0 {
-        return fmt.Sprintf("Iteration %d/%d", i, total)
-    }
-    return fmt.Sprintf("Iteration %d", i)
-}
+In this codebase the `substitute` helper in `header.go` handles this for iteration/phase lines via template strings (`iterationHeaderBoundedFormat`, `iterationHeaderUnboundedFormat`, etc.), so the conditional logic lives in `RenderIterationLine` and the formatting in the templates.
 
-// Call sites stay readable and stay in sync automatically:
-executor.WriteToLog(fmt.Sprintf("%s — No issue found.", iterationLabel(i, cfg.Iterations)))
-executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("%s — Issue #%s", iterationLabel(i, cfg.Iterations), issueID)))
+```go
+// Phase-specific render methods each select the right template and call substitute:
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+    vals := map[string]string{"ITER": strconv.Itoa(iter), "ISSUE_ID": issueID}
+    if maxIter > 0 {
+        vals["MAX_ITER"] = strconv.Itoa(maxIter)
+        h.IterationLine = substitute(iterationHeaderBoundedFormat, vals)
+    } else {
+        h.IterationLine = substitute(iterationHeaderUnboundedFormat, vals)
+    }
+}
 ```
 
 ## Cobra: share command definition with an unexported impl helper
@@ -107,7 +108,7 @@ func Execute() (*Config, error) {
 // In main:
 cfg, err := cli.Execute()
 if err != nil {
-    fmt.Fprintf(os.Stderr, "Error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+    fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
     os.Exit(1)
 }
 if cfg == nil {
@@ -126,14 +127,19 @@ Populate the Bubble Tea model's initial state before calling `program.Run()`. Th
 if len(stepFile.Initialize) > 0 {
     header.SetPhaseSteps(stepNames(stepFile.Initialize))
     header.SetStepState(0, ui.StepActive)
-    header.RenderInitializeLine(1, len(stepFile.Initialize), stepFile.Initialize[0].Name)
+    header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
 } else {
     header.SetPhaseSteps(stepNames(stepFile.Iteration))
     header.SetStepState(0, ui.StepActive)
-    header.RenderIterationLine(1, cfg.Iterations, "")
+    if cfg.Iterations > 0 {
+        header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
+    } else {
+        header.IterationLine = "Iteration 1"
+    }
 }
 
-model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+versionLabel := "ralph-tui v" + version.Version
+model := ui.NewModel(header, keyHandler, versionLabel)
 program := tea.NewProgram(model, ...)
 program.Run() // first frame renders from already-populated state
 ```
@@ -195,7 +201,9 @@ When a Go module needs to pin a tool-only dependency (e.g., a code generator or 
 package main
 
 import (
+    _ "github.com/charmbracelet/bubbles"
     _ "github.com/charmbracelet/bubbletea"
+    _ "github.com/charmbracelet/lipgloss"
 )
 ```
 
@@ -207,12 +215,85 @@ vet:
 
 The `//go:build tools` tag excludes the file from normal builds and `go build` (which fails by design — no `main` function). `go mod tidy` keeps the dependency pinned in `go.sum`. The `-tags tools` vet step catches import-path typos that `go mod tidy` would miss.
 
+## Two-pass layout for uniform column width
+
+When rendering a multi-column grid where all columns must be the same width, compute the global maximum cell width in a first pass across all rows and columns, then apply padding in a second pass. Computing the max per-row instead of globally causes rows with shorter content to produce narrower columns, misaligning the grid across rows.
+
+```go
+// First pass — measure globally across all rows and columns.
+maxCellWidth := 0
+for r := range grid.Rows {
+    for c := range numCols {
+        if w := lipgloss.Width(grid.Rows[r][c]); w > maxCellWidth {
+            maxCellWidth = w
+        }
+    }
+}
+
+// Second pass — render with uniform padding.
+for r := range grid.Rows {
+    var row strings.Builder
+    for c := range numCols {
+        row.WriteString(renderCell(grid.Rows[r][c]))
+        if pad := maxCellWidth - lipgloss.Width(grid.Rows[r][c]); pad > 0 {
+            row.WriteString(strings.Repeat(" ", pad))
+        }
+    }
+}
+```
+
+Apply this pattern any time a grid or table must keep columns aligned across rows. A single-pass approach that computes per-row max will fail as soon as a later row contains a wider cell than the first row.
+
+## Delete write-only fields — don't cache through a pointer
+
+When a wrapper struct holds a pointer to another struct and exposes an accessor that reads through that pointer, do not also cache the pointed-to value as a separate field. A field that is written at every update site but never read is a write-only field — it creates synchronization burden (every update site must dual-write) and divergence risk (if any update site is missed, the cache and the pointer drift apart).
+
+```go
+// Bad — iterationLine is written at every update site but never read;
+// iterLine() already reads header.IterationLine directly.
+type headerModel struct {
+    header        *StatusHeader
+    iterationLine string // written but never read — vestigial cache
+}
+
+func (m headerModel) apply(msg tea.Msg) headerModel {
+    case headerIterationLineMsg:
+        m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
+        m.iterationLine = m.header.IterationLine // redundant write
+    // ...
+}
+
+func (m headerModel) iterLine() string {
+    return m.header.IterationLine // reads through pointer — the only reader
+}
+```
+
+```go
+// Good — remove the cache field; the accessor reads through the pointer.
+type headerModel struct {
+    header *StatusHeader
+}
+
+func (m headerModel) apply(msg tea.Msg) headerModel {
+    case headerIterationLineMsg:
+        m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
+        // no cache to maintain
+    // ...
+}
+
+func (m headerModel) iterLine() string {
+    return m.header.IterationLine
+}
+```
+
+When reviewing a struct, look for fields that appear only on the left side of assignments (`m.field = ...`) and never in expressions. Those are candidates for deletion. If a pointer accessor already provides the same value, the cached field is always redundant.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
-- [Workflow Orchestration](../features/workflow-orchestration.md) — `iterationLabel` conditional format helper applied across log call sites
-- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run()
+- [Workflow Orchestration](../features/workflow-orchestration.md) — Phase-specific render methods using `substitute` for conditional format strings
+- [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid; write-only `iterationLine` field removed from `headerModel` (issue #75)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
 - [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps

@@ -13,10 +13,11 @@ go test -race ./...
 Every type with a `Close` method must have a test that calls `Close` twice. The second call must return `nil` and must not panic. This documents the contract and prevents resource-management bugs in callers.
 
 ```go
-func TestClose_IsIdempotent(t *testing.T) {
-    r := newRunner(t)
-    require.NoError(t, r.Close())
-    require.NoError(t, r.Close()) // must not panic or error
+func TestCloseIsIdempotent(t *testing.T) {
+    l, err := NewLogger(t.TempDir())
+    require.NoError(t, err)
+    require.NoError(t, l.Close())
+    require.NoError(t, l.Close()) // must not panic or error
 }
 ```
 
@@ -248,12 +249,43 @@ This standard applies to `func main()` and to any analogous one-time assembly fu
 
 Run `go vet ./...` before every commit. Vet catches correctness issues that the compiler does not (e.g., misuse of `sync` types, incorrect format strings).
 
+## Test grid layout with structural variants
+
+When testing multi-row grid rendering, cover five structural variants. Each targets a distinct failure mode that single-case tests miss:
+
+| Variant | What it catches |
+|---|---|
+| Multi-row with unequal names | Global max computed per-row instead of globally — later rows misalign |
+| Sparse trailing cells (last row not full) | Empty slots collapsing column width for that row |
+| All names equal width | Padding added unnecessarily, inflating row width |
+| Long name with truncation active | Truncation interacting with padding, producing wrong widths |
+| Single item | Off-by-one on column index 0; degenerate row with no separators |
+
+```go
+// Multi-row: maxCellWidth must use the wider name from row 1, not the shorter names in row 0.
+func TestView_CheckboxGrid_MultiRow_GlobalMaxCellWidth(t *testing.T) { ... }
+
+// Sparse: empty trailing slot in row 1 must still align with the filled slots in row 0.
+func TestView_CheckboxGrid_EmptyTrailingCells_AlignWithFilledRow(t *testing.T) { ... }
+
+// Equal: no extra spaces when all names are the same width.
+func TestView_CheckboxGrid_EqualWidthNames_NoPaddingWithinCells(t *testing.T) { ... }
+
+// Truncation: verify padding is added after truncation, not before.
+func TestView_CheckboxGrid_LongNames_TruncatedToTerminalWidth(t *testing.T) { ... }
+
+// Single item: must not crash and cell must appear at offset 0.
+func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) { ... }
+```
+
+Apply this checklist any time you write or modify a grid/table rendering function that pads or aligns cells.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded); fakeRunHeader as the canonical capturing fake pattern
 - [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
-- [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState; phase transition testing via SetPhaseSteps
+- [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState; phase transition testing via SetPhaseSteps; grid layout structural variants (TP-001–TP-005)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand; stdout-only capture contract (D4) tested via TestLastCapture_StderrNotCaptured
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes); newTestKeyHandler as the canonical async signal injection pattern
 - [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration

@@ -2,7 +2,7 @@
 
 Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination and per-step stdout capture.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-12
 - **Authors:**
   - River Bailey
 
@@ -18,7 +18,7 @@ Key files:
 - `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
 - `ralph-tui/internal/workflow/run.go` — `ResolveCommand` ({{VAR}} substitution + script path resolution)
 - `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution
-- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture`, `CaptureOutput`, and `ResolveCommand`
+- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture` and `CaptureOutput`
 
 ## Architecture
 
@@ -71,7 +71,7 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
 | `ralph-tui/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
-| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, and `SetSender` |
+| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, and `SetSender` |
 | `ralph-tui/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
 
 ## Core Types
@@ -79,7 +79,7 @@ Key files:
 ```go
 // Runner executes workflow steps and forwards subprocess output via a sendLine callback.
 type Runner struct {
-    mu         sync.Mutex     // protects sendLine
+    mu         sync.Mutex     // protects sendLine and lastCapture
     log        *logger.Logger // file logger
     workingDir string         // cmd.Dir for every subprocess
     sendLine   func(string)   // callback invoked for every forwarded line; never nil
@@ -92,6 +92,7 @@ type Runner struct {
 
     // lastCapture holds the last non-empty stdout line from the most recent
     // successful RunStep. Empty string if the last step failed or produced no output.
+    // Protected by mu; written by RunStep, read by LastCapture.
     lastCapture string
 }
 ```
@@ -117,6 +118,10 @@ func (r *Runner) SetSender(send func(string)) {
 
 ```go
 func (r *Runner) RunStep(stepName string, command []string) error {
+    if len(command) == 0 {
+        return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
+    }
+
     r.processMu.Lock()
     r.terminated = false  // reset for this step
     r.processMu.Unlock()
@@ -170,6 +175,8 @@ After each successful `RunStep`, `Runner` stores the last non-empty stdout line.
 // successful RunStep call, stripped of trailing carriage returns and whitespace.
 // Returns "" if the last step failed or produced no non-empty stdout output.
 func (r *Runner) LastCapture() string {
+    r.mu.Lock()
+    defer r.mu.Unlock()
     return r.lastCapture
 }
 ```
@@ -223,6 +230,9 @@ func (r *Runner) WriteToLog(line string) {
 
 ```go
 func (r *Runner) CaptureOutput(command []string) (string, error) {
+    if len(command) == 0 {
+        return "", fmt.Errorf("workflow: CaptureOutput: empty command")
+    }
     cmd := exec.Command(command[0], command[1:]...)
     cmd.Dir = r.workingDir
     out, err := cmd.Output()
@@ -236,6 +246,10 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 
 ```go
 func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+    if len(command) == 0 {
+        return command
+    }
+
     result := make([]string, len(command))
     for i, arg := range command {
         substituted, _ := vars.Substitute(arg, vt, phase)
@@ -257,6 +271,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 | Resource | Protection | Why |
 |----------|-----------|-----|
 | `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently with scanner goroutines reading it |
+| `lastCapture` | `mu sync.Mutex` | Written by `RunStep` after `wg.Wait()`, read by `LastCapture()`; both hold `mu` to prevent data races between concurrent callers |
 | `currentProc`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep (main goroutine) and Terminate (keyboard/signal goroutine) |
 | `WaitGroup` drain before `cmd.Wait()` | `sync.WaitGroup` | Ensures all pipe output is forwarded before the process exit status is collected |
 
@@ -272,26 +287,28 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `Close`, `ResolveCommand`, and `SetSender`:
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and `RunStep` empty-command guard:
   - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
-  - `TestRunStep_SendLineReceivesStdout`, `TestRunStep_SendLineReceivesStderr` — sendLine receives stdout and stderr lines
-  - `TestRunStep_SendLineBurstOrdering` — lines arrive in order under burst load
-  - `TestRunStep_SetSenderNilInstallsNoOp` — nil sender installs a no-op
-  - `TestRunStep_SetSenderReplacementTakesEffect` — replacement is reflected immediately
-  - `TestWriteToLog_SendLineInvoked` — WriteToLog path invokes sendLine
+  - `TestSetSender_ForwardsEveryStdoutLine`, `TestSetSender_ForwardsEveryStderrLine` — sendLine receives stdout and stderr lines
+  - `TestSetSender_BurstDoesNotDropOrReorder` — lines arrive in order under burst load
+  - `TestSetSender_NilIsTreatedAsNoop` — nil sender installs a no-op
+  - `TestSetSender_CalledBeforeAndAfterRunStep` — replacement is reflected immediately
+  - `TestWriteToLog_ForwardsToSender` — WriteToLog path invokes sendLine
   - `TestRunStep_ConcurrentSetSenderNoRace`, `TestRunStep_ConcurrentStdoutStderrSenderNoRace` — race-detector tests for concurrent sender swaps and concurrent stdout/stderr goroutines
   - `TestRunStep_SendLineAfterTerminateNoPanic` — sendLine calls survive Terminate without panic
-  - `TestRunStep_SendLineDefaultNoOp`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — default no-op installed by NewRunner does not panic
-  - `TestWriteToLog_AfterCloseSendLineStillInvoked` — sendLine fires even after Close
+  - `TestRunStep_DefaultNoOpSendLineNoPanic`, `TestWriteToLog_DefaultNoOpSendLineNoPanic` — after `SetSender(nil)` the no-op sender does not panic
   - `TestSetSender_AtomicReplacementViaWriteToLog` — atomic replacement via WriteToLog
   - `TestWriteToLog_DoesNotWriteToFileLogger` — verifies WriteToLog forwards to sendLine but does not write to the file logger
+  - `TestNewRunner_WriteToLogWithoutSetSenderPanics*` — verifies that calling WriteToLog before SetSender panics with a descriptive message
+  - `TestRunStep_ReturnsErrorForEmpty*` — verifies that RunStep returns an error for empty and nil command slices
+  - `TestCaptureOutput_ReturnsErrorForEmptyCommandSlice`, `TestCaptureOutput_ReturnsErrorForNilCommand` — verifies CaptureOutput returns an error for empty and nil command slices
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step
   - `TestLastCapture_StripsTrailingCarriageReturn` — verifies trailing `\r` is stripped
   - `TestLastCapture_StderrNotCaptured` — verifies stderr output does not appear in `LastCapture`
   - `TestCaptureOutput_UsesWorkingDir` — verifies `CaptureOutput` sets `cmd.Dir`
-  - `TestBuildStep_*` — tests for `buildStep` including Claude and shell step variants
+  - `TestBuildStep_*` — tests for `buildStep` including Claude step variants (iteration, var substitution, missing prompt file, finalize phase)
 
 ## Additional Information
 

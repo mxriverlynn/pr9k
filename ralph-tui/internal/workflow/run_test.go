@@ -24,7 +24,6 @@ type fakeExecutor struct {
 	runStepCaptures []string // per-call LastCapture values (indexed by call order)
 	lastCapture     string
 	logLines        []string
-	closed          bool
 	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
 	// Tests use it to observe the log stream from another goroutine without
 	// racing on logLines. The callback runs synchronously on the writer
@@ -63,11 +62,6 @@ func (f *fakeExecutor) WriteToLog(line string) {
 
 func (f *fakeExecutor) LastCapture() string {
 	return f.lastCapture
-}
-
-func (f *fakeExecutor) Close() error {
-	f.closed = true
-	return nil
 }
 
 type fakeRunHeader struct {
@@ -223,6 +217,86 @@ func TestRun_TwoIterationsAllStepsSucceed(t *testing.T) {
 	}
 	if header.renderIterationCalls[1].maxIter != 2 {
 		t.Errorf("iteration 2: want maxIter=2, got %d", header.renderIterationCalls[1].maxIter)
+	}
+}
+
+// TestRun_UnlimitedIterations verifies that Iterations==0 runs until a
+// breakLoopIfEmpty step returns empty capture. The loop must not run forever.
+func TestRun_UnlimitedIterations(t *testing.T) {
+	// Iteration 1: get-issue → "issue-1" (non-empty → continue)
+	// Iteration 2: get-issue → "" (empty AND BreakLoopIfEmpty → break)
+	// Finalize: final1
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"issue-1", "", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    0, // unlimited
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID")},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.IterationsRun != 2 {
+		t.Errorf("expected IterationsRun=2, got %d", result.IterationsRun)
+	}
+
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run after unlimited loop exit")
+	}
+}
+
+// TestRun_NegativeIterationsRunsZeroIterations verifies that a negative
+// Iterations value (e.g. -1) silently produces zero iterations because the
+// loop condition `cfg.Iterations == 0 || i <= cfg.Iterations` is false on
+// the very first evaluation: -1 != 0 and 1 <= -1 is false. Finalization still
+// executes. IterationsRun returns the last value of i that was committed, which
+// is 1 because the counter increments before the check fails — however, no step
+// actually runs during that iteration since we break immediately.
+//
+// Note: the caller is responsible for validating Iterations >= 0 before calling
+// Run. This test documents the current behaviour so that any future change to
+// the loop condition is noticed.
+func TestRun_NegativeIterationsRunsZeroIterations(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    -1, // invalid; loop condition is false immediately
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// No iteration step should have run.
+	for _, call := range executor.runStepCalls {
+		if call.name == "iter-step" {
+			t.Errorf("iter-step must not run when Iterations=-1, but it did")
+		}
+	}
+
+	// Finalization still runs.
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run even when Iterations=-1")
 	}
 }
 
@@ -491,27 +565,6 @@ func TestRun_FinalizationRunsWhenLoopBreaksEarly(t *testing.T) {
 	}
 }
 
-// TestRun_ClosedAfterCompletion verifies executor.Close() is called after all
-// work completes.
-func TestRun_ClosedAfterCompletion(t *testing.T) {
-	executor := &fakeExecutor{}
-	header := &fakeRunHeader{}
-	kh := newTestKeyHandler()
-
-	cfg := RunConfig{
-		ProjectDir:    t.TempDir(),
-		Iterations:    1,
-		Steps:         nonClaudeSteps("step1"),
-		FinalizeSteps: nonClaudeSteps("final1"),
-	}
-
-	Run(executor, header, kh, cfg)
-
-	if !executor.closed {
-		t.Error("expected executor to be closed after completion")
-	}
-}
-
 // TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization verifies that
 // when building a step fails, Run logs "Error preparing steps", skips the
 // remaining iteration steps, still runs finalization.
@@ -563,10 +616,65 @@ func TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization(t *testing.T
 	}
 }
 
-// TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization verifies that
-// when Orchestrate returns ActionQuit during an iteration, Run closes the
-// executor and skips finalization.
-func TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization(t *testing.T) {
+// TestRun_StepBuildErrorAbortsAllRemainingIterations verifies that when
+// buildStep fails during the iteration loop with Iterations > 1, the entire
+// loop is aborted — not just the current iteration. This is distinct from the
+// initialize phase, which continues to the next step on a build error.
+func TestRun_StepBuildErrorAbortsAllRemainingIterations(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	badStep := steps.Step{
+		Name:       "bad-claude",
+		IsClaude:   true,
+		Model:      "some-model",
+		PromptFile: "nonexistent.txt",
+	}
+
+	cfg := RunConfig{
+		ProjectDir:    t.TempDir(),
+		Iterations:    3, // three iterations configured; error on first should abort all
+		Steps:         []steps.Step{badStep},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Iteration step must never have executed (build failed before RunStep).
+	for _, call := range executor.runStepCalls {
+		if call.name == "bad-claude" {
+			t.Errorf("bad-claude step should not have run (build error)")
+		}
+	}
+
+	// Finalization still runs.
+	ranFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "final1" {
+			ranFinal = true
+		}
+	}
+	if !ranFinal {
+		t.Error("expected finalization to run after iteration build error")
+	}
+
+	// Only one "Error preparing steps" message should appear (iteration 1 aborts
+	// the loop; iterations 2 and 3 never start).
+	errCount := 0
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Error preparing steps") {
+			errCount++
+		}
+	}
+	if errCount != 1 {
+		t.Errorf("expected exactly 1 'Error preparing steps' log line (loop aborted after first iteration), got %d", errCount)
+	}
+}
+
+// TestRun_QuitFromIterationSkipsFinalization verifies that when Orchestrate
+// returns ActionQuit during an iteration, Run skips finalization.
+func TestRun_QuitFromIterationSkipsFinalization(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	actions <- ui.ActionQuit
 	kh := ui.NewKeyHandler(func() {}, actions)
@@ -585,9 +693,6 @@ func TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization(t *testing.T
 
 	Run(executor, header, kh, cfg)
 
-	if !executor.closed {
-		t.Error("expected executor to be closed on quit")
-	}
 	for _, call := range executor.runStepCalls {
 		if call.name == "final1" {
 			t.Error("finalization step should not have run after iteration quit")
@@ -595,10 +700,10 @@ func TestRun_QuitFromIterationOrchestrateClosesAndSkipsFinalization(t *testing.T
 	}
 }
 
-// TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary verifies that
-// when Orchestrate returns ActionQuit during finalization, Run closes the
-// executor.
-func TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary(t *testing.T) {
+// TestRun_QuitFromFinalizationReturnsWithoutSummary verifies that when
+// Orchestrate returns ActionQuit during finalization, Run returns without
+// writing the completion summary.
+func TestRun_QuitFromFinalizationReturnsWithoutSummary(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	actions <- ui.ActionQuit
 	kh := ui.NewKeyHandler(func() {}, actions)
@@ -617,15 +722,11 @@ func TestRun_QuitFromFinalizationOrchestrateClosesWithoutSummary(t *testing.T) {
 	}
 
 	Run(executor, header, kh, cfg)
-
-	if !executor.closed {
-		t.Error("expected executor to be closed on finalization quit")
-	}
 }
 
-// TestRun_QuitFromInitializeOrchestrateClosesEarly verifies that
-// ActionQuit during the initialize phase closes the executor immediately.
-func TestRun_QuitFromInitializeOrchestrateClosesEarly(t *testing.T) {
+// TestRun_QuitFromInitializeSkipsRemainingPhases verifies that ActionQuit
+// during the initialize phase skips all iteration and finalization steps.
+func TestRun_QuitFromInitializeSkipsRemainingPhases(t *testing.T) {
 	actions := make(chan ui.StepAction, 10)
 	actions <- ui.ActionQuit
 	kh := ui.NewKeyHandler(func() {}, actions)
@@ -645,9 +746,6 @@ func TestRun_QuitFromInitializeOrchestrateClosesEarly(t *testing.T) {
 
 	Run(executor, header, kh, cfg)
 
-	if !executor.closed {
-		t.Error("expected executor to be closed on initialize quit")
-	}
 	for _, call := range executor.runStepCalls {
 		if call.name == "iter-step" || call.name == "final1" {
 			t.Errorf("step %q should not have run after initialize quit", call.name)
@@ -1287,6 +1385,17 @@ func TestRun_FinalizeBuildErrorSkipsRenderFinalizeLine(t *testing.T) {
 		t.Errorf("expected {stepNum=2, stepCount=2, stepName=%q}, got {%d, %d, %q}",
 			"good-final", got.stepNum, got.stepCount, got.stepName)
 	}
+
+	foundGoodFinal := false
+	for _, call := range executor.runStepCalls {
+		if call.name == "good-final" {
+			foundGoodFinal = true
+			break
+		}
+	}
+	if !foundGoodFinal {
+		t.Errorf("expected 'good-final' step to execute via RunStep after bad step, got calls: %v", executor.runStepCalls)
+	}
 }
 
 // TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth verifies that when LogWidth
@@ -1333,6 +1442,51 @@ func TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth(t *testing.T) {
 				t.Errorf("LogWidth=%d: no '═' phase banner underline found in log lines: %v", logWidth, executor.logLines)
 			}
 		})
+	}
+}
+
+// TestRun_LogWidthPositive_UsesThatWidthForPhaseBanner verifies that when
+// LogWidth is set to a positive value, Run uses that width for phase banner
+// underlines (mirrors the zero-width fallback test with a real value).
+func TestRun_LogWidthPositive_UsesThatWidthForPhaseBanner(t *testing.T) {
+	const wantWidth = 40
+
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		ProjectDir: t.TempDir(),
+		Iterations: 1,
+		Steps:      nonClaudeSteps("step1"),
+		LogWidth:   wantWidth,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	foundUnderline := false
+	for _, line := range executor.logLines {
+		if len(line) == 0 {
+			continue
+		}
+		allDouble := true
+		for _, r := range line {
+			if r != '═' {
+				allDouble = false
+				break
+			}
+		}
+		if allDouble {
+			got := len([]rune(line))
+			if got != wantWidth {
+				t.Errorf("phase banner underline rune count = %d, want %d (LogWidth)", got, wantWidth)
+			}
+			foundUnderline = true
+			break
+		}
+	}
+	if !foundUnderline {
+		t.Errorf("no '═' phase banner underline found in log lines: %v", executor.logLines)
 	}
 }
 

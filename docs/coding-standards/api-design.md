@@ -6,11 +6,11 @@ If a parameter is intentionally unused (reserved for future use or part of an in
 
 ```go
 // SetContext updates the iteration prefix for subsequent log lines.
-// The stepName parameter is reserved for future use and is currently ignored.
-func (l *Logger) SetContext(iteration int, stepName string) {
+// The second parameter is reserved for future use and is currently ignored.
+func (l *Logger) SetContext(iteration string, _ string) {
     l.mu.Lock()
     defer l.mu.Unlock()
-    l.prefix = fmt.Sprintf("[iter %d]", iteration)
+    l.iteration = iteration
 }
 ```
 
@@ -93,7 +93,6 @@ func (h *StatusHeader) SetIteration(current, total int, issueID, issueTitle stri
 func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string)
 func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string)
 func (h *StatusHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string)
-func (h *StatusHeader) RenderCompletionLine(iterationsRun, finalizeCount int)
 ```
 
 Apply this when an existing method starts accumulating conditional branches keyed on which lifecycle phase is active. That branching belongs in the method name, not the method body.
@@ -158,7 +157,7 @@ func NewRunner(...) *Runner {
         // NewRunner provides this default so a missing SetSender fails loudly
         // in tests and integration rather than silently discarding output.
         sendLine: func(string) {
-            panic("workflow: SetSender must be called before RunStep")
+            panic("workflow.Runner: sendLine not set — call SetSender before running steps")
         },
     }
     // ...
@@ -174,8 +173,9 @@ If a function uses platform-specific behavior (e.g., `/` as the path separator t
 
 ```go
 // Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
-if strings.Contains(command[0], "/") {
-    command[0] = filepath.Join(projectDir, command[0])
+exe := result[0]
+if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
+    result[0] = filepath.Join(projectDir, exe)
 }
 ```
 

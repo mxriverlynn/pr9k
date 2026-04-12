@@ -77,6 +77,58 @@ func readLogFile(t *testing.T, log *logger.Logger, dir string) []string {
 
 // Unit tests
 
+// TestNewRunner_WriteToLogWithoutSetSenderPanics verifies that calling WriteToLog
+// on a newly-created Runner (before SetSender) panics with a descriptive message.
+// This catches missing-wire bugs (forgetting to call SetSender before RunStep)
+// early and loudly rather than silently dropping output.
+func TestNewRunner_WriteToLogWithoutSetSenderPanics(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, dir)
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Error("expected WriteToLog to panic without SetSender, but it did not")
+		}
+	}()
+
+	r.WriteToLog("this should panic")
+}
+
+// TP-003 — NewRunner panic sentinel contains a descriptive message
+func TestNewRunner_WriteToLogWithoutSetSenderPanicsWithDescriptiveMessage(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, dir)
+
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Fatal("expected WriteToLog to panic without SetSender, but it did not")
+		}
+		msg, ok := rec.(string)
+		if !ok {
+			t.Fatalf("expected panic value to be a string, got %T: %v", rec, rec)
+		}
+		if !strings.Contains(msg, "sendLine not set") {
+			t.Errorf("expected panic message to contain 'sendLine not set', got %q", msg)
+		}
+	}()
+
+	r.WriteToLog("this should panic with a descriptive message")
+}
+
 func TestRunStep_StdoutArrivesInPipe(t *testing.T) {
 	r, log, drain := newCapturingRunner(t)
 
@@ -266,6 +318,42 @@ func TestRunStep_ReturnsErrorOnNonZeroExit(t *testing.T) {
 	}
 }
 
+// TP-001 — RunStep returns error for empty command slice
+func TestRunStep_ReturnsErrorForEmptyCommandSlice(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	err := r.RunStep("my-step", []string{})
+	_ = log.Close()
+
+	if err == nil {
+		t.Fatal("expected error for empty command slice, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "my-step") {
+		t.Errorf("expected error to contain step name 'my-step', got %q", err.Error())
+	}
+	if r.LastCapture() != "" {
+		t.Errorf("expected LastCapture to be empty after empty-command error, got %q", r.LastCapture())
+	}
+}
+
+// TP-002 — RunStep returns error for nil command (nil slice is zero-length)
+func TestRunStep_ReturnsErrorForNilCommand(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	err := r.RunStep("nil-step", nil)
+	_ = log.Close()
+
+	if err == nil {
+		t.Fatal("expected error for nil command, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+}
+
 // T2 — RunStep returns error for non-existent command
 func TestRunStep_ReturnsErrorForNonExistentCommand(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
@@ -339,16 +427,33 @@ func TestRunStep_StepNameAppearsInLogFile(t *testing.T) {
 	}
 }
 
-// T5 — Close is idempotent
-func TestClose_IsIdempotent(t *testing.T) {
+// TP-004 — CaptureOutput returns error for empty command slice
+func TestCaptureOutput_ReturnsErrorForEmptyCommandSlice(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
 
-	_ = log.Close()
+	_, err := r.CaptureOutput([]string{})
 
-	// Second close should not panic and should return nil (io.PipeWriter behavior)
-	err := r.Close()
-	if err != nil {
-		t.Errorf("expected nil on second Close(), got %v", err)
+	if err == nil {
+		t.Fatal("expected error for empty command slice, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+}
+
+// TP-005 — CaptureOutput returns error for nil command (nil slice is zero-length)
+func TestCaptureOutput_ReturnsErrorForNilCommand(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	_, err := r.CaptureOutput(nil)
+
+	if err == nil {
+		t.Fatal("expected error for nil command, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
 	}
 }
 

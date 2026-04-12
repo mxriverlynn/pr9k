@@ -146,7 +146,7 @@ func Substitute(input string, vt *VarTable, phase Phase) (string, error)
 - Unresolved variables log a warning and substitute the empty string.
 - If `vt` is nil, the input is returned unchanged.
 
-`vars.ExtractReferences` returns all variable names referenced by `{{VAR_NAME}}` tokens in a string (used for validation and tooling):
+`vars.ExtractReferences` returns all variable names referenced by `{{VAR_NAME}}` tokens in a string (used for validation and tooling). The returned slice may contain duplicates if the same variable appears more than once:
 
 ```go
 func ExtractReferences(input string) []string
@@ -192,7 +192,7 @@ These are programming errors, not runtime conditions — the step validator (iss
 - Escape sequences (`{{{{` → `{{`, `}}}}` → `}}`)
 - Unresolved variable warning and empty-string substitution
 - Nil `VarTable` pass-through
-- `ExtractReferences` deduplication and escape handling
+- `ExtractReferences` duplicate preservation (same variable appearing twice produces two entries) and escape handling
 
 ## Additional Information
 

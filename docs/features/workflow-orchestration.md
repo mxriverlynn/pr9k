@@ -15,7 +15,7 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - `Run` writes full-width `PhaseBanner` headings (`Initializing`, `Iterations`, `Finalizing`) on entering each phase, and a `Captured VAR = "value"` line after any step with `captureAs` set
 - All steps — initialize, iteration, and finalize — are resolved per-phase via the `VarTable` using `{{VAR}}` substitution; there are no hardcoded script calls in `Run()`
 - The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
-- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header), closes the executor, and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
+- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
 - `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
@@ -99,12 +99,11 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture + Close.
+// StepExecutor wraps StepRunner + LastCapture.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
     LastCapture() string  // last non-empty stdout line from the most recent RunStep
-    Close() error
 }
 
 // RunHeader updates the TUI status header during workflow execution.
@@ -195,7 +194,6 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     emitBlank()
     executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
-    _ = executor.Close()
     return RunResult{IterationsRun: iterationsRun}
 }
 ```
@@ -207,7 +205,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Calls `emitBlank` then `buildStep` and `ui.Orchestrate` with a `noopHeader{}` — step checkboxes are not updated during the initialize phase (no `SetPhaseSteps` call, no checkbox rendering); only `IterationLine` is updated via `RenderInitializeLine`. `Orchestrate` itself writes the `Starting step: <name>` banner + underline + trailing blank line to the log before running the step
 - After each step, if `s.CaptureAs != ""`, calls `executor.LastCapture()`, binds the value into the persistent VarTable scope via `vt.Bind(vars.Initialize, s.CaptureAs, ...)`, and calls `writeCaptureLog(s.CaptureAs, captured)` to append a `Captured VAR = "value"` line to the log body
 - Bound values (e.g. `GITHUB_USER`, `ISSUE_ID`) are available in all subsequent phases via VarTable resolution
-- If `Orchestrate` returns `ActionQuit`, closes executor and returns immediately
+- If `Orchestrate` returns `ActionQuit`, returns immediately
 - If `buildStep` fails (e.g. missing prompt file), logs `"Error preparing initialize step: ..."` and skips `RenderInitializeLine` for that step, then continues to the next init step
 
 **Phase 2 — Iteration loop:** runs `Steps` repeatedly:
@@ -221,7 +219,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - After each step, if `s.CaptureAs != ""`, binds captured output into the iteration-scoped VarTable, re-calls `header.RenderIterationLine(i, cfg.Iterations, issueID)` — looking up `ISSUE_ID` from the iteration VarTable to update the header with the newly bound issue ID (empty string if `ISSUE_ID` was not the captured variable) — and calls `writeCaptureLog(s.CaptureAs, captured)` to append the bound value to the log body
 - If `s.BreakLoopIfEmpty` is set, `executor.LastCapture()` is empty, **and the step completed as `StepDone`**, exits the loop: remaining iteration steps are marked `StepSkipped` in the header before the loop exits, then finalization still runs; if the step failed (non-zero exit), the check is skipped so normal error-mode handling takes effect instead
 - If `buildStep` fails, logs `"Error preparing steps: ..."` and breaks the inner loop (finalization still runs)
-- If `Orchestrate` returns `ActionQuit`, closes executor and returns without finalization
+- If `Orchestrate` returns `ActionQuit`, returns without finalization
 
 **Phase 3 — Finalization:** runs even after an early loop exit:
 - Calls `header.SetPhaseSteps(finalizeNames)` to switch the header to finalization step names
@@ -233,7 +231,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 **Phase 4 — Completion:** after finalize completes normally:
 - Calls `emitBlank` then writes `ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps))` — `"Ralph completed after N iteration(s) and M finalizing tasks."` — as the **last non-blank line of the log body**. The header's `IterationLine` retains the final `"Finalizing N/M: <step name>"` value from the last finalize step; there is no header-level completion line
-- Closes the executor and returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
+- Returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
 
 ### Step Resolution
 
@@ -358,14 +356,19 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_InitializeStepsRunBeforeIterationSteps` — verifies ordering: init steps run before iteration steps
   - `TestRun_InitializeCaptureAvailableInIteration` — verifies that `CaptureAs` values bound in the initialize phase are substituted as `{{VAR}}` tokens in iteration step commands
   - `TestRun_InitializeBuildErrorContinuesToNextInitStep` — verifies that a bad init step (missing prompt file) logs `"Error preparing initialize step"`, skips that step, and continues to the next
-  - `TestRun_QuitFromInitializeOrchestrateClosesEarly` — verifies `ActionQuit` during init closes the executor and skips iteration and finalization
+  - `TestRun_QuitFromInitializeSkipsRemainingPhases` — verifies `ActionQuit` during the initialize phase skips all iteration and finalization steps
+  - `TestRun_QuitFromIterationSkipsFinalization` — verifies `ActionQuit` during an iteration skips the finalization phase
+  - `TestRun_QuitFromFinalizationReturnsWithoutSummary` — verifies `ActionQuit` during finalization returns without writing the completion summary
   - `TestRun_BreakLoopIfEmptyCapture` / `TestRun_BreakLoopIfEmptyNonEmptyCapture` — verify early-exit loop semantics
   - `TestRun_BreakLoopIfEmpty_MarksRemainingStepsSkipped` — verifies trigger at index 0 marks all subsequent step indices as `StepSkipped`
   - `TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered` — verifies no `StepSkipped` calls when captured value is non-empty (break does not fire)
   - `TestRun_BreakLoopIfEmpty_LastStepNoRemainingSkips` — boundary: single-step iteration, break fires on the only step → no remaining steps to mark
   - `TestRun_BreakLoopIfEmpty_MultiIterBreakOnSecond` — multi-iteration: break fires on iteration 2 only; `StepSkipped` appears exactly once, confirming iteration 1 steps are unaffected
   - `TestRun_BreakLoopIfEmpty_FailedStepNoSkips` — failed step guard: step returns error → no `StepSkipped` calls (break check is skipped)
+  - `TestRun_UnlimitedIterations` — verifies `Iterations==0` runs until `BreakLoopIfEmpty` exits the loop
+  - `TestRun_NegativeIterationsRunsZeroIterations` — verifies negative `Iterations` values run zero iterations and proceed directly to finalization
   - `TestRun_StepBuildErrorSkipsIterationAndContinuesToFinalization` — verifies a missing prompt file for an iteration step logs `"Error preparing steps"` and skips to finalization
+  - `TestRun_StepBuildErrorAbortsAllRemainingIterations` — verifies a build error on iteration 1 of a 3-iteration config exits the entire loop (not just the current iteration)
   - `TestRun_IterationsRunOnNormalCompletion` — verifies `RunResult.IterationsRun` equals the configured `Iterations` count after a normal bounded run
   - `TestRun_IterationsRunZeroOnInitializeQuit` — verifies `RunResult.IterationsRun` is zero when `ActionQuit` fires during the initialize phase
   - `TestRun_IterationsRunOnIterationQuit` — verifies `RunResult.IterationsRun` reflects the in-progress iteration index when `ActionQuit` fires mid-loop
@@ -380,7 +383,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls` — verifies that quitting during the initialize phase produces zero `RenderIterationLine` and `RenderFinalizeLine` calls
   - `TestRun_QuitDuringFinalizeRecordsOnlyTheQuittingStepRender` — verifies that when quit fires during the finalize phase, only render calls up to and including the quitting step are recorded
   - `TestRun_FinalizeRenderCalledAfterBreakLoopIfEmpty` — verifies that `RenderFinalizeLine` is still called for finalize steps after an early loop exit via `BreakLoopIfEmpty`
-  - `TestRun_CompletionSummaryAndBlockForKeypress` — verifies the `ui.CompletionSummary` string is written to the log body via `executor.WriteToLog`, that it is the last non-blank line, that `Run` blocks before `ActionQuit` is sent, and that `Run` returns after it is sent (uses `fakeExecutor.onLog` as a synchronization point for the completion line)
+  - `TestRun_CompletionSummaryAndReturnsImmediately` — verifies the `ui.CompletionSummary` string is written to the log body via `executor.WriteToLog`, that it is the last non-blank line, and that `Run` returns on its own immediately without requiring any user input
   - `TestRun_CompletionSummaryWithEmptyFinalize` — verifies the completion summary is written with `finalizeCount=0` when `FinalizeSteps` is empty
   - `TestRun_CompletionSummary_AfterBreakLoopIfEmpty` — verifies `iterationsRun=1` after early loop exit with a 3-iteration config; confirms the log-body completion summary fires with the correct partial iteration count
   - `TestRun_LogsPhaseBanners` — verifies each phase writes a banner heading exactly matching the phase name followed by a `═`-filled underline whose rune count equals `cfg.LogWidth`
@@ -391,7 +394,10 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_CaptureLogWrittenAfterCaptureStep` — verifies an iteration step with `captureAs: "ISSUE_ID"` produces a `Captured ISSUE_ID = "42"` log line after the step
   - `TestRun_CaptureLogWrittenForInitializePhase` — verifies the same behavior for an initialize-phase capture
   - `TestRun_CaptureLogNotWrittenForNonCaptureStep` — negative test: no `Captured ` line appears when the step has no `captureAs`
-- `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator
+- `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
+  - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
+  - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
+  - `TestOrchestrate_Retry_StateTransitionSequence` — verifies the `Active→Failed→Done` state transition sequence on retry (note: `StepActive` is not re-set on retry — this is documented in the test)
 
 ## Additional Information
 

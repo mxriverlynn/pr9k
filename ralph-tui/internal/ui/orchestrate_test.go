@@ -600,6 +600,147 @@ func TestOrchestrate_ForceQuitAfterSuccessfulStep_SkipsNextStep(t *testing.T) {
 	}
 }
 
+// --- StepStartBanner log writing ---
+
+// SUGG-001 — Orchestrate writes a StepStartBanner (heading + underline + blank)
+// to the log before each step.
+func TestOrchestrate_WritesStepStartBannerBeforeEachStep(t *testing.T) {
+	stub := &stubRunner{results: []error{nil, nil}}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	twoSteps := []ResolvedStep{
+		{Name: "alpha", Command: []string{"x"}},
+		{Name: "beta", Command: []string{"x"}},
+	}
+
+	done := runOrchestrate(twoSteps, stub, spy, h)
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return")
+	}
+
+	// Each step must have written: heading, underline, blank line.
+	foundAlpha, foundBeta := false, false
+	for _, line := range stub.logLines {
+		if strings.Contains(line, "alpha") {
+			foundAlpha = true
+		}
+		if strings.Contains(line, "beta") {
+			foundBeta = true
+		}
+	}
+	if !foundAlpha {
+		t.Errorf("expected a log line containing 'alpha' (StepStartBanner), got %v", stub.logLines)
+	}
+	if !foundBeta {
+		t.Errorf("expected a log line containing 'beta' (StepStartBanner), got %v", stub.logLines)
+	}
+
+	// Verify the blank separator line is present.
+	foundBlank := false
+	for _, line := range stub.logLines {
+		if line == "" {
+			foundBlank = true
+			break
+		}
+	}
+	if !foundBlank {
+		t.Errorf("expected a blank separator line in log output, got %v", stub.logLines)
+	}
+}
+
+// --- StepActive state transition ---
+
+// SUGG-002 — Orchestrate sets StepActive before running each step.
+func TestOrchestrate_SetsStepActiveBeforeRunning(t *testing.T) {
+	// Use callbackStubRunner to verify the state *before* RunStep returns.
+	activeBeforeRun := false
+	cbRunner := &callbackStubRunner{
+		onRunStep:       func(_ string) error { return nil },
+		wasTerminatedFn: func() bool { return false },
+	}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+
+	// Wrap onRunStep to capture state at call time via spy.
+	cbRunner.onRunStep = func(_ string) error {
+		state, ok := spy.lastStateFor(0)
+		if ok && state == StepActive {
+			activeBeforeRun = true
+		}
+		return nil
+	}
+
+	steps := []ResolvedStep{{Name: "step0", Command: []string{"x"}}}
+	done := runOrchestrate(steps, cbRunner, spy, h)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return")
+	}
+
+	if !activeBeforeRun {
+		t.Error("expected StepActive to be set on header before RunStep was called")
+	}
+}
+
+// --- Retry state transitions ---
+
+// SUGG-003 — On retry the state sequence is Active→Failed→Done (StepActive is
+// not re-set between the retry attempt and success; the retry loop in
+// runStepWithErrorHandling goes straight back to RunStep without calling
+// SetStepState(Active) again).
+func TestOrchestrate_Retry_StateTransitionSequence(t *testing.T) {
+	stub, spy, h, steps := newOrchestrateTest(t, errors.New("fail"), nil)
+	done := runOrchestrate(steps, stub, spy, h)
+
+	time.Sleep(30 * time.Millisecond) // blocked on first failure
+
+	h.Actions <- ActionRetry
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not return after retry")
+	}
+
+	spy.mu.Lock()
+	calls := append([]struct {
+		idx   int
+		state StepState
+	}{}, spy.calls...)
+	spy.mu.Unlock()
+
+	// Extract all states recorded for step 0 in order.
+	var states []StepState
+	for _, c := range calls {
+		if c.idx == 0 {
+			states = append(states, c.state)
+		}
+	}
+
+	// Expected sequence: Active (from Orchestrate before first run), Failed
+	// (from first failure), Done (from successful retry — Active is not
+	// re-set between the retry loop and the second RunStep call).
+	want := []StepState{StepActive, StepFailed, StepDone}
+	if len(states) != len(want) {
+		t.Fatalf("expected state sequence %v, got %v", want, states)
+	}
+	for i, w := range want {
+		if states[i] != w {
+			t.Errorf("state[%d]: want %v, got %v", i, w, states[i])
+		}
+	}
+}
+
 // TestOrchestrate_Quit_ReturnsActionQuit passes through the quit action.
 func TestOrchestrate_Quit_ReturnsActionQuit(t *testing.T) {
 	stub, spy, h, steps := newOrchestrateTest(t, errors.New("exit 1"))
