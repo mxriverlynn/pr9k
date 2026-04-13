@@ -449,7 +449,7 @@ func TestRun_InitializeStepsRunBeforeIterationSteps(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init1", "init2"),
 		Steps:           nonClaudeSteps("iter1"),
@@ -491,7 +491,7 @@ func TestRun_InitializeCaptureAvailableInIteration(t *testing.T) {
 	}
 
 	cfg := RunConfig{
-		WorkflowDir:      dir,
+		WorkflowDir:     dir,
 		Iterations:      1,
 		InitializeSteps: []steps.Step{initStep},
 		Steps:           []steps.Step{iterStep},
@@ -742,7 +742,7 @@ func TestRun_QuitFromInitializeSkipsRemainingPhases(t *testing.T) {
 	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init-step"),
 		Steps:           nonClaudeSteps("iter-step"),
@@ -776,7 +776,7 @@ func TestRun_InitializeBuildErrorContinuesToNextInitStep(t *testing.T) {
 	}
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: []steps.Step{badInitStep, nonClaudeSteps("good-init")[0]},
 		Steps:           nonClaudeSteps("iter-step"),
@@ -967,8 +967,8 @@ func TestRun_IterationsRunOnNormalCompletion(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 2,
-		Steps:      nonClaudeSteps("step1"),
+		Iterations:  2,
+		Steps:       nonClaudeSteps("step1"),
 	}
 
 	result := Run(executor, header, kh, cfg)
@@ -991,7 +991,7 @@ func TestRun_IterationsRunZeroOnInitializeQuit(t *testing.T) {
 	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init-step"),
 		Steps:           nonClaudeSteps("iter-step"),
@@ -1018,8 +1018,8 @@ func TestRun_IterationsRunOnIterationQuit(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 3,
-		Steps:      nonClaudeSteps("iter-step"),
+		Iterations:  3,
+		Steps:       nonClaudeSteps("iter-step"),
 	}
 
 	result := Run(executor, header, kh, cfg)
@@ -1143,7 +1143,7 @@ func TestRun_InitializeDoesNotCallSetPhaseSteps(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init1", "init2"),
 		Steps:           nonClaudeSteps("iter-step"),
@@ -1175,8 +1175,8 @@ func TestRun_IterationHeaderUpdatesAfterCaptureAs(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 3,
-		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+		Iterations:  3,
+		Steps:       []steps.Step{captureStep("get-issue", "ISSUE_ID")},
 	}
 
 	Run(executor, header, kh, cfg)
@@ -1211,8 +1211,8 @@ func TestRun_SecondIterationStartsWithEmptyIssueID(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 2,
-		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+		Iterations:  2,
+		Steps:       []steps.Step{captureStep("get-issue", "ISSUE_ID")},
 	}
 
 	Run(executor, header, kh, cfg)
@@ -1240,8 +1240,8 @@ func TestRun_NonCapturingIterStepDoesNotRerenderHeader(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("work-step"), // no captureAs
+		Iterations:  1,
+		Steps:       nonClaudeSteps("work-step"), // no captureAs
 	}
 
 	Run(executor, header, kh, cfg)
@@ -1264,7 +1264,7 @@ func TestRun_InitializeRenderCalledPerStep(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init-a", "init-b"),
 		Steps:           nonClaudeSteps("iter-step"),
@@ -1328,7 +1328,7 @@ func TestRun_InitializeBuildErrorSkipsRenderInitializeLine(t *testing.T) {
 	}
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: []steps.Step{badInitStep, nonClaudeSteps("good-init")[0]},
 		Steps:           nonClaudeSteps("iter-step"),
@@ -1414,9 +1414,9 @@ func TestRun_LogWidthZero_FallsBackToDefaultTerminalWidth(t *testing.T) {
 
 			cfg := RunConfig{
 				WorkflowDir: t.TempDir(),
-				Iterations: 1,
-				Steps:      nonClaudeSteps("step1"),
-				LogWidth:   logWidth,
+				Iterations:  1,
+				Steps:       nonClaudeSteps("step1"),
+				LogWidth:    logWidth,
 			}
 
 			Run(executor, header, kh, cfg)
@@ -1462,9 +1462,9 @@ func TestRun_LogWidthPositive_UsesThatWidthForPhaseBanner(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
-		LogWidth:   wantWidth,
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		LogWidth:    wantWidth,
 	}
 
 	Run(executor, header, kh, cfg)
@@ -1508,8 +1508,8 @@ func TestRun_CaptureAsNonIssueIDProducesEmptyIssueIDInHeader(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      []steps.Step{captureStep("get-sha", "STARTING_SHA")},
+		Iterations:  1,
+		Steps:       []steps.Step{captureStep("get-sha", "STARTING_SHA")},
 	}
 
 	Run(executor, header, kh, cfg)
@@ -1541,7 +1541,7 @@ func TestRun_QuitFromInitializeProducesZeroIterationAndFinalizeHeaderCalls(t *te
 	header := &fakeRunHeader{}
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init-step"),
 		Steps:           nonClaudeSteps("iter-step"),
@@ -1926,7 +1926,7 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	}
 
 	cfg := RunConfig{
-		WorkflowDir:      projectDir,
+		WorkflowDir:     projectDir,
 		Iterations:      1,
 		InitializeSteps: initSteps,
 		Steps:           iterSteps,
@@ -1974,7 +1974,7 @@ func TestRun_BreakLoopIfEmpty_MarksRemainingStepsSkipped(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
+		Iterations:  1,
 		Steps: []steps.Step{
 			breakStep("get-issue", "ISSUE_ID"),
 			nonClaudeSteps("work")[0],
@@ -2017,7 +2017,7 @@ func TestRun_BreakLoopIfEmpty_NoSkipWhenNotTriggered(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
+		Iterations:  1,
 		Steps: []steps.Step{
 			breakStep("get-issue", "ISSUE_ID"),
 			nonClaudeSteps("work")[0],
@@ -2076,7 +2076,7 @@ func TestRun_BreakLoopIfEmpty_MultiIterBreakOnSecond(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 2,
+		Iterations:  2,
 		Steps: []steps.Step{
 			breakStep("get-issue", "ISSUE_ID"),
 			nonClaudeSteps("work")[0],
@@ -2228,8 +2228,8 @@ func TestRun_CompletionSummaryWithEmptyFinalize(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
 		// FinalizeSteps intentionally empty.
 	}
 
@@ -2336,7 +2336,7 @@ func TestRun_LogsPhaseBanners(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init1"),
 		Steps:           nonClaudeSteps("step1"),
@@ -2380,7 +2380,7 @@ func TestRun_PhaseBannerOrderingAcrossPhases(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: nonClaudeSteps("init1"),
 		Steps:           nonClaudeSteps("step1"),
@@ -2409,9 +2409,9 @@ func TestRun_InitializingPhaseSkippedWhenNoInitSteps(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
-		LogWidth:   20,
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		LogWidth:    20,
 	}
 
 	Run(executor, header, kh, cfg)
@@ -2434,9 +2434,9 @@ func TestRun_FinalizingPhaseSkippedWhenNoFinalizeSteps(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
-		LogWidth:   20,
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		LogWidth:    20,
 	}
 
 	Run(executor, header, kh, cfg)
@@ -2455,8 +2455,8 @@ func TestRun_PhaseBannerUsesDefaultWidthWhenZero(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
 		// LogWidth intentionally left at 0.
 	}
 
@@ -2483,9 +2483,9 @@ func TestRun_CaptureLogWrittenAfterCaptureStep(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      []steps.Step{captureStep("get-issue", "ISSUE_ID")},
-		LogWidth:   40,
+		Iterations:  1,
+		Steps:       []steps.Step{captureStep("get-issue", "ISSUE_ID")},
+		LogWidth:    40,
 	}
 
 	Run(executor, header, kh, cfg)
@@ -2506,7 +2506,7 @@ func TestRun_CaptureLogWrittenForInitializePhase(t *testing.T) {
 	kh := newTestKeyHandler()
 
 	cfg := RunConfig{
-		WorkflowDir:      t.TempDir(),
+		WorkflowDir:     t.TempDir(),
 		Iterations:      1,
 		InitializeSteps: []steps.Step{captureStep("get-user", "GITHUB_USER")},
 		Steps:           nonClaudeSteps("step1"),
@@ -2530,14 +2530,91 @@ func TestRun_CaptureLogNotWrittenForNonCaptureStep(t *testing.T) {
 
 	cfg := RunConfig{
 		WorkflowDir: t.TempDir(),
-		Iterations: 1,
-		Steps:      nonClaudeSteps("step1"),
-		LogWidth:   40,
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		LogWidth:    40,
 	}
 
 	Run(executor, header, kh, cfg)
 
 	if idx := indexOfLine(executor.logLines, func(l string) bool { return strings.HasPrefix(l, "Captured ") }); idx >= 0 {
 		t.Errorf("no capture log expected for non-capture step, got %q at index %d", executor.logLines[idx], idx)
+	}
+}
+
+// TP-002 — Run() flows executor.ProjectDir() into VarTable as PROJECT_DIR.
+// Verifies that the two dir arguments to vars.New() are not swapped: a step
+// with command ["echo", "{{PROJECT_DIR}}"] must receive the executor's
+// projectDir, not cfg.WorkflowDir.
+func TestRun_ProjectDirFlowsIntoVarTable(t *testing.T) {
+	executor := &fakeExecutor{projectDir: "/my/target/repo"}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: "/install/dir",
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "echo-project", IsClaude: false, Command: []string{"echo", "{{PROJECT_DIR}}"}},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(executor.runStepCalls) == 0 {
+		t.Fatal("expected at least one RunStep call")
+	}
+	cmd := executor.runStepCalls[0].command
+	found := false
+	for _, arg := range cmd {
+		if arg == "/my/target/repo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected command to contain %q (PROJECT_DIR), got %v", "/my/target/repo", cmd)
+	}
+	for _, arg := range cmd {
+		if arg == "/install/dir" {
+			t.Errorf("command must not contain WorkflowDir %q where PROJECT_DIR is expected, got %v", "/install/dir", cmd)
+		}
+	}
+}
+
+// TP-006 — Run() seeds WORKFLOW_DIR from cfg.WorkflowDir distinct from PROJECT_DIR.
+// Verifies the mirror of TP-002: a step with command ["echo", "{{WORKFLOW_DIR}}"]
+// receives cfg.WorkflowDir, not executor.ProjectDir().
+func TestRun_WorkflowDirFlowsIntoVarTable(t *testing.T) {
+	executor := &fakeExecutor{projectDir: "/target/repo"}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: "/install/dir",
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "echo-workflow", IsClaude: false, Command: []string{"echo", "{{WORKFLOW_DIR}}"}},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(executor.runStepCalls) == 0 {
+		t.Fatal("expected at least one RunStep call")
+	}
+	cmd := executor.runStepCalls[0].command
+	found := false
+	for _, arg := range cmd {
+		if arg == "/install/dir" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected command to contain %q (WORKFLOW_DIR), got %v", "/install/dir", cmd)
+	}
+	for _, arg := range cmd {
+		if arg == "/target/repo" {
+			t.Errorf("command must not contain ProjectDir %q where WORKFLOW_DIR is expected, got %v", "/target/repo", cmd)
+		}
 	}
 }

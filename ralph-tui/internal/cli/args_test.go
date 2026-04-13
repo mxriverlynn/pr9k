@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -326,6 +327,69 @@ func TestNewCommand_ProjectDirEvalSymlinks(t *testing.T) {
 	}
 	if cfg.ProjectDir == "" {
 		t.Error("expected non-empty project-dir after EvalSymlinks")
+	}
+}
+
+// TP-003 — --workflow-dir pointing to a file (not a directory) returns an error.
+func TestNewCommand_WorkflowDirIsFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "workflow-file-*")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	_ = f.Close()
+
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	cmd.SetArgs([]string{"--workflow-dir", f.Name()})
+	execErr := cmd.Execute()
+	if execErr == nil {
+		t.Fatal("expected error when --workflow-dir points to a file, got nil")
+	}
+	if !strings.Contains(execErr.Error(), "is not a directory") {
+		t.Errorf("expected error to contain %q, got %q", "is not a directory", execErr.Error())
+	}
+}
+
+// TP-004 — --project-dir pointing to a file (not a directory) returns an error.
+func TestNewCommand_ProjectDirIsFile(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "project-file-*")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	_ = f.Close()
+
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	cmd.SetArgs([]string{"--project-dir", f.Name()})
+	execErr := cmd.Execute()
+	if execErr == nil {
+		t.Fatal("expected error when --project-dir points to a file, got nil")
+	}
+	if !strings.Contains(execErr.Error(), "is not a directory") {
+		t.Errorf("expected error to contain %q, got %q", "is not a directory", execErr.Error())
+	}
+}
+
+// TP-005 — SetFlagErrorFunc fires for arbitrary unknown flags, not just -p.
+// Verifies the wrapper is generic: any unknown flag produces the flagSplitGuidance
+// text containing both --workflow-dir and --project-dir mentions and the ADR path.
+func TestNewCommand_ArbitraryUnknownFlagFiresGuidanceMessage(t *testing.T) {
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	cmd.SetArgs([]string{"--bogus"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for unknown flag --bogus, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "--workflow-dir") {
+		t.Errorf("expected error to mention --workflow-dir, got %q", msg)
+	}
+	if !strings.Contains(msg, "--project-dir") {
+		t.Errorf("expected error to mention --project-dir, got %q", msg)
+	}
+	if !strings.Contains(msg, "docs/adr/20260413162428-workflow-project-dir-split.md") {
+		t.Errorf("expected error to mention the split ADR, got %q", msg)
 	}
 }
 

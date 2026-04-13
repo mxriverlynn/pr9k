@@ -1450,6 +1450,21 @@ func TestWriteToLog_DoesNotWriteToFileLogger(t *testing.T) {
 
 // TestTerminate_IntegrationOrchestrationCanProceed terminates a step mid-stream
 // and verifies the orchestration can proceed to the next step without hanging.
+// TP-001 — Runner.ProjectDir() getter returns the value passed to NewRunner.
+func TestNewRunner_ProjectDirGetter(t *testing.T) {
+	dir := t.TempDir()
+	log, err := logger.NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, "/some/project/dir")
+	if got := r.ProjectDir(); got != "/some/project/dir" {
+		t.Errorf("ProjectDir() = %q, want %q", got, "/some/project/dir")
+	}
+}
+
 func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
 	r, log, drain := newCapturingRunner(t)
 
