@@ -25,9 +25,10 @@ type Step struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-	Initialize []Step `json:"initialize"`
-	Iteration  []Step `json:"iteration"`
-	Finalize   []Step `json:"finalize"`
+	Env        []string `json:"env,omitempty"`
+	Initialize []Step   `json:"initialize"`
+	Iteration  []Step   `json:"iteration"`
+	Finalize   []Step   `json:"finalize"`
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,

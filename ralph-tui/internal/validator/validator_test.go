@@ -110,9 +110,11 @@ func TestValidate_HappyPath_TargetConfig(t *testing.T) {
 	dir := tempProject(t)
 
 	// Prompt files with variable references in scope.
-	writePrompt(t, dir, "setup.md", "project dir is {{PROJECT_DIR}}\n")
-	writePrompt(t, dir, "feature.md", "implement issue {{ISSUE_ID}} in {{PROJECT_DIR}}\n")
-	writePrompt(t, dir, "finalize.md", "finalize for project {{PROJECT_DIR}}\n")
+	// Note: {{PROJECT_DIR}} and {{WORKFLOW_DIR}} are banned from prompt files
+	// (Rule B); use other in-scope variables instead.
+	writePrompt(t, dir, "setup.md", "step {{STEP_NAME}}\n")
+	writePrompt(t, dir, "feature.md", "implement issue {{ISSUE_ID}}\n")
+	writePrompt(t, dir, "finalize.md", "finalize step {{STEP_NUM}} of {{STEP_COUNT}}\n")
 
 	// A script for the non-claude init step.
 	writeScript(t, dir, "get_issue")
@@ -706,14 +708,32 @@ func TestValidate_UnresolvedReferenceInCommand(t *testing.T) {
 }
 
 // TestValidate_BuiltinVarsInScope confirms that all initialize seeds are
-// available without being declared.
+// available without being declared. Note: {{PROJECT_DIR}} and {{WORKFLOW_DIR}}
+// are banned from prompt files (Rule B) — use command steps to verify those.
 func TestValidate_BuiltinVarsInScope(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "p.md",
-		"dir={{PROJECT_DIR}} max={{MAX_ITER}} num={{STEP_NUM}} count={{STEP_COUNT}} name={{STEP_NAME}}\n")
+		"max={{MAX_ITER}} num={{STEP_NUM}} count={{STEP_COUNT}} name={{STEP_NAME}}\n")
 	writeStepsJSON(t, dir, `{
 		"initialize": [],
 		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_BuiltinDirVarsValidInCommandScope confirms that {{PROJECT_DIR}}
+// and {{WORKFLOW_DIR}} remain valid in command argv (non-claude steps).
+func TestValidate_BuiltinDirVarsValidInCommandScope(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Show","isClaude":false,"command":["cat","{{PROJECT_DIR}}/README.md"]},
+			{"name":"Art","isClaude":false,"command":["cat","{{WORKFLOW_DIR}}/ralph-art.txt"]}
+		],
 		"finalize": []
 	}`)
 
@@ -959,4 +979,393 @@ func TestError_FormatWithoutStepName(t *testing.T) {
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+}
+
+// ----------------------------------------------------------------------------
+// Category 10 — env passthrough names
+// ----------------------------------------------------------------------------
+
+// TestValidate_Env_MissingKey confirms that an absent "env" key is valid (treated
+// as empty list).
+func TestValidate_Env_MissingKey(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_EmptyArray confirms that env: [] is valid.
+func TestValidate_Env_EmptyArray(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": [],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_SingleValid confirms that a single valid name is accepted.
+func TestValidate_Env_SingleValid(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["GITHUB_TOKEN"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_MultipleValid confirms that multiple valid names are accepted.
+func TestValidate_Env_MultipleValid(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["GITHUB_TOKEN", "AWS_ACCESS_KEY_ID"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_OverlapWithBuiltins confirms that overlap with built-in
+// variable names (e.g. ANTHROPIC_API_KEY) is harmless.
+func TestValidate_Env_OverlapWithBuiltins(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["ANTHROPIC_API_KEY"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_DuplicatesAllowed confirms that duplicate names within the
+// env list are harmless.
+func TestValidate_Env_DuplicatesAllowed(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["MY_VAR", "MY_VAR"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_Env_NonArrayValue confirms that env: "FOO" (non-array) causes a
+// parse error.
+func TestValidate_Env_NonArrayValue(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": "GITHUB_TOKEN",
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "malformed JSON")
+}
+
+// TestValidate_Env_NonStringElement confirms that env: [123] (non-string
+// element) causes a parse error.
+func TestValidate_Env_NonStringElement(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": [123],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "malformed JSON")
+}
+
+// TestValidate_Env_EmptyStringElement confirms that an empty string element is
+// rejected.
+func TestValidate_Env_EmptyStringElement(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": [""],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "env name must not be empty")
+}
+
+// TestValidate_Env_StartsWithDigit confirms that a name starting with a digit
+// is rejected.
+func TestValidate_Env_StartsWithDigit(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["1BAD"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not a valid identifier")
+}
+
+// TestValidate_Env_HyphenNotAllowed confirms that a name containing a hyphen is
+// rejected.
+func TestValidate_Env_HyphenNotAllowed(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["FOO-BAR"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not a valid identifier")
+}
+
+// TestValidate_Env_SandboxReserved confirms that sandbox-reserved names are
+// rejected with a reason message. Parameterized over reserved names.
+func TestValidate_Env_SandboxReserved(t *testing.T) {
+	reserved := []string{"CLAUDE_CONFIG_DIR", "HOME"}
+	for _, name := range reserved {
+		t.Run(name, func(t *testing.T) {
+			dir := tempProject(t)
+			writeStepsJSON(t, dir, fmt.Sprintf(`{
+				"env": [%q],
+				"initialize": [],
+				"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+				"finalize": []
+			}`, name))
+			errs := validator.Validate(dir)
+			requireError(t, errs, "reserved by the sandbox")
+		})
+	}
+}
+
+// TestValidate_Env_Denylist confirms that denylisted names are rejected.
+// Parameterized over all eight denylisted names.
+func TestValidate_Env_Denylist(t *testing.T) {
+	denylisted := []string{
+		"PATH", "USER", "LOGNAME", "SSH_AUTH_SOCK",
+		"LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+	}
+	for _, name := range denylisted {
+		t.Run(name, func(t *testing.T) {
+			dir := tempProject(t)
+			writeStepsJSON(t, dir, fmt.Sprintf(`{
+				"env": [%q],
+				"initialize": [],
+				"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+				"finalize": []
+			}`, name))
+			errs := validator.Validate(dir)
+			requireError(t, errs, "denylisted: would break container isolation")
+		})
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Rule A — captureAs on claude step
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleA_CaptureAsOnClaudeStepIsError confirms that a step with
+// isClaude:true and a non-empty captureAs is rejected.
+func TestValidate_RuleA_CaptureAsOnClaudeStepIsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "hello\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md","captureAs":"X"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a claude step is not allowed")
+	requireError(t, errs, "docker's output, not claude's")
+}
+
+// TestValidate_RuleA_ClaudeStepWithoutCaptureAsIsClean confirms that a claude
+// step without captureAs is accepted.
+func TestValidate_RuleA_ClaudeStepWithoutCaptureAsIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "hello\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_RuleA_NonClaudeStepWithCaptureAsIsClean confirms that a
+// non-claude step with captureAs is not affected by Rule A.
+func TestValidate_RuleA_NonClaudeStepWithCaptureAsIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "s")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["scripts/s"],"captureAs":"X"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// ----------------------------------------------------------------------------
+// Rule B — prompt-token ban
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleB_WorkflowDirInPromptIsError confirms that {{WORKFLOW_DIR}}
+// in a prompt file referenced by a claude step is rejected.
+func TestValidate_RuleB_WorkflowDirInPromptIsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "install dir: {{WORKFLOW_DIR}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "{{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files")
+	requireError(t, errs, "expand to host paths that do not exist inside the sandbox")
+}
+
+// TestValidate_RuleB_ProjectDirInPromptIsError confirms that {{PROJECT_DIR}}
+// in a prompt file referenced by a claude step is rejected.
+func TestValidate_RuleB_ProjectDirInPromptIsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "target repo: {{PROJECT_DIR}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "{{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files")
+}
+
+// TestValidate_RuleB_BothTokensInPromptEmitsError confirms that a prompt
+// containing both tokens emits at least one error.
+func TestValidate_RuleB_BothTokensInPromptEmitsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "workflow={{WORKFLOW_DIR}} project={{PROJECT_DIR}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, "not valid inside prompt files") {
+		t.Errorf("expected at least one sandbox prompt-token error; got: %v", errs)
+	}
+}
+
+// TestValidate_RuleB_PromptWithNeitherTokenIsClean confirms that a prompt file
+// without either banned token is accepted.
+func TestValidate_RuleB_PromptWithNeitherTokenIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "no banned tokens here\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_RuleB_WorkflowDirInCommandArgIsClean confirms that
+// {{WORKFLOW_DIR}} in a non-claude command step argv is NOT flagged by Rule B.
+func TestValidate_RuleB_WorkflowDirInCommandArgIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Art","isClaude":false,"command":["cat","{{WORKFLOW_DIR}}/ralph-art.txt"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// ----------------------------------------------------------------------------
+// Rule C — command + captureAs + forbidden token
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleC_ProjectDirInArgWithCaptureAsIsError confirms that a
+// command step referencing {{PROJECT_DIR}} in argv with captureAs set is
+// rejected.
+func TestValidate_RuleC_ProjectDirInArgWithCaptureAsIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Read","isClaude":false,"command":["cat","{{PROJECT_DIR}}/README.md"],"captureAs":"README"}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed")
+	requireError(t, errs, "stale value inside the sandbox")
+}
+
+// TestValidate_RuleC_WorkflowDirInArgWithCaptureAsIsError confirms that a
+// command step referencing {{WORKFLOW_DIR}} in argv with captureAs set is
+// rejected.
+func TestValidate_RuleC_WorkflowDirInArgWithCaptureAsIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Art","isClaude":false,"command":["cat","{{WORKFLOW_DIR}}/ralph-art.txt"],"captureAs":"ART"}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed")
+}
+
+// TestValidate_RuleC_ProjectDirInArgWithoutCaptureAsIsClean confirms that a
+// command step referencing {{PROJECT_DIR}} in argv WITHOUT captureAs is fine.
+func TestValidate_RuleC_ProjectDirInArgWithoutCaptureAsIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Show","isClaude":false,"command":["cat","{{PROJECT_DIR}}/README.md"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_RuleC_CaptureAsWithoutForbiddenTokenIsClean confirms that a
+// command step with captureAs but no {{WORKFLOW_DIR}}/{{PROJECT_DIR}} in argv
+// is not affected by Rule C.
+func TestValidate_RuleC_CaptureAsWithoutForbiddenTokenIsClean(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "get_issue")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Get","isClaude":false,"command":["scripts/get_issue"],"captureAs":"ISSUE_ID","breakLoopIfEmpty":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
 }

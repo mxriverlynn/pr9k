@@ -1,5 +1,5 @@
 // Package validator implements D13 config validation for ralph-steps.json.
-// It covers all eight validation categories from the UX corrections design plan
+// It covers all ten validation categories from the UX corrections design plan
 // and returns a collected slice of structured errors — one per problem found.
 // Validation runs in a single pass so all errors are visible before exit 1.
 package validator
@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
@@ -53,10 +54,36 @@ type vStep struct {
 // vFile is the strict top-level struct.
 // Each phase field uses *[]vStep so that a missing key (nil) is distinguished
 // from an explicitly empty array (non-nil, len 0).
+// Env uses *[]string; absent key (nil) is treated as empty list. A non-array
+// value (e.g. "env": "FOO") or a non-string element (e.g. [123]) will fail
+// JSON decode and be reported as a "malformed JSON" parse error.
 type vFile struct {
-	Initialize *[]vStep `json:"initialize"`
-	Iteration  *[]vStep `json:"iteration"`
-	Finalize   *[]vStep `json:"finalize"`
+	Env        *[]string `json:"env"`
+	Initialize *[]vStep  `json:"initialize"`
+	Iteration  *[]vStep  `json:"iteration"`
+	Finalize   *[]vStep  `json:"finalize"`
+}
+
+// envNameRe is the regex all env passthrough names must match.
+var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// envSandboxReserved are env var names the sandbox reserves for its own use.
+// Keys are the name; values are human-readable reason for rejection.
+var envSandboxReserved = map[string]string{
+	"CLAUDE_CONFIG_DIR": "reserved by the sandbox for its own use",
+	"HOME":              "reserved by the sandbox for its own use",
+}
+
+// envDenylist are env var names that would break container isolation (F11).
+var envDenylist = map[string]string{
+	"PATH":                  "denylisted: would break container isolation",
+	"USER":                  "denylisted: would break container isolation",
+	"LOGNAME":               "denylisted: would break container isolation",
+	"SSH_AUTH_SOCK":         "denylisted: would break container isolation",
+	"LD_PRELOAD":            "denylisted: would break container isolation",
+	"LD_LIBRARY_PATH":       "denylisted: would break container isolation",
+	"DYLD_INSERT_LIBRARIES": "denylisted: would break container isolation",
+	"DYLD_LIBRARY_PATH":     "denylisted: would break container isolation",
 }
 
 // reservedBuiltins is the set of built-in variable names that captureAs bindings
@@ -107,6 +134,28 @@ func Validate(workflowDir string) []Error {
 	// Category 3 — iteration must have at least 1 step.
 	if vf.Iteration != nil && len(*vf.Iteration) < 1 {
 		errs = append(errs, cfgErr("phase-size", "iteration", "", "iteration array must have at least 1 step"))
+	}
+
+	// Category 10 — env passthrough names.
+	if vf.Env != nil {
+		for _, name := range *vf.Env {
+			if name == "" {
+				errs = append(errs, cfgErr("env", "config", "", "env name must not be empty"))
+				continue
+			}
+			if !envNameRe.MatchString(name) {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is not a valid identifier (must match ^[A-Za-z_][A-Za-z0-9_]*$)", name)))
+				continue
+			}
+			if reason, ok := envSandboxReserved[name]; ok {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
+				continue
+			}
+			if reason, ok := envDenylist[name]; ok {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
+				continue
+			}
+		}
 	}
 
 	// Without all three phases we cannot walk variable scopes.
@@ -228,6 +277,17 @@ func validatePhase(
 					*errs = append(*errs, at("schema", fmt.Sprintf("duplicate captureAs %q in phase", ca)))
 				}
 				seenCaptureAs[ca] = true
+
+				// Rule A — captureAs on a claude step is rejected.
+				// After sandboxing, resolved.Command[0] becomes "docker", so captured
+				// stdout is docker's output, not claude's — corrupting downstream
+				// {{VAR}} substitution.
+				if isClaude {
+					*errs = append(*errs, at("sandbox", fmt.Sprintf(
+						"captureAs on a claude step is not allowed: after sandboxing, captured stdout is docker's output, not claude's, which would corrupt downstream {{%s}} substitution",
+						ca,
+					)))
+				}
 			}
 		}
 
@@ -252,6 +312,40 @@ func validatePhase(
 			if !isClaude && len(step.Command) > 0 {
 				if msg := validateCommandPath(workflowDir, step.Command[0]); msg != "" {
 					*errs = append(*errs, at("file", msg))
+				}
+			}
+		}
+
+		// Rule B — prompt-token ban.
+		// Scan prompt files referenced by claude steps for {{WORKFLOW_DIR}} and
+		// {{PROJECT_DIR}}. These tokens expand to host paths that do not exist
+		// inside the sandbox. Non-claude command steps are not scanned; both
+		// tokens remain valid inside command argv.
+		if isClaude && step.PromptFile != "" {
+			promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
+			if data, err := os.ReadFile(promptPath); err == nil {
+				body := string(data)
+				if strings.Contains(body, "{{WORKFLOW_DIR}}") || strings.Contains(body, "{{PROJECT_DIR}}") {
+					*errs = append(*errs, at("sandbox", fmt.Sprintf(
+						"prompt %s: {{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files — they expand to host paths that do not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the target repo root inside the container).",
+						step.PromptFile,
+					)))
+				}
+			}
+		}
+
+		// Rule C — captureAs-indirection bypass.
+		// Reject any command step that BOTH references {{WORKFLOW_DIR}} or
+		// {{PROJECT_DIR}} in argv AND sets captureAs. A command could capture a
+		// host path into a var that a later claude prompt then uses — forwarding
+		// the stale host path into the sandbox.
+		if !isClaude && step.CaptureAs != nil && *step.CaptureAs != "" {
+			for _, arg := range step.Command {
+				if strings.Contains(arg, "{{WORKFLOW_DIR}}") || strings.Contains(arg, "{{PROJECT_DIR}}") {
+					*errs = append(*errs, at("sandbox",
+						"captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed: the captured host path would be forwarded to later prompt files as a stale value inside the sandbox",
+					))
+					break
 				}
 			}
 		}
