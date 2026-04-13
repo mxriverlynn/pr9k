@@ -32,8 +32,8 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 ## Key Design Decisions
 
 - Two distinct directories, captured separately at startup:
-  - **ProjectDir (install dir)** — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--project-dir` / `-p`. Anchors `{{PROJECT_DIR}}` template substitution and relative script-path resolution.
-  - **WorkingDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo) and the `logs/` output location.
+  - **WorkflowDir (install dir)** — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
+  - **ProjectDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup, or overridden with `--project-dir`. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo), the `logs/` output location, and `{{PROJECT_DIR}}` substitution.
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
@@ -46,21 +46,21 @@ The Go TUI orchestrator lives in `ralph-tui/`, using [Bubble Tea](https://github
 ```bash
 # Using make (recommended):
 make build
-./bin/ralph-tui [-n <iterations>] [-p <project-dir>]
+./bin/ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
 
 # Or build directly:
 cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
-./ralph-tui [-n <iterations>] [-p <project-dir>]
+./ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
 ```
 
-Use `go build` — `go run` won't work because `projectDir` is resolved via `os.Executable()`.
+Use `go build` — `go run` won't work because `workflowDir` is resolved via `os.Executable()`.
 
 See [`docs/architecture.md`](docs/architecture.md) for detailed architectural documentation including block diagrams, data flow, and links to feature-level docs.
 
 ## Architecture & Feature Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
-- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--project-dir`/`-p`, `--version`/`-v`) and project directory resolution from the executable path
+- [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, `--version`/`-v`), workflow directory resolution from the executable path, and project directory resolution from `os.Getwd()`
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming and sendLine callback (SetSender), graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
