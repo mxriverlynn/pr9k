@@ -1369,3 +1369,98 @@ func TestValidate_RuleC_CaptureAsWithoutForbiddenTokenIsClean(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireNoErrors(t, errs)
 }
+
+// TP-003: Env validation continues after invalid entry — mixed list
+func TestValidate_Env_ContinuesAfterInvalidEntry(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["", "VALID_NAME", "PATH"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, "env name must not be empty") {
+		t.Error("expected error for empty env name")
+	}
+	if !hasError(errs, "denylisted") {
+		t.Error(`expected error for denylisted env name "PATH"`)
+	}
+	if hasError(errs, "VALID_NAME") {
+		t.Error("expected no error for valid env name VALID_NAME")
+	}
+	if len(errs) < 2 {
+		t.Errorf("expected at least 2 errors (empty + denylisted), got %d: %v", len(errs), errs)
+	}
+}
+
+// TP-004: Rule A — captureAs on claude step in initialize phase
+func TestValidate_RuleA_CaptureAsOnClaudeStepInInitializePhase(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "init.md", "setting up\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [{"name":"Setup","isClaude":true,"model":"sonnet","promptFile":"init.md","captureAs":"SETUP_OUT"}],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a claude step is not allowed")
+}
+
+// TP-005: Rule B — prompt-token ban in initialize phase
+func TestValidate_RuleB_WorkflowDirInInitializePromptIsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "init.md", "install dir: {{WORKFLOW_DIR}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [{"name":"Setup","isClaude":true,"model":"sonnet","promptFile":"init.md"}],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not valid inside prompt files")
+}
+
+// TP-006: Rule B — prompt-token ban in finalize phase
+func TestValidate_RuleB_ProjectDirInFinalizePromptIsError(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fin.md", "target repo: {{PROJECT_DIR}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": [{"name":"Fin","isClaude":true,"model":"sonnet","promptFile":"fin.md"}]
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not valid inside prompt files")
+}
+
+// TP-007: Rule C — forbidden token in command[0] position
+func TestValidate_RuleC_ForbiddenTokenInCommandZeroIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Run","isClaude":false,"command":["{{WORKFLOW_DIR}}/scripts/run","arg1"],"captureAs":"OUT"}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed")
+}
+
+// TP-008: Env errors do not block phase validation
+func TestValidate_Env_ErrorsDoNotBlockPhaseValidation(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["PATH"],
+		"initialize": [],
+		"iteration": [{"name":"","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, "denylisted") {
+		t.Error(`expected error for denylisted env name "PATH"`)
+	}
+	if !hasError(errs, "name must not be empty") {
+		t.Error("expected error for empty step name in iteration phase")
+	}
+}
