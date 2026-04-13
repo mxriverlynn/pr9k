@@ -1732,3 +1732,257 @@ func TestTerminate_IntegrationOrchestrationCanProceed(t *testing.T) {
 		t.Errorf("expected 'next step ran' in output after termination, got %v", lines)
 	}
 }
+
+// TP-001 — RunSandboxedStep returns error for empty command slice.
+func TestRunSandboxedStep_ReturnsErrorForEmptyCommandSlice(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunSandboxedStep("my-step", []string{}, SandboxOptions{})
+	if err == nil {
+		t.Fatal("expected error for empty command slice, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "my-step") {
+		t.Errorf("expected error to contain step name 'my-step', got %q", err.Error())
+	}
+}
+
+// TP-002 — RunSandboxedStep returns error for nil command slice.
+func TestRunSandboxedStep_ReturnsErrorForNilCommand(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunSandboxedStep("nil-step", nil, SandboxOptions{})
+	if err == nil {
+		t.Fatal("expected error for nil command, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty command") {
+		t.Errorf("expected error to contain 'empty command', got %q", err.Error())
+	}
+}
+
+// TP-003 — RunSandboxedStep forwards stdout and stderr through runCommand.
+func TestRunSandboxedStep_OutputForwarding(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunSandboxedStep("out-step", []string{"sh", "-c", "echo stdout-line; echo stderr-line >&2"}, SandboxOptions{}); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	lines := drain()
+	foundOut, foundErr := false, false
+	for _, l := range lines {
+		if l == "stdout-line" {
+			foundOut = true
+		}
+		if l == "stderr-line" {
+			foundErr = true
+		}
+	}
+	if !foundOut {
+		t.Errorf("expected 'stdout-line' in drain output, got %v", lines)
+	}
+	if !foundErr {
+		t.Errorf("expected 'stderr-line' in drain output, got %v", lines)
+	}
+}
+
+// TP-004 — RunSandboxedStep populates LastCapture on success and clears it on failure.
+func TestRunSandboxedStep_LastCapturePopulation(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// (a) Successful command: LastCapture holds the last non-empty stdout line.
+	if err := r.RunSandboxedStep("cap-step", []string{"sh", "-c", "echo first; echo second"}, SandboxOptions{}); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+	if got := r.LastCapture(); got != "second" {
+		t.Errorf("LastCapture after success: want %q, got %q", "second", got)
+	}
+
+	// (b) Failing command: LastCapture is cleared.
+	_ = r.RunSandboxedStep("fail-step", []string{"false"}, SandboxOptions{})
+	if got := r.LastCapture(); got != "" {
+		t.Errorf("LastCapture after failure: want %q, got %q", "", got)
+	}
+}
+
+// TP-005 — RunSandboxedStep cleans up the cidfile even when the command fails.
+func TestRunSandboxedStep_CleansCidfileOnError(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	f, err := os.CreateTemp("", "ralph-test-*.cid")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	cidPath := f.Name()
+	_ = f.Close()
+
+	opts := SandboxOptions{CidfilePath: cidPath}
+	runErr := r.RunSandboxedStep("fail-step", []string{"false"}, opts)
+	if runErr == nil {
+		t.Fatal("expected non-nil error from 'false', got nil")
+	}
+
+	if _, statErr := os.Stat(cidPath); !os.IsNotExist(statErr) {
+		t.Errorf("expected cidfile %q to be removed after failed RunSandboxedStep, got stat err: %v", cidPath, statErr)
+	}
+}
+
+// TP-006 — RunSandboxedStep resets the terminated flag.
+func TestRunSandboxedStep_ResetTerminatedFlag(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// Terminate a RunStep to set the flag.
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("long-step", []string{"sleep", "60"})
+	}()
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+	<-stepDone
+
+	if !r.WasTerminated() {
+		t.Fatal("WasTerminated should be true after Terminate was called")
+	}
+
+	// RunSandboxedStep must reset the flag.
+	if err := r.RunSandboxedStep("reset-step", []string{"true"}, SandboxOptions{}); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	if r.WasTerminated() {
+		t.Error("WasTerminated should be false after RunSandboxedStep resets the flag")
+	}
+}
+
+// TP-007 — Terminate() calls terminator exactly once with SIGTERM when the
+// process exits promptly after SIGTERM (no SIGKILL escalation).
+func TestTerminate_TerminatorSIGTERMOnlyWhenProcessExitsPromptly(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	r.terminateGraceOverride = 2 * time.Second
+
+	var mu sync.Mutex
+	var signals []syscall.Signal
+
+	var proc *os.Process
+	terminator := func(sig syscall.Signal) error {
+		mu.Lock()
+		signals = append(signals, sig)
+		p := proc
+		mu.Unlock()
+		if p != nil {
+			if sig == syscall.SIGKILL {
+				return p.Kill()
+			}
+			return p.Signal(sig)
+		}
+		return nil
+	}
+
+	// Script traps SIGTERM and exits cleanly — SIGKILL should never fire.
+	script := `trap 'exit 0' TERM; while true; do sleep 0.05; done`
+	opts := SandboxOptions{Terminator: terminator}
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunSandboxedStep("sigterm-only-step", []string{"sh", "-c", script}, opts)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	r.processMu.Lock()
+	proc = r.currentProc
+	r.processMu.Unlock()
+
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunSandboxedStep did not return within 5 seconds after Terminate")
+	}
+
+	mu.Lock()
+	got := make([]syscall.Signal, len(signals))
+	copy(got, signals)
+	mu.Unlock()
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 terminator call (SIGTERM only), got %d: %v", len(got), got)
+	}
+	if got[0] != syscall.SIGTERM {
+		t.Errorf("expected SIGTERM, got %v", got[0])
+	}
+}
+
+// TP-008 — RunSandboxedStep returns error for a nonexistent command.
+func TestRunSandboxedStep_ReturnsErrorForNonExistentCommand(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunSandboxedStep("test-step", []string{"/nonexistent/command"}, SandboxOptions{})
+	if err == nil {
+		t.Fatal("expected error for nonexistent command, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow: start") {
+		t.Errorf("expected error to contain 'workflow: start', got %q", err.Error())
+	}
+}
+
+// TP-009 — RunSandboxedStep propagates non-zero exit error.
+func TestRunSandboxedStep_ReturnsErrorOnNonZeroExit(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunSandboxedStep("exit-step", []string{"false"}, SandboxOptions{})
+	if err == nil {
+		t.Fatal("expected error from non-zero exit, got nil")
+	}
+}
+
+// TP-010 — RunSandboxedStep uses projectDir as cmd.Dir.
+func TestRunSandboxedStep_UsesProjectDir(t *testing.T) {
+	projectDir := t.TempDir()
+	logDir := t.TempDir()
+	log, err := logger.NewLogger(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, projectDir)
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+
+	if err := r.RunSandboxedStep("pwd-step", []string{"sh", "-c", "pwd"}, SandboxOptions{}); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	wantDir, _ := filepath.EvalSymlinks(projectDir)
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, line := range captured {
+		got, evalErr := filepath.EvalSymlinks(line)
+		if evalErr == nil && got == wantDir {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected RunSandboxedStep cmd.Dir=%q in captured output, got %v", wantDir, captured)
+	}
+}

@@ -32,11 +32,11 @@ type Runner struct {
 	sendLine   func(string) // callback invoked for every forwarded line; never nil
 
 	// processMu guards currentProc, currentTerminator, procDone, and terminated.
-	processMu          sync.Mutex
-	currentProc        *os.Process
-	currentTerminator  func(syscall.Signal) error
-	procDone           chan struct{}
-	terminated         bool // set by Terminate(), reset at start of RunStep/RunSandboxedStep
+	processMu         sync.Mutex
+	currentProc       *os.Process
+	currentTerminator func(syscall.Signal) error
+	procDone          chan struct{}
+	terminated        bool // set by Terminate(), reset at start of RunStep/RunSandboxedStep
 
 	// terminateGraceOverride, when non-zero, replaces terminateGracePeriod in
 	// Terminate(). Used in tests to avoid waiting the full 3 seconds.

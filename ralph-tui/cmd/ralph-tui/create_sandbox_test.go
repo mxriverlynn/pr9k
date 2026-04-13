@@ -160,7 +160,7 @@ func TestCreateSandbox_ImagePresent_Force(t *testing.T) {
 	}
 	// Two calls: pull, then smoke test.
 	fr := &fakeRun{responses: []fakeRunResponse{
-		{exitCode: 0}, // pull succeeds
+		{exitCode: 0},                           // pull succeeds
 		{exitCode: 0, stdout: "claude 2.1.101"}, // smoke test succeeds
 	}}
 	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
@@ -279,7 +279,7 @@ func TestCreateSandbox_SmokeTest_UnexpectedOutput(t *testing.T) {
 		imagePresent:    false,
 	}
 	fr := &fakeRun{responses: []fakeRunResponse{
-		{exitCode: 0},                      // pull succeeds
+		{exitCode: 0},                        // pull succeeds
 		{exitCode: 0, stdout: "hello world"}, // smoke test: non-semver output
 	}}
 	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
@@ -309,7 +309,7 @@ func TestCreateSandbox_SmokeTest_Success(t *testing.T) {
 		imagePresent:    false,
 	}
 	fr := &fakeRun{responses: []fakeRunResponse{
-		{exitCode: 0},                            // pull succeeds
+		{exitCode: 0},                           // pull succeeds
 		{exitCode: 0, stdout: "claude 2.1.101"}, // smoke test: valid version
 	}}
 	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
