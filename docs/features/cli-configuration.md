@@ -17,7 +17,7 @@ Parses command-line flags and resolves the two directories that anchor all path 
 
 Key files:
 - `ralph-tui/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir`
-- `ralph-tui/internal/cli/args_test.go` — 27 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, and `-p` guidance message)
+- `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
 - `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
 - `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
 - `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper and `newServices` wiring
@@ -97,10 +97,13 @@ type Config struct {
 `Execute` creates a `Config`, builds a cobra command via `newCommandImpl`, and runs it against `os.Args`. It uses a `ranE` sentinel to distinguish `--help` (RunE not invoked) from a successful parse:
 
 ```go
-func Execute() (*Config, error) {
+func Execute(extra ...*cobra.Command) (*Config, error) {
     cfg := &Config{}
     var ranE bool
     cmd := newCommandImpl(cfg, &ranE)
+    for _, sub := range extra {
+        cmd.AddCommand(sub)
+    }
     if err := cmd.Execute(); err != nil {
         return nil, err
     }
@@ -252,12 +255,13 @@ All errors are written to stderr followed by a `Run 'ralph-tui --help' for usage
 
 ```
 ralph-tui [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
+ralph-tui create-sandbox [--force]
 ralph-tui --version
 ```
 
 ## Testing
 
-- `ralph-tui/internal/cli/args_test.go` — 27 test cases covering all `NewCommand` and `Execute` branches
+- `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all `NewCommand` and `Execute` branches
 
 ### Test Cases
 
@@ -290,6 +294,7 @@ ralph-tui --version
 | `TestNewCommand_ProjectDirIsFile` | `--project-dir` pointing to a file → error |
 | `TestNewCommand_ArbitraryUnknownFlagFiresGuidanceMessage` | Any unknown flag → error contains `flagSplitGuidance` message |
 | `TestNewCommand_NoShortFormsForDirFlags` | `-w` and `-p` are not registered → error for each |
+| `TestNewCommandImpl_AddedSubcommandRunsItsRunE` | Subcommand added via `AddCommand` fires its `RunE` when invoked by name |
 
 The two version tests read the expected string from `version.Version` rather than hardcoding `"0.1.0"` — the pattern required by [Versioning](../coding-standards/versioning.md) so a version bump does not require touching the test file.
 

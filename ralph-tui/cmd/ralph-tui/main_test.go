@@ -138,6 +138,46 @@ func TestNewServices_ValidationFailureReturnsFalse(t *testing.T) {
 	}
 }
 
+// TestNewServices_LoadStepsFailureReturnsFalse verifies that newServices returns
+// (nil, false) when ralph-steps.json is missing from WorkflowDir. It also checks
+// that the logger was created and closed without leaking (logs/ must exist under
+// projectDir, confirming logger instantiation before the early-return path).
+func TestNewServices_LoadStepsFailureReturnsFalse(t *testing.T) {
+	workflowDir := t.TempDir() // no ralph-steps.json here
+	projectDir := t.TempDir()
+	// Deliberately do NOT write ralph-steps.json so LoadSteps fails.
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	svc, ok := newServices(cfg, projectDir)
+	if ok {
+		t.Fatal("newServices should have returned ok=false when ralph-steps.json is missing")
+	}
+	if svc != nil {
+		t.Error("newServices should have returned nil services on LoadSteps failure")
+	}
+
+	// Logger was created and closed cleanly — logs/ dir should exist with no leak.
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); err != nil {
+		t.Errorf("expected logs/ directory to exist under projectDir after LoadSteps failure: %v", err)
+	}
+}
+
+// TestNewServices_LoggerFailureReturnsFalse verifies that newServices returns
+// (nil, false) when logger.NewLogger fails due to an unwritable projectDir.
+func TestNewServices_LoggerFailureReturnsFalse(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := "/nonexistent/path/that/does/not/exist"
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	svc, ok := newServices(cfg, projectDir)
+	if ok {
+		t.Fatal("newServices should have returned ok=false when logger creation fails")
+	}
+	if svc != nil {
+		t.Error("newServices should have returned nil services on logger failure")
+	}
+}
+
 // TestNewServices_LoadsStepsFromWorkflowDir verifies that newServices reads
 // ralph-steps.json from cfg.WorkflowDir (install dir), not projectDir (target repo).
 func TestNewServices_LoadsStepsFromWorkflowDir(t *testing.T) {

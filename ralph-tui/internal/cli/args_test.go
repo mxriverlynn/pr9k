@@ -395,10 +395,11 @@ func TestNewCommand_ArbitraryUnknownFlagFiresGuidanceMessage(t *testing.T) {
 	}
 }
 
-// T4. Execute() registers variadic subcommands and makes them callable.
-// Verifies that a cobra.Command passed to Execute() via extra is added as a
-// subcommand and its RunE fires when invoked by name.
-func TestExecute_RegistersVariadicSubcommand(t *testing.T) {
+// T4. newCommandImpl accepts subcommands added via AddCommand and dispatches to them.
+// Verifies that a cobra.Command added to the root command runs its RunE when
+// invoked by name. (The variadic Execute() path that calls AddCommand internally
+// is tested indirectly through the integration in main.go.)
+func TestNewCommandImpl_AddedSubcommandRunsItsRunE(t *testing.T) {
 	cfg := &Config{}
 	var ranE bool
 	cmd := newCommandImpl(cfg, &ranE)

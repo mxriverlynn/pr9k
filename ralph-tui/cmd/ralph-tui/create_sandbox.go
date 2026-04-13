@@ -38,6 +38,9 @@ type createSandboxDeps struct {
 
 // realDockerRun is the production implementation of dockerRunFunc.
 func realDockerRun(args []string, stdout, stderr io.Writer) (int, error) {
+	if len(args) == 0 {
+		return -1, errors.New("realDockerRun: args must not be empty")
+	}
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -85,6 +88,18 @@ func newCreateSandboxCmdWith(deps *createSandboxDeps) *cobra.Command {
 
 // semverRe matches a semver-shaped pattern (e.g. "2.1.101") anywhere in a string.
 var semverRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// ansiEscapeRe matches ANSI/VT terminal escape sequences: CSI sequences
+// (\x1b[...m), OSC sequences (\x1b]...\x07), and Fe sequences (\x1b[@-_]).
+// Used to strip terminal injection from untrusted subprocess output before
+// reflecting it to the user's terminal (SEC-001).
+var ansiEscapeRe = regexp.MustCompile(`\x1b(?:[@-Z\\-_]|\[[0-9;]*[ -/]*[@-~]|\][^\x07]*\x07)`)
+
+// stripANSI removes ANSI/VT escape sequences from s so that untrusted
+// subprocess output cannot inject terminal control codes when printed.
+func stripANSI(s string) string {
+	return ansiEscapeRe.ReplaceAllString(s, "")
+}
 
 func runCreateSandbox(deps *createSandboxDeps, force bool) error {
 	// Step 1: Docker reachability check.
@@ -149,9 +164,10 @@ func runCreateSandbox(deps *createSandboxDeps, force bool) error {
 	}
 
 	// Accept version output from stdout first, then stderr.
-	output := strings.TrimSpace(smokeStdout.String())
+	// stripANSI prevents terminal injection from a malicious or compromised image.
+	output := stripANSI(strings.TrimSpace(smokeStdout.String()))
 	if output == "" {
-		output = strings.TrimSpace(smokeStderr.String())
+		output = stripANSI(strings.TrimSpace(smokeStderr.String()))
 	}
 	if output == "" {
 		_, _ = fmt.Fprintln(deps.stderr, "Sandbox smoke test failed — image ran but produced no version output. Image may be corrupted or a locally-tagged stub. Re-pull with --force.")
