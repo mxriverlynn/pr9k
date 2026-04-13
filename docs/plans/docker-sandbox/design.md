@@ -3,7 +3,7 @@
 Status: **Design — not implemented**.
 Target ralph-tui version: **0.3.0** (breaking change — `y` bump from `0.2.3` per `docs/coding-standards/versioning.md`).
 
-> **Plan currency note (iteration 4, 2026-04-13):** Between the design
+> **Plan currency note (iteration 6, 2026-04-13):** Between the design
 > freeze and re-review, commit `4f4481b` ("fixing issues with working
 > dir vs executing dir", bumping to `0.2.3`) landed a narrower
 > clean-up of the project-dir-vs-cwd confusion: it captured
@@ -11,7 +11,11 @@ Target ralph-tui version: **0.3.0** (breaking change — `y` bump from `0.2.3` p
 > logger and runner without touching flags or variables. This plan's
 > §4.15 split is still the intended 0.3.0 endpoint, but §9's rename
 > inventory and main.go line references below have been reconciled
-> against the post-`4f4481b` state. See §14 iteration 4 for a summary.
+> against the post-`4f4481b` state. Iterations 5 and 6 further
+> tightened internal consistency, reservedBuiltins coverage in the
+> validator, captureAs interaction with the prompt-token ban,
+> terminator-closure post-exit safety, and cobra unknown-flag
+> messaging. See §14 iterations 4–6 for summaries.
 
 ## 1. Overview
 
@@ -308,7 +312,7 @@ ralph-tui create-sandbox [--force]
      - Non-zero exit → `Sandbox smoke test failed — container exited with status <N>.` + captured stderr → exit 1.
      - Exit 0 but no output on either stream → `Sandbox smoke test failed — image ran but produced no version output. Image may be corrupted or a locally-tagged stub. Re-pull with --force.` → exit 1.
      - Exit 0 with output that does not match a semver-shaped pattern →
-       `Sandbox smoke test warning — unexpected version output: <line>. Proceeding, but this image may not be the expected claude-code.` (warning, not failure — upstream output format is outside our control).
+       `Sandbox smoke test warning — unexpected version output: <line>. The image may not be claude-code (e.g., a tag squat or local stub). Re-pull with --force or verify the image digest before proceeding.` (warning, not failure — upstream format is outside our control, but the copy now names the supply-chain risk §3 accepts).
    - On success, print: `Sandbox verified: claude <version> under UID <UID>:<GID>.`
    - Note: this smoke test does NOT exercise writes with bind mounts, so
      it will not catch the "`agent` user can't write to `/home/agent/.cache`
@@ -360,6 +364,21 @@ before the main orchestration loop begins.
    a warning condition (fresh profile is valid).
 7. Enter main loop.
 
+### Error-collection ordering (iteration 6 F3)
+
+§11's upgrade path expects the docker-missing or sandbox-image-missing
+message to be the first thing a migrating user sees. §7 step 1 runs D13
+first, which means a user whose custom `ralph-steps.json` uses
+`{{PROJECT_DIR}}` in a prompt would instead hit the prompt-token-ban
+error — then fix, re-run, hit profile, fix, re-run, hit docker. To
+align the two sections, the preflight dispatcher collects *all*
+preflight errors (D13, profile, docker binary, daemon, image) before
+exiting, matching D13's own existing collect-all-errors contract
+(`validator.go:77-146`). The printed output lists every blocking
+failure so the user can address them in one pass; exit code remains 1
+if any check fails. This removes the ordering-induced ping-pong without
+forcing the plan to pick a single "most important" check.
+
 ### Explicitly not done at startup
 - **No smoke test at startup.** `create-sandbox` already verified the specific
   image + UID combination. Re-verifying costs a container start per
@@ -408,6 +427,16 @@ around them.
   overwritten to the mount point; `HOME` is whatever the image sets).
   The validator rejects either name with a clear reason. This keeps the
   sandbox's own invariants out of reach of workflow configs.
+- A second denylist covers names that would either break the
+  container's isolation assumptions or silently weaken §3's threat
+  model: `PATH`, `USER`, `LOGNAME`, `SSH_AUTH_SOCK`, `LD_PRELOAD`,
+  `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`.
+  Rationale: `PATH` would override the image's curated tool set;
+  `SSH_AUTH_SOCK` without a matching socket bind-mount is a dead
+  pointer that invites surprise if bind mounts are ever added;
+  `LD_*` / `DYLD_*` are classic injection surface. §3's "no env
+  exfiltration" promise is only for the unextended default plus
+  names not in either denylist. Iteration 6 F11 added this list.
 
 ### Validation (extensions of D13)
 
@@ -428,11 +457,39 @@ around them.
   inside `command` argv because commands run on the host and see host
   paths.
 
+**`captureAs` on claude steps — rejected.**
+
+Because `resolved.Command[0]` for a claude step becomes `docker` post-sandbox
+(§5), the stdout captured by `RunStep` is no longer claude's output but
+docker's. Silently rebinding a `captureAs` to docker-level text would turn
+historical `captureAs` contracts into garbage. The validator therefore rejects
+any step with both `isClaude: true` and a non-empty `captureAs`. Addresses
+iteration 6 adversarial F1 and keeps §2's "no semantic regression in captured
+values" invariant intact.
+
+**`captureAs` indirection around the prompt-token ban — closed.**
+
+§8's literal-token scan of prompt bodies does not, by itself, close the
+indirection path where a `command` step binds `captureAs: "X"` to a string
+containing `{{WORKFLOW_DIR}}`/`{{PROJECT_DIR}}` and a later claude prompt
+references `{{X}}`. `vars/substitute.go` is single-pass, so the forwarded
+value reaches claude as a host path with no further substitution. The
+validator therefore also rejects any `command` step that both (a) references
+`{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}` in its argv and (b) sets `captureAs`.
+The two tokens remain usable in `command` argv when no capture is taken
+(e.g., `"command": ["cat", "{{PROJECT_DIR}}/README.md"]` is fine). Addresses
+iteration 6 adversarial F4.
+
+**`reservedBuiltins` in the validator (not just `reservedNames` in vars).**
+
+The validator carries its own map at `internal/validator/validator.go:64-71`
+(`reservedBuiltins`) that mirrors `vars.reservedNames` and enforces the
+`captureAs`-may-not-shadow-built-ins rule at preflight. §9's rename block
+adds `"WORKFLOW_DIR": true` to **both** maps. V4 only flagged the `vars.go`
+map; the validator copy is the primary enforcement site and was missed.
+Iteration 6 adversarial F6 closes this correctness gap.
+
 These additions bring D13's category count to ten.
-- Reject anything else via the existing `validator.Error` surface
-  (`ralph-tui/internal/validator/validator.go:23-37`). Use a new
-  `Category: "env"` value; `Phase: "config"`; `StepName: ""` (this is a
-  file-level field, not step-level).
 
 ## 9. Code Change Inventory
 
@@ -447,6 +504,12 @@ New and modified files:
     allowlist).
   - `sandbox/command.go` — `BuildRunArgs(projectDir, profileDir string, uid, gid int, cidfile string, envAllowlist []string, model, prompt string) []string`.
     Pure function producing the full `docker run ...` argv. Unit-tested.
+    UID/GID are inputs (pure function — no syscalls inside); the caller
+    in `buildStep` obtains them from a new `sandbox.HostUIDGID() (int,
+    int)` helper that wraps `os.Getuid()` / `os.Getgid()`. Tests pass
+    fixed values (e.g., 501, 20) so argv-shape assertions do not
+    depend on the test runner's user. Iteration 6 F12 closed this
+    sourcing gap.
   - `sandbox/terminator.go` — given a cidfile path *and* the `*os.Process`
     for the `docker run` CLI invocation, returns a closure of the shape
     `func(signal syscall.Signal) error` that:
@@ -463,14 +526,26 @@ New and modified files:
     pull or cold-start, cidfile may not yet exist, and the closure must
     NOT no-op. The prior "nothing to kill" sentinel would orphan a
     container that starts moments after termination.
-    The closure is stateless (no captured buffers) so it is safe to
-    invoke from `Runner.Terminate()` without additional locking.
-  - `sandbox/cidfile.go` — unique cidfile path generation (via
+    The closure captures the `*exec.Cmd` (not bare `*os.Process`) so
+    it can check `cmd.ProcessState != nil` before signaling — a
+    post-exit `proc.Signal` call would otherwise hit a PID that the
+    kernel may have recycled (statelessness alone does not defend
+    against PID reuse). `RunSandboxedStep`'s defer also clears
+    `currentTerminator` under `processMu` **before** the final
+    `cmd.Wait()` return path releases the process, so `Terminate()`
+    fired after exit short-circuits cleanly. Iteration 6 F2 tightened
+    this spec from the earlier "stateless, no locking needed" framing.
+  - `sandbox/cidfile.go` — cidfile path generation via
     `os.CreateTemp("", "ralph-*.cid")` then `os.Remove` so the path is
-    available to `docker run --cidfile`; this guarantees uniqueness
-    even under concurrent ralph-tui invocations and produces a loud,
-    specific error if collision ever occurs) and ENOENT-tolerant
-    cleanup.
+    available to `docker run --cidfile` (which refuses to start if the
+    path already exists). This reserves an unused filename at the
+    moment of creation; there is a small window between `os.Remove`
+    and docker's own `O_CREAT|O_EXCL` where another process could
+    claim the name. Parallelism is explicitly out of scope (§2), so
+    the accepted failure mode is a loud "container ID file found"
+    error from docker on collision — not a silent corruption. Plus
+    ENOENT-tolerant cleanup. Iteration 6 F5 rewrote the earlier
+    "guarantees uniqueness" claim which was wrong about the mechanism.
 - **`ralph-tui/internal/preflight/`** — startup checks.
   - `preflight/profile.go` — resolves and validates the profile dir.
   - `preflight/docker.go` — docker-binary, daemon-reachability, and
@@ -522,10 +597,19 @@ New and modified files:
   into `buildStep`'s caller chain so `sandbox.BuildRunArgs` can see the
   list. `BuildPrompt` itself does not need to change.
 - **`ralph-tui/internal/validator/validator.go`** — D13 lives here
-  (`Error` type at lines 23-37, `vFile` at 56-60). Extend `vFile` with
-  `Env *[]string` and add a validation category for env names. Errors
-  use the existing `validator.Error` type (not `ConfigError` — that name
-  was shorthand; correct the spec here).
+  (`Error` type at lines 23-37, `vFile` at 56-60, `reservedBuiltins`
+  map at 64-71). Extend `vFile` with `Env *[]string` and add a
+  validation category for env names. Add `"WORKFLOW_DIR": true` to
+  `reservedBuiltins` alongside the `vars.reservedNames` change — the
+  validator is the primary enforcement site for the
+  captureAs-may-not-shadow-built-ins rule. Add two new validator
+  passes: (i) reject any step with both `isClaude: true` and a
+  non-empty `captureAs` (post-sandbox stdout is docker's, not
+  claude's — see §8); (ii) reject any `command` step whose argv
+  references `{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}` when `captureAs`
+  is set (closes the indirection bypass of the prompt-token ban —
+  see §8). Errors use the existing `validator.Error` type (not
+  `ConfigError` — that name was shorthand; correct the spec here).
 - **`ralph-tui/internal/version/version.go`** — bump `0.2.2` → `0.3.0`.
 
 ### New test files
@@ -720,6 +804,17 @@ rename diff is reviewable independently inside the sandbox PR.
   before the runner starts. **Note:** the 0.2.3 `os.Getwd()` call
   does not run through `EvalSymlinks`; the split adds the symlink
   dereference for parity with `resolveWorkflowDir()`.
+  **Unknown-flag message (iteration 6 F9).** §11 step 2 promises that
+  a user passing the old `-p` or `--project-dir <workflow-bundle>`
+  sees an error mentioning both `--workflow-dir` and `--project-dir`.
+  Cobra's default unknown-flag message does not name replacements, so
+  `args.go` installs a `SetFlagErrorFunc` that wraps the default
+  message with a trailing line: `--project-dir changed meaning in
+  0.3.0 (now: target repo). Use --workflow-dir for the install dir
+  and --project-dir for the target repo. See docs/adr/20260413162428-workflow-project-dir-split.md.`
+  A unit test in `cli/args_test.go` asserts the wrapped message
+  fires for `-p` and `--project-dir` when parsing fails. Without
+  this, §11's upgrade path is aspirational.
 - `ralph-tui/internal/cli/args_test.go` — new test cases for
   `--project-dir` long flag, default = cwd behavior, nonexistent
   directory rejection.
@@ -775,12 +870,15 @@ rename diff is reviewable independently inside the sandbox PR.
 
 **ADR changes (see §12):**
 
-- `docs/adr/<timestamp>-workflow-project-dir-split.md` — new ADR
-  capturing the split decision; referenced from §4.15.
+- `docs/adr/20260413162428-workflow-project-dir-split.md` — exists on
+  disk (accepted); the 0.3.0 PR amends (a) its Context section for
+  the `os.Getwd()` inaccuracy and (b) its Notes → Key Files table
+  for the `RunConfig.ProjectDir` Option B contradiction. Decision
+  section is unchanged. See §12.
 - `docs/adr/20260409135303-cobra-cli-framework.md` — in-place updates
   to the two `-project-dir` references (lines 12, 79) and a trailing
-  "Updates" note pointing at the new ADR. The cobra decision itself is
-  unchanged; only the flag names it mentions.
+  "Updates" note pointing at the split ADR. The cobra decision itself
+  is unchanged; only the flag names it mentions.
 
 **Validation:**
 
@@ -972,9 +1070,9 @@ New user-visible surface:
    Same behavior already applies to `WORKFLOW_DIR` (via
    `resolveWorkflowDir()`) — this aligns the two. Surfaced by
    adversarial validator V8.
-4. First run prints: `Claude sandbox image is missing. Run: ralph-tui create-sandbox` and exits 1.
-5. User runs `ralph-tui create-sandbox` — image pulls, smoke test passes.
-6. Normal runs resume.
+5. First run prints: `Claude sandbox image is missing. Run: ralph-tui create-sandbox` and exits 1.
+6. User runs `ralph-tui create-sandbox` — image pulls, smoke test passes.
+7. Normal runs resume.
 
 ### Rollback
 If sandboxed claude turns out to break a specific workflow in production,
@@ -1015,17 +1113,27 @@ authored as part of the implementation PR or a follow-up doc PR.
 
 **Rename-driven doc updates (§4.15):**
 
-- **New**: `docs/adr/<timestamp>-workflow-project-dir-split.md` — records
-  the split decision (see §9 Rename ADR changes).
 - **Update**: `docs/adr/20260409135303-cobra-cli-framework.md` — in-place
   replacement of `-project-dir` at lines 12 and 79; trailing "Updates"
-  note pointing to the new split ADR.
+  note pointing to the split ADR.
 - **Update**: `docs/adr/20260413162428-workflow-project-dir-split.md` —
-  amend the Context section in place to reflect that commit
-  `4f4481b` (0.2.3) introduced an internal `workingDir` capture via
-  `os.Getwd()` at `cmd/ralph-tui/main.go:77` that is not surfaced
-  as a flag/variable, and the split promotes it. Decision section
-  unchanged. See §13 ADR-context-inaccuracy resolution.
+  two in-place amendments:
+  1. **Context section** — reflect that commit `4f4481b` (0.2.3)
+     introduced an internal `workingDir` capture via `os.Getwd()` at
+     `cmd/ralph-tui/main.go:77` that is not surfaced as a
+     flag/variable, and the split promotes it. See §13
+     ADR-context-inaccuracy resolution.
+  2. **Notes → Key Files table (line 229)** — the `run.go` row
+     currently reads `RunConfig.WorkflowDir + RunConfig.ProjectDir;
+     target repo wired through to sandbox.BuildRunArgs`. This
+     contradicts §13's iteration 5 Option B resolution, which keeps
+     `RunConfig.WorkflowDir` as the single `RunConfig` field and
+     routes the target repo via `Runner.ProjectDir()` /
+     `StepExecutor.ProjectDir()` instead. Rewrite the row as
+     `RunConfig.WorkflowDir; target repo reaches BuildRunArgs via
+     Runner.ProjectDir() / StepExecutor.ProjectDir() per Option B`.
+     Surfaced by iteration 6 evidence-based F20. Decision section
+     unchanged.
 - **Update**: `docs/architecture.md` — update line 164 project-directory
   resolution prose.
 - **Update**: `docs/features/cli-configuration.md` — rewrite flag
@@ -1523,9 +1631,91 @@ validation (evidence-based-investigator + adversarial-validator).
   a note that flag routing is automated and the manual checklist
   is scoped to docker-dependent behavior. See §13 "Iteration 5
   ambiguity resolutions" for full rationale on each.
-- **Stopped at iteration 5** because remaining open questions
-  (image-internal assumptions, runtime behavior) are runtime-only and
-  not answerable by further static review.
+- **Iteration 6 (consistency + correctness sweep with full agent
+  validation, 2026-04-13)** — re-ran evidence-based-investigator
+  and adversarial-validator against the post-iteration-5 plan. The
+  evidence-based pass VERIFIED 20 plan claims (tests, line
+  references, ADR existence) and REFUTED two: (F20) the split
+  ADR's Notes → Key Files table still claims `RunConfig.WorkflowDir
+  + RunConfig.ProjectDir`, contradicting iteration 5's Option B
+  resolution; (F6-prose) the "`Command[0] == 'claude'`" assertion
+  location list in §9 was loose prose — only lines 840 and 945
+  assert `Command[0]`, others assert positional indexes. The
+  adversarial pass surfaced twelve findings; seven became plan
+  changes:
+  - F1 (HIGH): `captureAs` on a claude step silently captures
+    docker stdout post-sandbox. §8 now adds a validator rule
+    rejecting `captureAs` on any step with `isClaude: true`; §9
+    validator entry updated.
+  - F2 (HIGH): terminator closure's `proc.Signal` fallback on a
+    post-exit `*os.Process` is a PID-recycling hazard; "stateless,
+    no locking needed" framing was insufficient. §9
+    `sandbox/terminator.go` spec now requires the closure to hold
+    `*exec.Cmd` and check `ProcessState != nil` before signaling,
+    and `RunSandboxedStep`'s defer clears `currentTerminator`
+    under `processMu` before the Wait return path releases the
+    process.
+  - F3 (MED): §7 preflight ordering (D13 first) contradicted §11
+    upgrade-path narrative (docker-missing first). Resolved by
+    batching all preflight errors before exit — matches D13's
+    existing collect-all-errors contract. Added §7 subsection.
+  - F4 (MED): §8's literal-token scan is bypassable via
+    `captureAs` in a `command` step whose argv contains
+    `{{WORKFLOW_DIR}}`/`{{PROJECT_DIR}}` — the captured string
+    substitutes into a later prompt as a dead host path. §8 and
+    §9 validator entry now reject this combination.
+  - F5 (MED): `sandbox/cidfile.go` prose claimed
+    `os.CreateTemp`+`os.Remove` "guarantees uniqueness"; the
+    mechanism does not. Rewrote §9 bullet to describe the actual
+    race window and cite §2's parallelism non-goal as the reason
+    the trade-off is acceptable.
+  - F6 (MED, correctness gap): iteration-4 V4 added
+    `"WORKFLOW_DIR"` to `vars.reservedNames` but missed the
+    parallel `reservedBuiltins` map in
+    `validator.go:64-71` — the primary enforcement site. §8
+    and §9 validator entry add the missing map update; §10(c)
+    test asserts validator-level rejection.
+  - F9 (MED): §11 step 2 claim that cobra "prints both new flag
+    names" on `-p` / `--project-dir` was unimplemented. §9
+    `cli/args.go` entry now specifies a `SetFlagErrorFunc`
+    wrapper and a unit test covering the wrapped message.
+  - F10 (LOW): smoke-test warning copy tightened to name the
+    supply-chain risk §3 accepts.
+  - F11 (MED): env allowlist denylist now covers `PATH`, `USER`,
+    `LOGNAME`, `SSH_AUTH_SOCK`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
+    `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH` alongside the
+    prior `CLAUDE_CONFIG_DIR`/`HOME` entries.
+  - F12 (LOW): UID/GID sourcing was unspecified. §9
+    `sandbox/command.go` entry adds a `sandbox.HostUIDGID()`
+    helper wrapping `os.Getuid`/`os.Getgid`; `BuildRunArgs`
+    stays a pure function taking uid/gid as parameters; tests
+    pass fixed values.
+  - F20 (HIGH): split ADR's Notes → Key Files table row for
+    `run.go` contradicts iteration 5's Option B. §12 ADR-update
+    entry amends both the Context section (iteration 4's note)
+    and the Key Files row (iteration 6's new finding).
+
+  Also cleaned up three documentation defects: §11 upgrade-path
+  had duplicate `4.` numbering (V8 was appended without
+  renumbering), fixed to 4–7; §12 listed the split ADR as both
+  "New" and "Update" (the ADR exists on disk, so only "Update"
+  applies), consolidated; §8 had an orphan bullet duplicating
+  env-validator rules, removed.
+
+  Three adversarial findings were accepted with framing rather
+  than plan changes: F7 (the numbering bug, which was the defect
+  above — so effectively a plan change), F8 (audience-posture
+  tension between §13 Q2 and §11 narrative — kept both postures
+  as-is; §11 doubles as author self-documentation), and
+  alternative UID/GID placements rejected in favor of the pure-
+  function + helper split.
+- **Stopped at iteration 6** — the remaining adversarial observation
+  (the §11 vs Q2 audience-posture tension) is stylistic, not
+  structural. Probability of meaningful structural improvement in
+  an iteration 7 is below 80% by the iterative-plan-review stopping
+  rule. Open questions that remain (image-internal assumptions,
+  runtime SIGTERM behavior, `@file` semantics inside the sandbox)
+  are runtime-only.
 
 ### Agent validation outcomes
 - **evidence-based-investigator**: 9 of 10 plan claims verified against
@@ -1570,15 +1760,19 @@ validation (evidence-based-investigator + adversarial-validator).
    ADR.
 
 ### Counts
-- 5 review iterations completed.
-- 10 plan-claim assumptions challenged via evidence-based agent;
-  10 plan-claim assumptions challenged via adversarial agent.
-- 7 adversarial findings incorporated as plan changes; 3 accepted with
-  documentation update.
-- 1 outright correctness bug found and fixed (§8 schema example).
-- 4 cross-reference and naming inconsistencies fixed.
-- 2 decisions surfaced and resolved during review
+- 6 review iterations completed.
+- 10 + 20 plan-claim assumptions challenged via evidence-based agent
+  (iterations 4 and 6); 10 + 12 challenged via adversarial agent
+  (iterations 4 and 6).
+- 14 adversarial findings incorporated as plan changes across
+  iterations 4 and 6; several accepted with documentation update.
+- 2 outright correctness gaps found and fixed: (§8 schema example in
+  iteration 2; `reservedBuiltins` omission in iteration 6 F6).
+- 7 cross-reference and naming inconsistencies fixed across
+  iterations 2–6.
+- 3 decisions surfaced and resolved during review
   (`{{WORKFLOW_DIR}}` / `{{PROJECT_DIR}}` ban in prompts;
-  `--project-dir` split into `--workflow-dir` + `--project-dir`).
+  `--project-dir` split into `--workflow-dir` + `--project-dir`;
+  `captureAs`-indirection bypass of the prompt-token ban).
 - 0 consolidations made — the plan was already well-decomposed; each
   numbered section addresses a distinct concern with low overlap.
