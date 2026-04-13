@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -48,8 +49,8 @@ func TestBuildRunArgs_GoldenArgv(t *testing.T) {
 	assertContainsFlag(t, args, "--init")
 	assertContainsConsecutive(t, args, "--cidfile", testCidfile)
 	assertContainsConsecutive(t, args, "-u", "501:20")
-	assertContainsConsecutive(t, args, "-v", testProjectDir+":"+ContainerRepoPath)
-	assertContainsConsecutive(t, args, "-v", testProfileDir+":"+ContainerProfilePath)
+	assertContainsConsecutive(t, args, "--mount", fmt.Sprintf("type=bind,source=%s,target=%s", testProjectDir, ContainerRepoPath))
+	assertContainsConsecutive(t, args, "--mount", fmt.Sprintf("type=bind,source=%s,target=%s", testProfileDir, ContainerProfilePath))
 	assertContainsConsecutive(t, args, "-w", ContainerRepoPath)
 	assertContainsConsecutive(t, args, "-e", "CLAUDE_CONFIG_DIR="+ContainerProfilePath)
 	assertContainsFlag(t, args, ImageTag)
@@ -233,6 +234,45 @@ func TestBuildRunArgs_EnvVarsEmittedAsBareNames(t *testing.T) {
 		}
 	}
 	t.Errorf("MY_VAR not found in args following -e: %v", args)
+}
+
+// TestBuildRunArgs_MixedSetUnsetEnvVarsInterleaved verifies that when the
+// allowlist contains a mix of set and unset vars in interleaved order, unset
+// vars are silently skipped and the set vars appear in first-seen order.
+func TestBuildRunArgs_MixedSetUnsetEnvVarsInterleaved(t *testing.T) {
+	t.Setenv("RALPH_TEST_SET_A", "val-a")
+	t.Setenv("RALPH_TEST_SET_B", "val-b")
+	// RALPH_TEST_UNSET_XYZ is guaranteed absent from the environment.
+
+	allowlist := []string{"RALPH_TEST_SET_A", "RALPH_TEST_UNSET_XYZ", "RALPH_TEST_SET_B"}
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		allowlist, testModel, "prompt")
+
+	// CLAUDE_CONFIG_DIR + 2 set vars = 3 -e flags total.
+	count := countFlag(args, "-e")
+	if count != 3 {
+		t.Errorf("expected 3 -e flags (CLAUDE_CONFIG_DIR + 2 set vars), got %d. args: %v", count, args)
+	}
+
+	// Unset var must not appear.
+	for _, a := range args {
+		if a == "RALPH_TEST_UNSET_XYZ" {
+			t.Errorf("unset var RALPH_TEST_UNSET_XYZ must not appear in args: %v", args)
+		}
+	}
+
+	// Set vars appear in first-seen order: A before B.
+	idxA := indexOf(args, "RALPH_TEST_SET_A")
+	idxB := indexOf(args, "RALPH_TEST_SET_B")
+	if idxA < 0 {
+		t.Fatal("RALPH_TEST_SET_A not found in args")
+	}
+	if idxB < 0 {
+		t.Fatal("RALPH_TEST_SET_B not found in args")
+	}
+	if idxA >= idxB {
+		t.Errorf("expected RALPH_TEST_SET_A before RALPH_TEST_SET_B: idxA=%d idxB=%d", idxA, idxB)
+	}
 }
 
 // TestBuildRunArgs_DoesNotMutateAllowlist verifies that BuildRunArgs does not

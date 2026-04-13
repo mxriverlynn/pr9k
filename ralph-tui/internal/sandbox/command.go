@@ -32,8 +32,8 @@ func BuildRunArgs(
 		"--init",
 		"--cidfile", cidfile,
 		"-u", fmt.Sprintf("%d:%d", uid, gid),
-		"-v", projectDir + ":" + ContainerRepoPath,
-		"-v", profileDir + ":" + ContainerProfilePath,
+		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", projectDir, ContainerRepoPath),
+		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),
 		"-w", ContainerRepoPath,
 		"-e", "CLAUDE_CONFIG_DIR=" + ContainerProfilePath,
 	}

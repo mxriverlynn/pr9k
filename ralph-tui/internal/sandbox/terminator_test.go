@@ -165,6 +165,8 @@ func TestIsValidCID(t *testing.T) {
 		{"64-char with space", validCID[:63] + " ", false},
 		{"64-char with newline", validCID[:63] + "\n", false},
 		{"valid 64-char lowercase hex", validCID, true},
+		{"64-char all zeros", strings.Repeat("0", 64), true},
+		{"64-char all f", strings.Repeat("f", 64), true},
 	}
 
 	for _, tc := range cases {
