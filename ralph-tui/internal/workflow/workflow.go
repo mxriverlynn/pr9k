@@ -38,7 +38,9 @@ type Runner struct {
 
 // NewRunner creates a Runner that streams subprocess output through the sendLine
 // callback (set via SetSender) and to the file logger. workingDir is set as
-// cmd.Dir for every subprocess.
+// cmd.Dir for every subprocess and must be the user's shell CWD (the target
+// repo being operated on), not the install dir where ralph-tui's bundled
+// ralph-steps.json, scripts/, and prompts/ live.
 //
 // NewRunner initializes sendLine to a sentinel that panics with a descriptive
 // message so that missing-wire bugs (forgetting to call SetSender before

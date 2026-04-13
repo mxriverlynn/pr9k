@@ -211,6 +211,47 @@ func TestRunStep_AllLinesArrivedBeforeCmdWait(t *testing.T) {
 	_ = log.Close()
 }
 
+// TestRunStep_UsesWorkingDir verifies RunStep sets cmd.Dir to the runner's
+// workingDir (shell CWD), not the install dir. Mirrors the equivalent test
+// for CaptureOutput.
+func TestRunStep_UsesWorkingDir(t *testing.T) {
+	workingDir := t.TempDir()
+	logDir := t.TempDir()
+	log, err := logger.NewLogger(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	r := NewRunner(log, workingDir)
+	var mu sync.Mutex
+	var captured []string
+	r.SetSender(func(line string) {
+		mu.Lock()
+		captured = append(captured, line)
+		mu.Unlock()
+	})
+
+	if err := r.RunStep("pwd-step", []string{"sh", "-c", "pwd"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+
+	wantDir, _ := filepath.EvalSymlinks(workingDir)
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, line := range captured {
+		got, err := filepath.EvalSymlinks(line)
+		if err == nil && got == wantDir {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected RunStep cmd.Dir=%q in captured output, got %v", wantDir, captured)
+	}
+}
+
 // Integration tests
 
 func TestRunStep_IntegrationStdoutInPipeAndLogFile(t *testing.T) {

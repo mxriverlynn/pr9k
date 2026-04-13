@@ -31,8 +31,9 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 
 ## Key Design Decisions
 
-- Ralph is invoked **from the target repo** — all subprocesses inherit that cwd
-- The project directory is resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`
+- Two distinct directories, captured separately at startup:
+  - **ProjectDir (install dir)** — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--project-dir` / `-p`. Anchors `{{PROJECT_DIR}}` template substitution and relative script-path resolution.
+  - **WorkingDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo) and the `logs/` output location.
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 

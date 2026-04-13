@@ -155,21 +155,28 @@ func resolveProjectDir() (string, error) {
 
 This is why `go run` does not work — it places the binary in a temporary directory. Use `go build` and run the compiled binary, or pass `--project-dir` explicitly.
 
-### ProjectDir Fan-Out
+### ProjectDir vs WorkingDir
 
-After parsing, `Config.ProjectDir` is distributed to five consumers in `main.go`:
+ralph-tui distinguishes two directories that are often conflated:
 
-| Consumer | Path Resolved |
-|----------|---------------|
-| `logger.NewLogger(projectDir)` | `{projectDir}/logs/ralph-*.log` |
-| `steps.LoadSteps(projectDir)` | `{projectDir}/ralph-steps.json` |
-| `validator.Validate(projectDir)` | Validates `ralph-steps.json` relative to `{projectDir}` |
-| `workflow.NewRunner(log, projectDir)` | Sets `cmd.Dir` for all subprocesses |
-| `workflow.RunConfig.ProjectDir` | Scripts, prompt files, command resolution |
+- **ProjectDir** (install dir) — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path by default, or overridden by `--project-dir` / `-p`.
+- **WorkingDir** — the user's shell CWD captured at startup via `os.Getwd()`. Governs subprocess `cmd.Dir` (so `gh`, `git`, and `claude` run against the target repo) and log file location (so `logs/` land alongside the work).
+
+Consumers in `main.go`:
+
+| Consumer | Dir | Path Resolved |
+|----------|-----|---------------|
+| `logger.NewLogger(workingDir)` | WorkingDir | `{workingDir}/logs/ralph-*.log` |
+| `steps.LoadSteps(projectDir)` | ProjectDir | `{projectDir}/ralph-steps.json` |
+| `validator.Validate(projectDir)` | ProjectDir | Validates `ralph-steps.json` relative to `{projectDir}` |
+| `workflow.NewRunner(log, workingDir)` | WorkingDir | Sets `cmd.Dir` for all subprocesses |
+| `workflow.RunConfig.ProjectDir` | ProjectDir | Scripts, prompt files, `{{PROJECT_DIR}}` variable |
 
 Within the workflow, `ProjectDir` anchors two path-resolution mechanisms:
 - `{projectDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt` (for Claude steps)
 - Relative script paths from step config — resolved against `projectDir` by `ResolveCommand` (e.g. `scripts/get_gh_user`, `scripts/close_gh_issue`); not hardcoded in `Run()`
+
+The `{{PROJECT_DIR}}` template variable resolves to `ProjectDir` (install dir) — e.g., `{{PROJECT_DIR}}/ralph-art.txt` in `ralph-steps.json` refers to the bundled banner file alongside the binary.
 
 ## Error Handling
 
