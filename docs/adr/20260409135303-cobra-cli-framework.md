@@ -9,7 +9,7 @@
 
 ## Context
 
-The ralph-tui Go application currently uses Go's stdlib `flag` package for CLI argument parsing (`ralph-tui/internal/cli/args.go`). This works for the current minimal interface (one positional `iterations` argument and an optional `-project-dir` flag), but requires a custom `reorderArgs()` function to work around `flag`'s limitation of stopping at the first non-flag argument.
+The ralph-tui Go application currently uses Go's stdlib `flag` package for CLI argument parsing (`ralph-tui/internal/cli/args.go`). This works for the current minimal interface (one positional `iterations` argument and an optional `--workflow-dir` flag — historically named `-project-dir` before the split recorded in [the workflow/project dir split ADR](20260413162428-workflow-project-dir-split.md)), but requires a custom `reorderArgs()` function to work around `flag`'s limitation of stopping at the first non-flag argument.
 
 The project needs to add POSIX-style flags (`--long-flag`) and subcommand support, neither of which stdlib `flag` provides. A third-party CLI framework is needed.
 
@@ -69,7 +69,7 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/cli/args.go` | CLI parsing via cobra: `Execute`, `NewCommand`, `Config`, `resolveProjectDir` |
+| `ralph-tui/internal/cli/args.go` | CLI parsing via cobra: `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir` (see [split ADR](20260413162428-workflow-project-dir-split.md)) |
 | `ralph-tui/internal/cli/args_test.go` | 16 test cases covering all cobra parsing branches |
 | `ralph-tui/cmd/ralph-tui/main.go` | Entry point that calls `cli.Execute()` and wires config into the app |
 | `ralph-tui/internal/workflow/run.go` | Downstream consumer of `cli.Config` via `workflow.RunConfig` |
@@ -78,3 +78,14 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 - [CLI Configuration Feature Doc](../features/cli-configuration.md) — documents current flag parsing and project directory resolution
 - [Architecture Overview](../architecture.md) — system-level architecture including CLI entry point
+
+## Updates
+
+- **2026-04-13** — The `-project-dir` flag named in this ADR has been
+  split into `--workflow-dir` (for the workflow bundle — today's
+  semantics) and `--project-dir` (reintroduced with a new meaning: the
+  target repo). Short forms were dropped. The cobra decision itself is
+  unchanged; only the flag surface described above. See
+  [the workflow/project dir split ADR](20260413162428-workflow-project-dir-split.md)
+  for rationale and [the docker sandbox design plan](../plans/docker-sandbox/design.md) §4.15
+  for the delivery inventory.

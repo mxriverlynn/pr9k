@@ -22,6 +22,12 @@ host can launch containers under its own UID. At startup, ralph-tui refuses to
 run until the sandbox is present, Docker is reachable, and the Claude profile
 directory exists.
 
+This release also splits the ambiguous `--project-dir` flag into
+`--workflow-dir` (the workflow bundle — `ralph-steps.json`, `prompts/`,
+`scripts/`, `ralph-art.txt`) and `--project-dir` (the target repo, newly
+first-class because the sandbox bind-mount needs to name it distinctly
+from the workflow bundle). See §4.14 and the split ADR for rationale.
+
 ## 2. Goal & Non-Goals
 
 ### Goal
@@ -51,7 +57,7 @@ invisible to claude.
 ### In scope
 | Attack                                            | Mitigated by                                     |
 |---------------------------------------------------|--------------------------------------------------|
-| Claude `rm -rf`s outside the repo                 | No bind mount outside `<project-dir>`            |
+| Claude `rm -rf`s outside the repo                 | No bind mount outside `<PROJECT_DIR>` (target repo) |
 | Claude reads `~/.ssh`, `~/.aws`, other repos      | Not bind-mounted; container sees empty `$HOME`   |
 | Claude exfiltrates host env vars                  | `-e` allowlist; no `-e $(env)`                   |
 | Upstream tool on host is subverted by claude work | Claude cannot invoke host binaries               |
@@ -133,11 +139,37 @@ reference.
 14. **Testing: unit-test command builder + unit-test preflight with injected
     prober + manual smoke checklist.** No CI integration tests against real
     Docker.
+15. **Split `--project-dir` into `--workflow-dir` (current meaning) and
+    `--project-dir` (target repo, new).** The sandbox bind-mount
+    (`-v <PROJECT_DIR>:/home/agent/workspace`, §5) needs a name for the
+    target repo distinct from the workflow bundle. Today's `--project-dir`
+    unambiguously resolves to the workflow bundle
+    (`ralph-tui/internal/cli/args.go:22-56`, `vars/vars.go:63`), but
+    design.md has been sloppily using `<PROJECT_DIR>` to mean the target
+    repo in the mount template — exposing a latent ambiguity that will
+    bite readers. The split names each concept once:
+    `--workflow-dir` / `{{WORKFLOW_DIR}}` / `WorkflowDir` inherits current
+    semantics (default: executable-path + `EvalSymlinks`), and
+    `--project-dir` / `{{PROJECT_DIR}}` / `ProjectDir` becomes a new
+    identifier for the target repo (default: `os.Getwd()` +
+    `EvalSymlinks`; overridable by the user). Short forms (`-p`) are
+    dropped — the ambiguity caused past confusion, and the long names
+    force the user to read what they're typing. No deprecation alias:
+    `--project-dir` means something different before and after, so a
+    silently-accepted alias would mount the wrong directory. Delivered
+    in the same `0.3.0` PR as the sandbox (§11). Rationale recorded in
+    the new split ADR alongside this plan.
 
 ## 5. The Runtime Docker Command
 
 The template below is the source of truth for the command ralph-tui
 constructs for every claude step. Substituted values in `<ANGLE_BRACKETS>`.
+After the §4.15 split, `<PROJECT_DIR>` unambiguously means the target repo
+(ralph-tui's new `--project-dir` flag, defaulting to `os.Getwd()`). The
+workflow bundle — `<WORKFLOW_DIR>` — is **not** mounted: claude runs
+against the target repo, and any workflow artifacts it needs (prompts,
+scripts) are interpolated into argv or prompt text on the host before
+the container starts.
 
 ```
 docker run                                              \
@@ -194,8 +226,12 @@ docker run                                              \
 - `-u <UID>:<GID>`: run as the host user. Files written to the bind-mounted
   repo come out owned by you.
 - `-v <PROJECT_DIR>:/home/agent/workspace`: bind-mount the target repo.
-  Matches the image's default `WORKDIR`, so relative paths claude resolves
-  inside the container correspond to real host paths.
+  `<PROJECT_DIR>` is the value of the new `--project-dir` flag (§4.15),
+  defaulting to `os.Getwd()` and passed through `filepath.EvalSymlinks`
+  so docker sees a real path. Matches the image's default `WORKDIR`, so
+  relative paths claude resolves inside the container correspond to real
+  host paths. The workflow bundle (`<WORKFLOW_DIR>`) is deliberately not
+  mounted — see §8 and §13 for the token ban that enforces this.
 - `-v <PROFILE_DIR>:/home/agent/.claude`: bind-mount the Claude profile.
   `<PROFILE_DIR>` is `$CLAUDE_CONFIG_DIR` if set, else `$HOME/.claude`.
 - `-w /home/agent/workspace`: explicit working directory (redundant with
@@ -359,11 +395,14 @@ around them.
   these).
 - Use `Category: "env"`, `Phase: "config"`, `StepName: ""`.
 
-**`{{PROJECT_DIR}}` ban in prompts:**
+**`{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` ban in prompts:**
 - Every prompt file referenced by a claude step is scanned for the
-  literal token `{{PROJECT_DIR}}`. If found, emit a validator error
-  (see §13 resolved decision for rationale and message).
-- Non-claude `command` steps are not scanned.
+  literal tokens `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}`. If either is
+  found, emit a validator error (see §13 resolved decision for
+  rationale and message).
+- Non-claude `command` steps are not scanned. Both tokens remain valid
+  inside `command` argv because commands run on the host and see host
+  paths.
 
 These additions bring D13's category count to ten.
 - Reject anything else via the existing `validator.Error` surface
@@ -463,11 +502,108 @@ New and modified files:
   regex, non-string elements, non-array top-level value).
 
 ### Files deliberately untouched
-- `ralph-tui/ralph-steps.json` — the existing default workflow gets no `env`
-  entries. If a migration to add `GITHUB_TOKEN` etc. is needed for the
-  default loop, that's a separate content change.
-- `prompts/*.md` — unchanged.
+- `prompts/*.md` — unchanged. (No prompt file uses `{{PROJECT_DIR}}` or
+  `{{WORKFLOW_DIR}}` today, so the new prompt-scan validator is
+  zero-churn for the default workflow.)
 - `scripts/*` — unchanged. These run on the host, not in the sandbox.
+- Historical plans (`docs/plans/ralph-tui.md`,
+  `docs/plans/cobra-cli-option-parsing.md`,
+  `docs/plans/ux-corrections/design.md`) — left as historical record;
+  current docs and ADRs reflect post-split vocabulary.
+
+### Rename (§4.15)
+
+The split is a pure search-and-replace for the existing identifier plus
+new sibling wiring for the target-repo identifier. Grouped here so the
+rename diff is reviewable independently inside the sandbox PR.
+
+**Rename of today's `ProjectDir`/`projectDir`/`PROJECT_DIR` → `WorkflowDir`/`workflowDir`/`WORKFLOW_DIR`:**
+
+- `ralph-tui/internal/cli/args.go` — flag registration at line 60 becomes
+  `--workflow-dir` (no short form); `Config.ProjectDir` field becomes
+  `Config.WorkflowDir`; `resolveProjectDir()` becomes
+  `resolveWorkflowDir()`. Same `os.Executable()` + `filepath.EvalSymlinks`
+  logic; no behavior change.
+- `ralph-tui/internal/cli/args_test.go` — rename
+  `TestNewCommand_LongProjectDirFlag` and `TestNewCommand_ShortProjectDirFlag`
+  (drop the latter — no short form now); update asserts.
+- `ralph-tui/internal/vars/vars.go` — rename `New(projectDir)` →
+  `New(workflowDir, projectDir string)`; seed both `WORKFLOW_DIR` and
+  `PROJECT_DIR` as persistent-scope vars. Rename existing
+  `TestNew_seedsProjectDir` to cover both.
+- `ralph-tui/internal/logger/logger.go` — parameter rename only
+  (`projectDir` → `workflowDir`); logs stay under
+  `{workflowDir}/logs/`. Zero behavior change.
+- `ralph-tui/internal/steps/steps.go` — parameter renames on
+  `LoadSteps` and `BuildPrompt`.
+- `ralph-tui/internal/validator/validator.go` — anchor parameter
+  renames throughout `Validate`, `validatePhase`, `validateCommandPath`,
+  `extractStepRefs`. Additionally extend the prompt-scan pass (§8) to
+  reject both `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` literal tokens.
+- `ralph-tui/internal/workflow/run.go` — `RunConfig.ProjectDir` →
+  `RunConfig.WorkflowDir`; add new sibling field `RunConfig.ProjectDir`
+  (see below); update `buildStep`, `ResolveCommand` call sites.
+- `ralph-tui/internal/workflow/run_test.go` — ~70 `ProjectDir: t.TempDir()`
+  call sites become `WorkflowDir: t.TempDir()`; a subset that genuinely
+  cares about target-repo behavior also set `ProjectDir`.
+- `ralph-tui/internal/workflow/workflow_test.go` — `ResolveCommand` tests
+  rename to use `workflowDir`.
+- `ralph-tui/cmd/ralph-tui/main.go` — rename `cfg.ProjectDir` →
+  `cfg.WorkflowDir` in the logger/steps/validator/runner wiring (lines
+  41, 47, 54, 63, 107).
+- `ralph-tui/ralph-steps.json` — line 3 Splash step's `{{PROJECT_DIR}}`
+  flips to `{{WORKFLOW_DIR}}` (ralph-art.txt lives in the workflow
+  bundle, not the target repo).
+- `ralph-tui/bin/ralph-steps.json` — mirror of the above (build output).
+
+**New identifier `ProjectDir`/`projectDir`/`PROJECT_DIR` for the target repo:**
+
+- `ralph-tui/internal/cli/args.go` — new `--project-dir` flag (no short
+  form) and new `Config.ProjectDir` field. New `resolveProjectDir()`
+  using `os.Getwd()` + `filepath.EvalSymlinks`. Both resolutions run in
+  `RunE` and are validated (directory exists) before the runner starts.
+- `ralph-tui/internal/cli/args_test.go` — new test cases for
+  `--project-dir` long flag, default = cwd behavior, nonexistent
+  directory rejection.
+- `ralph-tui/internal/vars/vars.go` — seed `PROJECT_DIR` persistent var
+  from the new parameter (see rename block above).
+- `ralph-tui/internal/workflow/run.go` — new `RunConfig.ProjectDir`
+  plumbs through to `sandbox.BuildRunArgs(projectDir, profileDir, ...)`
+  (`BuildRunArgs`'s first parameter at `design.md:385` now
+  unambiguously means target repo).
+- `ralph-tui/internal/workflow/run_test.go` — a new test block asserts
+  `ProjectDir` is routed into the sandbox mount arg for claude steps.
+- `ralph-tui/cmd/ralph-tui/main.go` — pass `cfg.ProjectDir` into the
+  runner alongside `cfg.WorkflowDir`.
+
+**Subcommand scope:**
+
+- `ralph-tui/cmd/ralph-tui/create_sandbox.go` (new; §9 existing entry)
+  registers **neither** `--workflow-dir` nor `--project-dir`. Both
+  flags live on the root/run command only, not `PersistentFlags()`.
+  `create-sandbox` is workflow-agnostic.
+
+**ADR changes (see §12):**
+
+- `docs/adr/<timestamp>-workflow-project-dir-split.md` — new ADR
+  capturing the split decision; referenced from §4.15.
+- `docs/adr/20260409135303-cobra-cli-framework.md` — in-place updates
+  to the two `-project-dir` references (lines 12, 79) and a trailing
+  "Updates" note pointing at the new ADR. The cobra decision itself is
+  unchanged; only the flag names it mentions.
+
+**Validation:**
+
+The generalized prompt-scan rule (§8) uses the same
+`Category`/`Phase`/`StepName` shape as the original `{{PROJECT_DIR}}`
+ban. Error message updated to name both tokens (§13).
+
+**Default workflow content:**
+
+- `ralph-tui/ralph-steps.json` — `env` entries remain untouched; only
+  line 3's Splash token flips (`{{PROJECT_DIR}}` → `{{WORKFLOW_DIR}}`).
+  If a migration to add `GITHUB_TOKEN` etc. is needed for the default
+  loop, that's a separate content change.
 
 ## 10. Testing Plan
 
@@ -504,11 +640,15 @@ New and modified files:
 - `env: "GITHUB_TOKEN"` → error (top-level value must be an array).
 - `env: ["CLAUDE_CONFIG_DIR"]` → error (sandbox-reserved).
 - `env: ["HOME"]` → error (sandbox-reserved).
+- Prompt file containing `{{WORKFLOW_DIR}}` referenced by a claude
+  step → error with exact `Problem` string from §13.
 - Prompt file containing `{{PROJECT_DIR}}` referenced by a claude step
   → error with exact `Problem` string from §13.
-- Prompt file with no `{{PROJECT_DIR}}` → clean.
-- `command` step containing `{{PROJECT_DIR}}` → clean (ban is prompt-
-  only).
+- Prompt file containing neither → clean.
+- `command` step containing `{{WORKFLOW_DIR}}` → clean (ban is
+  prompt-only).
+- `command` step containing `{{PROJECT_DIR}}` → clean (ban is
+  prompt-only).
 Include both the error category/phase/stepName shape and the exact
 `Problem` string in assertions, matching the existing test style.
 
@@ -552,28 +692,63 @@ they run `ralph-tui create-sandbox`.
 Per `docs/coding-standards/versioning.md`, this is a `y` bump under the
 `0.y.z` scheme: `0.2.2` → `0.3.0`.
 
-**Characterization of the change**: This is schema-additive (new `env`
-field is backwards-compatible for existing `ralph-steps.json`) *plus*
-environment-breaking (Docker becomes a hard runtime dependency, so a
-previously-valid config no longer produces the same workflow — it fails
-preflight). Under the versioning standard's §2 rule ("Any existing
-user's ralph-steps.json that was valid before must still be valid and
-still produce the same workflow"), environment-breaking would be MAJOR
-in a `1.y.z` regime. It is MINOR here *only* under the `0.y.z` escape
-hatch. The first `1.0.0` release must not silently absorb this kind of
-change — future breaking environment dependencies will be 2.0.0.
+**Characterization of the change**: `0.3.0` bundles three independently-
+breaking changes to the public API surface named by
+`docs/coding-standards/versioning.md:19` (CLI flags, `ralph-steps.json`
+schema, `{{VAR}}` language, environment dependencies):
+
+1. **Environment-breaking** — Docker becomes a hard runtime dependency,
+   so a previously-valid config no longer produces the same workflow
+   (it fails preflight).
+2. **CLI-flag-breaking** — `--project-dir` is renamed to `--workflow-dir`
+   for its current meaning, and `--project-dir` is reintroduced with a
+   new meaning (target repo). No deprecation alias. Short forms
+   dropped. Scripts passing the old `-p` or `--project-dir <workflow-bundle>`
+   will break loudly at flag-parse or silently mount the wrong directory
+   if not updated — hence the MINOR (breaking) bump, not PATCH.
+3. **Schema-additive and VAR-language change** — new top-level `env`
+   field in `ralph-steps.json` (backwards-compatible) plus a new
+   `{{WORKFLOW_DIR}}` built-in and a behavior change for `{{PROJECT_DIR}}`
+   (now means target repo, not workflow bundle). The default
+   `ralph-steps.json:3` flips from `{{PROJECT_DIR}}` to
+   `{{WORKFLOW_DIR}}` — so any user who copied the default workflow
+   verbatim will continue to work (because the default config ships
+   with them); any user whose own `ralph-steps.json` uses
+   `{{PROJECT_DIR}}` to mean "workflow bundle" must rename it to
+   `{{WORKFLOW_DIR}}`.
+
+Under the versioning standard's §2 rule ("Any existing user's
+ralph-steps.json that was valid before must still be valid and still
+produce the same workflow"), (1) and (2) and the `{{PROJECT_DIR}}`
+semantic change in (3) would all be MAJOR in a `1.y.z` regime. They
+are MINOR here *only* under the `0.y.z` escape hatch. The first
+`1.0.0` release must not silently absorb changes of this shape —
+future breaking environment dependencies, flag renames, or variable-
+token resemantications will each be MAJOR.
 
 New user-visible surface:
 - `create-sandbox` subcommand
 - `env` top-level field in `ralph-steps.json`
+- `--workflow-dir` flag (rename of `--project-dir`)
+- `--project-dir` flag (reintroduced, new meaning: target repo)
+- `{{WORKFLOW_DIR}}` built-in variable
 - Three new startup error conditions with exit code 1
 - Docker required as a runtime dependency
 
 ### Upgrade path
 1. User updates ralph-tui to `0.3.0`.
-2. First run prints: `Claude sandbox image is missing. Run: ralph-tui create-sandbox` and exits 1.
-3. User runs `ralph-tui create-sandbox` — image pulls, smoke test passes.
-4. Normal runs resume.
+2. If the user's invocation passes `-p` or `--project-dir`: cobra
+   errors at flag-parse. The error prints both new flag names. User
+   replaces the old argument with `--workflow-dir` (for the current
+   meaning) and optionally adds `--project-dir` (for target repo, else
+   defaults to `os.Getwd()`).
+3. If the user's custom `ralph-steps.json` uses `{{PROJECT_DIR}}` to
+   mean the workflow bundle (paths like `{{PROJECT_DIR}}/prompts/foo.md`):
+   validator errors at startup naming the offending step. User renames
+   those tokens to `{{WORKFLOW_DIR}}`.
+4. First run prints: `Claude sandbox image is missing. Run: ralph-tui create-sandbox` and exits 1.
+5. User runs `ralph-tui create-sandbox` — image pulls, smoke test passes.
+6. Normal runs resume.
 
 ### Rollback
 If sandboxed claude turns out to break a specific workflow in production,
@@ -599,57 +774,125 @@ authored as part of the implementation PR or a follow-up doc PR.
 - **Update**: `docs/features/step-definitions.md` — document the new
   top-level `env` field and the layered allowlist behavior.
 - **Update**: `docs/features/config-validation.md` — document the new
-  validation rules for the `env` field and the `{{PROJECT_DIR}}`-in-
-  prompts ban.
+  validation rules for the `env` field and the
+  `{{WORKFLOW_DIR}}`/`{{PROJECT_DIR}}`-in-prompts ban.
 - **Update**: `docs/how-to/variable-output-and-injection.md` — note
-  that `{{PROJECT_DIR}}` is valid only in `command` steps, not in
-  prompt files (since sandboxed claude cannot see the host path).
+  that `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are valid only in
+  `command` steps, not in prompt files (since sandboxed claude cannot
+  see the host path), and document the semantics of each token after
+  the §4.15 split.
 - **Update**: `CLAUDE.md` — add pointers to the new feature doc, ADR, and
-  how-to guide under the appropriate sections.
+  how-to guide under the appropriate sections. Also replace the two
+  references to project-directory resolution in the "Key Design
+  Decisions" and build-and-run sections to use `--workflow-dir` and
+  introduce `--project-dir` alongside it.
+
+**Rename-driven doc updates (§4.15):**
+
+- **New**: `docs/adr/<timestamp>-workflow-project-dir-split.md` — records
+  the split decision (see §9 Rename ADR changes).
+- **Update**: `docs/adr/20260409135303-cobra-cli-framework.md` — in-place
+  replacement of `-project-dir` at lines 12 and 79; trailing "Updates"
+  note pointing to the new split ADR.
+- **Update**: `docs/architecture.md` — update line 164 project-directory
+  resolution prose.
+- **Update**: `docs/features/cli-configuration.md` — rewrite flag
+  registration, resolution, and `ProjectDir` fan-out sections to cover
+  both `--workflow-dir` and `--project-dir`; retitle test-case
+  documentation.
+- **Update**: `docs/features/step-definitions.md` — `LoadSteps(projectDir)`
+  / `BuildPrompt(projectDir)` signatures become `workflowDir` in
+  docs; add note that `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are
+  both seeded into the VarTable at startup.
+- **Update**: `docs/features/file-logging.md` — log directory is under
+  `{workflowDir}/logs/`, not `{projectDir}/logs/`.
+- **Update**: `docs/features/variable-state.md` — rename the seeded
+  built-in from `PROJECT_DIR` to `WORKFLOW_DIR`; add `PROJECT_DIR` as
+  the new sibling built-in.
+- **Update**: `docs/coding-standards/api-design.md` — update the example
+  signatures at lines 35 and 178 from `BuildPrompt(projectDir, ...)` to
+  `BuildPrompt(workflowDir, ...)`.
+- **Update**: `docs/coding-standards/go-patterns.md` — line 294's
+  symlink-safe-project-directory-resolution section retitles to cover
+  both resolutions (workflow dir via executable path + target repo via
+  cwd), both running through `filepath.EvalSymlinks`.
+- **Update**: `docs/coding-standards/error-handling.md` — line 89's
+  error-message example updates to reference the workflow-dir
+  resolution path.
+- **Update**: `docs/how-to/building-custom-workflows.md` — line 120
+  rewrites `{projectDir}/scripts/deploy` as `{workflowDir}/scripts/deploy`.
+- **Update**: `docs/how-to/debugging-a-run.md` — line 111 reproduction
+  instructions switch `--project-dir` → `--workflow-dir`; add note that
+  `--project-dir` now controls the target repo cwd.
+- **Update**: `docs/coding-standards/versioning.md` — one-line addition
+  to the public-API list reflecting that both flag names and both
+  `{{VAR}}` tokens are covered.
+
+**Historical plans left untouched** (not in the update list): this is
+a deliberate choice per Question 6 — `docs/plans/ralph-tui.md`,
+`docs/plans/cobra-cli-option-parsing.md`, and
+`docs/plans/ux-corrections/design.md` describe prior trajectories and
+are preserved as-written. Current docs and the new ADR are the source
+of truth for today's vocabulary.
 
 ## 13. Open Questions & Known Risks
 
-### `{{PROJECT_DIR}}` inside claude prompts — resolved
+### `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` inside claude prompts — resolved
 
-**Decision:** Reject `{{PROJECT_DIR}}` when it appears in any prompt
-file referenced by a claude step. The built-in variable remains
-available for non-claude `command` steps (which continue to run on the
-host and see host paths).
+**Decision:** Reject both `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}`
+when either appears in any prompt file referenced by a claude step.
+Both built-ins remain available for non-claude `command` steps (which
+continue to run on the host and see host paths).
 
-**Why:** The VarTable seeds `PROJECT_DIR` to the *host* absolute path
-resolved from `os.Executable()` (`ralph-tui/internal/vars/vars.go:63`;
-the `{{VAR}}` language is public API per
-`docs/coding-standards/versioning.md:19`). Once claude runs inside a
-container with the repo mounted at `/home/agent/workspace`, a prompt
-containing `{{PROJECT_DIR}}/foo` would hand claude a host path that
-does not exist in the container — claude then either fails visibly,
-wastes tokens searching for the file, or hallucinates its contents.
-Today no prompt file uses `{{PROJECT_DIR}}` (only
-`ralph-tui/ralph-steps.json:3` uses it in a non-claude command, which
-still works on the host), so banning it in prompts is zero-churn.
-Keeps the substitution language uniform and phase-only (no
-context-dependent resolution), aligned with the narrow-reading
-principle ADR.
+**Why:** After the §4.15 split, the VarTable seeds two persistent
+vars:
+
+- `WORKFLOW_DIR` — host absolute path to the workflow bundle, resolved
+  from `os.Executable()` + `filepath.EvalSymlinks`
+  (`ralph-tui/internal/cli/args.go:resolveWorkflowDir`). The bundle is
+  **not** bind-mounted into the sandbox, so a prompt containing
+  `{{WORKFLOW_DIR}}/foo` would hand claude a host path that doesn't
+  exist inside the container.
+- `PROJECT_DIR` — host absolute path to the target repo, resolved from
+  `os.Getwd()` + `filepath.EvalSymlinks` or the explicit
+  `--project-dir` flag. The target repo **is** bind-mounted, but at
+  `/home/agent/workspace` (not at the host path), so a prompt
+  containing `{{PROJECT_DIR}}/foo` still hands claude a path that
+  doesn't exist inside the container.
+
+In both cases claude would either fail visibly, waste tokens searching
+for the file, or hallucinate its contents. Banning both tokens in
+prompts is the simplest rule that avoids this — and it preserves
+phase-only substitution (no `IsClaude`-aware special-casing in
+`vars.go`), which the narrow-reading-principle ADR recommends.
+Today no prompt file uses either token, so the ban is zero-churn for
+the default workflow.
+
+Inside the container claude's cwd is `/home/agent/workspace` (the
+workspace root, `-w` in §5); relative paths are the natural idiom.
 
 **Implementation sketch (extends §8 validation):**
 - D13 validator already reads every prompt file referenced by a claude
-  step (file-existence check in `validator.go`). Add a scan pass that
-  rejects any occurrence of the literal token `{{PROJECT_DIR}}` in
-  prompt bodies.
+  step (file-existence check in `validator.go`). Add one scan pass
+  that rejects either `{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}` literal
+  token in prompt bodies.
 - New `Category: "prompt"` (or reuse existing prompt-related category)
   with `Phase: <step's phase>`, `StepName: <step name>`, and
-  `Problem`: `prompt %s: {{PROJECT_DIR}} is not valid inside prompt files — it expands to a host path that does not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the repo root inside the container).`
+  `Problem`: `prompt %s: {{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files — they expand to host paths that do not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the target repo root inside the container).`
 - Non-claude command steps are unaffected — `ResolveCommand` in
-  `run.go:260-282` still substitutes the host path and commands still
-  run on the host.
-- Add validator test cases: prompt containing `{{PROJECT_DIR}}` →
-  error; prompt without it → clean; command containing
-  `{{PROJECT_DIR}}` → clean.
+  `run.go` still substitutes the host paths and commands still run on
+  the host.
+- Add validator test cases: prompt containing `{{WORKFLOW_DIR}}` →
+  error; prompt containing `{{PROJECT_DIR}}` → error; prompt
+  containing both → error (report at least once; exact shape decided
+  at implementation time); prompt without either → clean; command
+  containing either token → clean.
 
-**Docs follow-up** (goes in §12's "docs to update" list):
+**Docs follow-up** (in §12's "docs to update" list):
 - `docs/how-to/variable-output-and-injection.md` — note that
-  `{{PROJECT_DIR}}` is valid only in `command` steps, not in prompt
-  files.
+  `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are valid only in `command`
+  steps, not in prompt files; document both tokens' post-split
+  semantics.
 
 ### To verify during implementation
 - **Prompt size vs. ARG_MAX.** macOS `getconf ARG_MAX` is 1,048,576 bytes
@@ -776,13 +1019,20 @@ validation (evidence-based-investigator + adversarial-validator).
   - F5, F7, F9: accepted with explicit framing, not silent acceptance.
 
 ### Items resolved during review
-1. **`{{PROJECT_DIR}}` semantics inside sandboxed prompts** — resolved
-   by banning the token in prompt files via validator extension (see
-   §8 and §13). Non-claude `command` steps continue to use the host
-   path. Chosen over context-dependent remapping because no prompt
-   currently uses `{{PROJECT_DIR}}`, keeping the substitution language
-   pure and phase-only matches the narrow-reading-principle ADR, and
-   the error surfaces at preflight rather than mid-run.
+1. **`{{WORKFLOW_DIR}}` / `{{PROJECT_DIR}}` semantics inside sandboxed
+   prompts** — resolved by banning both tokens in prompt files via
+   validator extension (see §8 and §13). Non-claude `command` steps
+   continue to use the host path for both. Chosen over
+   context-dependent remapping because no prompt currently uses either
+   token, keeping the substitution language pure and phase-only
+   matches the narrow-reading-principle ADR, and the error surfaces at
+   preflight rather than mid-run.
+2. **`--project-dir` flag and `{{PROJECT_DIR}}` token ambiguity** —
+   resolved by splitting each into a pair: `--workflow-dir` /
+   `{{WORKFLOW_DIR}}` inherits today's semantics (the workflow
+   bundle), and `--project-dir` / `{{PROJECT_DIR}}` is reintroduced
+   with a new meaning (the target repo). See §4.15 and the new split
+   ADR.
 
 ### Counts
 - 3 review iterations completed.
@@ -792,7 +1042,8 @@ validation (evidence-based-investigator + adversarial-validator).
   documentation update.
 - 1 outright correctness bug found and fixed (§8 schema example).
 - 4 cross-reference and naming inconsistencies fixed.
-- 1 decision surfaced and resolved during review
-  (`{{PROJECT_DIR}}` ban in prompts).
+- 2 decisions surfaced and resolved during review
+  (`{{WORKFLOW_DIR}}` / `{{PROJECT_DIR}}` ban in prompts;
+  `--project-dir` split into `--workflow-dir` + `--project-dir`).
 - 0 consolidations made — the plan was already well-decomposed; each
   numbered section addresses a distinct concern with low overlap.
