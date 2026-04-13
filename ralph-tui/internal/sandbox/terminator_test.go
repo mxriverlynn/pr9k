@@ -206,6 +206,38 @@ func TestTerminator_NilProcessNoCrash(t *testing.T) {
 	}
 }
 
+// TestPollCidfile_ReturnsEmptyOnTimeout verifies that pollCidfile returns ""
+// when the file never appears within the poll window (TP-001).
+// The empty-string return drives the fallback-to-CLI-signal path; a regression
+// returning a non-empty string would cause docker-kill against an invalid CID.
+func TestPollCidfile_ReturnsEmptyOnTimeout(t *testing.T) {
+	start := time.Now()
+	got := pollCidfile("/nonexistent/ralph-test-timeout.cid", 100*time.Millisecond)
+
+	if got != "" {
+		t.Errorf("pollCidfile returned %q, want empty string", got)
+	}
+	if elapsed := time.Since(start); elapsed > 150*time.Millisecond {
+		t.Errorf("pollCidfile took %v, expected to complete within ~150ms", elapsed)
+	}
+}
+
+// TestPollCidfile_WhitespaceOnlyContentReturnsEmpty verifies that pollCidfile
+// returns "" when the cidfile contains only whitespace (TP-005).
+// Exercises the TrimSpace→isValidCID pipeline — docker writes a hex CID, not
+// whitespace, so this confirms defensive handling of partial writes.
+func TestPollCidfile_WhitespaceOnlyContentReturnsEmpty(t *testing.T) {
+	cidfile := t.TempDir() + "/ralph-whitespace.cid"
+	if err := os.WriteFile(cidfile, []byte("   \n  "), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got := pollCidfile(cidfile, 100*time.Millisecond)
+	if got != "" {
+		t.Errorf("pollCidfile returned %q for whitespace-only content, want empty string", got)
+	}
+}
+
 // TestPollCidfile_FileAppearsAfterPollStarts verifies that pollCidfile detects
 // a cidfile that materialises mid-poll and returns its CID (TP-005).
 func TestPollCidfile_FileAppearsAfterPollStarts(t *testing.T) {

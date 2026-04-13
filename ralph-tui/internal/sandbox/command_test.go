@@ -207,6 +207,34 @@ func TestBuildRunArgs_FlagOrder(t *testing.T) {
 	}
 }
 
+// TestBuildRunArgs_EnvVarsEmittedAsBareNames verifies that env vars in the
+// allowlist are emitted as bare names ("-e MY_VAR"), not as key=value pairs
+// ("-e MY_VAR=secret") (TP-002).
+// Security-relevant: bare names cause the container runtime to inherit the
+// value from the host environment at startup, keeping secrets out of argv
+// (and therefore out of /proc/*/cmdline).
+func TestBuildRunArgs_EnvVarsEmittedAsBareNames(t *testing.T) {
+	t.Setenv("MY_VAR", "secret")
+
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		[]string{"MY_VAR"}, testModel, "prompt")
+
+	// Find the -e flag that corresponds to MY_VAR.
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && args[i+1] == "MY_VAR" {
+			return // found: bare name, not key=value
+		}
+	}
+	// Check if it was emitted as key=value (the wrong form).
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && strings.HasPrefix(args[i+1], "MY_VAR=") {
+			t.Errorf("env var emitted as key=value %q; want bare name %q", args[i+1], "MY_VAR")
+			return
+		}
+	}
+	t.Errorf("MY_VAR not found in args following -e: %v", args)
+}
+
 // TestBuildRunArgs_DoesNotMutateAllowlist verifies that BuildRunArgs does not
 // modify the envAllowlist slice passed by the caller (TP-001, mandatory per
 // docs/coding-standards/testing.md §input-slice-immutability).
