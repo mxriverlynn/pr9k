@@ -139,6 +139,11 @@ func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Ph
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
     promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
+    absPath, absErr := filepath.Abs(promptPath)
+    absPrompts, absPromptsErr := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+    if absErr != nil || absPromptsErr != nil || !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+        return "", fmt.Errorf("steps: prompt path escapes prompts directory: %s", step.PromptFile)
+    }
     data, err := os.ReadFile(promptPath)
     // ...
     content, err := vars.Substitute(string(data), vt, phase)
@@ -146,6 +151,8 @@ func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Ph
     return content, nil
 }
 ```
+
+The path containment check prevents `promptFile` values containing `..` segments (e.g., `"../../../etc/passwd"`) from reading files outside the `prompts/` directory. Both the resolved path and the prompts directory are converted to absolute paths before comparison.
 
 All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` before the string is returned. Unresolved variables log a warning and substitute the empty string.
 
@@ -156,6 +163,7 @@ All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` 
 | Config file unreadable | `"steps: could not read {path}: ..."` | Returned to caller |
 | Malformed JSON | `"steps: malformed JSON in {path}: ..."` | Returned to caller |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
+| Path traversal attempt | `"steps: prompt path escapes prompts directory: {promptFile}"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 | Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
 

@@ -32,7 +32,7 @@ The `iteration` array must contain at least one step.
 
 ### Category 4 — Referenced file existence
 
-- For Claude steps: `prompts/<promptFile>` must exist on disk.
+- For Claude steps: `prompts/<promptFile>` must exist on disk. Additionally, `promptFile` values containing path traversal segments (e.g., `../`) that would resolve outside the `prompts/` directory are rejected with a "prompt path escapes prompts directory" error.
 - For non-Claude steps: `command[0]` must be resolvable — either as a relative path under `projectDir`, an absolute path, or a bare name found via `PATH` lookup.
 
 Command path resolution uses `"/"` as a path separator and assumes Unix; revise if Windows support is added.
