@@ -145,6 +145,48 @@ func TestRun_ZeroByteCredentials_WarningNotFatal(t *testing.T) {
 	}
 }
 
+// TP-002: Run collects a CheckCredentials error (permission-denied) into Result.Errors.
+func TestRun_CredentialsPermissionError_CollectedAsError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "profile")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(path, []byte(`{"token":"abc"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Revoke execute permission on dir so os.Stat(dir/.credentials.json) fails.
+	if err := os.Chmod(dir, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0700)
+	})
+
+	result := Run(dir, allGreenProber)
+
+	if len(result.Errors) == 0 {
+		t.Fatal("expected at least 1 error for permission-denied credentials, got none")
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no warnings, got: %v", result.Warnings)
+	}
+	found := false
+	for _, e := range result.Errors {
+		if os.IsPermission(e) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a permission error in result.Errors, got: %v", result.Errors)
+	}
+}
+
 func TestRun_AllGreen(t *testing.T) {
 	dir := t.TempDir()
 	result := Run(dir, allGreenProber)

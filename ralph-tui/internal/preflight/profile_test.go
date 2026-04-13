@@ -63,6 +63,51 @@ func TestCheckProfileDir_ValidDirectory(t *testing.T) {
 	}
 }
 
+// TP-003: CheckProfileDir returns the raw stat error for non-ErrNotExist failures.
+func TestCheckProfileDir_StatPermissionError_PropagatedRaw(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	subdir := filepath.Join(parent, "profile")
+	if err := os.Mkdir(subdir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(parent, 0700)
+	})
+
+	err := CheckProfileDir(subdir)
+
+	if err == nil {
+		t.Fatal("expected error for permission-denied stat, got nil")
+	}
+	if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("expected raw stat error, not a custom message, got: %q", err.Error())
+	}
+	if !os.IsPermission(err) {
+		t.Errorf("expected permission error, got: %v", err)
+	}
+}
+
+// TP-004: ResolveProfileDir converts a relative CLAUDE_CONFIG_DIR to an absolute path.
+func TestResolveProfileDir_RelativePath_BecomeAbsolute(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "relative/claude")
+
+	got := ResolveProfileDir()
+
+	if !filepath.IsAbs(got) {
+		t.Errorf("expected absolute path, got %q", got)
+	}
+	if !strings.HasSuffix(got, "relative/claude") {
+		t.Errorf("expected path ending with %q, got %q", "relative/claude", got)
+	}
+}
+
 func TestCheckCredentials_NoCredentialsFile(t *testing.T) {
 	dir := t.TempDir()
 	w, err := CheckCredentials(dir)
