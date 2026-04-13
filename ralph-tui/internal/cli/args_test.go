@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
@@ -390,6 +392,35 @@ func TestNewCommand_ArbitraryUnknownFlagFiresGuidanceMessage(t *testing.T) {
 	}
 	if !strings.Contains(msg, "docs/adr/20260413162428-workflow-project-dir-split.md") {
 		t.Errorf("expected error to mention the split ADR, got %q", msg)
+	}
+}
+
+// T4. Execute() registers variadic subcommands and makes them callable.
+// Verifies that a cobra.Command passed to Execute() via extra is added as a
+// subcommand and its RunE fires when invoked by name.
+func TestExecute_RegistersVariadicSubcommand(t *testing.T) {
+	cfg := &Config{}
+	var ranE bool
+	cmd := newCommandImpl(cfg, &ranE)
+
+	var subRan bool
+	sub := &cobra.Command{
+		Use:           "test-sub",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			subRan = true
+			return nil
+		},
+	}
+	cmd.AddCommand(sub)
+	cmd.SetArgs([]string{"test-sub"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !subRan {
+		t.Error("expected subcommand RunE to execute, but it did not")
 	}
 }
 

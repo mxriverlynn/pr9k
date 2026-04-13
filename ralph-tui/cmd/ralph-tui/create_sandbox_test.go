@@ -30,6 +30,7 @@ type fakeRunResponse struct {
 	exitCode int
 	stdout   string
 	stderr   string
+	err      error
 }
 
 func (f *fakeRun) run(args []string, stdout, stderr io.Writer) (int, error) {
@@ -39,6 +40,9 @@ func (f *fakeRun) run(args []string, stdout, stderr io.Writer) (int, error) {
 		return 0, nil
 	}
 	resp := f.responses[idx]
+	if resp.err != nil {
+		return -1, resp.err
+	}
 	if resp.stdout != "" {
 		_, _ = io.WriteString(stdout, resp.stdout)
 	}
@@ -345,6 +349,142 @@ func TestCreateSandbox_SmokeTest_VersionFromStderr(t *testing.T) {
 	}
 	if !strings.Contains(outBuf.String(), "Sandbox verified: claude 2.1.101 under UID 501:20.") {
 		t.Errorf("want verified message from stderr output, got stdout: %q", outBuf.String())
+	}
+}
+
+// TestCreateSandbox_ImagePresentErr verifies that when SandboxImagePresent returns
+// an error, the command prints the error to stderr and returns errSilentExit
+// without making any docker exec calls.
+func TestCreateSandbox_ImagePresentErr(t *testing.T) {
+	t.Parallel()
+	var outBuf, errBuf bytes.Buffer
+	prober := &fakeProber{
+		binaryAvailable: true,
+		imagePresentErr: errors.New("inspect failed"),
+	}
+	fr := &fakeRun{}
+	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
+
+	err := runCmd(deps)
+
+	if !errors.Is(err, errSilentExit) {
+		t.Errorf("want errSilentExit, got %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "Failed to check sandbox image: inspect failed") {
+		t.Errorf("want image-check-error message in stderr, got %q", errBuf.String())
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("no docker exec calls expected, got %d: %v", len(fr.calls), fr.calls)
+	}
+}
+
+// TestCreateSandbox_PullExecError verifies that when dockerRun returns an
+// exec-level error during pull (distinct from a non-zero exit code), the command
+// prints the error to stderr, returns errSilentExit, and does not run the smoke test.
+func TestCreateSandbox_PullExecError(t *testing.T) {
+	t.Parallel()
+	var outBuf, errBuf bytes.Buffer
+	prober := &fakeProber{
+		binaryAvailable: true,
+		imagePresent:    false,
+	}
+	fr := &fakeRun{responses: []fakeRunResponse{
+		{err: errors.New("exec: not found")},
+	}}
+	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
+
+	err := runCmd(deps)
+
+	if !errors.Is(err, errSilentExit) {
+		t.Errorf("want errSilentExit, got %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "Failed to pull sandbox image: exec: not found") {
+		t.Errorf("want pull-exec-error message in stderr, got %q", errBuf.String())
+	}
+	// Smoke test must not have run.
+	for _, call := range fr.calls {
+		if len(call) > 1 && call[1] == "run" {
+			t.Errorf("smoke test must not run after pull exec error; calls=%v", fr.calls)
+		}
+	}
+}
+
+// TestCreateSandbox_SmokeExecError verifies that when dockerRun returns an
+// exec-level error during the smoke test, the command prints the error to stderr
+// and returns errSilentExit.
+func TestCreateSandbox_SmokeExecError(t *testing.T) {
+	t.Parallel()
+	var outBuf, errBuf bytes.Buffer
+	prober := &fakeProber{
+		binaryAvailable: true,
+		imagePresent:    true,
+	}
+	fr := &fakeRun{responses: []fakeRunResponse{
+		{err: errors.New("container runtime error")},
+	}}
+	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
+
+	err := runCmd(deps)
+
+	if !errors.Is(err, errSilentExit) {
+		t.Errorf("want errSilentExit, got %v", err)
+	}
+	if !strings.Contains(errBuf.String(), "Sandbox smoke test failed: container runtime error") {
+		t.Errorf("want smoke-exec-error message in stderr, got %q", errBuf.String())
+	}
+}
+
+// TestCreateSandbox_PullFails_StderrForwarded verifies that when docker pull
+// exits non-zero with stderr output, the captured stderr is forwarded to the
+// user after the "Failed to pull" message.
+func TestCreateSandbox_PullFails_StderrForwarded(t *testing.T) {
+	t.Parallel()
+	var outBuf, errBuf bytes.Buffer
+	prober := &fakeProber{
+		binaryAvailable: true,
+		imagePresent:    false,
+	}
+	fr := &fakeRun{responses: []fakeRunResponse{
+		{exitCode: 1, stderr: "Error: manifest unknown"},
+	}}
+	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
+
+	err := runCmd(deps)
+
+	if !errors.Is(err, errSilentExit) {
+		t.Errorf("want errSilentExit, got %v", err)
+	}
+	got := errBuf.String()
+	if !strings.Contains(got, "Failed to pull sandbox image.") {
+		t.Errorf("want pull-failure message in stderr, got %q", got)
+	}
+	if !strings.Contains(got, "Error: manifest unknown") {
+		t.Errorf("want captured pull stderr forwarded to user, got %q", got)
+	}
+}
+
+// TestCreateSandbox_PullFails_EmptyStderr verifies that when docker pull exits
+// non-zero but produces no stderr, only "Failed to pull sandbox image." appears
+// (no extra blank line or empty content appended).
+func TestCreateSandbox_PullFails_EmptyStderr(t *testing.T) {
+	t.Parallel()
+	var outBuf, errBuf bytes.Buffer
+	prober := &fakeProber{
+		binaryAvailable: true,
+		imagePresent:    false,
+	}
+	fr := &fakeRun{responses: []fakeRunResponse{
+		{exitCode: 1},
+	}}
+	deps := newTestDeps(prober, fr, &outBuf, &errBuf)
+
+	err := runCmd(deps)
+
+	if !errors.Is(err, errSilentExit) {
+		t.Errorf("want errSilentExit, got %v", err)
+	}
+	if errBuf.String() != "Failed to pull sandbox image.\n" {
+		t.Errorf("want exactly %q in stderr, got %q", "Failed to pull sandbox image.\n", errBuf.String())
 	}
 }
 
