@@ -20,9 +20,10 @@ type Logger struct {
 }
 
 // NewLogger creates a new Logger that writes to logs/ralph-YYYY-MM-DD-HHMMSS.log
-// under projectDir. The logs/ directory is created if it does not exist.
-func NewLogger(projectDir string) (*Logger, error) {
-	logsDir := filepath.Join(projectDir, "logs")
+// under workingDir (the user's shell CWD at startup). The logs/ directory is
+// created if it does not exist.
+func NewLogger(workingDir string) (*Logger, error) {
+	logsDir := filepath.Join(workingDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
 	}
