@@ -161,7 +161,7 @@ Each feature is documented in detail in its own file under [`docs/features/`](fe
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line flags (`--iterations`/`-n`, `--project-dir`/`-p`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra) and resolves the project directory. Iterations defaults to 0 (run until done). Resolves the project directory from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when `--project-dir` is not given. The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
+Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `ralph-steps.json`, `prompts/`, and `scripts/` live) from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when not given explicitly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
 **Packages:** `internal/cli/`, `internal/version/`
 
@@ -209,15 +209,21 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Variable State Management](features/variable-state.md)
 
-`VarTable` owns all runtime variable state for a single run. It maintains two scoped tables — persistent (survives the whole run) and iteration (cleared at the start of each iteration) — plus six built-in variables seeded from CLI flags and updated by the orchestrator (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). Resolution order during an iteration step is iteration table → persistent table; during initialize or finalize, only the persistent table is consulted. `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase.
+`VarTable` owns all runtime variable state for a single run. It maintains two scoped tables — persistent (survives the whole run) and iteration (cleared at the start of each iteration) — plus seven built-in variables seeded from CLI flags and updated by the orchestrator (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). Resolution order during an iteration step is iteration table → persistent table; during initialize or finalize, only the persistent table is consulted. `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase.
 
 **Package:** `internal/vars/`
 
 ### [Config Validation](features/config-validation.md)
 
-Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules A/B/C (captureAs on Claude steps, host-path tokens in prompts, and captureAs+host-path in commands). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
+
+### [Docker Sandbox](features/sandbox.md)
+
+The `internal/sandbox` package constructs the `docker run` argv that wraps every Claude step, manages the container ID file (cidfile) lifecycle, and provides a terminator closure that signals the running container on shutdown. `BuildRunArgs` is a pure function (uid/gid as parameters) that emits `--mount type=bind,...` mounts for the target repo and Claude profile directory, an env passthrough with deduplication and set-on-host filtering, and the claude invocation flags. `BuiltinEnvAllowlist` names five env vars always included in the passthrough. `Path()`/`Cleanup()` reserve and clean up the cidfile path. `NewTerminator` returns a closure that polls the cidfile for the container ID, delivers `docker kill --signal` to the container, and falls back to signaling the docker CLI process if the container never started.
+
+**Package:** `internal/sandbox/`
 
 ## Package Dependency Graph
 
@@ -226,6 +232,7 @@ cmd/ralph-tui/main.go
     ├── internal/cli        (argument parsing)
     │       └── internal/version
     ├── internal/logger     (file logging)
+    ├── internal/sandbox    (docker run argv, cidfile, terminator)
     ├── internal/steps      (step loading)
     ├── internal/ui         (key handling, header, orchestration)
     ├── internal/validator  (config validation)
