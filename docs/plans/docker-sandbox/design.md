@@ -1,7 +1,17 @@
 # Docker Sandbox for Claude — Design Plan
 
 Status: **Design — not implemented**.
-Target ralph-tui version: **0.3.0** (breaking change — `y` bump from `0.2.2` per `docs/coding-standards/versioning.md`).
+Target ralph-tui version: **0.3.0** (breaking change — `y` bump from `0.2.3` per `docs/coding-standards/versioning.md`).
+
+> **Plan currency note (iteration 4, 2026-04-13):** Between the design
+> freeze and re-review, commit `4f4481b` ("fixing issues with working
+> dir vs executing dir", bumping to `0.2.3`) landed a narrower
+> clean-up of the project-dir-vs-cwd confusion: it captured
+> `workingDir` via `os.Getwd()` in `main.go` and routed it into the
+> logger and runner without touching flags or variables. This plan's
+> §4.15 split is still the intended 0.3.0 endpoint, but §9's rename
+> inventory and main.go line references below have been reconciled
+> against the post-`4f4481b` state. See §14 iteration 4 for a summary.
 
 ## 1. Overview
 
@@ -159,6 +169,20 @@ reference.
     silently-accepted alias would mount the wrong directory. Delivered
     in the same `0.3.0` PR as the sandbox (§11). Rationale recorded in
     the new split ADR alongside this plan.
+
+    **Relation to the `0.2.3` `workingDir` capture.** Commit `4f4481b`
+    already introduced an internal `workingDir` captured via
+    `os.Getwd()` at `ralph-tui/cmd/ralph-tui/main.go:77` and routed it
+    to the logger and runner. That capture is the *same value* the
+    split's new `--project-dir` / `{{PROJECT_DIR}}` will surface as a
+    flag and VarTable entry — the split is a promotion of the existing
+    internal concept to first-class user-facing surface. The split
+    adds `filepath.EvalSymlinks` (the 0.2.3 capture is a raw
+    `os.Getwd()` string), adds the `--project-dir` flag override, and
+    seeds the value into the VarTable. No re-wiring of logger/runner
+    is required — those already take the target repo. The `workingDir`
+    identifier in current code is renamed to `projectDir` as part of
+    the split.
 
 ## 5. The Runtime Docker Command
 
@@ -530,41 +554,127 @@ rename diff is reviewable independently inside the sandbox PR.
 - `ralph-tui/internal/vars/vars.go` — rename `New(projectDir)` →
   `New(workflowDir, projectDir string)`; seed both `WORKFLOW_DIR` and
   `PROJECT_DIR` as persistent-scope vars. Rename existing
-  `TestNew_seedsProjectDir` to cover both.
-- `ralph-tui/internal/logger/logger.go` — parameter rename only
-  (`projectDir` → `workflowDir`); logs stay under
-  `{workflowDir}/logs/`. Zero behavior change.
+  `TestNew_seedsProjectDir` to cover both. **Add `"WORKFLOW_DIR": true`
+  to the `reservedNames` map at `vars.go:27-34`** alongside the
+  existing `"PROJECT_DIR"` entry, so `captureAs` cannot shadow the
+  new built-in (defense-in-depth match for the existing PROJECT_DIR
+  reservation). Surfaced by adversarial validator V4 — without this,
+  a workflow could silently rebind `WORKFLOW_DIR`.
+- `ralph-tui/internal/logger/logger.go` — parameter rename
+  (current `workingDir` → post-split `projectDir`); logs stay under
+  `{projectDir}/logs/` (target repo), preserving the behavior
+  `4f4481b` introduced in 0.2.3. **Not** renamed to `workflowDir` —
+  that would revert logs to the install dir and contradict
+  `4f4481b`'s commit message ("logs now land under the shell CWD").
+  Zero runtime behavior change from 0.2.3; pure identifier rename.
 - `ralph-tui/internal/steps/steps.go` — parameter renames on
   `LoadSteps` and `BuildPrompt`.
 - `ralph-tui/internal/validator/validator.go` — anchor parameter
   renames throughout `Validate`, `validatePhase`, `validateCommandPath`,
   `extractStepRefs`. Additionally extend the prompt-scan pass (§8) to
   reject both `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` literal tokens.
-- `ralph-tui/internal/workflow/run.go` — `RunConfig.ProjectDir` →
-  `RunConfig.WorkflowDir`; add new sibling field `RunConfig.ProjectDir`
-  (see below); update `buildStep`, `ResolveCommand` call sites.
+- `ralph-tui/internal/workflow/run.go` — `RunConfig.ProjectDir`
+  (currently install dir) → `RunConfig.WorkflowDir`. **No sibling
+  `RunConfig.ProjectDir` field is added.** The target-repo path
+  reaches `Run()` and `buildStep()` via a new `Runner.ProjectDir()`
+  getter (see Runner entry below). Update `buildStep`,
+  `ResolveCommand`, and `vars.New(...)` call sites to read the
+  target repo from the executor (`runner.ProjectDir()`) rather than
+  `cfg.ProjectDir`. The `StepExecutor` interface gains a
+  `ProjectDir() string` method — update all implementers (production
+  `*Runner` and any test doubles).
+- `ralph-tui/internal/workflow/workflow.go` — `Runner`'s constructor
+  parameter `workingDir` (added in `4f4481b`) is renamed to
+  `projectDir`. The Runner field at `workflow.go:24` renames from
+  `workingDir` → `projectDir`. **Not a pure rename — also a semantic
+  promotion.** Pre-split, `workingDir` always equals the unresolved
+  `os.Getwd()` at startup. Post-split, the same field receives
+  `cfg.ProjectDir`, which defaults to `os.Getwd()` + `EvalSymlinks`
+  but is *overridable* by the user via `--project-dir`. So `cmd.Dir`
+  for every subprocess can now point somewhere other than the user's
+  shell CWD when the flag is passed. This is the desired endpoint
+  (target repo as a first-class flag), but reviewers should not
+  treat the runtime semantics as identical to 0.2.3. Surfaced by
+  adversarial validator V1. **Resolved in iteration 4:** Runner is
+  the single source of truth for the target-repo path. The
+  constructor field (renamed from `workingDir` → `projectDir`) is
+  exposed via a new `Runner.ProjectDir() string` getter; `Run()`,
+  `buildStep()`, and VarTable seeding all read through the getter.
+  `RunConfig.ProjectDir` is **not** reintroduced as a sibling field.
+  The `StepExecutor` interface gains `ProjectDir() string` so
+  `buildStep` can reach the value without touching Runner internals.
+  Rationale: single source of truth; removes the redundancy flagged
+  by V1; trade-off is that `StepExecutor` now carries target-repo
+  knowledge (minor coupling, acceptable given sandbox construction
+  also needs the value). Alternatives (keep both; per-call arg)
+  recorded in §13.
 - `ralph-tui/internal/workflow/run_test.go` — ~70 `ProjectDir: t.TempDir()`
-  call sites become `WorkflowDir: t.TempDir()`; a subset that genuinely
-  cares about target-repo behavior also set `ProjectDir`.
+  call sites become `WorkflowDir: t.TempDir()`. Tests that genuinely
+  care about target-repo behavior pass the target path via
+  `workflow.NewRunner(log, targetDir)` (since `RunConfig.ProjectDir`
+  no longer exists — see the getter decision above). Test-double
+  executors must implement the new `ProjectDir() string` method.
 - `ralph-tui/internal/workflow/workflow_test.go` — `ResolveCommand` tests
-  rename to use `workflowDir`.
-- `ralph-tui/cmd/ralph-tui/main.go` — rename `cfg.ProjectDir` →
-  `cfg.WorkflowDir` in the logger/steps/validator/runner wiring (lines
-  41, 47, 54, 63, 107).
+  rename to use `workflowDir`. Also renames the existing
+  `TestRunStep_UsesWorkingDir` (added in `4f4481b`) to
+  `TestRunStep_UsesProjectDir`; the test's assertion (subprocess
+  `cmd.Dir` matches the value passed to `NewRunner`) is unchanged.
+- `ralph-tui/internal/workflow/run_test.go` — also renames
+  `TestCaptureOutput_UsesWorkingDir` (`run_test.go:1649`) to
+  `TestCaptureOutput_UsesProjectDir`. This is a parallel `CaptureOutput`
+  variant of the `RunStep` test and was missed in the first iteration-4
+  inventory; surfaced by adversarial validator V7. Also update the
+  reference to it in `docs/features/subprocess-execution.md:310`.
+- `ralph-tui/cmd/ralph-tui/main.go` — the wiring is now encapsulated
+  in the `newServices(cfg, workingDir)` helper added by `4f4481b`.
+  Rename the helper's parameter `workingDir` → `projectDir`;
+  rename `cfg.ProjectDir` → `cfg.WorkflowDir` at the three remaining
+  call sites inside `newServices` (currently `logger.NewLogger`,
+  `steps.LoadSteps`, `validator.Validate`, `workflow.NewRunner`).
+  Outside `newServices`, `cfg.ProjectDir` also appears in the
+  `RunConfig` construction (`main.go:142`) — that site splits into
+  `WorkflowDir: cfg.WorkflowDir` and `ProjectDir: cfg.ProjectDir`.
+  The top of `main()` renames local `workingDir` → `projectDir`;
+  the `os.Getwd()` call becomes an `os.Getwd()` + `filepath.EvalSymlinks`
+  pair wrapped by the new `resolveProjectDir()` in `cli/args.go`
+  (so the main function delegates resolution to `cli` instead of
+  doing it inline). Specific line numbers from `4f4481b`
+  (`main.go:46`, `:53`, `:60`, `:71`, `:77`, `:92`, `:142`) are
+  shown for orientation and may shift slightly during implementation.
 - `ralph-tui/ralph-steps.json` — line 3 Splash step's `{{PROJECT_DIR}}`
   flips to `{{WORKFLOW_DIR}}` (ralph-art.txt lives in the workflow
   bundle, not the target repo).
-- `ralph-tui/bin/ralph-steps.json` — mirror of the above (build output).
+- ~~`ralph-tui/bin/ralph-steps.json`~~ — **dropped from inventory.**
+  The entire `bin/` tree is gitignored (`.gitignore:9`); editing it
+  is either a no-op (untracked) or introduces a tracked copy that
+  diverges from `make build` output. Adversarial validator V5.
 
 **New identifier `ProjectDir`/`projectDir`/`PROJECT_DIR` for the target repo:**
 
 - `ralph-tui/internal/cli/args.go` — new `--project-dir` flag (no short
   form) and new `Config.ProjectDir` field. New `resolveProjectDir()`
-  using `os.Getwd()` + `filepath.EvalSymlinks`. Both resolutions run in
-  `RunE` and are validated (directory exists) before the runner starts.
+  using `os.Getwd()` + `filepath.EvalSymlinks`. This replaces the
+  inline `os.Getwd()` call at `cmd/ralph-tui/main.go:77` added by
+  `4f4481b`; main.go delegates target-repo resolution to `cli`. Both
+  resolutions run in `RunE` and are validated (directory exists)
+  before the runner starts. **Note:** the 0.2.3 `os.Getwd()` call
+  does not run through `EvalSymlinks`; the split adds the symlink
+  dereference for parity with `resolveWorkflowDir()`.
 - `ralph-tui/internal/cli/args_test.go` — new test cases for
   `--project-dir` long flag, default = cwd behavior, nonexistent
   directory rejection.
+- `ralph-tui/cmd/ralph-tui/main_test.go` — the `TestNewServices_*`
+  tests added by `4f4481b` (verifying logger binds to workingDir,
+  runner binds to workingDir, steps loads from ProjectDir) renamed to
+  use the split vocabulary: logger/runner bind to new `ProjectDir`
+  (target repo); steps/validator bind to new `WorkflowDir` (install
+  dir). Assertion logic is unchanged, but **test comments and
+  variable names** (e.g., local `installDir := t.TempDir()` pairs
+  and comments referencing "the bug where subprocess cmd.Dir... were
+  mistakenly bound to the install dir") must be rewritten to match
+  the split vocabulary — a mechanical identifier rename leaves stale
+  doc strings contradicting the new names. Surfaced by adversarial
+  validator V3.
 - `ralph-tui/internal/vars/vars.go` — seed `PROJECT_DIR` persistent var
   from the new parameter (see rename block above).
 - `ralph-tui/internal/workflow/run.go` — new `RunConfig.ProjectDir`
@@ -640,6 +750,9 @@ ban. Error message updated to name both tokens (§13).
 - `env: "GITHUB_TOKEN"` → error (top-level value must be an array).
 - `env: ["CLAUDE_CONFIG_DIR"]` → error (sandbox-reserved).
 - `env: ["HOME"]` → error (sandbox-reserved).
+- `captureAs: "WORKFLOW_DIR"` → error (reserved built-in; parallel
+  to existing `captureAs: "PROJECT_DIR"` rejection). Added alongside
+  the `reservedNames` map update in `vars/vars.go` (see §9).
 - Prompt file containing `{{WORKFLOW_DIR}}` referenced by a claude
   step → error with exact `Problem` string from §13.
 - Prompt file containing `{{PROJECT_DIR}}` referenced by a claude step
@@ -741,11 +854,34 @@ New user-visible surface:
    errors at flag-parse. The error prints both new flag names. User
    replaces the old argument with `--workflow-dir` (for the current
    meaning) and optionally adds `--project-dir` (for target repo, else
-   defaults to `os.Getwd()`).
+   defaults to `os.Getwd()` + `EvalSymlinks`).
 3. If the user's custom `ralph-steps.json` uses `{{PROJECT_DIR}}` to
-   mean the workflow bundle (paths like `{{PROJECT_DIR}}/prompts/foo.md`):
-   validator errors at startup naming the offending step. User renames
-   those tokens to `{{WORKFLOW_DIR}}`.
+   mean the workflow bundle (paths like `{{PROJECT_DIR}}/prompts/foo.md`
+   in claude prompts, **or** `{{PROJECT_DIR}}/scripts/foo` in `command`
+   step argv): the failure surfaces are *different* and the user
+   should be prepared for both:
+   - **Claude prompts**: validator errors at startup naming the
+     offending step (§8 ban). User renames tokens to `{{WORKFLOW_DIR}}`.
+   - **`command` steps**: validator does **not** scan these (`{{VAR}}`
+     tokens in `command` argv are supported, just now with new
+     meaning). Failure is a runtime `exec: no such file` at first
+     run. User must audit their `ralph-steps.json` for any
+     `{{PROJECT_DIR}}` token referring to workflow-bundle assets
+     (scripts, art files, config) and rename to `{{WORKFLOW_DIR}}`.
+     Adversarial validator V6 flagged this as silent-failure surface;
+     implementers should consider adding a best-effort startup
+     warning that scans command-step argv for `{{PROJECT_DIR}}`
+     tokens and prints a one-time migration note during the 0.3.0
+     window.
+4. **Symlinked invocation path change.** If the user invokes ralph-tui
+   from a path that is itself a symlink (e.g., `/Users/me/dev`
+   resolving to `/private/...`), the new `resolveProjectDir()` will
+   pass the value through `filepath.EvalSymlinks`. Paths printed in
+   log lines, error messages, and `{{PROJECT_DIR}}` substitutions
+   will be the realpath rather than the user-typed symlink path.
+   Same behavior already applies to `WORKFLOW_DIR` (via
+   `resolveWorkflowDir()`) — this aligns the two. Surfaced by
+   adversarial validator V8.
 4. First run prints: `Claude sandbox image is missing. Run: ralph-tui create-sandbox` and exits 1.
 5. User runs `ralph-tui create-sandbox` — image pulls, smoke test passes.
 6. Normal runs resume.
@@ -794,6 +930,12 @@ authored as part of the implementation PR or a follow-up doc PR.
 - **Update**: `docs/adr/20260409135303-cobra-cli-framework.md` — in-place
   replacement of `-project-dir` at lines 12 and 79; trailing "Updates"
   note pointing to the new split ADR.
+- **Update**: `docs/adr/20260413162428-workflow-project-dir-split.md` —
+  amend the Context section in place to reflect that commit
+  `4f4481b` (0.2.3) introduced an internal `workingDir` capture via
+  `os.Getwd()` at `cmd/ralph-tui/main.go:77` that is not surfaced
+  as a flag/variable, and the split promotes it. Decision section
+  unchanged. See §13 ADR-context-inaccuracy resolution.
 - **Update**: `docs/architecture.md` — update line 164 project-directory
   resolution prose.
 - **Update**: `docs/features/cli-configuration.md` — rewrite flag
@@ -824,6 +966,15 @@ authored as part of the implementation PR or a follow-up doc PR.
 - **Update**: `docs/how-to/debugging-a-run.md` — line 111 reproduction
   instructions switch `--project-dir` → `--workflow-dir`; add note that
   `--project-dir` now controls the target repo cwd.
+- **Update**: `docs/how-to/getting-started.md` and
+  `docs/how-to/debugging-a-run.md` — add instruction that users
+  should add `logs/` to their target repo's `.gitignore` before the
+  first ralph-tui run. Since `4f4481b` (0.2.3), logs land under the
+  target repo's CWD; pr9k's own `.gitignore` does not currently
+  exclude `logs/` so other target repos are on their own. Surfaced
+  by adversarial validator V2. (Alternative: auto-create a
+  `.gitignore` entry on first run, or emit a warning. Implementation
+  PR decides.)
 - **Update**: `docs/coding-standards/versioning.md` — one-line addition
   to the public-API list reflecting that both flag names and both
   `{{VAR}}` tokens are covered.
@@ -893,6 +1044,63 @@ workspace root, `-w` in §5); relative paths are the natural idiom.
   `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are valid only in `command`
   steps, not in prompt files; document both tokens' post-split
   semantics.
+
+### Runner signature post-split (resolved in iteration 4)
+
+Current code (post-`4f4481b`) has:
+
+```go
+func NewRunner(log *logger.Logger, workingDir string) *Runner
+```
+
+where `workingDir` is the target repo cwd. After the §4.15 split,
+the target-repo path needs to reach two consumers: Runner (for
+`cmd.Dir`) and `Run()` / `buildStep` (for VarTable seeding and
+`sandbox.BuildRunArgs`). Three options were considered:
+
+- **(A) Keep both** — Runner field + `RunConfig.ProjectDir`, same
+  value carried twice. Minimal diff; redundant.
+- **(B) Runner getter** — Runner field is the single source of
+  truth; add `Runner.ProjectDir() string`; `StepExecutor` grows a
+  `ProjectDir()` method. Eliminates redundancy; adds minor coupling
+  to the executor interface.
+- **(C) Per-call arg** — drop Runner's field; pass target repo to
+  each `RunStep` call. Cleaner separation but bigger diff.
+
+**Decision: Option B.** Rationale: single source of truth;
+eliminates the V1 redundancy flagged by adversarial validation;
+`StepExecutor` already carries step-execution knowledge so extending
+it with `ProjectDir()` is a small, bounded coupling. Option A was
+rejected because the redundancy motivated V1 in the first place.
+Option C was rejected because setting `cmd.Dir` per-call — rather
+than once at Runner construction — would expand the diff beyond
+the rename and complicate `CaptureOutput`, which also reads
+`workingDir` at `workflow.go:245`.
+
+Implementation: §9 entries for `workflow.go` and `run.go` updated
+accordingly.
+
+### ADR context inaccuracy (resolved in iteration 4)
+
+`docs/adr/20260413162428-workflow-project-dir-split.md` was written
+before `4f4481b` and states (lines ~30-31): *"there is no `TargetRepo`
+field in `cli.Config` or `workflow.RunConfig`, no flag for it, and
+no call to `os.Getwd()` anywhere in the codebase."* The `os.Getwd()`
+clause is no longer true — `cmd/ralph-tui/main.go:77` now calls it.
+
+**Decision: amend in place.** In the 0.3.0 PR that implements the
+split, edit the ADR's Context section to note that an internal
+`workingDir` capture exists as of commit `4f4481b` (0.2.3) but is
+not surfaced as a user-facing flag/variable — the split promotes
+that internal capture to first-class surface. The Decision section
+is unchanged. Rationale: content-only edit to an accepted ADR is
+the least-disruptive way to keep the record accurate; alternatives
+(dedicated "Updates" section, leaving the inaccuracy, superseding
+with a new ADR) were considered and rejected as either overkill
+for a single stale observation or as trip hazards for future
+readers.
+
+Add this edit to §12's docs-update list.
 
 ### To verify during implementation
 - **Prompt size vs. ARG_MAX.** macOS `getconf ARG_MAX` is 1,048,576 bytes
@@ -988,9 +1196,74 @@ validation (evidence-based-investigator + adversarial-validator).
 - **Iteration 3 (completeness)** — added prohibition on `CLAUDE_CONFIG_DIR`
   and `HOME` in user env list with validator enforcement; added the
   `env` validator category to D13's category count.
-- **Stopped at iteration 3** because remaining open questions
-  (image-internal assumptions, runtime behavior) were better tested by
-  agent validation than by another self-review pass.
+- **Iteration 4 (post-`4f4481b` reconciliation, 2026-04-13)** — a
+  code change landed between design freeze and re-review that
+  introduced an internal `workingDir` (captured via `os.Getwd()` in
+  `main.go`) and routed it to the logger and runner without touching
+  flags or variables, bumping to `0.2.3`. This iteration reconciled
+  the plan with that state: (a) fixed the version-bump baseline
+  (`0.2.2` → `0.2.3`); (b) noted that the split now *promotes* an
+  existing internal capture rather than introducing `os.Getwd()` for
+  the first time (§4.15 "Relation to the `0.2.3` `workingDir`
+  capture"); (c) corrected the logger-rename claim — logs remain
+  under the target repo (`4f4481b`'s decision), so the parameter
+  renames `workingDir` → `projectDir`, not `workingDir` →
+  `workflowDir`; (d) rewrote the `main.go` change entry to target
+  the new `newServices` helper and its three internal call sites
+  instead of the pre-`4f4481b` inline wiring; (e) added the existing
+  `TestRunStep_UsesWorkingDir` and `TestNewServices_*` tests to the
+  rename inventory; (f) surfaced two ambiguities in §13 — Runner
+  signature choice and the accepted ADR's now-inaccurate "no
+  `os.Getwd()` anywhere" context clause — neither of which blocks
+  implementation.
+- **Iteration 4 agent validation (same date)** — the iteration-4
+  reconciliation itself was re-validated against the codebase with
+  `evidence-based-investigator` + `adversarial-validator` agents.
+  - **Evidence-based-investigator**: 9 of 10 iteration-4 claims
+    VERIFIED with file:line evidence. The one outlier (claim 7) was
+    a framing clarification: `version.Version` is currently `0.2.3`
+    so "0.3.0 is a bump from 0.2.3" stands, but the constant has
+    not yet been bumped (pending PR).
+  - **Adversarial-validator** surfaced 8 findings:
+    - V1 (HIGH): "pure rename" framing for Runner field hid a
+      semantic promotion (cmd.Dir becomes flag-overridable, not
+      always `os.Getwd()`). Fixed in §9 Runner entry + §11 upgrade
+      path with explicit wording.
+    - V2 (MED): target repo `logs/` is not in the user's
+      `.gitignore` by default. Added §12 doc updates for
+      `getting-started.md` and `debugging-a-run.md`.
+    - V3 (LOW): mechanical identifier rename leaves stale comments
+      in `main_test.go`. Updated §9 entry to mandate comment
+      rewording.
+    - V4 (MED — correctness gap): `reservedNames` map in `vars.go`
+      is missing `"WORKFLOW_DIR"` entry. Updated §9 vars.go bullet
+      and §10 validator test plan.
+    - V5 (LOW): `bin/ralph-steps.json` is gitignored. Dropped from
+      §9 rename inventory.
+    - V6 (MED): `{{PROJECT_DIR}}` in `command` steps silently flips
+      meaning post-split; validator does not scan command argv.
+      Strengthened §11 upgrade-path bullet 3 and proposed a
+      best-effort startup warning.
+    - V7 (LOW): `TestCaptureOutput_UsesWorkingDir` missed from
+      rename inventory. Added to §9.
+    - V8 (LOW): `EvalSymlinks` on `cfg.ProjectDir` means symlinked
+      invocation paths flip to realpaths in logs/messages. Added
+      §11 upgrade-path bullet 4.
+- **Iteration 4 ambiguity resolutions (user-supplied, 2026-04-13)** —
+  two ambiguities surfaced in §13 by the post-`4f4481b`
+  reconciliation were resolved with the user:
+  - **Runner signature post-split:** chose Option B — Runner is the
+    single source of truth for the target-repo path via a new
+    `Runner.ProjectDir() string` getter; `StepExecutor` gains a
+    `ProjectDir()` method; `RunConfig.ProjectDir` is not
+    reintroduced. Eliminates the V1 redundancy.
+  - **ADR context inaccuracy:** chose amend-in-place — edit
+    `docs/adr/20260413162428-workflow-project-dir-split.md` Context
+    section in the 0.3.0 PR to note `4f4481b`'s internal capture;
+    Decision unchanged; added to §12 docs-update list.
+- **Stopped at iteration 4** because remaining open questions
+  (image-internal assumptions, runtime behavior) are runtime-only and
+  not answerable by further static review.
 
 ### Agent validation outcomes
 - **evidence-based-investigator**: 9 of 10 plan claims verified against
