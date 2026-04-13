@@ -2,6 +2,7 @@ package preflight
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,7 +179,7 @@ func TestRun_CredentialsPermissionError_CollectedAsError(t *testing.T) {
 	}
 	found := false
 	for _, e := range result.Errors {
-		if os.IsPermission(e) {
+		if errors.Is(e, fs.ErrPermission) {
 			found = true
 		}
 	}

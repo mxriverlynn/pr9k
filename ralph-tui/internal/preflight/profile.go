@@ -5,14 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ResolveProfileDir returns $CLAUDE_CONFIG_DIR if set and non-empty,
 // else $HOME/.claude. The returned path is absolute (filepath.Abs applied)
 // but symlinks are not resolved — profile dir realpath is not material
-// for the stat check.
+// for the stat check. Trailing whitespace in CLAUDE_CONFIG_DIR is trimmed
+// to guard against .env file parsers that include it.
 func ResolveProfileDir() string {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
 		abs, err := filepath.Abs(dir)
 		if err != nil {
 			return dir
@@ -33,12 +35,12 @@ func CheckProfileDir(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("claude profile directory not found: %s. Set CLAUDE_CONFIG_DIR or create ~/.claude", path)
+			return fmt.Errorf("preflight: claude profile directory not found: %s. Set CLAUDE_CONFIG_DIR or create ~/.claude", path)
 		}
-		return err
+		return fmt.Errorf("preflight: stat profile dir %s: %w", path, err)
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("claude profile path is not a directory: %s. Point CLAUDE_CONFIG_DIR at a directory", path)
+		return fmt.Errorf("preflight: claude profile path is not a directory: %s. Point CLAUDE_CONFIG_DIR at a directory", path)
 	}
 	return nil
 }
@@ -54,7 +56,7 @@ func CheckCredentials(profileDir string) (warning string, _ error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("preflight: stat credentials %s: %w", path, err)
 	}
 	if fi.Size() == 0 {
 		return fmt.Sprintf(

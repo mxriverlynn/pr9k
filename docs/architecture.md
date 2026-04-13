@@ -232,6 +232,8 @@ cmd/ralph-tui/main.go
     ├── internal/cli        (argument parsing)
     │       └── internal/version
     ├── internal/logger     (file logging)
+    ├── internal/preflight  (startup validation)
+    │       └── internal/sandbox
     ├── internal/sandbox    (docker run argv, cidfile, terminator)
     ├── internal/steps      (step loading)
     ├── internal/ui         (key handling, header, orchestration)

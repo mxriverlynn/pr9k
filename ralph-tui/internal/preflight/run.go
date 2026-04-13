@@ -23,6 +23,11 @@ func Run(profileDir string, p Prober) Result {
 
 	result.Errors = append(result.Errors, CheckDocker(p)...)
 
+	// CheckCredentials is called even when CheckProfileDir fails. This is
+	// intentionally safe: CheckCredentials treats ErrNotExist as benign, so
+	// a missing parent directory simply returns no warning. If CheckCredentials
+	// ever adds logic that distinguishes a missing file from a missing parent,
+	// this call should be gated on CheckProfileDir succeeding.
 	if w, err := CheckCredentials(profileDir); err != nil {
 		result.Errors = append(result.Errors, err)
 	} else if w != "" {

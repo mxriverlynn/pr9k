@@ -74,21 +74,25 @@ func TestCheckDocker_AllGreen(t *testing.T) {
 	}
 }
 
-// TP-001: CheckDocker propagates a non-ExitError from SandboxImagePresent directly.
-func TestCheckDocker_ImageNonExitError_PropagatedRaw(t *testing.T) {
+// TP-001: CheckDocker wraps a non-ExitError from SandboxImagePresent with package context.
+func TestCheckDocker_ImageNonExitError_WrappedWithContext(t *testing.T) {
+	underlying := errors.New("network timeout")
 	p := fakeProber{
 		binaryAvailable: true,
 		daemonErr:       nil,
 		imagePresent:    false,
-		imageErr:        errors.New("network timeout"),
+		imageErr:        underlying,
 	}
 	errs := CheckDocker(p)
 
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	if errs[0].Error() != "network timeout" {
-		t.Errorf("expected raw error %q, got %q", "network timeout", errs[0].Error())
+	if !strings.Contains(errs[0].Error(), "preflight:") {
+		t.Errorf("expected preflight prefix in error, got %q", errs[0].Error())
+	}
+	if !errors.Is(errs[0], underlying) {
+		t.Errorf("expected wrapped underlying error, got %q", errs[0].Error())
 	}
 }
 
@@ -125,5 +129,24 @@ func TestCheckDocker_BinaryMissing_ShortCircuits(t *testing.T) {
 	}
 	if spy.imageCalled {
 		t.Error("SandboxImagePresent should not be called when binary is missing")
+	}
+}
+
+// WARN-004: CheckDocker short-circuits when daemon is unreachable — image not probed.
+func TestCheckDocker_DaemonUnreachable_ShortCircuits(t *testing.T) {
+	spy := &spyProber{fakeProber: fakeProber{
+		binaryAvailable: true,
+		daemonErr:       errors.New("connection refused"),
+	}}
+	errs := CheckDocker(spy)
+
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "daemon isn't running") {
+		t.Errorf("unexpected error text: %q", errs[0].Error())
+	}
+	if spy.imageCalled {
+		t.Error("SandboxImagePresent should not be called when daemon is unreachable")
 	}
 }

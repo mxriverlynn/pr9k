@@ -1,6 +1,8 @@
 package preflight
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,8 +65,8 @@ func TestCheckProfileDir_ValidDirectory(t *testing.T) {
 	}
 }
 
-// TP-003: CheckProfileDir returns the raw stat error for non-ErrNotExist failures.
-func TestCheckProfileDir_StatPermissionError_PropagatedRaw(t *testing.T) {
+// TP-003: CheckProfileDir wraps non-ErrNotExist stat errors with package context.
+func TestCheckProfileDir_StatPermissionError_WrappedWithContext(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("requires non-root: root bypasses permission checks")
 	}
@@ -86,11 +88,11 @@ func TestCheckProfileDir_StatPermissionError_PropagatedRaw(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for permission-denied stat, got nil")
 	}
-	if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("expected raw stat error, not a custom message, got: %q", err.Error())
+	if !strings.Contains(err.Error(), "preflight:") {
+		t.Errorf("expected preflight prefix in error, got: %q", err.Error())
 	}
-	if !os.IsPermission(err) {
-		t.Errorf("expected permission error, got: %v", err)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected permission error in chain, got: %v", err)
 	}
 }
 
@@ -105,6 +107,32 @@ func TestResolveProfileDir_RelativePath_BecomeAbsolute(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "relative/claude") {
 		t.Errorf("expected path ending with %q, got %q", "relative/claude", got)
+	}
+}
+
+// SUGG-002: ResolveProfileDir falls back to cwd/.claude when both CLAUDE_CONFIG_DIR and HOME are empty.
+func TestResolveProfileDir_BothEnvVarsEmpty_FallsBackToCwdClaud(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("HOME", "")
+
+	got := ResolveProfileDir()
+
+	if !filepath.IsAbs(got) {
+		t.Errorf("expected absolute path, got %q", got)
+	}
+	if !strings.HasSuffix(got, ".claude") {
+		t.Errorf("expected path ending with .claude, got %q", got)
+	}
+}
+
+// SUGG-004: ResolveProfileDir trims trailing whitespace from CLAUDE_CONFIG_DIR.
+func TestResolveProfileDir_TrailingWhitespace_Trimmed(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir  ")
+
+	got := ResolveProfileDir()
+
+	if got != "/custom/claude/dir" {
+		t.Errorf("ResolveProfileDir() = %q, want %q", got, "/custom/claude/dir")
 	}
 }
 
@@ -132,6 +160,37 @@ func TestCheckCredentials_ZeroByteCredentials(t *testing.T) {
 	}
 	if !strings.Contains(w, "will likely fail authentication") {
 		t.Errorf("warning %q does not contain expected text", w)
+	}
+}
+
+// SUGG-003: CheckCredentials propagates non-ErrNotExist stat errors directly.
+func TestCheckCredentials_StatPermissionError_PropagatedWrapped(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	credPath := filepath.Join(parent, ".credentials.json")
+	if err := os.WriteFile(credPath, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(parent, 0700)
+	})
+
+	_, err := CheckCredentials(parent)
+
+	if err == nil {
+		t.Fatal("expected error for permission-denied stat, got nil")
+	}
+	if !strings.Contains(err.Error(), "preflight:") {
+		t.Errorf("expected preflight prefix in error, got: %q", err.Error())
+	}
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("expected permission error in chain, got: %v", err)
 	}
 }
 
