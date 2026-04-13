@@ -10,7 +10,7 @@ Owns and resolves runtime variable state for a ralph-tui run, providing two scop
 
 - `VarTable` holds all runtime variable state for a single run
 - Variables belong to one of two scopes: persistent (survives the whole run) or iteration (cleared at the start of each iteration)
-- Six built-in variables are seeded or updated by the orchestrator: `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`
+- Seven built-in variables are seeded or updated by the orchestrator: `WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`
 - `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase
 - Resolution order during an iteration step: iteration table → persistent table; during initialize or finalize: persistent table only
 
@@ -27,8 +27,8 @@ Key files:
 │                       VarTable                          │
 │                                                         │
 │  persistent map[string]string                           │
-│    PROJECT_DIR, MAX_ITER, ITER, STEP_NUM,               │
-│    STEP_COUNT, STEP_NAME (set by orchestrator)          │
+│    WORKFLOW_DIR, PROJECT_DIR, MAX_ITER, ITER,           │
+│    STEP_NUM, STEP_COUNT, STEP_NAME (set by orchestrator)│
 │    + initialize-phase captureAs bindings                │
 │                                                         │
 │  iteration  map[string]string                           │
@@ -67,24 +67,25 @@ type VarTable struct {
 
 | Variable | Set By | When |
 |----------|--------|------|
-| `PROJECT_DIR` | `New()` | Once at startup from CLI flag |
+| `WORKFLOW_DIR` | `New()` | Once at startup from `--workflow-dir` flag (install dir) |
+| `PROJECT_DIR` | `New()` | Once at startup from `--project-dir` flag (target repo) |
 | `MAX_ITER` | `New()` | Once at startup from `--iterations` flag (0 = unbounded) |
 | `ITER` | `SetIteration(n)` | Start of each iteration |
 | `STEP_NUM` | `SetStep(num, count, name)` | Just before each step runs |
 | `STEP_COUNT` | `SetStep(num, count, name)` | Just before each step runs |
 | `STEP_NAME` | `SetStep(num, count, name)` | Just before each step runs |
 
-Built-in names are reserved: `Bind` panics if a `captureAs` binding attempts to overwrite any of them. The step validator (issue #40) is the primary enforcement point; the panic is a defense-in-depth check.
+Built-in names are reserved: `Bind` panics if a `captureAs` binding attempts to overwrite any of them. The step validator is the primary enforcement point; the panic is a defense-in-depth check.
 
 ## Key Methods
 
 ### New
 
 ```go
-func New(projectDir string, maxIter int) *VarTable
+func New(workflowDir, projectDir string, maxIter int) *VarTable
 ```
 
-Creates a `VarTable` seeded with `PROJECT_DIR` and `MAX_ITER` in the persistent table. The initial phase is `Initialize`.
+Creates a `VarTable` seeded with `WORKFLOW_DIR`, `PROJECT_DIR`, and `MAX_ITER` in the persistent table. The initial phase is `Initialize`.
 
 ### SetPhase
 
@@ -177,7 +178,7 @@ These are programming errors, not runtime conditions — the step validator (iss
 - `ralph-tui/internal/vars/substitute_test.go` — Unit tests for `Substitute` and `ExtractReferences`
 
 `VarTable` covered behaviors:
-- Built-in seeding via `New`
+- Built-in seeding via `New` (both `WORKFLOW_DIR` and `PROJECT_DIR`)
 - Phase transitions and resolution-order contract
 - `captureAs` routing to the correct scope
 - Overwrite semantics (iteration shadows persistent; `Bind` overwrites previous value in the same scope)

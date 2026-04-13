@@ -97,7 +97,7 @@ Two steps run once before the iteration loop begins:
 | 1 | Splash | Shell | — |
 | 2 | Get GitHub user | Shell | `GITHUB_USER` |
 
-"Splash" runs `cat {{PROJECT_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
+"Splash" runs `cat {{WORKFLOW_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
 
 ### Iteration Steps
 

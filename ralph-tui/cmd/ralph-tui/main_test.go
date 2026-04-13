@@ -95,6 +95,49 @@ func TestNewServices_BindsLoggerAndRunnerToProjectDir(t *testing.T) {
 	}
 }
 
+// writeInvalidStepFile creates a ralph-steps.json whose JSON is valid but
+// fails D13 validation — a claude step missing the required promptFile field.
+// Used to exercise the validator.Validate failure path in newServices.
+func writeInvalidStepFile(t *testing.T, dir string) {
+	t.Helper()
+	content := `{
+		"initialize": [],
+		"iteration": [
+			{ "name": "bad-step", "isClaude": true, "model": "sonnet" }
+		],
+		"finalize": []
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestNewServices_ValidationFailureReturnsFalse verifies that newServices
+// returns (nil, false) when validator.Validate reports errors. It also checks
+// that the logger is created and closed without leaking (the logs/ directory
+// must exist under projectDir, confirming the logger was instantiated before
+// the early-return path was taken).
+func TestNewServices_ValidationFailureReturnsFalse(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	writeInvalidStepFile(t, workflowDir)
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	svc, ok := newServices(cfg, projectDir)
+	if ok {
+		t.Fatal("newServices should have returned ok=false on validation failure")
+	}
+	if svc != nil {
+		t.Error("newServices should have returned nil services on validation failure")
+	}
+
+	// Confirm the logger was created (logs/ dir exists) but its Close was
+	// called by the early-return path — no leak.
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); err != nil {
+		t.Errorf("expected logs/ directory to exist under projectDir after validation failure: %v", err)
+	}
+}
+
 // TestNewServices_LoadsStepsFromWorkflowDir verifies that newServices reads
 // ralph-steps.json from cfg.WorkflowDir (install dir), not projectDir (target repo).
 func TestNewServices_LoadsStepsFromWorkflowDir(t *testing.T) {

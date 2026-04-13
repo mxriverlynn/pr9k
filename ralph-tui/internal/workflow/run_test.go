@@ -1866,6 +1866,35 @@ func TestLastCapture_StderrNotCaptured(t *testing.T) {
 	}
 }
 
+// TestLastCapture_ResetBetweenCalls verifies that a successful RunStep followed
+// by a failing RunStep returns "" from LastCapture, not stale data from the
+// first call. This guards the reset-on-failure contract of lastCapture.
+func TestLastCapture_ResetBetweenCalls(t *testing.T) {
+	logDir := t.TempDir()
+	log, err := logger.NewLogger(logDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = log.Close() }()
+
+	runner := NewRunner(log, logDir)
+	runner.SetSender(func(string) {})
+
+	// First call succeeds and populates LastCapture.
+	if err := runner.RunStep("step1", []string{"sh", "-c", "echo captured-value"}); err != nil {
+		t.Fatalf("first RunStep: %v", err)
+	}
+	if got := runner.LastCapture(); got != "captured-value" {
+		t.Fatalf("after first RunStep: got %q, want %q", got, "captured-value")
+	}
+
+	// Second call fails; LastCapture must be cleared, not stale.
+	_ = runner.RunStep("step2", []string{"sh", "-c", "echo something; exit 1"})
+	if got := runner.LastCapture(); got != "" {
+		t.Errorf("after failed RunStep: LastCapture = %q, want empty (must not retain stale value)", got)
+	}
+}
+
 // TestRun_Integration_FullFlow runs the orchestration end-to-end with fake
 // scripts and real subprocesses — verifying the full path from initialize phase
 // through iteration and finalization.

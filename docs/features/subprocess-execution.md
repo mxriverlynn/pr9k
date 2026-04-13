@@ -81,7 +81,7 @@ Key files:
 type Runner struct {
     mu         sync.Mutex     // protects sendLine and lastCapture
     log        *logger.Logger // file logger
-    workingDir string         // cmd.Dir for every subprocess
+    projectDir string         // cmd.Dir for every subprocess (target repository)
     sendLine   func(string)   // callback invoked for every forwarded line; never nil
 
     // processMu guards currentProc, procDone, and terminated.
@@ -127,7 +127,7 @@ func (r *Runner) RunStep(stepName string, command []string) error {
     r.processMu.Unlock()
 
     cmd := exec.Command(command[0], command[1:]...)
-    cmd.Dir = r.workingDir
+    cmd.Dir = r.projectDir
 
     stdout, _ := cmd.StdoutPipe()
     stderr, _ := cmd.StderrPipe()
@@ -234,7 +234,7 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
         return "", fmt.Errorf("workflow: CaptureOutput: empty command")
     }
     cmd := exec.Command(command[0], command[1:]...)
-    cmd.Dir = r.workingDir
+    cmd.Dir = r.projectDir
     out, err := cmd.Output()
     return strings.TrimSpace(string(out)), err
 }
@@ -245,7 +245,7 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 `ResolveCommand` lives in `run.go` and prepares command arrays for execution by substituting `{{VAR}}` tokens via the `VarTable` and resolving relative script paths:
 
 ```go
-func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+func ResolveCommand(workflowDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
     if len(command) == 0 {
         return command
     }
@@ -258,13 +258,13 @@ func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phas
     // Resolve the executable if it looks like a relative script path.
     exe := result[0]
     if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
-        result[0] = filepath.Join(projectDir, exe)
+        result[0] = filepath.Join(workflowDir, exe)
     }
     return result
 }
 ```
 
-Bare commands like `git` are not resolved — only relative paths containing a `/` separator are joined with `projectDir`.
+Bare commands like `git` are not resolved — only relative paths containing a `/` separator are joined with `workflowDir`.
 
 ## Concurrency
 

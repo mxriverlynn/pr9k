@@ -240,7 +240,7 @@ func (r *Runner) WriteToLog(line string) {
 	send(line)
 }
 
-// CaptureOutput runs command in workingDir and returns its trimmed stdout.
+// CaptureOutput runs command in projectDir and returns its trimmed stdout.
 // Stderr is discarded. Use this for commands that return a single value
 // (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
 func (r *Runner) CaptureOutput(command []string) (string, error) {

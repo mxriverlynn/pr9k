@@ -8,7 +8,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ## Overview
 
-- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.log` under the working directory (the user's shell CWD at startup)
+- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.log` under the project directory (the target repository)
 - Each line is prefixed with a timestamp, optional iteration context, and step name
 - Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines
 - Uses `bufio.Writer` for buffered I/O with explicit flush on close
@@ -71,8 +71,8 @@ type Logger struct {
 `NewLogger` creates the `logs/` directory if needed and opens a timestamped log file:
 
 ```go
-func NewLogger(workingDir string) (*Logger, error) {
-    logsDir := filepath.Join(workingDir, "logs")
+func NewLogger(projectDir string) (*Logger, error) {
+    logsDir := filepath.Join(projectDir, "logs")
     if err := os.MkdirAll(logsDir, 0o700); err != nil {
         return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
     }

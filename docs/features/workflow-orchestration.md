@@ -79,7 +79,7 @@ Key files:
 ```go
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-    ProjectDir      string
+    WorkflowDir     string
     Iterations      int
     InitializeSteps []steps.Step  // run once before the iteration loop
     Steps           []steps.Step  // run each iteration
@@ -140,7 +140,7 @@ See [Config Validation](config-validation.md) for the full list of validation ru
 
 ```go
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
-    vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+    vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
 
     logWidth := cfg.LogWidth
     if logWidth <= 0 {
@@ -238,9 +238,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 `buildStep` converts a single `Step` into a `ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution:
 
 ```go
-func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
     if s.IsClaude {
-        prompt, err := steps.BuildPrompt(projectDir, s, vt, phase)
+        prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
         if err != nil {
             return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
         }
@@ -251,12 +251,12 @@ func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Ph
     }
     return ui.ResolvedStep{
         Name:    s.Name,
-        Command: ResolveCommand(projectDir, s.Command, vt, phase),
+        Command: ResolveCommand(workflowDir, s.Command, vt, phase),
     }, nil
 }
 ```
 
-The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
+The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
 
 ### The Orchestrate State Machine
 

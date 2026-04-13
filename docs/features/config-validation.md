@@ -21,7 +21,7 @@ Each step is checked for:
 - `isClaude` is required (`*bool` pointer type, so a missing key is distinguished from `false`).
 - Claude steps (`isClaude: true`) must have a non-empty `promptFile` and `model`, and must not have a `command`.
 - Non-Claude steps (`isClaude: false`) must have a non-empty `command` array, and must not have a `promptFile`.
-- `captureAs`, when set, must be non-empty and must not shadow any built-in variable name (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`).
+- `captureAs`, when set, must be non-empty and must not shadow any built-in variable name (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`).
 - `breakLoopIfEmpty` requires `captureAs` to be set and is only valid in the iteration phase.
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).
@@ -41,7 +41,7 @@ Command path resolution uses `"/"` as a path separator and assumes Unix; revise 
 
 The validator walks steps in declaration order and builds a live scope table for each phase:
 
-- **Initialize scope** seeds `PROJECT_DIR`, `MAX_ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`. `ITER` is intentionally excluded — it is an iteration-only built-in.
+- **Initialize scope** seeds `WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`. `ITER` is intentionally excluded — it is an iteration-only built-in.
 - Each initialize step's `captureAs` name is added to the scope after that step, making it visible to later initialize steps and all finalize steps (the persistent scope).
 - **Iteration scope** = persistent scope + `ITER`.
 - **Finalize scope** = persistent scope only (no iteration-phase captures, no `ITER`).
