@@ -74,9 +74,11 @@ func newServices(cfg *cli.Config, projectDir string) (s *services, ok bool) {
 }
 
 func main() {
-	cfg, err := cli.Execute()
+	cfg, err := cli.Execute(newCreateSandboxCmd())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+		if !errors.Is(err, errSilentExit) {
+			fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+		}
 		os.Exit(1)
 	}
 	if cfg == nil {

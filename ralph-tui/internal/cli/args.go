@@ -126,10 +126,14 @@ func NewCommand(cfg *Config) *cobra.Command {
 // Returns (nil, nil) if --help was requested (RunE was not invoked).
 // Returns (nil, err) if parsing or validation failed.
 // Returns (cfg, nil) on success.
-func Execute() (*Config, error) {
+// extra subcommands are added to the root command before execution.
+func Execute(extra ...*cobra.Command) (*Config, error) {
 	cfg := &Config{}
 	var ranE bool
 	cmd := newCommandImpl(cfg, &ranE)
+	for _, sub := range extra {
+		cmd.AddCommand(sub)
+	}
 	if err := cmd.Execute(); err != nil {
 		return nil, err
 	}
