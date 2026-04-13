@@ -485,20 +485,33 @@ New and modified files:
   implementation calling into `sandbox` + `preflight` packages.
 - **`ralph-tui/internal/workflow/run.go`** — `buildStep` for `IsClaude: true`
   now calls `sandbox.BuildRunArgs(...)` instead of constructing the literal
-  `["claude", ...]` slice. The resolved step also carries the cidfile
-  path (so the Runner can install the terminator closure) and a flag
-  telling the Runner to set `cmd.Stdin = bytes.NewReader(nil)` before
-  `cmd.Start()` — required to prevent docker's `-i` from sharing the
-  host TTY with Bubble Tea (§5 flag rationale).
+  `["claude", ...]` slice. The `ResolvedStep` produced for claude steps
+  carries the `SandboxOptions` (cidfile path + terminator closure) that
+  `workflow.Run` passes into `Runner.RunSandboxedStep` instead of
+  `RunStep`. Non-claude (shell) steps continue to go through `RunStep`
+  unchanged. Routing the sandbox lifecycle through a dedicated entry
+  point — rather than a flag on `RunStep` — is the Q1 Option B
+  resolution (iteration 5).
 - **`ralph-tui/internal/workflow/workflow.go`** — `Runner` gains:
   - `currentTerminator func(syscall.Signal) error` field alongside
     `currentProc`, guarded by the same `processMu` mutex that already
     protects `currentProc`, `procDone`, and `terminated`
     (`workflow.go:27-31`). Read/write sites must acquire `processMu`.
-  - `SetTerminator(func(syscall.Signal) error)` called by sandboxed
-    steps before `cmd.Start()`. Cleared in the same `defer` that
-    clears `currentProc` (`workflow.go:144-149`), so terminator and
-    process lifetimes stay matched.
+  - A new method `RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error`
+    where `SandboxOptions` carries `Terminator func(syscall.Signal) error`
+    and `CidfilePath string`. The wrapper installs the terminator
+    closure under `processMu`, sets `cmd.Stdin = bytes.NewReader(nil)`,
+    delegates to a shared internal core extracted from today's
+    `RunStep`, and clears the terminator in the same `defer` that
+    clears `currentProc` (`workflow.go:144-149`). Cidfile cleanup
+    (ENOENT-tolerant) also runs inside that defer.
+    Rationale: per Q1 Option B resolution (iteration 5), a dedicated
+    wrapper keeps `RunStep`'s signature and non-sandbox callers
+    untouched, isolates sandbox lifecycle inside one method, and
+    sidesteps the install-then-call race that an orchestrator-driven
+    `SetTerminator`/`RunStep` pair would expose. The shared core is
+    a simple extraction — one method becomes two thin entry points
+    over a private `runCommand(...)` helper.
   - `Terminate()` snapshots `currentTerminator` under `processMu`. If
     non-nil, the TERM and KILL paths call `terminator(syscall.SIGTERM)`
     and `terminator(syscall.SIGKILL)` instead of `proc.Signal`/`proc.Kill`.
@@ -524,6 +537,48 @@ New and modified files:
 - `ralph-tui/internal/validator/validator_test.go` — extend existing
   file with cases covering the new `env` field (valid names, invalid
   regex, non-string elements, non-array top-level value).
+
+### Flag-routing test inventory (Q3 resolution, iteration 5)
+
+To cover the `--workflow-dir` / `--project-dir` split without a
+manual checklist, the following automated tests verify the full
+path from flag parse through consumer use. Tests 1, 2, 3, 4 are
+renames already captured in the §9 rename inventory; tests 5, 6,
+7 are additions introduced here; test 8 is already in §10(a).
+
+1. `cli/args_test.go` — `--workflow-dir <alt>` populates
+   `Config.WorkflowDir`; `--project-dir <alt>` populates
+   `Config.ProjectDir`; each defaults correctly; each passes
+   through `EvalSymlinks`; nonexistent directory errors out.
+2. `cmd/ralph-tui/main_test.go` — `TestNewServices_*` verifies
+   logger and runner bind to `ProjectDir` (target repo);
+   `steps.LoadSteps` and `validator.Validate` receive
+   `WorkflowDir` (install dir).
+3. `workflow/workflow_test.go` — `TestRunStep_UsesProjectDir`
+   (renamed from `UsesWorkingDir`) asserts `cmd.Dir` equals the
+   `projectDir` passed to `NewRunner`.
+4. `workflow/run_test.go` — `TestCaptureOutput_UsesProjectDir`
+   (renamed from `UsesWorkingDir`) asserts the same for
+   `CaptureOutput`.
+5. **NEW** `workflow/run_test.go` —
+   `TestBuildStep_ClaudeStep_SandboxBindMount`: fake
+   `StepExecutor.ProjectDir()` returns a known path; assert
+   resolved docker argv contains `-v <knownPath>:/home/agent/workspace`.
+   Covers `buildStep` → `sandbox.BuildRunArgs` target-repo
+   routing.
+6. **NEW** `workflow/run_test.go` —
+   `TestResolveCommand_UsesWorkflowDir`: a relative script path
+   (e.g., `scripts/foo`) is joined against `workflowDir`, not
+   `projectDir`. Catches the easy-to-miss confusion where
+   scripts live in the workflow bundle but claude operates on
+   the target repo.
+7. **NEW** `vars/vars_test.go` — `TestNew_SeedsBothBuiltins`:
+   `vars.New(workflowDir, projectDir, maxIter)` seeds
+   `WORKFLOW_DIR` and `PROJECT_DIR` as persistent-scope vars
+   with the passed values. Replaces today's
+   `TestNew_seedsProjectDir`.
+8. `sandbox/command_test.go` (already §10a) — golden argv test
+   verifies the `-v` mount flag for a given `projectDir` input.
 
 ### Files deliberately untouched
 - `prompts/*.md` — unchanged. (No prompt file uses `{{PROJECT_DIR}}` or
@@ -580,9 +635,11 @@ rename diff is reviewable independently inside the sandbox PR.
   getter (see Runner entry below). Update `buildStep`,
   `ResolveCommand`, and `vars.New(...)` call sites to read the
   target repo from the executor (`runner.ProjectDir()`) rather than
-  `cfg.ProjectDir`. The `StepExecutor` interface gains a
-  `ProjectDir() string` method — update all implementers (production
-  `*Runner` and any test doubles).
+  `cfg.ProjectDir`. The `StepExecutor` interface gains two methods:
+  `ProjectDir() string` (target-repo routing per §13 Option B) and
+  `RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error`
+  (sandbox lifecycle per Q1 Option B, iteration 5). Update all
+  implementers (production `*Runner` and any test doubles).
 - `ralph-tui/internal/workflow/workflow.go` — `Runner`'s constructor
   parameter `workingDir` (added in `4f4481b`) is renamed to
   `projectDir`. The Runner field at `workflow.go:24` renames from
@@ -632,8 +689,11 @@ rename diff is reviewable independently inside the sandbox PR.
   call sites inside `newServices` (currently `logger.NewLogger`,
   `steps.LoadSteps`, `validator.Validate`, `workflow.NewRunner`).
   Outside `newServices`, `cfg.ProjectDir` also appears in the
-  `RunConfig` construction (`main.go:142`) — that site splits into
-  `WorkflowDir: cfg.WorkflowDir` and `ProjectDir: cfg.ProjectDir`.
+  `RunConfig` construction (`main.go:142`) — that site becomes
+  `WorkflowDir: cfg.WorkflowDir` only. Per the Option B resolution
+  in §13, `RunConfig.ProjectDir` is **not** reintroduced; the
+  target-repo path reaches the runner via
+  `workflow.NewRunner(log, cfg.ProjectDir)` inside `newServices`.
   The top of `main()` renames local `workingDir` → `projectDir`;
   the `os.Getwd()` call becomes an `os.Getwd()` + `filepath.EvalSymlinks`
   pair wrapped by the new `resolveProjectDir()` in `cli/args.go`
@@ -677,14 +737,34 @@ rename diff is reviewable independently inside the sandbox PR.
   validator V3.
 - `ralph-tui/internal/vars/vars.go` — seed `PROJECT_DIR` persistent var
   from the new parameter (see rename block above).
-- `ralph-tui/internal/workflow/run.go` — new `RunConfig.ProjectDir`
-  plumbs through to `sandbox.BuildRunArgs(projectDir, profileDir, ...)`
-  (`BuildRunArgs`'s first parameter at `design.md:385` now
-  unambiguously means target repo).
+- `ralph-tui/internal/workflow/run.go` — **no new `RunConfig.ProjectDir`
+  field** (per the Option B resolution in §13 and the rename sub-section
+  above). The target repo reaches `sandbox.BuildRunArgs(projectDir, ...)`
+  via `runner.ProjectDir()` from the `StepExecutor` interface, which
+  `buildStep` already has in hand. `BuildRunArgs`'s first parameter
+  (§5) unambiguously means target repo.
 - `ralph-tui/internal/workflow/run_test.go` — a new test block asserts
-  `ProjectDir` is routed into the sandbox mount arg for claude steps.
-- `ralph-tui/cmd/ralph-tui/main.go` — pass `cfg.ProjectDir` into the
-  runner alongside `cfg.WorkflowDir`.
+  the `Runner.ProjectDir()` value is routed into the sandbox mount arg
+  for claude steps. Test-double executors gain the `ProjectDir()`
+  method (already covered in the rename sub-section).
+  **Additionally**, the existing `TestBuildStep_ClaudeStep*` tests
+  (`TestBuildStep_ClaudeStepIteration` at line 812,
+  `TestBuildStep_ClaudeStepWithVarSubstitution` at line 859,
+  `TestBuildStep_ClaudeStepMissingPromptFile` at line 896,
+  `TestBuildStep_ClaudeStepFinalize` at line 919) hardcode
+  `resolved.Command[0] == "claude"` and positional flag indexes
+  (`run_test.go:840,843,846,849,852,889,945,948,951`). Post-sandbox,
+  `resolved.Command[0]` becomes `"docker"` with claude args shifted
+  deep into the slice. These assertions must be rewritten to match
+  the new docker-wrapped shape (e.g., search argv for the `claude`
+  token after the image tag, rather than asserting a fixed index).
+  Missing from earlier iteration-4 inventory; surfaced in iteration 5.
+- `ralph-tui/cmd/ralph-tui/main.go` — the `RunConfig` construction
+  site at `main.go:142` carries a **single** `WorkflowDir: cfg.WorkflowDir`
+  field post-split (no sibling `ProjectDir` in `RunConfig`). The
+  target-repo path flows through the `workflow.NewRunner(log,
+  cfg.ProjectDir)` call inside `newServices` instead. This aligns
+  the main.go wiring with §13's Option B resolution.
 
 **Subcommand scope:**
 
@@ -766,6 +846,15 @@ Include both the error category/phase/stepName shape and the exact
 `Problem` string in assertions, matching the existing test style.
 
 ### (d) Manual validation checklist (in the plan, not automated)
+
+**Note (iteration 5, Q3 resolution):** flag routing for
+`--workflow-dir` and `--project-dir` is covered by automated
+tests 1–8 in §9's "Flag-routing test inventory"; no manual
+checklist item is needed for the split itself. Items below are
+scoped to docker-dependent behavior, OAuth session flow, and OS
+signal handling — concerns that can't be faked cheaply in Go
+tests.
+
 Before merging, a human runs:
 - [ ] `ralph-tui create-sandbox` on a fresh image cache succeeds and prints
       structured output.
@@ -868,11 +957,12 @@ New user-visible surface:
      run. User must audit their `ralph-steps.json` for any
      `{{PROJECT_DIR}}` token referring to workflow-bundle assets
      (scripts, art files, config) and rename to `{{WORKFLOW_DIR}}`.
-     Adversarial validator V6 flagged this as silent-failure surface;
-     implementers should consider adding a best-effort startup
-     warning that scans command-step argv for `{{PROJECT_DIR}}`
-     tokens and prints a one-time migration note during the 0.3.0
-     window.
+     Adversarial validator V6 originally proposed a preflight
+     warning scanning command argv for `{{PROJECT_DIR}}`. Dropped
+     in iteration 5 (Q2 resolution, Option A): pr9k has no
+     external user base, so there is no migration population to
+     warn. The runtime `exec: no such file` error is sufficient
+     signal for the sole user who maintains their own configs.
 4. **Symlinked invocation path change.** If the user invokes ralph-tui
    from a path that is itself a symlink (e.g., `/Users/me/dev`
    resolving to `/private/...`), the new `resolveProjectDir()` will
@@ -1102,6 +1192,144 @@ readers.
 
 Add this edit to §12's docs-update list.
 
+### Iteration 5 ambiguity resolutions
+
+**Q1. Per-step Runner-API extension mechanism — RESOLVED (Option B).**
+
+The user chose Option B: a dedicated `Runner.RunSandboxedStep(...)`
+wrapper carrying a `SandboxOptions{Terminator, CidfilePath}`
+struct, sharing an extracted private core with `RunStep`. §9 Runner
+entry, §9 run.go entry, and the `StepExecutor` interface extension
+have been updated to reflect this. `RunStep`'s signature is
+unchanged, so non-sandbox callers and their tests are untouched.
+The install-then-call race that Option (c) would have exposed is
+sidestepped by moving terminator install into the wrapper's own
+defer block alongside cidfile cleanup.
+
+Original framing preserved below for audit trail.
+
+**Q1 (historical). Per-step Runner-API extension mechanism.**
+
+§9 says the Runner gains `SetTerminator(func(syscall.Signal) error)`
+and that sandboxed steps must "set `cmd.Stdin = bytes.NewReader(nil)`
+before `cmd.Start()`". Both are *per-step* inputs, but `RunStep`'s
+current signature is `RunStep(stepName string, command []string)`
+— it has no channel for either parameter. The plan is silent on
+the actual mechanism.
+
+Impact: dictates the shape of the Runner API change in the 0.3.0 PR
+and determines whether `Terminate()` can race with sandbox-step
+setup.
+
+- **(a) Extend `RunStep` signature** — add a `StepOptions` struct
+  carrying `Terminator` and `EmptyStdin`. Single entry point; one
+  lock acquisition covering both the install and the `Start` call.
+  Downside: every existing non-sandbox caller updates.
+- **(b) Add `RunSandboxedStep(stepName, command, opts)`** —
+  wrapper that does terminator install + null stdin + RunStep +
+  cleanup. Keeps `RunStep` signature stable. Downside: duplicates
+  lifecycle logic or forces RunStep refactor to a shared core.
+- **(c) Orchestrator-driven `SetTerminator` before `RunStep`** —
+  orchestrator calls `SetTerminator` then `RunStep`. Racy with
+  `Terminate()` if the user hits `q` between the two calls; prior
+  step's cleared terminator may leak a ghost signal target.
+
+**Recommendation:** (b). Keeps RunStep's non-sandbox callers
+untouched, isolates sandbox lifecycle inside one method, avoids
+the (c) race. RunStep's `defer` block can stay as-is; the wrapper
+adds its own install + defer cleanup around the delegated call.
+
+**Q2. Should the V6 `{{PROJECT_DIR}}`-in-command-argv warning be
+required, not discretionary? — RESOLVED (Option A, dropped).**
+
+User confirmed in iteration 5 that pr9k has no external user base
+beyond themselves, so the warning's purpose (loud migration signal
+across many configs) does not apply. Mitigation dropped entirely:
+§11 upgrade-path bullet 3 no longer recommends the warning. The
+runtime `exec: no such file` error is sufficient signal for a sole
+user who maintains their own `ralph-steps.json`. Rationale aligns
+with the project-level preference recorded in `~/.claude/CLAUDE.md`
+("Don't add error handling, fallbacks, or validation for scenarios
+that can't happen... Don't design for hypothetical future
+requirements").
+
+Original framing preserved below for audit trail.
+
+**Q2 (historical). Should the V6 `{{PROJECT_DIR}}`-in-command-argv
+warning be required, not discretionary?**
+
+§11 upgrade-path bullet 3 notes that post-split, `{{PROJECT_DIR}}`
+inside `command` step argv silently flips meaning from
+workflow-bundle to target-repo. Current plan says implementers
+"should consider adding a best-effort startup warning" — leaves
+it to implementation PR. Adversarial validator V6 flagged this as
+silent-failure surface with a runtime `exec: no such file`
+payload.
+
+Impact: governs whether a user whose `ralph-steps.json` references
+`{{PROJECT_DIR}}/scripts/...` gets a loud signal at preflight or
+discovers the break mid-run.
+
+- **(a) Keep discretionary (status quo).** Implementation PR
+  decides. Lowest spec burden; users may hit runtime failure.
+- **(b) Required validator warning** on any `command` argv token
+  matching `{{PROJECT_DIR}}`, emitted at preflight, non-failing.
+  Reuses existing validator pipeline; catches the failure class
+  for one release window.
+- **(c) Required validator error.** Breaks configs that
+  *legitimately* use `{{PROJECT_DIR}}` in commands with the new
+  target-repo meaning — wrong for configs that already intend the
+  new semantics.
+
+**Recommendation:** (b). The warning is loud enough to prevent
+silent runtime failure, soft enough to not punish configs that
+intended the new meaning. Drop the warning in a later release
+once the migration window closes.
+
+**Q3. Should §10(d) manual checklist gain explicit flag-coverage
+items? — RESOLVED (automated tests instead of manual items).**
+
+User asked whether the flag-routing behavior could be tested
+automatically rather than manually. Yes — the full path (flag
+parse → `cli.Config` → constructor wiring → consumer use) is
+reachable from Go's test harness without starting Bubble Tea,
+pulling images, or invoking docker. Resolution: add a
+"Flag-routing test inventory" subsection to §9 listing tests 1-8
+(tests 1-4 are renames already in the §9 rename inventory;
+tests 5-7 are new additions; test 8 is already in §10(a)). §10(d)
+gains a note that flag routing is automated and the manual
+checklist is scoped to docker-dependent behavior, OAuth session
+flow, and OS signal handling.
+
+Original framing preserved below for audit trail.
+
+**Q3 (historical). Should §10(d) manual checklist gain explicit
+flag-coverage items?**
+
+§10(d) currently tests the new preflight error paths, profile
+override via `CLAUDE_CONFIG_DIR`, and `-n 1` real run, but has no
+explicit item for the new `--workflow-dir` or `--project-dir`
+flags. Since §4.15 is the most user-visible breaking change in
+0.3.0 and V6/V8 flagged silent-failure risks tied to these flags,
+explicit verification aligns with the plan's cause-specific
+coverage pattern.
+
+Impact: catches mis-wiring of the new flags or of the new
+`EvalSymlinks` dereference path before merge.
+
+- **(a) Leave as-is.** The `-n 1` item implicitly exercises the
+  default-value path for both flags.
+- **(b) Add three items:** (i) `ralph-tui --workflow-dir <alt>`
+  loads an alternate workflow bundle; (ii) `ralph-tui --project-dir
+  <alt>` runs claude against a different repo than the shell CWD;
+  (iii) `ralph-tui --project-dir <workflow-bundle-path>` —
+  migration-mistake case — confirms the failure mode is
+  observable (even if silent).
+
+**Recommendation:** (b). Matches the plan's existing
+cause-specific checklist pattern and gives the manual tester a
+repro for the V6/V8 silent-failure paths.
+
 ### To verify during implementation
 - **Prompt size vs. ARG_MAX.** macOS `getconf ARG_MAX` is 1,048,576 bytes
   (~1MB) as of Sonoma, but in practice argv+environ share that budget and
@@ -1261,7 +1489,41 @@ validation (evidence-based-investigator + adversarial-validator).
     `docs/adr/20260413162428-workflow-project-dir-split.md` Context
     section in the 0.3.0 PR to note `4f4481b`'s internal capture;
     Decision unchanged; added to §12 docs-update list.
-- **Stopped at iteration 4** because remaining open questions
+- **Iteration 5 (consistency sweep, 2026-04-13)** — reconciled three
+  internal contradictions introduced across earlier iterations:
+  (a) §9 "New identifier" sub-section introduced a "new
+  `RunConfig.ProjectDir` plumbs through to `sandbox.BuildRunArgs`"
+  entry that directly contradicted §13's Option B resolution
+  (Runner is the single source of truth; no sibling `RunConfig`
+  field). Rewrote both contradicting bullets — the `run.go` entry
+  in the "New identifier" sub-section and the `main.go` entry in
+  the "Rename" sub-section — to route target-repo through
+  `runner.ProjectDir()` only. (b) Count "3 review iterations
+  completed" was stale from iteration 3 and did not match the
+  four iterations documented in §14 body. Bumped to 5 to include
+  this pass. (c) §9's inventory omitted the four existing
+  `TestBuildStep_ClaudeStep*` tests in `run_test.go` that hardcode
+  `resolved.Command[0] == "claude"` and positional flag indexes —
+  these will fail once `resolved.Command` becomes a docker argv
+  slice. Added them explicitly to the run_test.go entry. Three
+  ambiguities surfaced to the user and all three were resolved:
+  (Q1) per-step Runner-API extension mechanism — chose Option B,
+  a dedicated `Runner.RunSandboxedStep(...)` wrapper carrying
+  `SandboxOptions{Terminator, CidfilePath}`, sharing an extracted
+  private core with `RunStep`; §9 Runner entry, run.go entry, and
+  `StepExecutor` interface updated. (Q2) V6
+  `{{PROJECT_DIR}}`-in-command-argv warning — chose Option A
+  (dropped entirely); pr9k has no external user base to warn and
+  the runtime `exec: no such file` error is sufficient signal for
+  the sole user; §11 upgrade path text updated to reflect this.
+  (Q3) manual checklist flag coverage — chose automated-tests
+  path: flag routing is reachable from Go's test harness without
+  running Bubble Tea or docker, so §9 gains a new "Flag-routing
+  test inventory" subsection listing tests 1–8, and §10(d) gains
+  a note that flag routing is automated and the manual checklist
+  is scoped to docker-dependent behavior. See §13 "Iteration 5
+  ambiguity resolutions" for full rationale on each.
+- **Stopped at iteration 5** because remaining open questions
   (image-internal assumptions, runtime behavior) are runtime-only and
   not answerable by further static review.
 
@@ -1308,7 +1570,7 @@ validation (evidence-based-investigator + adversarial-validator).
    ADR.
 
 ### Counts
-- 3 review iterations completed.
+- 5 review iterations completed.
 - 10 plan-claim assumptions challenged via evidence-based agent;
   10 plan-claim assumptions challenged via adversarial agent.
 - 7 adversarial findings incorporated as plan changes; 3 accepted with
