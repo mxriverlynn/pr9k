@@ -54,6 +54,10 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 
 func (f *fakeExecutor) WasTerminated() bool { return false }
 
+func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
+	panic("fakeExecutor.RunSandboxedStep called unexpectedly")
+}
+
 func (f *fakeExecutor) WriteToLog(line string) {
 	f.logLines = append(f.logLines, line)
 	if f.onLog != nil {

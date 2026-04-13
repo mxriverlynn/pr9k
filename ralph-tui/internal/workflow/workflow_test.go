@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1034,6 +1035,230 @@ func TestSetSender_ForwardsEveryStderrLine(t *testing.T) {
 		if got[i] != w {
 			t.Errorf("line %d: want %q, got %q", i, w, got[i])
 		}
+	}
+}
+
+// RunSandboxedStep tests
+
+// TestRunSandboxedStep_InstallsAndClearsTerminator verifies that the terminator
+// is installed in currentTerminator during RunSandboxedStep and cleared to nil
+// after the call returns.
+func TestRunSandboxedStep_InstallsAndClearsTerminator(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	terminator := func(syscall.Signal) error { return nil }
+
+	// Use a slow-enough command that a goroutine can observe currentTerminator.
+	observedNonNil := make(chan bool, 1)
+	go func() {
+		// Poll briefly until we see the terminator installed.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			r.processMu.Lock()
+			v := r.currentTerminator
+			r.processMu.Unlock()
+			if v != nil {
+				observedNonNil <- true
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		observedNonNil <- false
+	}()
+
+	opts := SandboxOptions{Terminator: terminator}
+	if err := r.RunSandboxedStep("sandbox-step", []string{"sh", "-c", "sleep 0.05"}, opts); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	// After RunSandboxedStep returns, currentTerminator must be nil.
+	r.processMu.Lock()
+	afterTerm := r.currentTerminator
+	r.processMu.Unlock()
+	if afterTerm != nil {
+		t.Error("expected currentTerminator to be nil after RunSandboxedStep returned")
+	}
+
+	// The goroutine must have seen the terminator set during the call.
+	if !<-observedNonNil {
+		t.Error("expected to observe non-nil currentTerminator while RunSandboxedStep was running")
+	}
+}
+
+// TestRunSandboxedStep_UsesEmptyStdin verifies that RunSandboxedStep provides
+// an explicit empty stdin. A command that reads stdin exits immediately when
+// stdin is empty (EOF on open), which is the expected sandbox behaviour.
+func TestRunSandboxedStep_UsesEmptyStdin(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// "cat -" reads stdin until EOF; with empty stdin it exits immediately.
+	err := r.RunSandboxedStep("stdin-step", []string{"cat", "-"}, SandboxOptions{})
+	if err != nil {
+		t.Fatalf("RunSandboxedStep with empty stdin: %v", err)
+	}
+}
+
+// TestRunSandboxedStep_CleansCidfile verifies that RunSandboxedStep removes the
+// cidfile after the step exits.
+func TestRunSandboxedStep_CleansCidfile(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// Create a real temp file to use as the cidfile.
+	f, err := os.CreateTemp("", "ralph-test-*.cid")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	cidPath := f.Name()
+	_ = f.Close()
+
+	opts := SandboxOptions{CidfilePath: cidPath}
+	if err := r.RunSandboxedStep("cidfile-step", []string{"true"}, opts); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	if _, statErr := os.Stat(cidPath); !os.IsNotExist(statErr) {
+		t.Errorf("expected cidfile %q to be removed after RunSandboxedStep, got stat err: %v", cidPath, statErr)
+	}
+}
+
+// TestRunSandboxedStep_CleansCidfile_NonexistentPath verifies that passing a
+// nonexistent CidfilePath does not cause an error or panic.
+func TestRunSandboxedStep_CleansCidfile_NonexistentPath(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	opts := SandboxOptions{CidfilePath: "/tmp/ralph-nonexistent-cidfile-that-does-not-exist.cid"}
+	if err := r.RunSandboxedStep("cidfile-missing-step", []string{"true"}, opts); err != nil {
+		t.Fatalf("RunSandboxedStep with nonexistent cidfile: %v", err)
+	}
+}
+
+// TestTerminate_UsesTerminatorWhenInstalled verifies that Terminate() dispatches
+// SIGTERM (and, after the grace period, SIGKILL) through the installed terminator
+// rather than calling proc.Signal / proc.Kill directly.
+func TestTerminate_UsesTerminatorWhenInstalled(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// Use a very short grace period so the test does not wait 3 seconds.
+	r.terminateGraceOverride = 100 * time.Millisecond
+
+	var mu sync.Mutex
+	var signals []syscall.Signal
+
+	// proc is captured after cmd.Start() so the terminator can forward signals.
+	var proc *os.Process
+
+	terminator := func(sig syscall.Signal) error {
+		mu.Lock()
+		signals = append(signals, sig)
+		p := proc
+		mu.Unlock()
+		if p != nil {
+			// Forward to the real process so it actually exits.
+			if sig == syscall.SIGKILL {
+				return p.Kill()
+			}
+			return p.Signal(sig)
+		}
+		return nil
+	}
+
+	// Run a script that traps SIGTERM but ignores it, so SIGKILL fires.
+	script := `trap '' TERM; while true; do sleep 0.05; done`
+	opts := SandboxOptions{Terminator: terminator}
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunSandboxedStep("term-step", []string{"sh", "-c", script}, opts)
+	}()
+
+	// Wait for the process to start and capture its *os.Process.
+	time.Sleep(50 * time.Millisecond)
+	r.processMu.Lock()
+	proc = r.currentProc
+	r.processMu.Unlock()
+
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("RunSandboxedStep did not return within 2 seconds after Terminate")
+	}
+
+	mu.Lock()
+	got := make([]syscall.Signal, len(signals))
+	copy(got, signals)
+	mu.Unlock()
+
+	if len(got) < 2 {
+		t.Fatalf("expected at least 2 terminator calls (SIGTERM + SIGKILL), got %d: %v", len(got), got)
+	}
+	if got[0] != syscall.SIGTERM {
+		t.Errorf("first terminator call: want SIGTERM, got %v", got[0])
+	}
+	if got[1] != syscall.SIGKILL {
+		t.Errorf("second terminator call: want SIGKILL, got %v", got[1])
+	}
+}
+
+// TestTerminate_UsesProcessWhenNoTerminator verifies that when no terminator is
+// installed (RunStep, not RunSandboxedStep), Terminate() signals the host
+// process directly and does not call any terminator.
+func TestTerminate_UsesProcessWhenNoTerminator(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStep("no-term-step", []string{"sleep", "60"})
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	r.Terminate()
+
+	select {
+	case <-stepDone:
+		// RunStep returned — direct process signaling worked
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStep did not return within 5 seconds; direct process signaling may be broken")
+	}
+}
+
+// TestRunSandboxedStep_TerminatorClearedBeforeWaitReturn verifies that after
+// RunSandboxedStep returns naturally, a subsequent Terminate() call does NOT
+// invoke the terminator (it was cleared before the procDone channel closed).
+func TestRunSandboxedStep_TerminatorClearedBeforeWaitReturn(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// A terminator that panics if called — should never fire after step exits.
+	panicTerminator := func(syscall.Signal) error {
+		panic("terminator called after RunSandboxedStep returned: F2 violation")
+	}
+
+	opts := SandboxOptions{Terminator: panicTerminator}
+	if err := r.RunSandboxedStep("f2-step", []string{"true"}, opts); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	// The step has exited. Terminate() must see currentTerminator == nil and
+	// currentProc == nil, short-circuit immediately, and not call the terminator.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.Terminate()
+	}()
+
+	select {
+	case <-done:
+		// Returned without calling the terminator.
+	case <-time.After(1 * time.Second):
+		t.Fatal("Terminate() blocked after RunSandboxedStep returned")
 	}
 }
 

@@ -16,6 +16,7 @@ type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
 	ProjectDir() string
+	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
