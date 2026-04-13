@@ -304,8 +304,10 @@ func validatePhase(
 		// Category 4 — referenced files must exist.
 		if step.IsClaude != nil {
 			if isClaude && step.PromptFile != "" {
-				promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
-				if _, err := os.Stat(promptPath); err != nil {
+				absPath, pathErr := safePromptPath(workflowDir, step.PromptFile)
+				if pathErr != nil {
+					*errs = append(*errs, at("file", pathErr.Error()))
+				} else if _, err := os.Stat(absPath); err != nil {
 					*errs = append(*errs, at("file", fmt.Sprintf("prompt file %q not found", step.PromptFile)))
 				}
 			}
@@ -321,15 +323,35 @@ func validatePhase(
 		// {{PROJECT_DIR}}. These tokens expand to host paths that do not exist
 		// inside the sandbox. Non-claude command steps are not scanned; both
 		// tokens remain valid inside command argv.
+		// Uses vars.ExtractReferences to correctly skip escaped sequences such
+		// as {{{{WORKFLOW_DIR}}}} which should not be flagged.
 		if isClaude && step.PromptFile != "" {
-			promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
-			if data, err := os.ReadFile(promptPath); err == nil {
-				body := string(data)
-				if strings.Contains(body, "{{WORKFLOW_DIR}}") || strings.Contains(body, "{{PROJECT_DIR}}") {
-					*errs = append(*errs, at("sandbox", fmt.Sprintf(
-						"prompt %s: {{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files — they expand to host paths that do not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the target repo root inside the container).",
-						step.PromptFile,
-					)))
+			if absPath, pathErr := safePromptPath(workflowDir, step.PromptFile); pathErr == nil {
+				if data, err := os.ReadFile(absPath); err == nil {
+					refs := vars.ExtractReferences(string(data))
+					hasWorkflowDir, hasProjectDir := false, false
+					for _, ref := range refs {
+						if ref == "WORKFLOW_DIR" {
+							hasWorkflowDir = true
+						}
+						if ref == "PROJECT_DIR" {
+							hasProjectDir = true
+						}
+					}
+					if hasWorkflowDir || hasProjectDir {
+						var banned []string
+						if hasWorkflowDir {
+							banned = append(banned, "{{WORKFLOW_DIR}}")
+						}
+						if hasProjectDir {
+							banned = append(banned, "{{PROJECT_DIR}}")
+						}
+						*errs = append(*errs, at("sandbox", fmt.Sprintf(
+							"prompt %s: %s are not valid inside prompt files — they expand to host paths that do not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the target repo root inside the container).",
+							step.PromptFile,
+							strings.Join(banned, " and "),
+						)))
+					}
 				}
 			}
 		}
@@ -409,7 +431,11 @@ func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 		if step.PromptFile == "" {
 			return nil
 		}
-		data, err := os.ReadFile(filepath.Join(workflowDir, "prompts", step.PromptFile))
+		absPath, err := safePromptPath(workflowDir, step.PromptFile)
+		if err != nil {
+			return nil
+		}
+		data, err := os.ReadFile(absPath)
 		if err != nil {
 			return nil
 		}
@@ -420,6 +446,26 @@ func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 		refs = append(refs, vars.ExtractReferences(arg)...)
 	}
 	return refs
+}
+
+// safePromptPath resolves the named prompt file under workflowDir/prompts and
+// returns its absolute path. It returns an error if the path escapes the
+// prompts directory (e.g. via ".." traversal), preventing path-traversal
+// attacks where a malicious ralph-steps.json could read arbitrary host files.
+func safePromptPath(workflowDir, promptFile string) (string, error) {
+	promptPath := filepath.Join(workflowDir, "prompts", promptFile)
+	absPath, err := filepath.Abs(promptPath)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve prompt path: %w", err)
+	}
+	absPrompts, err := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+	if err != nil {
+		return "", fmt.Errorf("could not resolve prompts directory: %w", err)
+	}
+	if !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+		return "", fmt.Errorf("prompt path escapes prompts directory: %s", promptFile)
+	}
+	return absPath, nil
 }
 
 // cfgErr constructs a validation Error.

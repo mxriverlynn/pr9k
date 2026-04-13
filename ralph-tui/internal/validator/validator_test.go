@@ -1228,7 +1228,8 @@ func TestValidate_RuleA_NonClaudeStepWithCaptureAsIsClean(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 // TestValidate_RuleB_WorkflowDirInPromptIsError confirms that {{WORKFLOW_DIR}}
-// in a prompt file referenced by a claude step is rejected.
+// in a prompt file referenced by a claude step is rejected. The error names
+// only the token that was actually found.
 func TestValidate_RuleB_WorkflowDirInPromptIsError(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "p.md", "install dir: {{WORKFLOW_DIR}}\n")
@@ -1238,12 +1239,14 @@ func TestValidate_RuleB_WorkflowDirInPromptIsError(t *testing.T) {
 		"finalize": []
 	}`)
 	errs := validator.Validate(dir)
-	requireError(t, errs, "{{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files")
+	requireError(t, errs, "{{WORKFLOW_DIR}}")
+	requireError(t, errs, "not valid inside prompt files")
 	requireError(t, errs, "expand to host paths that do not exist inside the sandbox")
 }
 
 // TestValidate_RuleB_ProjectDirInPromptIsError confirms that {{PROJECT_DIR}}
-// in a prompt file referenced by a claude step is rejected.
+// in a prompt file referenced by a claude step is rejected. The error names
+// only the token that was actually found.
 func TestValidate_RuleB_ProjectDirInPromptIsError(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "p.md", "target repo: {{PROJECT_DIR}}\n")
@@ -1253,7 +1256,8 @@ func TestValidate_RuleB_ProjectDirInPromptIsError(t *testing.T) {
 		"finalize": []
 	}`)
 	errs := validator.Validate(dir)
-	requireError(t, errs, "{{WORKFLOW_DIR}} and {{PROJECT_DIR}} are not valid inside prompt files")
+	requireError(t, errs, "{{PROJECT_DIR}}")
+	requireError(t, errs, "not valid inside prompt files")
 }
 
 // TestValidate_RuleB_BothTokensInPromptEmitsError confirms that a prompt
@@ -1463,4 +1467,152 @@ func TestValidate_Env_ErrorsDoNotBlockPhaseValidation(t *testing.T) {
 	if !hasError(errs, "name must not be empty") {
 		t.Error("expected error for empty step name in iteration phase")
 	}
+}
+
+// ----------------------------------------------------------------------------
+// WARN-008: Rule A — captureAs on claude step in finalize phase
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizePhase confirms that Rule A
+// fires in the finalize phase, not just initialize and iteration.
+func TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizePhase(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fin.md", "wrapping up\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": [{"name":"Wrap","isClaude":true,"model":"sonnet","promptFile":"fin.md","captureAs":"WRAP_OUT"}]
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a claude step is not allowed")
+}
+
+// ----------------------------------------------------------------------------
+// WARN-006: Rule C — captureAs + forbidden token in initialize phase
+// WARN-007: Rule C — captureAs + forbidden token in finalize phase
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleC_ForbiddenTokenInInitializePhaseIsError confirms that Rule C
+// fires in the initialize phase (not only iteration).
+func TestValidate_RuleC_ForbiddenTokenInInitializePhaseIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Setup","isClaude":false,"command":["cat","{{PROJECT_DIR}}/config.json"],"captureAs":"CONFIG"}
+		],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed")
+}
+
+// TestValidate_RuleC_ForbiddenTokenInFinalizePhaseIsError confirms that Rule C
+// fires in the finalize phase (not only iteration).
+func TestValidate_RuleC_ForbiddenTokenInFinalizePhaseIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": [
+			{"name":"Archive","isClaude":false,"command":["cat","{{WORKFLOW_DIR}}/ralph-art.txt"],"captureAs":"ART"}
+		]
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed")
+}
+
+// ----------------------------------------------------------------------------
+// WARN-009: Rule B — escaped tokens must not produce a false positive
+// ----------------------------------------------------------------------------
+
+// TestValidate_RuleB_EscapedTokenIsNotFlaggedAsFalsePositive confirms that
+// {{{{WORKFLOW_DIR}}}} (which renders as the literal text {{WORKFLOW_DIR}} after
+// substitution) does not trigger Rule B, because vars.ExtractReferences skips
+// escape sequences.
+func TestValidate_RuleB_EscapedTokenIsNotFlaggedAsFalsePositive(t *testing.T) {
+	dir := tempProject(t)
+	// {{{{WORKFLOW_DIR}}}} is the escape sequence for literal {{WORKFLOW_DIR}}.
+	writePrompt(t, dir, "p.md", "show literal: {{{{WORKFLOW_DIR}}}}\n")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// ----------------------------------------------------------------------------
+// SUGG-003: Early-return guard — multiple missing phases produce errors without crash
+// ----------------------------------------------------------------------------
+
+// TestValidate_MultipleMissingPhasesNoScopeWalkCrash confirms that when more
+// than one required top-level array is absent, all missing-key errors are
+// reported and the validator returns without attempting a scope walk (which
+// would crash on nil phase pointers).
+func TestValidate_MultipleMissingPhasesNoScopeWalkCrash(t *testing.T) {
+	dir := tempProject(t)
+	// Both "initialize" and "finalize" are missing; only "iteration" is present.
+	writeStepsJSON(t, dir, `{
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}]
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, `"initialize"`) {
+		t.Error(`expected error for missing "initialize" key`)
+	}
+	if !hasError(errs, `"finalize"`) {
+		t.Error(`expected error for missing "finalize" key`)
+	}
+	// Confirm the validator did not panic (reaching here means it didn't).
+}
+
+// ----------------------------------------------------------------------------
+// SUGG-004: Env name regex — spaces and dots are rejected
+// ----------------------------------------------------------------------------
+
+// TestValidate_Env_SpaceNotAllowed confirms that an env name containing a space
+// is rejected by the identifier regex.
+func TestValidate_Env_SpaceNotAllowed(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["MY VAR"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not a valid identifier")
+}
+
+// TestValidate_Env_DotNotAllowed confirms that an env name containing a dot is
+// rejected by the identifier regex.
+func TestValidate_Env_DotNotAllowed(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["my.var"],
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not a valid identifier")
+}
+
+// ----------------------------------------------------------------------------
+// SEC-001: Path traversal — prompt path escaping prompts directory is rejected
+// ----------------------------------------------------------------------------
+
+// TestValidate_PromptPathTraversalIsError confirms that a promptFile value
+// containing ".." that escapes the prompts/ directory is rejected by the
+// containment check, not treated as a simple missing-file error.
+func TestValidate_PromptPathTraversalIsError(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"../../secret.txt"}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "escapes prompts directory")
 }

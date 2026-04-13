@@ -1,6 +1,6 @@
 # Config Validation
 
-The `internal/validator` package validates `ralph-steps.json` against all eight D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
+The `internal/validator` package validates `ralph-steps.json` against all ten D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
 
 **Package:** `internal/validator/`
 
@@ -48,6 +48,30 @@ The validator walks steps in declaration order and builds a live scope table for
 
 Any `{{VAR}}` reference in a prompt file or command argument that is not in scope at that point produces an "unresolved variable reference" error.
 
+### Category 10 — env passthrough names
+
+The optional top-level `env` array lists host environment variable names that ralph-tui passes through into the sandbox. Each name is validated:
+
+- Must not be empty.
+- Must match `^[A-Za-z_][A-Za-z0-9_]*$` (standard POSIX identifier format — no spaces, dots, or hyphens).
+- Must not be in the sandbox-reserved set (`CLAUDE_CONFIG_DIR`, `HOME`).
+- Must not be in the isolation denylist (`PATH`, `USER`, `LOGNAME`, `SSH_AUTH_SOCK`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`).
+
+Duplicates within the `env` array and overlap with built-in variable names are harmless and produce no errors. Env validation runs before the scope walk; errors here do not block phase validation.
+
+### Sandbox Rules A, B, C
+
+Three additional rules protect sandbox isolation. All three fire regardless of which phase the step is in.
+
+**Rule A — captureAs on a claude step is rejected.**
+After sandboxing, the `claude` binary is wrapped in a `docker run` command. The captured stdout is docker's own output (container lifecycle messages), not claude's response. Any `captureAs` on a `isClaude: true` step would silently inject corrupted data into downstream `{{VAR}}` substitutions.
+
+**Rule B — prompt files must not reference `{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}`.**
+These tokens expand to host filesystem paths. Inside the sandbox, those paths do not exist. A prompt that embeds them would pass a broken path to claude, causing silent substitution failures or confusing instructions. The check uses token-aware parsing (via `vars.ExtractReferences`) so escaped sequences like `{{{{WORKFLOW_DIR}}}}` (which render as the literal text `{{WORKFLOW_DIR}}`) are not flagged. The error message names only the token(s) actually found.
+
+**Rule C — a command step that both references `{{WORKFLOW_DIR}}`/`{{PROJECT_DIR}}` in argv AND sets `captureAs` is rejected.**
+Even though dir tokens are valid in command argv (Rule B does not apply to shell commands), capturing a host path into a variable and then consuming that variable inside a later claude prompt forwards the stale host path into the sandbox — the same isolation break that Rule B prevents directly.
+
 ## Error type
 
 `Error` is a structured type that implements the `error` interface:
@@ -72,7 +96,7 @@ config error: variable: finalize step "push": unresolved variable reference {{IT
 ## Entry point
 
 ```go
-errs := validator.Validate(projectDir)
+errs := validator.Validate(workflowDir)
 ```
 
 Returns an empty slice when the config is valid; one `Error` per problem otherwise. Validation always collects all errors before returning — it does not short-circuit.

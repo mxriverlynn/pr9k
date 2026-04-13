@@ -68,9 +68,10 @@ type Step struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Initialize []Step `json:"initialize"`
-    Iteration  []Step `json:"iteration"`
-    Finalize   []Step `json:"finalize"`
+    Env        []string `json:"env,omitempty"`
+    Initialize []Step   `json:"initialize"`
+    Iteration  []Step   `json:"iteration"`
+    Finalize   []Step   `json:"finalize"`
 }
 ```
 
@@ -78,11 +79,11 @@ type StepFile struct {
 
 ### Step Loading
 
-`LoadSteps` reads `ralph-steps.json` relative to the project directory and unmarshals into a `StepFile`:
+`LoadSteps` reads `ralph-steps.json` relative to the workflow directory and unmarshals into a `StepFile`:
 
 ```go
-func LoadSteps(projectDir string) (StepFile, error) {
-    path := filepath.Join(projectDir, "ralph-steps.json")
+func LoadSteps(workflowDir string) (StepFile, error) {
+    path := filepath.Join(workflowDir, "ralph-steps.json")
     data, err := os.ReadFile(path)
     // ... unmarshal JSON into StepFile
 }
@@ -133,11 +134,11 @@ Three steps run once after all iterations complete:
 `BuildPrompt` reads the prompt file, applies `{{VAR}}` substitution using the supplied `VarTable` and phase, and returns the result:
 
 ```go
-func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
+func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
     if step.PromptFile == "" {
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
-    promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+    promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
     data, err := os.ReadFile(promptPath)
     // ...
     content, err := vars.Substitute(string(data), vt, phase)

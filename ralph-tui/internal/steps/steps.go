@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
@@ -55,6 +56,11 @@ func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Ph
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
 	promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
+	absPath, absErr := filepath.Abs(promptPath)
+	absPrompts, absPromptsErr := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+	if absErr != nil || absPromptsErr != nil || !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+		return "", fmt.Errorf("steps: prompt path escapes prompts directory: %s", step.PromptFile)
+	}
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)
