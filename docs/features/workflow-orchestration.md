@@ -130,7 +130,7 @@ type ResolvedStep struct {
 
 ### Pre-Run Validation
 
-Before `Run()` is called, `main.go` invokes `validator.Validate(projectDir)` against `ralph-steps.json`. This covers all eight D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, and variable scope resolution — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
+Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules A/B/C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
 See [Config Validation](config-validation.md) for the full list of validation rules.
 

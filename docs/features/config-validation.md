@@ -8,7 +8,7 @@ The `internal/validator` package validates `ralph-steps.json` against all ten D1
 
 ### Category 1 — File presence and parseability
 
-- `ralph-steps.json` must be readable from the project directory.
+- `ralph-steps.json` must be readable from the workflow directory.
 - The JSON must parse without error.
 - Unknown fields (e.g., stale `prependVars`) are rejected via `json.Decoder.DisallowUnknownFields`.
 - All three top-level array keys — `initialize`, `iteration`, `finalize` — must be present.
@@ -33,7 +33,7 @@ The `iteration` array must contain at least one step.
 ### Category 4 — Referenced file existence
 
 - For Claude steps: `prompts/<promptFile>` must exist on disk. Additionally, `promptFile` values containing path traversal segments (e.g., `../`) that would resolve outside the `prompts/` directory are rejected with a "prompt path escapes prompts directory" error.
-- For non-Claude steps: `command[0]` must be resolvable — either as a relative path under `projectDir`, an absolute path, or a bare name found via `PATH` lookup.
+- For non-Claude steps: `command[0]` must be resolvable — either as a relative path under `workflowDir`, an absolute path, or a bare name found via `PATH` lookup.
 
 Command path resolution uses `"/"` as a path separator and assumes Unix; revise if Windows support is added.
 

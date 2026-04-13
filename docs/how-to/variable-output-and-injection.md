@@ -63,7 +63,7 @@ Config:
 
 At runtime with issue `42`, this resolves to:
 ```
-["{projectDir}/scripts/close_gh_issue", "42"]
+["{workflowDir}/scripts/close_gh_issue", "42"]
 ```
 
 Note that the relative script path `scripts/close_gh_issue` is also resolved to an absolute path against the workflow directory. Bare commands like `git` are not modified.

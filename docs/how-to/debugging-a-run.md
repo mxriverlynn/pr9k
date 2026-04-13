@@ -141,7 +141,7 @@ For the full file-passing model, see [Variable Output & Injection](variable-outp
 
 ## Validator errors before a run
 
-If ralph-tui refuses to start, it's the validator. `validator.Validate(projectDir)` runs before the TUI and checks:
+If ralph-tui refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
 
 - `ralph-steps.json` exists and parses
 - Every step has valid schema (`name`, `isClaude`, required fields per type)

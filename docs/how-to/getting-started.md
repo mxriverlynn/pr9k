@@ -55,15 +55,15 @@ To check which version you are running without launching the workflow:
 
 `-v` is accepted as a short alias. See [Versioning](../coding-standards/versioning.md) for the repo's semver rules.
 
-## Pointing at a different project
+## Pointing at a different workflow bundle
 
-If your pr9k install lives somewhere other than the current directory's resolved binary path — for example, if you're testing a feature branch of ralph-tui itself — pass `-p` to override the project directory:
+If your pr9k install lives somewhere other than the current directory's resolved binary path — for example, if you're testing a feature branch of ralph-tui itself — pass `--workflow-dir` to override the workflow directory:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui -p /path/to/pr9k
+/path/to/pr9k/bin/ralph-tui --workflow-dir /path/to/pr9k/bin
 ```
 
-The project directory is where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is always the current working directory when you launch ralph-tui.
+The workflow directory is where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch ralph-tui (or can be overridden with `--project-dir`).
 
 ## What the TUI shows on first run
 
