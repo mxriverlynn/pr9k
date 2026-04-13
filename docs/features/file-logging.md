@@ -8,7 +8,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ## Overview
 
-- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.log` under the project directory
+- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.log` under the working directory (the user's shell CWD at startup)
 - Each line is prefixed with a timestamp, optional iteration context, and step name
 - Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines
 - Uses `bufio.Writer` for buffered I/O with explicit flush on close
@@ -71,8 +71,8 @@ type Logger struct {
 `NewLogger` creates the `logs/` directory if needed and opens a timestamped log file:
 
 ```go
-func NewLogger(projectDir string) (*Logger, error) {
-    logsDir := filepath.Join(projectDir, "logs")
+func NewLogger(workingDir string) (*Logger, error) {
+    logsDir := filepath.Join(workingDir, "logs")
     if err := os.MkdirAll(logsDir, 0o700); err != nil {
         return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
     }
@@ -167,7 +167,7 @@ func (l *Logger) Close() error {
 
 - [Architecture Overview](../architecture.md) — Data flow showing logger alongside the `sendLine` streaming path
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How scanner goroutines write to the logger
-- [CLI & Configuration](cli-configuration.md) — How ProjectDir determines the log file location
+- [CLI & Configuration](cli-configuration.md) — How the working directory is captured at startup and governs the log file location
 - [Workflow Orchestration](workflow-orchestration.md) — Where log context (iteration number) is set during the run loop
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected shared writers
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for bufio.Writer error surfacing and package-prefixed errors

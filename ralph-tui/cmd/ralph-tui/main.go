@@ -28,7 +28,58 @@ func stepNames(ss []steps.Step) []string {
 	return names
 }
 
+// services bundles the dependencies wired from cfg and the captured working
+// directory. Split out so tests can verify each constructor receives the
+// correct dir (logger/runner bound to workingDir; steps/validator bound to
+// cfg.ProjectDir).
+type services struct {
+	log      *logger.Logger
+	runner   *workflow.Runner
+	stepFile steps.StepFile
+}
+
+// newServices wires the logger, runner, and step file. workingDir is the
+// shell CWD captured at startup and governs subprocess cmd.Dir and log file
+// location. cfg.ProjectDir is the install dir (where ralph-steps.json,
+// scripts/, prompts/ live). On validation failure, errors are written to
+// stderr and ok=false is returned.
+func newServices(cfg *cli.Config, workingDir string) (s *services, ok bool) {
+	log, err := logger.NewLogger(workingDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return nil, false
+	}
+
+	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_ = log.Close()
+		return nil, false
+	}
+
+	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
+		for _, ve := range validationErrs {
+			fmt.Fprintln(os.Stderr, ve.Error())
+		}
+		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
+		_ = log.Close()
+		return nil, false
+	}
+
+	return &services{
+		log:      log,
+		runner:   workflow.NewRunner(log, workingDir),
+		stepFile: stepFile,
+	}, true
+}
+
 func main() {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "main: could not resolve working dir: %v\n", err)
+		os.Exit(1)
+	}
+
 	cfg, err := cli.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
@@ -38,29 +89,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	log, err := logger.NewLogger(cfg.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	svc, ok := newServices(cfg, workingDir)
+	if !ok {
 		os.Exit(1)
 	}
-
-	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		_ = log.Close()
-		os.Exit(1)
-	}
-
-	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
-		for _, ve := range validationErrs {
-			fmt.Fprintln(os.Stderr, ve.Error())
-		}
-		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
-		_ = log.Close()
-		os.Exit(1)
-	}
-
-	runner := workflow.NewRunner(log, cfg.ProjectDir)
+	log := svc.log
+	stepFile := svc.stepFile
+	runner := svc.runner
 
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
