@@ -71,6 +71,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
 - [`docs/features/config-validation.md`](docs/features/config-validation.md) — D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules A/B/C, and structured error collection
 - [`docs/features/sandbox.md`](docs/features/sandbox.md) — Docker sandbox package: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
+- [`docs/features/preflight.md`](docs/features/preflight.md) — Preflight package: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 
 ## ADRs
 
