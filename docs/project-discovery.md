@@ -48,7 +48,7 @@
 ### Commands and Tests
 
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
-- Run: `./bin/ralph-tui [-n <iterations>] [-p <project-dir>]` (omit `-n` for until-done mode)
+- Run: `./bin/ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]` (omit `-n` for until-done mode)
 - Test: `make test` or `cd ralph-tui && go test -race ./...`
 - Lint: `make lint` (requires golangci-lint)
 - Format check: `make format`
@@ -56,7 +56,7 @@
 - Vulnerability check: `make vulncheck` (requires govulncheck)
 - CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`
+- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`, `internal/sandbox/`, `internal/preflight/`
 
 ### Configuration
 

@@ -4,7 +4,7 @@ This guide explains how to create and modify workflow step sequences in ralph-tu
 
 ## Step Configuration Files
 
-Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the project directory). This file contains three groups:
+Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the workflow directory). This file contains three groups:
 
 - **`initialize`** — Steps run once before the iteration loop begins
 - **`iteration`** — Steps run once per issue
@@ -25,6 +25,7 @@ Each step object has the following fields:
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
 | `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
 | `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
+| `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../features/config-validation.md) for allowed names) |
 
 ## Claude Steps
 
@@ -46,7 +47,7 @@ The prompt content is read from `prompts/<promptFile>` and all `{{VAR_NAME}}` to
 
 A shell command step runs an arbitrary command as a subprocess. The `command` field is an argv array — the first element is the executable, the rest are arguments.
 
-Relative paths containing a `/` separator are resolved against the project directory. Bare commands (like `git`) are looked up via `PATH`. Template variables like `{{ISSUE_ID}}` are replaced with actual values at runtime (see [Variable Output & Injection](variable-output-and-injection.md)).
+Relative paths containing a `/` separator are resolved against the workflow directory. Bare commands (like `git`) are looked up via `PATH`. Template variables like `{{ISSUE_ID}}` are replaced with actual values at runtime (see [Variable Output & Injection](variable-output-and-injection.md)).
 
 ### Example: Shell command steps
 
@@ -64,7 +65,7 @@ Relative paths containing a `/` separator are resolved against the project direc
 
 **Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
 
-**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
+**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ## The Default Workflow
 
@@ -117,7 +118,7 @@ Place scripts in the `scripts/` directory. Reference them with a relative path i
 {"name": "Deploy", "isClaude": false, "command": ["scripts/deploy", "{{ISSUE_ID}}"]}
 ```
 
-The orchestrator resolves `scripts/deploy` to `{projectDir}/scripts/deploy` before execution.
+The orchestrator resolves `scripts/deploy` to `{workflowDir}/scripts/deploy` before execution.
 
 ### 4. Build and run
 

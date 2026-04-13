@@ -17,7 +17,8 @@ The `VarTable` is created at the start of `Run` and carries two categories of va
 
   | Variable | Value |
   |----------|-------|
-  | `PROJECT_DIR` | Resolved project directory path |
+  | `WORKFLOW_DIR` | Resolved workflow (install) directory path |
+  | `PROJECT_DIR` | Resolved project (target repo) directory path |
   | `MAX_ITER` | Value of `--iterations` flag (0 = unbounded) |
   | `ITER` | Current iteration number (1-based) |
   | `STEP_NUM` | Current step number within the phase |
@@ -65,11 +66,11 @@ At runtime with issue `42`, this resolves to:
 ["{projectDir}/scripts/close_gh_issue", "42"]
 ```
 
-Note that the relative script path `scripts/close_gh_issue` is also resolved to an absolute path against the project directory. Bare commands like `git` are not modified.
+Note that the relative script path `scripts/close_gh_issue` is also resolved to an absolute path against the workflow directory. Bare commands like `git` are not modified.
 
 ### Finalization steps
 
-Finalization steps run after all iterations complete. Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible during the finalize phase — using them in a finalize step will log a warning and substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
+Finalization steps run after all iterations complete. Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible during the finalize phase — using them in a finalize step will log a warning and substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ### Escape sequences
 

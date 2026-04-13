@@ -215,7 +215,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Config Validation](features/config-validation.md)
 
-Validates `ralph-steps.json` against all eight D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules A/B/C (captureAs on Claude steps, host-path tokens in prompts, and captureAs+host-path in commands). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules A/B/C (captureAs on Claude steps, host-path tokens in prompts, and captureAs+host-path in commands). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
@@ -224,6 +224,12 @@ Validates `ralph-steps.json` against all eight D13 categories in a single pass, 
 The `internal/sandbox` package constructs the `docker run` argv that wraps every Claude step, manages the container ID file (cidfile) lifecycle, and provides a terminator closure that signals the running container on shutdown. `BuildRunArgs` is a pure function (uid/gid as parameters) that emits `--mount type=bind,...` mounts for the target repo and Claude profile directory, an env passthrough with deduplication and set-on-host filtering, and the claude invocation flags. `BuiltinEnvAllowlist` names five env vars always included in the passthrough. `Path()`/`Cleanup()` reserve and clean up the cidfile path. `NewTerminator` returns a closure that polls the cidfile for the container ID, delivers `docker kill --signal` to the container, and falls back to signaling the docker CLI process if the container never started.
 
 **Package:** `internal/sandbox/`
+
+### [Preflight Checks](features/preflight.md)
+
+Startup validation that runs before the main orchestration loop. Resolves and validates the Claude profile directory (`ResolveProfileDir` / `CheckProfileDir`), checks for Docker binary availability, daemon reachability, and sandbox image presence via the injectable `Prober` interface, and verifies the credentials file is non-empty (`CheckCredentials`). All checks are collected before returning (collect-all-errors via `Run`) so the caller sees the full list of failures in one pass. `RealProber` uses `exec.CommandContext` with a 10-second timeout for each Docker probe to guard against a frozen daemon.
+
+**Package:** `internal/preflight/`
 
 ## Package Dependency Graph
 
