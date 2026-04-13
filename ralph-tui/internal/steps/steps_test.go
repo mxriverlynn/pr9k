@@ -394,7 +394,7 @@ func makeTempProjectWithPrompt(t *testing.T, filename, content string) string {
 func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "do the thing\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {
@@ -410,7 +410,7 @@ func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 func TestBuildPrompt_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	step := steps.Step{PromptFile: "missing.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -422,7 +422,7 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	dir := t.TempDir()
 	// No prompts/ subdirectory — file will not exist
 	step := steps.Step{PromptFile: "missing.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -446,7 +446,7 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := steps.Step{PromptFile: ""}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -457,7 +457,7 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "implement issue {{ISSUE_ID}}\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 
@@ -475,7 +475,7 @@ func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
 func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "value: {{UNKNOWN}}\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {

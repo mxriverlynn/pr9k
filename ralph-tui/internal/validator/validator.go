@@ -62,23 +62,24 @@ type vFile struct {
 // reservedBuiltins is the set of built-in variable names that captureAs bindings
 // must not shadow.
 var reservedBuiltins = map[string]bool{
-	"PROJECT_DIR": true,
-	"MAX_ITER":    true,
-	"ITER":        true,
-	"STEP_NUM":    true,
-	"STEP_COUNT":  true,
-	"STEP_NAME":   true,
+	"WORKFLOW_DIR": true,
+	"PROJECT_DIR":  true,
+	"MAX_ITER":     true,
+	"ITER":         true,
+	"STEP_NUM":     true,
+	"STEP_COUNT":   true,
+	"STEP_NAME":    true,
 }
 
-// Validate loads ralph-steps.json from projectDir and validates all D13
+// Validate loads ralph-steps.json from workflowDir and validates all D13
 // categories. It returns all errors found; an empty slice means valid.
 // Validation collects every error before returning — it does not stop at the
 // first failure.
-func Validate(projectDir string) []Error {
+func Validate(workflowDir string) []Error {
 	var errs []Error
 
 	// Category 1 — file presence.
-	path := filepath.Join(projectDir, "ralph-steps.json")
+	path := filepath.Join(workflowDir, "ralph-steps.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []Error{cfgErr("file", "config", "", fmt.Sprintf("could not read %s: %v", path, err))}
@@ -113,19 +114,20 @@ func Validate(projectDir string) []Error {
 		return errs
 	}
 
-	// Build the initialize-phase scope: PROJECT_DIR, MAX_ITER, STEP_NUM,
-	// STEP_COUNT, STEP_NAME.  ITER is deliberately excluded — it is a
+	// Build the initialize-phase scope: WORKFLOW_DIR, PROJECT_DIR, MAX_ITER,
+	// STEP_NUM, STEP_COUNT, STEP_NAME.  ITER is deliberately excluded — it is a
 	// validation error if any initialize or finalize step references it.
 	initScope := map[string]bool{
-		"PROJECT_DIR": true,
-		"MAX_ITER":    true,
-		"STEP_NUM":    true,
-		"STEP_COUNT":  true,
-		"STEP_NAME":   true,
+		"WORKFLOW_DIR": true,
+		"PROJECT_DIR":  true,
+		"MAX_ITER":     true,
+		"STEP_NUM":     true,
+		"STEP_COUNT":   true,
+		"STEP_NAME":    true,
 	}
 
 	// Validate initialize; collect captureAs names for the persistent scope.
-	initCaptures := validatePhase(projectDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs)
+	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs)
 
 	// Persistent scope = initialize seeds + all captureAs from initialize.
 	persistentScope := copyScope(initScope)
@@ -137,10 +139,10 @@ func Validate(projectDir string) []Error {
 	iterScope := copyScope(persistentScope)
 	iterScope["ITER"] = true
 
-	validatePhase(projectDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs)
+	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs)
 
 	// Finalize scope = persistent only (no ITER, no iteration captures).
-	validatePhase(projectDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs)
+	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs)
 
 	return errs
 }
@@ -148,7 +150,7 @@ func Validate(projectDir string) []Error {
 // validatePhase validates all steps in one phase and returns the captureAs names
 // introduced by that phase (for persistent scope building).
 func validatePhase(
-	projectDir string,
+	workflowDir string,
 	phase vars.Phase,
 	phaseName string,
 	steps []vStep,
@@ -242,13 +244,13 @@ func validatePhase(
 		// Category 4 — referenced files must exist.
 		if step.IsClaude != nil {
 			if isClaude && step.PromptFile != "" {
-				promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+				promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
 				if _, err := os.Stat(promptPath); err != nil {
 					*errs = append(*errs, at("file", fmt.Sprintf("prompt file %q not found", step.PromptFile)))
 				}
 			}
 			if !isClaude && len(step.Command) > 0 {
-				if msg := validateCommandPath(projectDir, step.Command[0]); msg != "" {
+				if msg := validateCommandPath(workflowDir, step.Command[0]); msg != "" {
 					*errs = append(*errs, at("file", msg))
 				}
 			}
@@ -256,7 +258,7 @@ func validatePhase(
 
 		// Category 5 — variable references must be in scope.
 		if step.IsClaude != nil {
-			refs := extractStepRefs(projectDir, step, isClaude)
+			refs := extractStepRefs(workflowDir, step, isClaude)
 			for _, ref := range refs {
 				if !scope[ref] {
 					*errs = append(*errs, at("variable", fmt.Sprintf("unresolved variable reference {{%s}}", ref)))
@@ -282,16 +284,16 @@ func validatePhase(
 }
 
 // validateCommandPath checks that cmd (command[0]) is resolvable.
-// A path containing "/" is treated as relative (resolved under projectDir) or
+// A path containing "/" is treated as relative (resolved under workflowDir) or
 // absolute.  A bare name is looked up via exec.LookPath.
-func validateCommandPath(projectDir, cmd string) string {
+func validateCommandPath(workflowDir, cmd string) string {
 	// Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
 	if strings.Contains(cmd, "/") {
 		var resolved string
 		if filepath.IsAbs(cmd) {
 			resolved = cmd
 		} else {
-			resolved = filepath.Join(projectDir, cmd)
+			resolved = filepath.Join(workflowDir, cmd)
 		}
 		if _, err := os.Stat(resolved); err != nil {
 			return fmt.Sprintf("command %q not found at %s", cmd, resolved)
@@ -308,12 +310,12 @@ func validateCommandPath(projectDir, cmd string) string {
 // the step's prompt file (for claude steps) or command arguments (for non-claude
 // steps).  If the prompt file cannot be read, nil is returned — a missing file
 // is already reported by category 4.
-func extractStepRefs(projectDir string, step vStep, isClaude bool) []string {
+func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 	if isClaude {
 		if step.PromptFile == "" {
 			return nil
 		}
-		data, err := os.ReadFile(filepath.Join(projectDir, "prompts", step.PromptFile))
+		data, err := os.ReadFile(filepath.Join(workflowDir, "prompts", step.PromptFile))
 		if err != nil {
 			return nil
 		}

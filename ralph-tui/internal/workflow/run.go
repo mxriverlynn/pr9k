@@ -15,6 +15,7 @@ import (
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
+	ProjectDir() string
 }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
@@ -29,7 +30,7 @@ type RunHeader interface {
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-	ProjectDir      string
+	WorkflowDir     string
 	Iterations      int
 	InitializeSteps []steps.Step
 	Steps           []steps.Step
@@ -73,7 +74,7 @@ type RunResult struct {
 // Run is the main orchestration goroutine. It drives three config-defined phases
 // — initialize, iteration loop, finalize — via VarTable-based substitution.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
-	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+	vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
 
 	logWidth := cfg.LogWidth
 	if logWidth <= 0 {
@@ -120,7 +121,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
-		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Initialize)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
 			continue
@@ -161,7 +162,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		breakOuter := false
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
-			resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Iteration)
+			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
 				breakOuter = true
@@ -209,7 +210,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
-		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Finalize)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
@@ -232,9 +233,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 // buildStep resolves a single step into a runnable ResolvedStep using vt for
 // {{VAR}} substitution in the given phase.
-func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
 	if s.IsClaude {
-		prompt, err := steps.BuildPrompt(projectDir, s, vt, phase)
+		prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
 		if err != nil {
 			return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
 		}
@@ -245,19 +246,19 @@ func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Ph
 	}
 	return ui.ResolvedStep{
 		Name:    s.Name,
-		Command: ResolveCommand(projectDir, s.Command, vt, phase),
+		Command: ResolveCommand(workflowDir, s.Command, vt, phase),
 	}, nil
 }
 
 // ResolveCommand substitutes {{VAR}} tokens in each command element using vt
-// and resolves relative script paths against projectDir.
+// and resolves relative script paths against workflowDir.
 //
 // For each element:
 //   - All {{VAR_NAME}} tokens are replaced using the substitution engine.
-//   - The first element (the executable) is resolved relative to projectDir if
+//   - The first element (the executable) is resolved relative to workflowDir if
 //     it is a relative path containing a path separator (i.e. not a bare
 //     command like "git").
-func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+func ResolveCommand(workflowDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
 	if len(command) == 0 {
 		return command
 	}
@@ -275,7 +276,7 @@ func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phas
 	// Resolve the executable if it looks like a relative script path.
 	exe := result[0]
 	if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
-		result[0] = filepath.Join(projectDir, exe)
+		result[0] = filepath.Join(workflowDir, exe)
 	}
 
 	return result

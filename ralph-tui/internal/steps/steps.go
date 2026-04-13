@@ -31,9 +31,9 @@ type StepFile struct {
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,
-// resolved relative to projectDir.
-func LoadSteps(projectDir string) (StepFile, error) {
-	path := filepath.Join(projectDir, "ralph-steps.json")
+// resolved relative to workflowDir.
+func LoadSteps(workflowDir string) (StepFile, error) {
+	path := filepath.Join(workflowDir, "ralph-steps.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return StepFile{}, fmt.Errorf("steps: could not read %s: %w", path, err)
@@ -49,11 +49,11 @@ func LoadSteps(projectDir string) (StepFile, error) {
 
 // BuildPrompt reads the prompt file for the given step, substitutes {{VAR}}
 // tokens using vt and phase, and returns the result.
-func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
+func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
 	if step.PromptFile == "" {
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
-	promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+	promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)

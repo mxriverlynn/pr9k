@@ -211,11 +211,11 @@ func TestRunStep_AllLinesArrivedBeforeCmdWait(t *testing.T) {
 	_ = log.Close()
 }
 
-// TestRunStep_UsesWorkingDir verifies RunStep sets cmd.Dir to the runner's
-// workingDir (shell CWD), not the install dir. Mirrors the equivalent test
+// TestRunStep_UsesProjectDir verifies RunStep sets cmd.Dir to the runner's
+// projectDir (target repo), not the install dir. Mirrors the equivalent test
 // for CaptureOutput.
-func TestRunStep_UsesWorkingDir(t *testing.T) {
-	workingDir := t.TempDir()
+func TestRunStep_UsesProjectDir(t *testing.T) {
+	projectDir := t.TempDir()
 	logDir := t.TempDir()
 	log, err := logger.NewLogger(logDir)
 	if err != nil {
@@ -223,7 +223,7 @@ func TestRunStep_UsesWorkingDir(t *testing.T) {
 	}
 	defer func() { _ = log.Close() }()
 
-	r := NewRunner(log, workingDir)
+	r := NewRunner(log, projectDir)
 	var mu sync.Mutex
 	var captured []string
 	r.SetSender(func(line string) {
@@ -236,7 +236,7 @@ func TestRunStep_UsesWorkingDir(t *testing.T) {
 		t.Fatalf("RunStep: %v", err)
 	}
 
-	wantDir, _ := filepath.EvalSymlinks(workingDir)
+	wantDir, _ := filepath.EvalSymlinks(projectDir)
 	mu.Lock()
 	defer mu.Unlock()
 	found := false
@@ -499,18 +499,18 @@ func TestCaptureOutput_ReturnsErrorForNilCommand(t *testing.T) {
 }
 
 // newIterVT creates a VarTable in Iteration phase with ISSUE_ID bound.
-func newIterVT(projectDir, issueID string) *vars.VarTable {
-	vt := vars.New(projectDir, 0)
+func newIterVT(workflowDir, issueID string) *vars.VarTable {
+	vt := vars.New(workflowDir, workflowDir, 0)
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Iteration, "ISSUE_ID", issueID)
 	return vt
 }
 
 func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
-	projectDir := "/home/user/project"
+	workflowDir := "/home/user/project"
 	cmd := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
-	vt := newIterVT(projectDir, "42")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "42")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	want := []string{"/home/user/project/scripts/close_gh_issue", "42"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -523,10 +523,10 @@ func TestResolveCommand_ScriptPathAndIssueID(t *testing.T) {
 }
 
 func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
-	projectDir := "/home/user/project"
+	workflowDir := "/home/user/project"
 	cmd := []string{"git", "push"}
-	vt := newIterVT(projectDir, "99")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "99")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	want := []string{"git", "push"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -539,10 +539,10 @@ func TestResolveCommand_BareCommandPassthrough(t *testing.T) {
 }
 
 func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
-	projectDir := "/proj"
+	workflowDir := "/proj"
 	cmd := []string{"scripts/foo", "{{ISSUE_ID}}", "--label={{ISSUE_ID}}"}
-	vt := newIterVT(projectDir, "7")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "7")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	want := []string{"/proj/scripts/foo", "7", "--label=7"}
 	if len(got) != len(want) {
 		t.Fatalf("len mismatch: got %v, want %v", got, want)
@@ -555,10 +555,10 @@ func TestResolveCommand_MultipleIssueIDOccurrences(t *testing.T) {
 }
 
 func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
-	projectDir := "/base"
+	workflowDir := "/base"
 	cmd := []string{"scripts/foo", "arg"}
-	vt := newIterVT(projectDir, "1")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "1")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	wantExe := "/base/scripts/foo"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
@@ -566,10 +566,10 @@ func TestResolveCommand_RelativeScriptPathResolved(t *testing.T) {
 }
 
 func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
-	projectDir := "/proj"
+	workflowDir := "/proj"
 	cmd := []string{"/usr/bin/env", "{{ISSUE_ID}}"}
-	vt := newIterVT(projectDir, "3")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "3")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	if got[0] != "/usr/bin/env" {
 		t.Errorf("exe: got %q, want /usr/bin/env", got[0])
 	}
@@ -579,10 +579,10 @@ func TestResolveCommand_AbsolutePathUnchanged(t *testing.T) {
 }
 
 func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
-	projectDir := "/proj"
+	workflowDir := "/proj"
 	cmd := []string{"git", "commit", "-m", "fix things"}
-	vt := newIterVT(projectDir, "10")
-	got := ResolveCommand(projectDir, cmd, vt, vars.Iteration)
+	vt := newIterVT(workflowDir, "10")
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
 	want := []string{"git", "commit", "-m", "fix things"}
 	for i := range want {
 		if got[i] != want[i] {
@@ -592,8 +592,8 @@ func TestResolveCommand_NoTemplateVars_Passthrough(t *testing.T) {
 }
 
 func TestResolveCommand_EmptySlice(t *testing.T) {
-	vt := newIterVT("/proj", "42")
-	got := ResolveCommand("/proj", []string{}, vt, vars.Iteration)
+	vt := newIterVT("/workflow", "42")
+	got := ResolveCommand("/workflow", []string{}, vt, vars.Iteration)
 	if len(got) != 0 {
 		t.Errorf("expected empty slice, got %v", got)
 	}
@@ -603,8 +603,8 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 	original := []string{"scripts/close_gh_issue", "{{ISSUE_ID}}"}
 	input := make([]string, len(original))
 	copy(input, original)
-	vt := newIterVT("/proj", "42")
-	ResolveCommand("/proj", input, vt, vars.Iteration)
+	vt := newIterVT("/workflow", "42")
+	ResolveCommand("/workflow", input, vt, vars.Iteration)
 	for i := range original {
 		if input[i] != original[i] {
 			t.Errorf("input[%d] mutated: got %q, want %q", i, input[i], original[i])
@@ -614,19 +614,49 @@ func TestResolveCommand_DoesNotMutateInput(t *testing.T) {
 
 func TestResolveCommand_TemplateInExecutable(t *testing.T) {
 	cmd := []string{"scripts/issue-{{ISSUE_ID}}/run", "arg"}
-	vt := newIterVT("/proj", "5")
-	got := ResolveCommand("/proj", cmd, vt, vars.Iteration)
-	wantExe := "/proj/scripts/issue-5/run"
+	vt := newIterVT("/workflow", "5")
+	got := ResolveCommand("/workflow", cmd, vt, vars.Iteration)
+	wantExe := "/workflow/scripts/issue-5/run"
 	if got[0] != wantExe {
 		t.Errorf("exe: got %q, want %q", got[0], wantExe)
 	}
 }
 
 func TestResolveCommand_SingleElementBareCommand(t *testing.T) {
-	vt := newIterVT("/proj", "1")
-	got := ResolveCommand("/proj", []string{"git"}, vt, vars.Iteration)
+	vt := newIterVT("/workflow", "1")
+	got := ResolveCommand("/workflow", []string{"git"}, vt, vars.Iteration)
 	if got[0] != "git" {
 		t.Errorf("exe: got %q, want %q", got[0], "git")
+	}
+}
+
+// TestResolveCommand_UsesWorkflowDir verifies that a relative script path is
+// joined against workflowDir (the install dir), NOT the projectDir (target repo).
+// This guards against confusion where scripts live in the workflow bundle but
+// claude subprocesses operate on the target repo.
+func TestResolveCommand_UsesWorkflowDir(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+
+	// Create the script in workflowDir, not projectDir, so a wrong join would fail.
+	scriptsDir := filepath.Join(workflowDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := []string{"scripts/my-script", "arg"}
+	vt := vars.New(workflowDir, projectDir, 0)
+	vt.SetPhase(vars.Iteration)
+
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
+
+	wantExe := filepath.Join(workflowDir, "scripts/my-script")
+	if got[0] != wantExe {
+		t.Errorf("ResolveCommand should join against workflowDir: got %q, want %q", got[0], wantExe)
+	}
+	// Confirm the resolved path does NOT start with projectDir.
+	if strings.HasPrefix(got[0], projectDir) {
+		t.Errorf("ResolveCommand must not join against projectDir: got %q", got[0])
 	}
 }
 

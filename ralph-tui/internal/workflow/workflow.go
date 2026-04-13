@@ -21,7 +21,7 @@ import (
 type Runner struct {
 	mu         sync.Mutex
 	log        *logger.Logger
-	workingDir string
+	projectDir string
 	sendLine   func(string) // callback invoked for every forwarded line; never nil
 
 	// processMu guards currentProc, procDone, and terminated.
@@ -37,22 +37,28 @@ type Runner struct {
 }
 
 // NewRunner creates a Runner that streams subprocess output through the sendLine
-// callback (set via SetSender) and to the file logger. workingDir is set as
-// cmd.Dir for every subprocess and must be the user's shell CWD (the target
-// repo being operated on), not the install dir where ralph-tui's bundled
-// ralph-steps.json, scripts/, and prompts/ live.
+// callback (set via SetSender) and to the file logger. projectDir is set as
+// cmd.Dir for every subprocess and must be the target repository being operated
+// on, not the install dir where ralph-tui's bundled ralph-steps.json, scripts/,
+// and prompts/ live.
 //
 // NewRunner initializes sendLine to a sentinel that panics with a descriptive
 // message so that missing-wire bugs (forgetting to call SetSender before
 // RunStep) fail loudly rather than silently dropping all output.
-func NewRunner(log *logger.Logger, workingDir string) *Runner {
+func NewRunner(log *logger.Logger, projectDir string) *Runner {
 	return &Runner{
 		log:        log,
-		workingDir: workingDir,
+		projectDir: projectDir,
 		sendLine: func(string) {
 			panic("workflow.Runner: sendLine not set — call SetSender before running steps")
 		},
 	}
+}
+
+// ProjectDir returns the target repository directory set for this runner.
+// Subprocesses run with cmd.Dir set to this path.
+func (r *Runner) ProjectDir() string {
+	return r.projectDir
 }
 
 // SetSender installs a callback that is invoked for every line forwarded
@@ -123,7 +129,7 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	r.processMu.Unlock()
 
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = r.workingDir
+	cmd.Dir = r.projectDir
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -242,7 +248,7 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 		return "", fmt.Errorf("workflow: CaptureOutput: empty command")
 	}
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = r.workingDir
+	cmd.Dir = r.projectDir
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }

@@ -59,55 +59,55 @@ func writeMinimalStepFile(t *testing.T, dir string) {
 	}
 }
 
-// TestNewServices_BindsLoggerAndRunnerToWorkingDir verifies that newServices
-// wires the logger and runner to workingDir, not to cfg.ProjectDir. This
-// guards against reintroducing the bug where subprocess cmd.Dir and log
-// output were mistakenly bound to the install dir.
-func TestNewServices_BindsLoggerAndRunnerToWorkingDir(t *testing.T) {
-	installDir := t.TempDir()
-	workingDir := t.TempDir()
-	writeMinimalStepFile(t, installDir)
+// TestNewServices_BindsLoggerAndRunnerToProjectDir verifies that newServices
+// wires the logger and runner to projectDir (target repo), not to cfg.WorkflowDir
+// (install dir). This guards against reintroducing the bug where subprocess
+// cmd.Dir and log output were mistakenly bound to the install dir.
+func TestNewServices_BindsLoggerAndRunnerToProjectDir(t *testing.T) {
+	workflowDir := t.TempDir() // install dir: holds ralph-steps.json, scripts/, prompts/
+	projectDir := t.TempDir()  // target repo: subprocess cmd.Dir and log location
+	writeMinimalStepFile(t, workflowDir)
 
-	cfg := &cli.Config{ProjectDir: installDir}
-	svc, ok := newServices(cfg, workingDir)
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	svc, ok := newServices(cfg, projectDir)
 	if !ok {
 		t.Fatal("newServices returned ok=false")
 	}
 	defer func() { _ = svc.log.Close() }()
 
-	// Logger creates logs/ under workingDir, not installDir.
-	if _, err := os.Stat(filepath.Join(workingDir, "logs")); err != nil {
-		t.Errorf("expected logs/ under workingDir, got error: %v", err)
+	// Logger creates logs/ under projectDir (target repo), not workflowDir (install dir).
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); err != nil {
+		t.Errorf("expected logs/ under projectDir, got error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(installDir, "logs")); !os.IsNotExist(err) {
-		t.Errorf("logs/ should NOT exist under installDir; Stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(workflowDir, "logs")); !os.IsNotExist(err) {
+		t.Errorf("logs/ should NOT exist under workflowDir; Stat err=%v", err)
 	}
 
-	// Runner subprocess cmd.Dir is workingDir, not installDir.
+	// Runner subprocess cmd.Dir is projectDir (target repo), not workflowDir.
 	out, err := svc.runner.CaptureOutput([]string{"sh", "-c", "pwd"})
 	if err != nil {
 		t.Fatalf("CaptureOutput: %v", err)
 	}
-	wantDir, _ := filepath.EvalSymlinks(workingDir)
+	wantDir, _ := filepath.EvalSymlinks(projectDir)
 	gotDir, _ := filepath.EvalSymlinks(out)
 	if gotDir != wantDir {
 		t.Errorf("runner cmd.Dir: want %q, got %q", wantDir, gotDir)
 	}
 }
 
-// TestNewServices_LoadsStepsFromProjectDir verifies that newServices reads
-// ralph-steps.json from cfg.ProjectDir (install dir), not workingDir.
-func TestNewServices_LoadsStepsFromProjectDir(t *testing.T) {
-	installDir := t.TempDir()
-	workingDir := t.TempDir()
-	writeMinimalStepFile(t, installDir)
-	// Deliberately do NOT write ralph-steps.json in workingDir: if the wiring
+// TestNewServices_LoadsStepsFromWorkflowDir verifies that newServices reads
+// ralph-steps.json from cfg.WorkflowDir (install dir), not projectDir (target repo).
+func TestNewServices_LoadsStepsFromWorkflowDir(t *testing.T) {
+	workflowDir := t.TempDir() // install dir with step definitions
+	projectDir := t.TempDir()  // target repo — deliberately no ralph-steps.json here
+	writeMinimalStepFile(t, workflowDir)
+	// Deliberately do NOT write ralph-steps.json in projectDir: if the wiring
 	// is wrong, LoadSteps will fail.
 
-	cfg := &cli.Config{ProjectDir: installDir}
-	svc, ok := newServices(cfg, workingDir)
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	svc, ok := newServices(cfg, projectDir)
 	if !ok {
-		t.Fatal("newServices returned ok=false; ralph-steps.json should have been loaded from ProjectDir")
+		t.Fatal("newServices returned ok=false; ralph-steps.json should have been loaded from WorkflowDir")
 	}
 	_ = svc.log.Close()
 }

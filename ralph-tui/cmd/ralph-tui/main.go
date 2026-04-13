@@ -28,36 +28,36 @@ func stepNames(ss []steps.Step) []string {
 	return names
 }
 
-// services bundles the dependencies wired from cfg and the captured working
+// services bundles the dependencies wired from cfg and the resolved project
 // directory. Split out so tests can verify each constructor receives the
-// correct dir (logger/runner bound to workingDir; steps/validator bound to
-// cfg.ProjectDir).
+// correct dir (logger/runner bound to projectDir; steps/validator bound to
+// cfg.WorkflowDir).
 type services struct {
 	log      *logger.Logger
 	runner   *workflow.Runner
 	stepFile steps.StepFile
 }
 
-// newServices wires the logger, runner, and step file. workingDir is the
-// shell CWD captured at startup and governs subprocess cmd.Dir and log file
-// location. cfg.ProjectDir is the install dir (where ralph-steps.json,
+// newServices wires the logger, runner, and step file. projectDir is the
+// target repository directory and governs subprocess cmd.Dir and log file
+// location. cfg.WorkflowDir is the install dir (where ralph-steps.json,
 // scripts/, prompts/ live). On validation failure, errors are written to
 // stderr and ok=false is returned.
-func newServices(cfg *cli.Config, workingDir string) (s *services, ok bool) {
-	log, err := logger.NewLogger(workingDir)
+func newServices(cfg *cli.Config, projectDir string) (s *services, ok bool) {
+	log, err := logger.NewLogger(projectDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return nil, false
 	}
 
-	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
+	stepFile, err := steps.LoadSteps(cfg.WorkflowDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		_ = log.Close()
 		return nil, false
 	}
 
-	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
+	if validationErrs := validator.Validate(cfg.WorkflowDir); len(validationErrs) > 0 {
 		for _, ve := range validationErrs {
 			fmt.Fprintln(os.Stderr, ve.Error())
 		}
@@ -68,18 +68,12 @@ func newServices(cfg *cli.Config, workingDir string) (s *services, ok bool) {
 
 	return &services{
 		log:      log,
-		runner:   workflow.NewRunner(log, workingDir),
+		runner:   workflow.NewRunner(log, projectDir),
 		stepFile: stepFile,
 	}, true
 }
 
 func main() {
-	workingDir, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "main: could not resolve working dir: %v\n", err)
-		os.Exit(1)
-	}
-
 	cfg, err := cli.Execute()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
@@ -89,7 +83,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	svc, ok := newServices(cfg, workingDir)
+	svc, ok := newServices(cfg, cfg.ProjectDir)
 	if !ok {
 		os.Exit(1)
 	}
@@ -139,7 +133,7 @@ func main() {
 	}
 
 	runCfg := workflow.RunConfig{
-		ProjectDir:      cfg.ProjectDir,
+		WorkflowDir:     cfg.WorkflowDir,
 		Iterations:      cfg.Iterations,
 		InitializeSteps: stepFile.Initialize,
 		Steps:           stepFile.Iteration,

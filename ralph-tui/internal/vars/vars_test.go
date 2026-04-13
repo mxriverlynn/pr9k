@@ -8,21 +8,27 @@ import (
 
 // newTable is a test helper that creates a VarTable with fixed seeds.
 func newTable() *vars.VarTable {
-	return vars.New("/project", 5)
+	return vars.New("/workflow", "/project", 5)
 }
 
 // --- Built-in seeding ---
 
-func TestNew_seedsProjectDir(t *testing.T) {
-	vt := vars.New("/my/project", 3)
-	v, ok := vt.Get("PROJECT_DIR")
-	if !ok || v != "/my/project" {
-		t.Errorf("expected PROJECT_DIR=/my/project, got %q ok=%v", v, ok)
+func TestNew_SeedsBothBuiltins(t *testing.T) {
+	vt := vars.New("/my/workflow", "/my/project", 3)
+
+	w, wok := vt.Get("WORKFLOW_DIR")
+	if !wok || w != "/my/workflow" {
+		t.Errorf("expected WORKFLOW_DIR=/my/workflow, got %q ok=%v", w, wok)
+	}
+
+	p, pok := vt.Get("PROJECT_DIR")
+	if !pok || p != "/my/project" {
+		t.Errorf("expected PROJECT_DIR=/my/project, got %q ok=%v", p, pok)
 	}
 }
 
 func TestNew_seedsMaxIter(t *testing.T) {
-	vt := vars.New("/project", 10)
+	vt := vars.New("/workflow", "/project", 10)
 	v, ok := vt.Get("MAX_ITER")
 	if !ok || v != "10" {
 		t.Errorf("expected MAX_ITER=10, got %q ok=%v", v, ok)
@@ -30,7 +36,7 @@ func TestNew_seedsMaxIter(t *testing.T) {
 }
 
 func TestNew_maxIterZeroMeansUnbounded(t *testing.T) {
-	vt := vars.New("/project", 0)
+	vt := vars.New("/workflow", "/project", 0)
 	v, ok := vt.Get("MAX_ITER")
 	if !ok || v != "0" {
 		t.Errorf("expected MAX_ITER=0 for unbounded, got %q ok=%v", v, ok)
@@ -225,28 +231,28 @@ func TestResetIteration_preservesPersistentTable(t *testing.T) {
 }
 
 func TestResetIteration_preservesBuiltins(t *testing.T) {
-	vt := vars.New("/project", 7)
+	vt := vars.New("/workflow", "/project", 7)
 	vt.SetIteration(2)
 	vt.ResetIteration()
 
-	v, ok := vt.Get("PROJECT_DIR")
-	if !ok || v != "/project" {
-		t.Errorf("ResetIteration must not clear PROJECT_DIR; got %q ok=%v", v, ok)
+	cases := []struct{ key, want string }{
+		{"WORKFLOW_DIR", "/workflow"},
+		{"PROJECT_DIR", "/project"},
+		{"MAX_ITER", "7"},
+		{"ITER", "2"},
 	}
-	v, ok = vt.Get("MAX_ITER")
-	if !ok || v != "7" {
-		t.Errorf("ResetIteration must not clear MAX_ITER; got %q ok=%v", v, ok)
-	}
-	v, ok = vt.Get("ITER")
-	if !ok || v != "2" {
-		t.Errorf("ResetIteration must not clear ITER; got %q ok=%v", v, ok)
+	for _, c := range cases {
+		v, ok := vt.Get(c.key)
+		if !ok || v != c.want {
+			t.Errorf("ResetIteration must not clear %s; got %q ok=%v", c.key, v, ok)
+		}
 	}
 }
 
 // --- Reserved name collision ---
 
 func TestBind_panicOnReservedName(t *testing.T) {
-	reserved := []string{"PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"}
+	reserved := []string{"WORKFLOW_DIR", "PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"}
 	for _, name := range reserved {
 		t.Run(name, func(t *testing.T) {
 			vt := newTable()

@@ -470,7 +470,7 @@ func TestValidate_CaptureAsEmptyString(t *testing.T) {
 }
 
 func TestValidate_CaptureAsShadowsReservedName(t *testing.T) {
-	reserved := []string{"PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"}
+	reserved := []string{"WORKFLOW_DIR", "PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"}
 	for _, name := range reserved {
 		t.Run(name, func(t *testing.T) {
 			dir := tempProject(t)
