@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -203,6 +204,61 @@ func TestBuildRunArgs_FlagOrder(t *testing.T) {
 	}
 	if imageIdx > claudeIdx {
 		t.Errorf("ImageTag at %d must come before claude at %d", imageIdx, claudeIdx)
+	}
+}
+
+// TestBuildRunArgs_DoesNotMutateAllowlist verifies that BuildRunArgs does not
+// modify the envAllowlist slice passed by the caller (TP-001, mandatory per
+// docs/coding-standards/testing.md §input-slice-immutability).
+func TestBuildRunArgs_DoesNotMutateAllowlist(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+
+	allowlist := []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN"}
+	original := slices.Clone(allowlist)
+
+	_ = BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		allowlist, testModel, "prompt")
+
+	if !slices.Equal(allowlist, original) {
+		t.Errorf("BuildRunArgs mutated envAllowlist: before=%v after=%v", original, allowlist)
+	}
+}
+
+// TestBuildRunArgs_DeduplicatesPreservesFirstSeenOrder verifies that when
+// envAllowlist contains duplicate entries, the first occurrence determines
+// position in the output argv (TP-003).
+func TestBuildRunArgs_DeduplicatesPreservesFirstSeenOrder(t *testing.T) {
+	t.Setenv("A", "1")
+	t.Setenv("B", "2")
+
+	allowlist := []string{"A", "B", "A", "B"}
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		allowlist, testModel, "prompt")
+
+	idxA := indexOf(args, "A")
+	idxB := indexOf(args, "B")
+
+	if idxA < 0 {
+		t.Fatal("A not found in args")
+	}
+	if idxB < 0 {
+		t.Fatal("B not found in args")
+	}
+	if idxA >= idxB {
+		t.Errorf("expected A (first-seen) to appear before B: idxA=%d idxB=%d", idxA, idxB)
+	}
+}
+
+// TestHostUIDGID_MatchesOsGetuid verifies that HostUIDGID returns values
+// equal to os.Getuid() and os.Getgid() (TP-006).
+func TestHostUIDGID_MatchesOsGetuid(t *testing.T) {
+	uid, gid := HostUIDGID()
+
+	if uid != os.Getuid() {
+		t.Errorf("HostUIDGID uid=%d, want os.Getuid()=%d", uid, os.Getuid())
+	}
+	if gid != os.Getgid() {
+		t.Errorf("HostUIDGID gid=%d, want os.Getgid()=%d", gid, os.Getgid())
 	}
 }
 

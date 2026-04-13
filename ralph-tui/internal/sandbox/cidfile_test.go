@@ -86,6 +86,23 @@ func TestCleanup_RemovesExistingFile(t *testing.T) {
 	}
 }
 
+// TestCleanup_NonENOENTErrorPropagates verifies that Cleanup returns a non-nil
+// error when os.Remove fails for a reason other than ENOENT (TP-007).
+// A non-empty directory cannot be removed by os.Remove, triggering that path.
+func TestCleanup_NonENOENTErrorPropagates(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file inside dir so dir is non-empty and os.Remove(dir) will fail.
+	inner := filepath.Join(dir, "inner.txt")
+	if err := os.WriteFile(inner, []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	err := Cleanup(dir)
+	if err == nil {
+		t.Error("expected non-nil error when removing non-empty directory, got nil")
+	}
+}
+
 func TestCleanup_ToleratesENOENT(t *testing.T) {
 	// Generate a path that does not exist.
 	path, err := Path()

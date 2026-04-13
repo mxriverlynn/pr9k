@@ -147,6 +147,85 @@ func TestTerminator_CidfileWithValidCIDDispatchesDockerKill(t *testing.T) {
 	}
 }
 
+// TestIsValidCID covers boundary and malformed inputs (TP-002).
+// Security-adjacent: a false positive could cause docker kill against a wrong CID.
+func TestIsValidCID(t *testing.T) {
+	validCID := strings.Repeat("a1b2c3d4", 8) // exactly 64 lowercase-hex chars
+
+	cases := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"empty string", "", false},
+		{"63-char valid hex (too short)", validCID[:63], false},
+		{"65-char valid hex (too long)", validCID + "a", false},
+		{"64-char uppercase hex", strings.ToUpper(validCID), false},
+		{"64-char with non-hex char g", validCID[:63] + "g", false},
+		{"64-char with space", validCID[:63] + " ", false},
+		{"64-char with newline", validCID[:63] + "\n", false},
+		{"valid 64-char lowercase hex", validCID, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := isValidCID(tc.input)
+			if got != tc.want {
+				t.Errorf("isValidCID(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTerminator_NilProcessNoCrash verifies that the terminator returns nil
+// without panicking when cmd was never started (cmd.Process == nil,
+// cmd.ProcessState == nil) and the cidfile does not exist (TP-004).
+//
+// NOTE: This test takes ~2s because pollCidfile waits for cidfileWait before
+// falling back to the cmd.Process nil guard.
+func TestTerminator_NilProcessNoCrash(t *testing.T) {
+	cmd := exec.Command("true") // not started — Process and ProcessState are both nil
+
+	cidfile := t.TempDir() + "/ralph-nil-process.cid"
+	// cidfile does not exist — pollCidfile will time out and return "".
+
+	terminator := NewTerminator(cmd, cidfile)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- terminator(syscall.SIGTERM)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("expected nil from terminator with nil Process, got %v", err)
+		}
+	case <-time.After(cidfileWait + 500*time.Millisecond):
+		t.Error("terminator did not return within poll window + buffer")
+	}
+}
+
+// TestPollCidfile_FileAppearsAfterPollStarts verifies that pollCidfile detects
+// a cidfile that materialises mid-poll and returns its CID (TP-005).
+func TestPollCidfile_FileAppearsAfterPollStarts(t *testing.T) {
+	cidfile := t.TempDir() + "/ralph-midpoll.cid"
+	validCID := strings.Repeat("a1b2c3d4", 8)
+
+	// Write the cidfile after a short delay. The sleep here simulates docker
+	// writing the cidfile asynchronously after container startup — it is not
+	// used for test synchronisation (no shared Go memory between goroutines).
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = os.WriteFile(cidfile, []byte(validCID), 0o644)
+	}()
+
+	got := pollCidfile(cidfile, 2*time.Second)
+	if got != validCID {
+		t.Errorf("pollCidfile returned %q, want %q", got, validCID)
+	}
+}
+
 // TestTerminator_CidfileWithPartialWriteFallsBack verifies that a cidfile
 // containing a partial (non-64-char) write causes the terminator to fall back
 // to signaling the CLI process.
