@@ -99,11 +99,13 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture.
+// StepExecutor wraps StepRunner + LastCapture + ProjectDir + RunSandboxedStep.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
     LastCapture() string  // last non-empty stdout line from the most recent RunStep
+    ProjectDir() string   // target repository directory used as cmd.Dir for every subprocess
+    RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 }
 
 // RunHeader updates the TUI status header during workflow execution.

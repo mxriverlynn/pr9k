@@ -12,7 +12,8 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 - Subprocess output is forwarded line-by-line via a `sendLine` callback (installed via `SetSender`); the callback writes to a buffered channel consumed by a drain goroutine in `main.go` that batches lines into `LogLinesMsg` messages for the Bubble Tea TUI
 - Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`; only the stdout goroutine captures lines for `LastCapture`
 - After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`; the orchestrator calls this to bind `CaptureAs` values into the `VarTable`
-- `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
+- `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback (via `terminateGracePeriod`); for sandboxed steps it dispatches through an installed terminator closure rather than signaling the host process directly; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
+- `RunSandboxedStep` executes a command inside a Docker sandbox, installing a terminator closure and using explicit empty stdin to prevent raw-mode keyboard inheritance; the cidfile is cleaned up (ENOENT-tolerant) after the step exits
 
 Key files:
 - `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
@@ -84,17 +85,39 @@ type Runner struct {
     projectDir string         // cmd.Dir for every subprocess (target repository)
     sendLine   func(string)   // callback invoked for every forwarded line; never nil
 
-    // processMu guards currentProc, procDone, and terminated.
-    processMu   sync.Mutex
-    currentProc *os.Process
-    procDone    chan struct{} // closed when subprocess exits
-    terminated  bool         // set by Terminate(), reset at start of RunStep
+    // processMu guards currentProc, currentTerminator, procDone, and terminated.
+    processMu         sync.Mutex
+    currentProc       *os.Process
+    currentTerminator func(syscall.Signal) error // nil for plain RunStep; set by RunSandboxedStep
+    procDone          chan struct{}               // closed when subprocess exits
+    terminated        bool                       // set by Terminate(), reset at start of RunStep/RunSandboxedStep
+
+    // terminateGraceOverride, when non-zero, replaces terminateGracePeriod in
+    // Terminate(). Used in tests to avoid waiting the full 3 seconds.
+    terminateGraceOverride time.Duration
 
     // lastCapture holds the last non-empty stdout line from the most recent
-    // successful RunStep. Empty string if the last step failed or produced no output.
-    // Protected by mu; written by RunStep, read by LastCapture.
+    // successful RunStep call. Empty string if the last step failed or produced no output.
+    // Protected by mu; written by runCommand, read by LastCapture.
     lastCapture string
 }
+
+// SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
+type SandboxOptions struct {
+    // Terminator, when non-nil, is called by Runner.Terminate() instead of
+    // signaling the host process directly. It receives SIGTERM first; if the
+    // process does not exit within the grace period, it receives SIGKILL.
+    Terminator func(syscall.Signal) error
+    // CidfilePath is the path of the Docker --cidfile to clean up after the
+    // step exits. May be empty. Cleanup is ENOENT-tolerant.
+    CidfilePath string
+}
+```
+
+`terminateGracePeriod` is the package-level constant (3 seconds) controlling the SIGTERM→SIGKILL escalation window:
+
+```go
+const terminateGracePeriod = 3 * time.Second
 ```
 
 `SetSender` installs a callback that is invoked for every line forwarded through `forwardPipe` and `WriteToLog`. If `send` is nil, a no-op is installed. The callback must not panic and must not block — it is called synchronously inside scanner goroutines, so a blocking callback stalls subprocess output and a panicking callback crashes the process:
@@ -193,23 +216,78 @@ func (r *Runner) LastCapture() string {
 func (r *Runner) Terminate() {
     r.processMu.Lock()
     proc := r.currentProc
+    term := r.currentTerminator
     done := r.procDone
     r.terminated = true
     r.processMu.Unlock()
 
     if proc == nil { return }  // no-op when idle
 
-    _ = proc.Signal(syscall.SIGTERM)
+    grace := terminateGracePeriod
+    if r.terminateGraceOverride > 0 {
+        grace = r.terminateGraceOverride
+    }
 
-    select {
-    case <-done:                        // process exited
-    case <-time.After(3 * time.Second): // timeout → force kill
-        _ = proc.Kill()
+    if term != nil {
+        // Sandboxed step: dispatch through the terminator closure (e.g. docker kill)
+        // rather than signaling the host docker CLI process directly.
+        _ = term(syscall.SIGTERM)
+        select {
+        case <-done:
+        case <-time.After(grace):
+            _ = term(syscall.SIGKILL)
+        }
+    } else {
+        _ = proc.Signal(syscall.SIGTERM)
+        select {
+        case <-done:                    // process exited
+        case <-time.After(grace):       // timeout → force kill
+            _ = proc.Kill()
+        }
     }
 }
 ```
 
-`WasTerminated()` reports whether the most recent `RunStep` was ended by a `Terminate()` call. The flag is reset at the start of each `RunStep`. The orchestrator uses this to distinguish user-initiated skips (step marked done) from genuine failures (enters error mode).
+`WasTerminated()` reports whether the most recent `RunStep` or `RunSandboxedStep` was ended by a `Terminate()` call. The flag is reset at the start of each `RunStep`/`RunSandboxedStep`. The orchestrator uses this to distinguish user-initiated skips (step marked done) from genuine failures (enters error mode).
+
+### Sandboxed Step Execution (RunSandboxedStep)
+
+`RunSandboxedStep` runs a command inside a Docker sandbox. It differs from `RunStep` in three ways: it installs `opts.Terminator` so that `Terminate()` dispatches signals through the container (not the host `docker` CLI process), it provides explicit empty stdin (`bytes.NewReader(nil)`) to prevent raw-mode keyboard inheritance, and it cleans up the cidfile at `opts.CidfilePath` after the step exits (ENOENT-tolerant via `sandbox.Cleanup`):
+
+```go
+func (r *Runner) RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error {
+    if len(command) == 0 {
+        return fmt.Errorf("workflow: RunSandboxedStep %q: empty command", stepName)
+    }
+
+    r.processMu.Lock()
+    r.terminated = false
+    r.currentTerminator = opts.Terminator
+    r.processMu.Unlock()
+
+    defer func() {
+        _ = sandbox.Cleanup(opts.CidfilePath)
+    }()
+
+    return r.runCommand(stepName, command, bytes.NewReader(nil))
+}
+```
+
+### Shared Subprocess Core (runCommand)
+
+`runCommand` is the private shared core used by both `RunStep` and `RunSandboxedStep`. It starts the subprocess, creates two scanner goroutines, waits for both pipes to drain, and then calls `cmd.Wait()`. A key correctness detail: the `currentTerminator` is cleared **before** the `procDone` channel is closed, so any `Terminate()` racing with natural step completion observes a nil terminator and short-circuits instead of dispatching a stale signal:
+
+```go
+defer func() {
+    r.processMu.Lock()
+    r.currentTerminator = nil
+    r.processMu.Unlock()
+    close(done)
+    r.processMu.Lock()
+    r.currentProc = nil
+    r.processMu.Unlock()
+}()
+```
 
 ### Direct Log Injection (WriteToLog)
 
@@ -272,7 +350,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 |----------|-----------|-----|
 | `sendLine` callback | `mu sync.Mutex` (snapshot-then-unlock) | Snapshotted under `mu`, called after unlock; prevents TOCTOU race when `SetSender` swaps the callback concurrently with scanner goroutines reading it |
 | `lastCapture` | `mu sync.Mutex` | Written by `RunStep` after `wg.Wait()`, read by `LastCapture()`; both hold `mu` to prevent data races between concurrent callers |
-| `currentProc`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep (main goroutine) and Terminate (keyboard/signal goroutine) |
+| `currentProc`, `currentTerminator`, `procDone`, `terminated` | `processMu sync.Mutex` | Accessed by RunStep/RunSandboxedStep (main goroutine) and Terminate (keyboard/signal goroutine); `currentTerminator` is cleared before `close(done)` to prevent stale signal dispatch when Terminate races with natural step completion |
 | `WaitGroup` drain before `cmd.Wait()` | `sync.WaitGroup` | Ensures all pipe output is forwarded before the process exit status is collected |
 
 ## Error Handling
@@ -287,7 +365,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and `RunStep` empty-command guard:
+- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `RunSandboxedStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and empty-command guards:
   - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
   - `TestSetSender_ForwardsEveryStdoutLine`, `TestSetSender_ForwardsEveryStderrLine` — sendLine receives stdout and stderr lines
   - `TestSetSender_BurstDoesNotDropOrReorder` — lines arrive in order under burst load
@@ -302,6 +380,19 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestNewRunner_WriteToLogWithoutSetSenderPanics*` — verifies that calling WriteToLog before SetSender panics with a descriptive message
   - `TestRunStep_ReturnsErrorForEmpty*` — verifies that RunStep returns an error for empty and nil command slices
   - `TestCaptureOutput_ReturnsErrorForEmptyCommandSlice`, `TestCaptureOutput_ReturnsErrorForNilCommand` — verifies CaptureOutput returns an error for empty and nil command slices
+  - `TestRunSandboxedStep_ReturnsErrorForEmptyCommandSlice`, `TestRunSandboxedStep_ReturnsErrorForNilCommand` — verifies RunSandboxedStep returns an error for empty and nil command slices
+  - `TestRunSandboxedStep_OutputForwarding` — verifies stdout/stderr are forwarded via sendLine
+  - `TestRunSandboxedStep_LastCapturePopulation` — verifies last non-empty stdout line is stored after a successful sandboxed step
+  - `TestRunSandboxedStep_CleansCidfileOnError` — verifies cidfile is removed even when the command exits non-zero
+  - `TestRunSandboxedStep_ResetTerminatedFlag` — verifies `terminated` is reset at the start of `RunSandboxedStep`
+  - `TestRunSandboxedStep_TerminatorClearedBeforeWaitReturn` — verifies `currentTerminator` is cleared before `procDone` is closed (prevents stale signal dispatch on natural exit)
+  - `TestRunSandboxedStep_ReturnsErrorForNonExistentCommand` — verifies error is returned when the command does not exist
+  - `TestRunSandboxedStep_ReturnsErrorOnNonZeroExit` — verifies error is returned for a non-zero exit code
+  - `TestRunSandboxedStep_UsesProjectDir` — verifies `cmd.Dir` is set to `projectDir`
+  - `TestTerminate_UsesTerminatorWhenInstalled` — verifies Terminate dispatches SIGTERM+SIGKILL through the terminator closure when one is installed
+  - `TestTerminate_UsesProcessWhenNoTerminator` — verifies Terminate signals the host process directly when no terminator is installed
+  - `TestTerminate_TerminatorSIGTERMOnlyWhenProcessExitsPromptly` — verifies SIGKILL is not sent when the process exits within the grace period
+  - `TestTerminate_IntegrationOrchestrationCanProceed` — integration test verifying that after Terminate() the runner is in a consistent state and can process the next step
 - `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step

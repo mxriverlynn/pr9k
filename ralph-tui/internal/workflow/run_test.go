@@ -19,12 +19,13 @@ import (
 // --- Test doubles ---
 
 type fakeExecutor struct {
-	runStepCalls    []runStepCall
-	runStepErrors   []error  // per-call errors; nil entries mean success
-	runStepCaptures []string // per-call LastCapture values (indexed by call order)
-	lastCapture     string
-	logLines        []string
-	projectDir      string
+	runStepCalls           []runStepCall
+	runStepErrors          []error  // per-call errors; nil entries mean success
+	runStepCaptures        []string // per-call LastCapture values (indexed by call order)
+	lastCapture            string
+	logLines               []string
+	projectDir             string
+	runSandboxedStepCalls  []runSandboxedStepCall
 	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
 	// Tests use it to observe the log stream from another goroutine without
 	// racing on logLines. The callback runs synchronously on the writer
@@ -35,6 +36,12 @@ type fakeExecutor struct {
 type runStepCall struct {
 	name    string
 	command []string
+}
+
+type runSandboxedStepCall struct {
+	name    string
+	command []string
+	opts    SandboxOptions
 }
 
 func (f *fakeExecutor) RunStep(name string, command []string) error {
@@ -55,7 +62,8 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 func (f *fakeExecutor) WasTerminated() bool { return false }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
-	panic("fakeExecutor.RunSandboxedStep called unexpectedly")
+	f.runSandboxedStepCalls = append(f.runSandboxedStepCalls, runSandboxedStepCall{name, command, opts})
+	return nil
 }
 
 func (f *fakeExecutor) WriteToLog(line string) {
