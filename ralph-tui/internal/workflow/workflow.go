@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -11,7 +13,12 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 )
+
+// terminateGracePeriod is the time Terminate() waits after SIGTERM before
+// escalating to SIGKILL (or calling the terminator with SIGKILL).
+const terminateGracePeriod = 3 * time.Second
 
 // Runner executes workflow steps and forwards subprocess output to the TUI via
 // a caller-supplied sendLine callback. The io.Pipe from the earlier architecture
@@ -21,14 +28,19 @@ import (
 type Runner struct {
 	mu         sync.Mutex
 	log        *logger.Logger
-	workingDir string
+	projectDir string
 	sendLine   func(string) // callback invoked for every forwarded line; never nil
 
-	// processMu guards currentProc, procDone, and terminated.
-	processMu   sync.Mutex
-	currentProc *os.Process
-	procDone    chan struct{}
-	terminated  bool // set by Terminate(), reset at start of RunStep
+	// processMu guards currentProc, currentTerminator, procDone, and terminated.
+	processMu         sync.Mutex
+	currentProc       *os.Process
+	currentTerminator func(syscall.Signal) error
+	procDone          chan struct{}
+	terminated        bool // set by Terminate(), reset at start of RunStep/RunSandboxedStep
+
+	// terminateGraceOverride, when non-zero, replaces terminateGracePeriod in
+	// Terminate(). Used in tests to avoid waiting the full 3 seconds.
+	terminateGraceOverride time.Duration
 
 	// lastCapture holds the last non-empty stdout line from the most recent
 	// successful RunStep call. Empty string if the last step failed or produced
@@ -36,23 +48,40 @@ type Runner struct {
 	lastCapture string
 }
 
+// SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
+type SandboxOptions struct {
+	// Terminator, when non-nil, is called by Runner.Terminate() instead of
+	// signaling the host process directly. It receives SIGTERM first; if the
+	// process does not exit within the grace period, it receives SIGKILL.
+	Terminator func(syscall.Signal) error
+	// CidfilePath is the path of the Docker --cidfile to clean up after the
+	// step exits. May be empty. Cleanup is ENOENT-tolerant.
+	CidfilePath string
+}
+
 // NewRunner creates a Runner that streams subprocess output through the sendLine
-// callback (set via SetSender) and to the file logger. workingDir is set as
-// cmd.Dir for every subprocess and must be the user's shell CWD (the target
-// repo being operated on), not the install dir where ralph-tui's bundled
-// ralph-steps.json, scripts/, and prompts/ live.
+// callback (set via SetSender) and to the file logger. projectDir is set as
+// cmd.Dir for every subprocess and must be the target repository being operated
+// on, not the install dir where ralph-tui's bundled ralph-steps.json, scripts/,
+// and prompts/ live.
 //
 // NewRunner initializes sendLine to a sentinel that panics with a descriptive
 // message so that missing-wire bugs (forgetting to call SetSender before
 // RunStep) fail loudly rather than silently dropping all output.
-func NewRunner(log *logger.Logger, workingDir string) *Runner {
+func NewRunner(log *logger.Logger, projectDir string) *Runner {
 	return &Runner{
 		log:        log,
-		workingDir: workingDir,
+		projectDir: projectDir,
 		sendLine: func(string) {
 			panic("workflow.Runner: sendLine not set — call SetSender before running steps")
 		},
 	}
+}
+
+// ProjectDir returns the target repository directory set for this runner.
+// Subprocesses run with cmd.Dir set to this path.
+func (r *Runner) ProjectDir() string {
+	return r.projectDir
 }
 
 // SetSender installs a callback that is invoked for every line forwarded
@@ -80,13 +109,15 @@ func (r *Runner) WasTerminated() bool {
 	return r.terminated
 }
 
-// Terminate sends SIGTERM to the currently running subprocess. If the process
-// has not exited within 3 seconds, SIGKILL is sent. Safe to call when no
-// subprocess is running (it is a no-op in that case). Keyboard handlers use
-// this to skip a step or quit cleanly.
+// Terminate sends SIGTERM to the currently running subprocess (or invokes the
+// installed terminator for sandboxed steps). If the process has not exited
+// within the grace period, SIGKILL is sent. Safe to call when no subprocess is
+// running (it is a no-op in that case). Keyboard handlers use this to skip a
+// step or quit cleanly.
 func (r *Runner) Terminate() {
 	r.processMu.Lock()
 	proc := r.currentProc
+	term := r.currentTerminator
 	done := r.procDone
 	r.terminated = true
 	r.processMu.Unlock()
@@ -95,12 +126,25 @@ func (r *Runner) Terminate() {
 		return
 	}
 
-	_ = proc.Signal(syscall.SIGTERM)
+	grace := terminateGracePeriod
+	if r.terminateGraceOverride > 0 {
+		grace = r.terminateGraceOverride
+	}
 
-	select {
-	case <-done:
-	case <-time.After(3 * time.Second):
-		_ = proc.Kill()
+	if term != nil {
+		_ = term(syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(grace):
+			_ = term(syscall.SIGKILL)
+		}
+	} else {
+		_ = proc.Signal(syscall.SIGTERM)
+		select {
+		case <-done:
+		case <-time.After(grace):
+			_ = proc.Kill()
+		}
 	}
 }
 
@@ -122,8 +166,51 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	r.terminated = false
 	r.processMu.Unlock()
 
+	return r.runCommand(stepName, command, nil, nil)
+}
+
+// RunSandboxedStep executes command inside a Docker sandbox. An explicit empty
+// stdin (bytes.NewReader(nil)) is used so that docker does not inherit the
+// parent's raw-mode keyboard reader. The cidfile at opts.CidfilePath is removed
+// after the step exits (ENOENT-tolerant).
+//
+// Terminator construction order: opts.Terminator takes precedence when set
+// (test-injection path). When opts.Terminator is nil, runCommand constructs a
+// terminator closure via sandbox.NewTerminator(cmd, opts.CidfilePath) after
+// the *exec.Cmd exists but before cmd.Start() — resolving the construction-
+// ordering constraint (the terminator needs the cmd pointer).
+func (r *Runner) RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error {
+	if len(command) == 0 {
+		return fmt.Errorf("workflow: RunSandboxedStep %q: empty command", stepName)
+	}
+
+	r.processMu.Lock()
+	r.terminated = false
+	r.processMu.Unlock()
+
+	defer func() {
+		_ = sandbox.Cleanup(opts.CidfilePath)
+	}()
+
+	return r.runCommand(stepName, command, bytes.NewReader(nil), &opts)
+}
+
+// runCommand is the shared private core for RunStep and RunSandboxedStep. It
+// executes command as a subprocess, streaming stdout and stderr in real-time.
+// If stdin is non-nil it is set on the command; otherwise the subprocess
+// inherits the parent's stdin (RunStep behaviour). opts, when non-nil, drives
+// terminator selection: if opts.Terminator is set it is used directly (test-
+// injection path); if opts.Terminator is nil but opts.CidfilePath is non-empty,
+// sandbox.NewTerminator is called after cmd is created (so the closure captures
+// the correct *exec.Cmd). The currentTerminator field is cleared before the
+// procDone channel is closed so that any Terminate() racing with natural step
+// completion sees a nil terminator and short-circuits.
+func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions) error {
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = r.workingDir
+	cmd.Dir = r.projectDir
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -134,6 +221,17 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 		return fmt.Errorf("workflow: stderr pipe: %w", err)
 	}
 
+	// Determine the terminator to install. For sandboxed steps, construct it
+	// here — after cmd exists — so the closure captures the correct *exec.Cmd.
+	var terminator func(syscall.Signal) error
+	if opts != nil {
+		if opts.Terminator != nil {
+			terminator = opts.Terminator
+		} else if opts.CidfilePath != "" {
+			terminator = sandbox.NewTerminator(cmd, opts.CidfilePath)
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("workflow: start %q: %w", command[0], err)
 	}
@@ -141,9 +239,16 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	done := make(chan struct{})
 	r.processMu.Lock()
 	r.currentProc = cmd.Process
+	r.currentTerminator = terminator
 	r.procDone = done
 	r.processMu.Unlock()
 	defer func() {
+		// Clear terminator BEFORE closing done so that any Terminate() racing
+		// with natural step completion observes a nil terminator and returns
+		// without dispatching a stale signal (iteration 6 F2).
+		r.processMu.Lock()
+		r.currentTerminator = nil
+		r.processMu.Unlock()
 		close(done)
 		r.processMu.Lock()
 		r.currentProc = nil
@@ -234,7 +339,7 @@ func (r *Runner) WriteToLog(line string) {
 	send(line)
 }
 
-// CaptureOutput runs command in workingDir and returns its trimmed stdout.
+// CaptureOutput runs command in projectDir and returns its trimmed stdout.
 // Stderr is discarded. Use this for commands that return a single value
 // (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).
 func (r *Runner) CaptureOutput(command []string) (string, error) {
@@ -242,7 +347,7 @@ func (r *Runner) CaptureOutput(command []string) (string, error) {
 		return "", fmt.Errorf("workflow: CaptureOutput: empty command")
 	}
 	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = r.workingDir
+	cmd.Dir = r.projectDir
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }

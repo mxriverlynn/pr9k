@@ -1,8 +1,10 @@
 # Go Patterns
 
-## Resolve binary path with os.Executable + filepath.EvalSymlinks
+## Resolve directories with os.Executable / os.Getwd + filepath.EvalSymlinks
 
-When a binary needs to locate sibling files (e.g., configs, scripts) relative to itself, use `os.Executable()` followed by `filepath.EvalSymlinks` to get the real path. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink.
+ralph-tui resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
+
+**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/ralph-tui` → `pr9k/bin/ralph-tui`).
 
 ```go
 exe, err := os.Executable()
@@ -13,8 +15,23 @@ exe, err = filepath.EvalSymlinks(exe)
 if err != nil {
     return "", err
 }
-projectDir := filepath.Dir(exe)
+workflowDir := filepath.Dir(exe)
 ```
+
+**Project directory** (target repo — the git repo the workflow operates against): resolved from the shell CWD at startup. `EvalSymlinks` ensures the path matches what Docker receives for bind-mount arguments.
+
+```go
+cwd, err := os.Getwd()
+if err != nil {
+    return "", err
+}
+projectDir, err := filepath.EvalSymlinks(cwd)
+if err != nil {
+    return "", err
+}
+```
+
+This is why `go run` does not work for ralph-tui: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
 
 ## Use runtime.Caller(0) in test helpers for path resolution
 
@@ -287,6 +304,54 @@ func (m headerModel) iterLine() string {
 ```
 
 When reviewing a struct, look for fields that appear only on the left side of assignments (`m.field = ...`) and never in expressions. Those are candidates for deletion. If a pointer accessor already provides the same value, the cached field is always redundant.
+
+## Sanitize external program output before reflecting to the terminal
+
+When displaying output captured from an external program (e.g., a Docker smoke test, a subprocess version check), strip ANSI escape sequences before printing. A malicious or misbehaving image can inject terminal control sequences — cursor repositioning, color resets, title rewrites — that corrupt the TUI display or trick the user.
+
+```go
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSI(s string) string {
+    return ansiEscapeRe.ReplaceAllString(s, "")
+}
+
+// Usage — sanitize before printing smoke-test output to stdout:
+output := stripANSI(strings.TrimSpace(string(combined)))
+fmt.Fprintln(cmd.OutOrStdout(), output)
+```
+
+Apply any time your code reflects output from an external binary to a terminal: Docker, subprocess capture, version probes, etc. Pure log-file writes do not need sanitization, but anything that reaches a TTY does.
+
+## Use exec.CommandContext with a timeout for external binary probes
+
+When invoking an external binary solely to probe for its presence or status (e.g., `docker info`, `docker images`), use `exec.CommandContext` with a deadline rather than `exec.Command`. A frozen or hung daemon will block `cmd.Run()` indefinitely otherwise, stalling startup for the user with no feedback.
+
+```go
+func (r RealProber) DockerDaemonReachable(ctx context.Context) error {
+    ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+    defer cancel()
+    cmd := exec.CommandContext(ctx, "docker", "info")
+    cmd.Stdout = io.Discard
+    cmd.Stderr = io.Discard
+    return cmd.Run()
+}
+```
+
+10 seconds is a reasonable upper bound for a local daemon probe. Use `io.Discard` for stdout/stderr on probes where the output is not needed — only the exit code matters.
+
+## Trim environment variable values before use
+
+When reading a value from an environment variable (especially one that may be set by a human in a shell profile or `.env` file), trim leading and trailing whitespace before using it. Editors and copy-paste operations commonly introduce invisible trailing spaces that cause path resolution, string comparison, and file-open calls to fail silently.
+
+```go
+profileDir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+if profileDir == "" {
+    // fall back to default
+}
+```
+
+Apply to any `os.Getenv` result that will be used as a file path, URL, identifier, or comparison value.
 
 ## Additional Information
 

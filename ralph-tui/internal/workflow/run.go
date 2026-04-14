@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
@@ -15,7 +17,31 @@ import (
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
+	ProjectDir() string
+	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 }
+
+// stepDispatcher wraps StepExecutor and implements ui.StepRunner so that
+// Orchestrate can call runner.RunStep uniformly. For a step that is marked
+// IsClaude, RunStep transparently delegates to the wrapped executor's
+// RunSandboxedStep instead. Non-claude steps pass through to RunStep unchanged.
+//
+// A new stepDispatcher is created for each step so that current always reflects
+// the step that is about to be executed.
+type stepDispatcher struct {
+	exec    StepExecutor
+	current ui.ResolvedStep
+}
+
+func (d *stepDispatcher) RunStep(name string, command []string) error {
+	if d.current.IsClaude {
+		return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+	}
+	return d.exec.RunStep(name, command)
+}
+
+func (d *stepDispatcher) WasTerminated() bool    { return d.exec.WasTerminated() }
+func (d *stepDispatcher) WriteToLog(line string) { d.exec.WriteToLog(line) }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
 // *ui.StatusHeader satisfies this interface.
@@ -29,8 +55,12 @@ type RunHeader interface {
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-	ProjectDir      string
-	Iterations      int
+	WorkflowDir string
+	Iterations  int
+	// Env is the per-workflow env allowlist loaded from the "env" field of
+	// ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+	// when building docker run args for claude steps.
+	Env             []string
 	InitializeSteps []steps.Step
 	Steps           []steps.Step
 	FinalizeSteps   []steps.Step
@@ -73,7 +103,7 @@ type RunResult struct {
 // Run is the main orchestration goroutine. It drives three config-defined phases
 // — initialize, iteration loop, finalize — via VarTable-based substitution.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
-	vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+	vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
 
 	logWidth := cfg.LogWidth
 	if logWidth <= 0 {
@@ -120,14 +150,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
-		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Initialize)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
 			continue
 		}
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, noopHeader{}, keyHandler)
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			return RunResult{}
 		}
@@ -161,7 +191,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		breakOuter := false
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
-			resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Iteration)
+			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, executor)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
 				breakOuter = true
@@ -169,7 +199,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			}
 			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
-			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, th, keyHandler)
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
 			if action == ui.ActionQuit {
 				return RunResult{IterationsRun: iterationsRun}
 			}
@@ -209,14 +239,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	}
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
-		resolved, err := buildStep(cfg.ProjectDir, s, vt, vars.Finalize)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
 		}
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, executor, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
 		}
@@ -231,33 +261,47 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 }
 
 // buildStep resolves a single step into a runnable ResolvedStep using vt for
-// {{VAR}} substitution in the given phase.
-func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+// {{VAR}} substitution in the given phase. env is the per-workflow env
+// allowlist (StepFile.Env) appended to sandbox.BuiltinEnvAllowlist for claude
+// steps. executor provides ProjectDir for the docker bind-mount.
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
 	if s.IsClaude {
-		prompt, err := steps.BuildPrompt(projectDir, s, vt, phase)
+		prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
 		if err != nil {
 			return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
 		}
+		uid, gid := sandbox.HostUIDGID()
+		cidfile, err := sandbox.Path()
+		if err != nil {
+			return ui.ResolvedStep{}, fmt.Errorf("step %q: cidfile: %w", s.Name, err)
+		}
+		profileDir := preflight.ResolveProfileDir()
+		projectDir := executor.ProjectDir()
+		envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
+		envAllowlist = append(envAllowlist, env...)
+		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
 		return ui.ResolvedStep{
-			Name:    s.Name,
-			Command: []string{"claude", "--permission-mode", "bypassPermissions", "--model", s.Model, "-p", prompt},
+			Name:        s.Name,
+			Command:     argv,
+			IsClaude:    true,
+			CidfilePath: cidfile,
 		}, nil
 	}
 	return ui.ResolvedStep{
 		Name:    s.Name,
-		Command: ResolveCommand(projectDir, s.Command, vt, phase),
+		Command: ResolveCommand(workflowDir, s.Command, vt, phase),
 	}, nil
 }
 
 // ResolveCommand substitutes {{VAR}} tokens in each command element using vt
-// and resolves relative script paths against projectDir.
+// and resolves relative script paths against workflowDir.
 //
 // For each element:
 //   - All {{VAR_NAME}} tokens are replaced using the substitution engine.
-//   - The first element (the executable) is resolved relative to projectDir if
+//   - The first element (the executable) is resolved relative to workflowDir if
 //     it is a relative path containing a path separator (i.e. not a bare
 //     command like "git").
-func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
+func ResolveCommand(workflowDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
 	if len(command) == 0 {
 		return command
 	}
@@ -275,7 +319,7 @@ func ResolveCommand(projectDir string, command []string, vt *vars.VarTable, phas
 	// Resolve the executable if it looks like a relative script path.
 	exe := result[0]
 	if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
-		result[0] = filepath.Join(projectDir, exe)
+		result[0] = filepath.Join(workflowDir, exe)
 	}
 
 	return result

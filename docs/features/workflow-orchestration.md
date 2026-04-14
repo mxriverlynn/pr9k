@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-11
+- **Last Updated:** 2026-04-13
 - **Authors:**
   - River Bailey
 
@@ -79,8 +79,12 @@ Key files:
 ```go
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-    ProjectDir      string
+    WorkflowDir     string
     Iterations      int
+    // Env is the per-workflow env allowlist loaded from the "env" field of
+    // ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+    // when building docker run args for claude steps.
+    Env             []string
     InitializeSteps []steps.Step  // run once before the iteration loop
     Steps           []steps.Step  // run each iteration
     FinalizeSteps   []steps.Step  // run once after the loop
@@ -99,11 +103,13 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture.
+// StepExecutor wraps StepRunner + LastCapture + ProjectDir + RunSandboxedStep.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
     LastCapture() string  // last non-empty stdout line from the most recent RunStep
+    ProjectDir() string   // target repository directory used as cmd.Dir for every subprocess
+    RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 }
 
 // RunHeader updates the TUI status header during workflow execution.
@@ -121,8 +127,10 @@ type RunHeader interface {
 
 // ResolvedStep holds a step's name and its fully-resolved command argv.
 type ResolvedStep struct {
-    Name    string
-    Command []string
+    Name        string
+    Command     []string
+    IsClaude    bool   // true for claude steps; routes to RunSandboxedStep
+    CidfilePath string // docker cidfile path; passed to SandboxOptions.CidfilePath
 }
 ```
 
@@ -130,7 +138,7 @@ type ResolvedStep struct {
 
 ### Pre-Run Validation
 
-Before `Run()` is called, `main.go` invokes `validator.Validate(projectDir)` against `ralph-steps.json`. This covers all eight D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, and variable scope resolution — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
+Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules A/B/C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
 See [Config Validation](config-validation.md) for the full list of validation rules.
 
@@ -140,7 +148,7 @@ See [Config Validation](config-validation.md) for the full list of validation ru
 
 ```go
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
-    vt := vars.New(cfg.ProjectDir, cfg.Iterations)
+    vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
 
     logWidth := cfg.LogWidth
     if logWidth <= 0 {
@@ -238,25 +246,37 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 `buildStep` converts a single `Step` into a `ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution:
 
 ```go
-func buildStep(projectDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
     if s.IsClaude {
-        prompt, err := steps.BuildPrompt(projectDir, s, vt, phase)
+        prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
         if err != nil {
             return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
         }
+        uid, gid := sandbox.HostUIDGID()
+        cidfile, err := sandbox.Path()
+        if err != nil {
+            return ui.ResolvedStep{}, fmt.Errorf("step %q: cidfile: %w", s.Name, err)
+        }
+        profileDir := preflight.ResolveProfileDir()
+        projectDir := executor.ProjectDir()
+        envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
+        envAllowlist = append(envAllowlist, env...)
+        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
         return ui.ResolvedStep{
-            Name:    s.Name,
-            Command: []string{"claude", "--permission-mode", "bypassPermissions", "--model", s.Model, "-p", prompt},
+            Name:        s.Name,
+            Command:     argv,
+            IsClaude:    true,
+            CidfilePath: cidfile,
         }, nil
     }
     return ui.ResolvedStep{
         Name:    s.Name,
-        Command: ResolveCommand(projectDir, s.Command, vt, phase),
+        Command: ResolveCommand(workflowDir, s.Command, vt, phase),
     }, nil
 }
 ```
 
-The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
+The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
 
 ### The Orchestrate State Machine
 
@@ -314,6 +334,39 @@ func runStepWithErrorHandling(...) StepAction {
         }
     }
 }
+```
+
+### stepDispatcher
+
+`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions{CidfilePath: d.current.CidfilePath}`. Non-claude steps pass through to the executor's `RunStep` unchanged.
+
+A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed:
+
+```go
+type stepDispatcher struct {
+    exec    StepExecutor
+    current ui.ResolvedStep
+}
+
+func (d *stepDispatcher) RunStep(name string, command []string) error {
+    if d.current.IsClaude {
+        return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+    }
+    return d.exec.RunStep(name, command)
+}
+```
+
+Each phase in `Run()` creates a fresh dispatcher per step and passes it as the `runner` to `Orchestrate`:
+
+```go
+// initialize phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
+
+// iteration phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
+
+// finalize phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 ```
 
 ### Header Adapters
@@ -394,6 +447,16 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_CaptureLogWrittenAfterCaptureStep` — verifies an iteration step with `captureAs: "ISSUE_ID"` produces a `Captured ISSUE_ID = "42"` log line after the step
   - `TestRun_CaptureLogWrittenForInitializePhase` — verifies the same behavior for an initialize-phase capture
   - `TestRun_CaptureLogNotWrittenForNonCaptureStep` — negative test: no `Captured ` line appears when the step has no `captureAs`
+  - `TestRun_ProjectDirFlowsIntoVarTable` — verifies `executor.ProjectDir()` flows into the VarTable as `PROJECT_DIR`, not `WorkflowDir`; a step with `command: ["echo", "{{PROJECT_DIR}}"]` receives the target repo path
+  - `TestRun_WorkflowDirFlowsIntoVarTable` — verifies `cfg.WorkflowDir` flows into the VarTable as `WORKFLOW_DIR`, not `executor.ProjectDir()`; a step with `command: ["echo", "{{WORKFLOW_DIR}}"]` receives the install directory
+  - `TestStepDispatcher_ClaudeStep_RoutesToRunSandboxedStep` (TP-001) — verifies `stepDispatcher.RunStep` dispatches a step with `IsClaude=true` to `RunSandboxedStep` with the correct `SandboxOptions.CidfilePath`; the underlying `RunStep` is not called
+  - `TestStepDispatcher_NonClaudeStep_RoutesToRunStep` (TP-002) — verifies `stepDispatcher.RunStep` delegates a non-claude step to the underlying executor's `RunStep`; `RunSandboxedStep` is not called
+  - `TestStepDispatcher_ClaudeStep_ForwardsCidfilePathToSandboxOptions` (TP-006) — verifies `ResolvedStep.CidfilePath` flows through `stepDispatcher.RunStep` into `SandboxOptions.CidfilePath` passed to `RunSandboxedStep`
+  - `TestStepDispatcher_DelegatesWasTerminatedAndWriteToLog` (TP-007) — verifies `WasTerminated()` and `WriteToLog()` delegate to the wrapped executor unchanged
+  - `TestStepDispatcher_ClaudeStep_PropagatesRunSandboxedStepError` (TP-011) — verifies errors from `RunSandboxedStep` flow through `stepDispatcher.RunStep` to the caller; prevents silent error swallowing that would bypass error-mode recovery in `Orchestrate`
+  - `TestRun_InitializePhase_PassesEnvThroughBuildStep` (TP-008) — verifies `RunConfig.Env` is threaded through the initialize phase into `buildStep`, producing `-e` flags for the custom env var in the sandboxed step command
+  - `TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep` (TP-012) — verifies claude steps in the finalize phase route to `RunSandboxedStep`, confirming `stepDispatcher` wiring is consistent across initialize, iteration, and finalize phases
+  - `TestRun_FinalizeCaptureAsIgnored` (WARN-004) — documents that the finalize phase intentionally does not call `vt.Bind()` after `Orchestrate`; a `captureAs` binding in a finalize step does not propagate to subsequent finalize steps (asymmetry with initialize/iteration is by design)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`

@@ -1,5 +1,5 @@
 // Package validator implements D13 config validation for ralph-steps.json.
-// It covers all eight validation categories from the UX corrections design plan
+// It covers all ten validation categories from the UX corrections design plan
 // and returns a collected slice of structured errors — one per problem found.
 // Validation runs in a single pass so all errors are visible before exit 1.
 package validator
@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
@@ -53,32 +54,59 @@ type vStep struct {
 // vFile is the strict top-level struct.
 // Each phase field uses *[]vStep so that a missing key (nil) is distinguished
 // from an explicitly empty array (non-nil, len 0).
+// Env uses *[]string; absent key (nil) is treated as empty list. A non-array
+// value (e.g. "env": "FOO") or a non-string element (e.g. [123]) will fail
+// JSON decode and be reported as a "malformed JSON" parse error.
 type vFile struct {
-	Initialize *[]vStep `json:"initialize"`
-	Iteration  *[]vStep `json:"iteration"`
-	Finalize   *[]vStep `json:"finalize"`
+	Env        *[]string `json:"env"`
+	Initialize *[]vStep  `json:"initialize"`
+	Iteration  *[]vStep  `json:"iteration"`
+	Finalize   *[]vStep  `json:"finalize"`
+}
+
+// envNameRe is the regex all env passthrough names must match.
+var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// envSandboxReserved are env var names the sandbox reserves for its own use.
+// Keys are the name; values are human-readable reason for rejection.
+var envSandboxReserved = map[string]string{
+	"CLAUDE_CONFIG_DIR": "reserved by the sandbox for its own use",
+	"HOME":              "reserved by the sandbox for its own use",
+}
+
+// envDenylist are env var names that would break container isolation (F11).
+var envDenylist = map[string]string{
+	"PATH":                  "denylisted: would break container isolation",
+	"USER":                  "denylisted: would break container isolation",
+	"LOGNAME":               "denylisted: would break container isolation",
+	"SSH_AUTH_SOCK":         "denylisted: would break container isolation",
+	"LD_PRELOAD":            "denylisted: would break container isolation",
+	"LD_LIBRARY_PATH":       "denylisted: would break container isolation",
+	"DYLD_INSERT_LIBRARIES": "denylisted: would break container isolation",
+	"DYLD_LIBRARY_PATH":     "denylisted: would break container isolation",
 }
 
 // reservedBuiltins is the set of built-in variable names that captureAs bindings
 // must not shadow.
 var reservedBuiltins = map[string]bool{
-	"PROJECT_DIR": true,
-	"MAX_ITER":    true,
-	"ITER":        true,
-	"STEP_NUM":    true,
-	"STEP_COUNT":  true,
-	"STEP_NAME":   true,
+	"WORKFLOW_DIR": true,
+	"PROJECT_DIR":  true,
+	"MAX_ITER":     true,
+	"ITER":         true,
+	"STEP_NUM":     true,
+	"STEP_COUNT":   true,
+	"STEP_NAME":    true,
 }
 
-// Validate loads ralph-steps.json from projectDir and validates all D13
+// Validate loads ralph-steps.json from workflowDir and validates all D13
 // categories. It returns all errors found; an empty slice means valid.
 // Validation collects every error before returning — it does not stop at the
 // first failure.
-func Validate(projectDir string) []Error {
+func Validate(workflowDir string) []Error {
 	var errs []Error
 
 	// Category 1 — file presence.
-	path := filepath.Join(projectDir, "ralph-steps.json")
+	path := filepath.Join(workflowDir, "ralph-steps.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []Error{cfgErr("file", "config", "", fmt.Sprintf("could not read %s: %v", path, err))}
@@ -108,24 +136,47 @@ func Validate(projectDir string) []Error {
 		errs = append(errs, cfgErr("phase-size", "iteration", "", "iteration array must have at least 1 step"))
 	}
 
+	// Category 10 — env passthrough names.
+	if vf.Env != nil {
+		for _, name := range *vf.Env {
+			if name == "" {
+				errs = append(errs, cfgErr("env", "config", "", "env name must not be empty"))
+				continue
+			}
+			if !envNameRe.MatchString(name) {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is not a valid identifier (must match ^[A-Za-z_][A-Za-z0-9_]*$)", name)))
+				continue
+			}
+			if reason, ok := envSandboxReserved[name]; ok {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
+				continue
+			}
+			if reason, ok := envDenylist[name]; ok {
+				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
+				continue
+			}
+		}
+	}
+
 	// Without all three phases we cannot walk variable scopes.
 	if vf.Initialize == nil || vf.Iteration == nil || vf.Finalize == nil {
 		return errs
 	}
 
-	// Build the initialize-phase scope: PROJECT_DIR, MAX_ITER, STEP_NUM,
-	// STEP_COUNT, STEP_NAME.  ITER is deliberately excluded — it is a
+	// Build the initialize-phase scope: WORKFLOW_DIR, PROJECT_DIR, MAX_ITER,
+	// STEP_NUM, STEP_COUNT, STEP_NAME.  ITER is deliberately excluded — it is a
 	// validation error if any initialize or finalize step references it.
 	initScope := map[string]bool{
-		"PROJECT_DIR": true,
-		"MAX_ITER":    true,
-		"STEP_NUM":    true,
-		"STEP_COUNT":  true,
-		"STEP_NAME":   true,
+		"WORKFLOW_DIR": true,
+		"PROJECT_DIR":  true,
+		"MAX_ITER":     true,
+		"STEP_NUM":     true,
+		"STEP_COUNT":   true,
+		"STEP_NAME":    true,
 	}
 
 	// Validate initialize; collect captureAs names for the persistent scope.
-	initCaptures := validatePhase(projectDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs)
+	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs)
 
 	// Persistent scope = initialize seeds + all captureAs from initialize.
 	persistentScope := copyScope(initScope)
@@ -137,10 +188,10 @@ func Validate(projectDir string) []Error {
 	iterScope := copyScope(persistentScope)
 	iterScope["ITER"] = true
 
-	validatePhase(projectDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs)
+	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs)
 
 	// Finalize scope = persistent only (no ITER, no iteration captures).
-	validatePhase(projectDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs)
+	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs)
 
 	return errs
 }
@@ -148,7 +199,7 @@ func Validate(projectDir string) []Error {
 // validatePhase validates all steps in one phase and returns the captureAs names
 // introduced by that phase (for persistent scope building).
 func validatePhase(
-	projectDir string,
+	workflowDir string,
 	phase vars.Phase,
 	phaseName string,
 	steps []vStep,
@@ -226,6 +277,17 @@ func validatePhase(
 					*errs = append(*errs, at("schema", fmt.Sprintf("duplicate captureAs %q in phase", ca)))
 				}
 				seenCaptureAs[ca] = true
+
+				// Rule A — captureAs on a claude step is rejected.
+				// After sandboxing, resolved.Command[0] becomes "docker", so captured
+				// stdout is docker's output, not claude's — corrupting downstream
+				// {{VAR}} substitution.
+				if isClaude {
+					*errs = append(*errs, at("sandbox", fmt.Sprintf(
+						"captureAs on a claude step is not allowed: after sandboxing, captured stdout is docker's output, not claude's, which would corrupt downstream {{%s}} substitution",
+						ca,
+					)))
+				}
 			}
 		}
 
@@ -242,21 +304,77 @@ func validatePhase(
 		// Category 4 — referenced files must exist.
 		if step.IsClaude != nil {
 			if isClaude && step.PromptFile != "" {
-				promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
-				if _, err := os.Stat(promptPath); err != nil {
+				absPath, pathErr := safePromptPath(workflowDir, step.PromptFile)
+				if pathErr != nil {
+					*errs = append(*errs, at("file", pathErr.Error()))
+				} else if _, err := os.Stat(absPath); err != nil {
 					*errs = append(*errs, at("file", fmt.Sprintf("prompt file %q not found", step.PromptFile)))
 				}
 			}
 			if !isClaude && len(step.Command) > 0 {
-				if msg := validateCommandPath(projectDir, step.Command[0]); msg != "" {
+				if msg := validateCommandPath(workflowDir, step.Command[0]); msg != "" {
 					*errs = append(*errs, at("file", msg))
+				}
+			}
+		}
+
+		// Rule B — prompt-token ban.
+		// Scan prompt files referenced by claude steps for {{WORKFLOW_DIR}} and
+		// {{PROJECT_DIR}}. These tokens expand to host paths that do not exist
+		// inside the sandbox. Non-claude command steps are not scanned; both
+		// tokens remain valid inside command argv.
+		// Uses vars.ExtractReferences to correctly skip escaped sequences such
+		// as {{{{WORKFLOW_DIR}}}} which should not be flagged.
+		if isClaude && step.PromptFile != "" {
+			if absPath, pathErr := safePromptPath(workflowDir, step.PromptFile); pathErr == nil {
+				if data, err := os.ReadFile(absPath); err == nil {
+					refs := vars.ExtractReferences(string(data))
+					hasWorkflowDir, hasProjectDir := false, false
+					for _, ref := range refs {
+						if ref == "WORKFLOW_DIR" {
+							hasWorkflowDir = true
+						}
+						if ref == "PROJECT_DIR" {
+							hasProjectDir = true
+						}
+					}
+					if hasWorkflowDir || hasProjectDir {
+						var banned []string
+						if hasWorkflowDir {
+							banned = append(banned, "{{WORKFLOW_DIR}}")
+						}
+						if hasProjectDir {
+							banned = append(banned, "{{PROJECT_DIR}}")
+						}
+						*errs = append(*errs, at("sandbox", fmt.Sprintf(
+							"prompt %s: %s are not valid inside prompt files — they expand to host paths that do not exist inside the sandbox. Use paths relative to the workspace root (claude's cwd is the target repo root inside the container).",
+							step.PromptFile,
+							strings.Join(banned, " and "),
+						)))
+					}
+				}
+			}
+		}
+
+		// Rule C — captureAs-indirection bypass.
+		// Reject any command step that BOTH references {{WORKFLOW_DIR}} or
+		// {{PROJECT_DIR}} in argv AND sets captureAs. A command could capture a
+		// host path into a var that a later claude prompt then uses — forwarding
+		// the stale host path into the sandbox.
+		if !isClaude && step.CaptureAs != nil && *step.CaptureAs != "" {
+			for _, arg := range step.Command {
+				if strings.Contains(arg, "{{WORKFLOW_DIR}}") || strings.Contains(arg, "{{PROJECT_DIR}}") {
+					*errs = append(*errs, at("sandbox",
+						"captureAs on a command step that references {{WORKFLOW_DIR}} or {{PROJECT_DIR}} is not allowed: the captured host path would be forwarded to later prompt files as a stale value inside the sandbox",
+					))
+					break
 				}
 			}
 		}
 
 		// Category 5 — variable references must be in scope.
 		if step.IsClaude != nil {
-			refs := extractStepRefs(projectDir, step, isClaude)
+			refs := extractStepRefs(workflowDir, step, isClaude)
 			for _, ref := range refs {
 				if !scope[ref] {
 					*errs = append(*errs, at("variable", fmt.Sprintf("unresolved variable reference {{%s}}", ref)))
@@ -282,16 +400,16 @@ func validatePhase(
 }
 
 // validateCommandPath checks that cmd (command[0]) is resolvable.
-// A path containing "/" is treated as relative (resolved under projectDir) or
+// A path containing "/" is treated as relative (resolved under workflowDir) or
 // absolute.  A bare name is looked up via exec.LookPath.
-func validateCommandPath(projectDir, cmd string) string {
+func validateCommandPath(workflowDir, cmd string) string {
 	// Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
 	if strings.Contains(cmd, "/") {
 		var resolved string
 		if filepath.IsAbs(cmd) {
 			resolved = cmd
 		} else {
-			resolved = filepath.Join(projectDir, cmd)
+			resolved = filepath.Join(workflowDir, cmd)
 		}
 		if _, err := os.Stat(resolved); err != nil {
 			return fmt.Sprintf("command %q not found at %s", cmd, resolved)
@@ -308,12 +426,16 @@ func validateCommandPath(projectDir, cmd string) string {
 // the step's prompt file (for claude steps) or command arguments (for non-claude
 // steps).  If the prompt file cannot be read, nil is returned — a missing file
 // is already reported by category 4.
-func extractStepRefs(projectDir string, step vStep, isClaude bool) []string {
+func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 	if isClaude {
 		if step.PromptFile == "" {
 			return nil
 		}
-		data, err := os.ReadFile(filepath.Join(projectDir, "prompts", step.PromptFile))
+		absPath, err := safePromptPath(workflowDir, step.PromptFile)
+		if err != nil {
+			return nil
+		}
+		data, err := os.ReadFile(absPath)
 		if err != nil {
 			return nil
 		}
@@ -324,6 +446,26 @@ func extractStepRefs(projectDir string, step vStep, isClaude bool) []string {
 		refs = append(refs, vars.ExtractReferences(arg)...)
 	}
 	return refs
+}
+
+// safePromptPath resolves the named prompt file under workflowDir/prompts and
+// returns its absolute path. It returns an error if the path escapes the
+// prompts directory (e.g. via ".." traversal), preventing path-traversal
+// attacks where a malicious ralph-steps.json could read arbitrary host files.
+func safePromptPath(workflowDir, promptFile string) (string, error) {
+	promptPath := filepath.Join(workflowDir, "prompts", promptFile)
+	absPath, err := filepath.Abs(promptPath)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve prompt path: %w", err)
+	}
+	absPrompts, err := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+	if err != nil {
+		return "", fmt.Errorf("could not resolve prompts directory: %w", err)
+	}
+	if !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+		return "", fmt.Errorf("prompt path escapes prompts directory: %s", promptFile)
+	}
+	return absPath, nil
 }
 
 // cfgErr constructs a validation Error.

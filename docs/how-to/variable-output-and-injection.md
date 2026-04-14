@@ -17,12 +17,21 @@ The `VarTable` is created at the start of `Run` and carries two categories of va
 
   | Variable | Value |
   |----------|-------|
-  | `PROJECT_DIR` | Resolved project directory path |
+  | `WORKFLOW_DIR` | Resolved workflow (install) directory path |
+  | `PROJECT_DIR` | Resolved project (target repo) directory path |
   | `MAX_ITER` | Value of `--iterations` flag (0 = unbounded) |
   | `ITER` | Current iteration number (1-based) |
   | `STEP_NUM` | Current step number within the phase |
   | `STEP_COUNT` | Total steps in the phase |
   | `STEP_NAME` | Display name of the current step |
+
+> **Sandbox constraint — `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are valid only in `command` steps.**
+> Both tokens expand to host filesystem paths. Inside the Docker sandbox, those paths do not exist:
+> `WORKFLOW_DIR` points to the workflow bundle, which is deliberately not bind-mounted; `PROJECT_DIR`
+> points to the target repo, which is bind-mounted at `/home/agent/workspace` (not at the host path).
+> A prompt file that embeds either token passes a broken path to claude. The config validator
+> (Rule B) rejects both tokens in any prompt file referenced by a claude step. Shell command steps,
+> which run on the host and see host paths, may use both tokens freely.
 
 - **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration and cleared at the start of the next:
 
@@ -62,14 +71,27 @@ Config:
 
 At runtime with issue `42`, this resolves to:
 ```
-["{projectDir}/scripts/close_gh_issue", "42"]
+["{workflowDir}/scripts/close_gh_issue", "42"]
 ```
 
-Note that the relative script path `scripts/close_gh_issue` is also resolved to an absolute path against the project directory. Bare commands like `git` are not modified.
+Note that the relative script path `scripts/close_gh_issue` is also resolved to an absolute path against the workflow directory. Bare commands like `git` are not modified.
+
+### `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` post-split semantics
+
+After the 0.3.0 split (`docs/adr/20260413162428-workflow-project-dir-split.md`), each token has a distinct, unambiguous meaning:
+
+| Token | Expands to | Default source | Override flag |
+|-------|-----------|----------------|---------------|
+| `{{WORKFLOW_DIR}}` | The workflow bundle directory — where `ralph-steps.json`, `prompts/`, `scripts/`, and `ralph-art.txt` live | `os.Executable()` + `filepath.EvalSymlinks` | `--workflow-dir` |
+| `{{PROJECT_DIR}}` | The target repository — the git repo being modified by the workflow | `os.Getwd()` + `filepath.EvalSymlinks` | `--project-dir` |
+
+In the default pr9k install both directories often share a parent (the binary lives under `bin/` inside the pr9k repo), but they are distinct concepts and may point to entirely different locations when ralph-tui is used from `PATH` or with explicit flags.
+
+Use `{{WORKFLOW_DIR}}` to reach workflow artifacts: `{{WORKFLOW_DIR}}/ralph-art.txt` (the default Splash step), `scripts/get_gh_user` (resolved against `workflowDir` by `ResolveCommand`). Use `{{PROJECT_DIR}}` when a shell command step needs to reference the target repo root explicitly (e.g., running a repo-specific tool). Do not use either token in prompt files (see sandbox constraint above).
 
 ### Finalization steps
 
-Finalization steps run after all iterations complete. Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible during the finalize phase — using them in a finalize step will log a warning and substitute the empty string. Built-in variables (`PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
+Finalization steps run after all iterations complete. Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible during the finalize phase — using them in a finalize step will log a warning and substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ### Escape sequences
 
@@ -113,7 +135,7 @@ These files are created by one step and consumed by a later step within the same
 | File | Created By | Consumed By | Lifecycle |
 |------|-----------|-------------|-----------|
 | `test-plan.md` | Test planning step | Test writing step (`@test-plan.md`) | Deleted by test writing step |
-| `code-review.md` | Code review step | Review fixes step (`@code-review.md`) | Deleted by review fixes step |
+| `code-review.md` | Code review step | Fix review items step (`@code-review.md`) | Deleted by fix review items step |
 
 The consuming step checks whether the file exists and has content. If the file is empty or missing, the step skips to cleanup.
 
@@ -125,7 +147,7 @@ Iteration N:
   Test planning ──writes──▶ test-plan.md, progress.txt
   Test writing ──reads───▶ test-plan.md ──deletes──▶ test-plan.md
   Code review ──writes──▶ code-review.md, progress.txt
-  Review fixes ──reads───▶ code-review.md ──deletes──▶ code-review.md
+  Fix review items ──reads───▶ code-review.md ──deletes──▶ code-review.md
   Update docs ──reads───▶ progress.txt
 
 Finalization:

@@ -12,6 +12,11 @@ When a workflow does something unexpected — a Claude step generated the wrong 
 
 If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
 
+> **Tip:** Since ralph-tui 0.2.3, logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> ```
+> echo 'logs/' >> .gitignore
+> ```
+
 ## Reading the log file
 
 The log file is plain text, UTF-8, one line per logical log event. You can use standard tools like `less`, `grep`, `tail -f` (during a run), or `rg` — nothing is binary-encoded.
@@ -108,7 +113,7 @@ If you want to reproduce a bug without running the whole workflow, narrow the sc
 ralph-tui -n 1
 ```
 
-Combined with a specific `--project-dir` pointing at a scratch ralph-tui checkout with a custom `ralph-steps.json` that only includes the steps leading up to the failure, you can get a minimal repro in seconds.
+Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
 
 If the bug is inside a specific step's prompt or script, you can also run that step directly:
 
@@ -131,7 +136,7 @@ Several Claude steps communicate by writing files into the target repo and havin
 | File | Written by | Read by | Lifecycle |
 |------|-----------|---------|-----------|
 | `test-plan.md` | Test planning | Test writing | Deleted by Test writing |
-| `code-review.md` | Code review | Review fixes | Deleted by Review fixes |
+| `code-review.md` | Code review | Fix review items | Deleted by Fix review items |
 | `progress.txt` | All Claude steps (append) | Update docs, Lessons learned | Cleared by Lessons learned |
 | `deferred.txt` | All Claude steps (append) | Deferred work | Cleared by Deferred work |
 
@@ -141,7 +146,7 @@ For the full file-passing model, see [Variable Output & Injection](variable-outp
 
 ## Validator errors before a run
 
-If ralph-tui refuses to start, it's the validator. `validator.Validate(projectDir)` runs before the TUI and checks:
+If ralph-tui refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
 
 - `ralph-steps.json` exists and parses
 - Every step has valid schema (`name`, `isClaude`, required fields per type)

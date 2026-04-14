@@ -80,13 +80,50 @@ if err != nil {
 // username may be empty — callers must tolerate that
 ```
 
+## Use errors.Is for specific error types — not os.IsPermission or similar helpers
+
+Use `errors.Is(err, fs.ErrPermission)` (or the equivalent `errors.As`) to inspect specific error types when errors may be wrapped with `fmt.Errorf("%w")`. Legacy helpers like `os.IsPermission` and `os.IsNotExist` do **not** traverse wrapped error chains — they only match the outermost error. Once you wrap an error with `%w`, those helpers return false even when the underlying cause is a permission denial.
+
+```go
+// Bad — os.IsPermission does not see through fmt.Errorf("%w") wrapping
+if os.IsPermission(err) {
+    return fmt.Errorf("preflight: not permitted: %w", err)
+}
+
+// Good — errors.Is traverses the wrapped chain
+if errors.Is(err, fs.ErrPermission) {
+    return fmt.Errorf("preflight: not permitted: %w", err)
+}
+```
+
+Apply `errors.Is(err, fs.ErrPermission)` anywhere you wrap errors with `%w` and need to check the cause downstream. The same applies to `fs.ErrNotExist` instead of `os.IsNotExist`.
+
+## Validate file paths stay within their expected directory
+
+When a config or user-supplied field resolves to a file path (e.g., `PromptFile` in a step definition), confirm that the resolved path remains inside the expected root directory before opening it. A relative path containing `..` can escape the root and read arbitrary files.
+
+```go
+// safePromptPath returns an error if resolved path escapes the prompts directory.
+func safePromptPath(workflowDir, promptFile string) (string, error) {
+    root := filepath.Join(workflowDir, "prompts")
+    abs := filepath.Join(root, promptFile)
+    rel, err := filepath.Rel(root, abs)
+    if err != nil || strings.HasPrefix(rel, "..") {
+        return "", fmt.Errorf("steps: PromptFile %q escapes prompts directory", promptFile)
+    }
+    return abs, nil
+}
+```
+
+Apply this check at every boundary where a file path is supplied by config or user input and opened from within a bounded directory. The check must happen after `filepath.Join` — not before — so that any `..` components are resolved against the root first.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Scanner error checking, goroutine write error tracking, and package-prefixed error messages
 - [Step Definitions & Prompt Building](../features/step-definitions.md) — Package-prefixed errors and file paths in I/O errors for step/prompt loading
 - [File Logging](../features/file-logging.md) — bufio.Writer error surfacing on close and package-prefixed logger errors
-- [CLI & Configuration](../features/cli-configuration.md) — Error messages for invalid arguments and project directory resolution failures
+- [CLI & Configuration](../features/cli-configuration.md) — Error messages for invalid arguments and workflow/project directory resolution failures
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Warning logs for discarded CaptureOutput failures (get_gh_user, get_next_issue)
 - [API Design](api-design.md) — Complementary standards for precondition validation
 - [Concurrency](concurrency.md) — Complementary standards for goroutine error handling

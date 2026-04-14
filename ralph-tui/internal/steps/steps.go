@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
@@ -25,15 +26,16 @@ type Step struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-	Initialize []Step `json:"initialize"`
-	Iteration  []Step `json:"iteration"`
-	Finalize   []Step `json:"finalize"`
+	Env        []string `json:"env,omitempty"`
+	Initialize []Step   `json:"initialize"`
+	Iteration  []Step   `json:"iteration"`
+	Finalize   []Step   `json:"finalize"`
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,
-// resolved relative to projectDir.
-func LoadSteps(projectDir string) (StepFile, error) {
-	path := filepath.Join(projectDir, "ralph-steps.json")
+// resolved relative to workflowDir.
+func LoadSteps(workflowDir string) (StepFile, error) {
+	path := filepath.Join(workflowDir, "ralph-steps.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return StepFile{}, fmt.Errorf("steps: could not read %s: %w", path, err)
@@ -49,11 +51,16 @@ func LoadSteps(projectDir string) (StepFile, error) {
 
 // BuildPrompt reads the prompt file for the given step, substitutes {{VAR}}
 // tokens using vt and phase, and returns the result.
-func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
+func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
 	if step.PromptFile == "" {
 		return "", fmt.Errorf("steps: PromptFile must not be empty")
 	}
-	promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+	promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
+	absPath, absErr := filepath.Abs(promptPath)
+	absPrompts, absPromptsErr := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+	if absErr != nil || absPromptsErr != nil || !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+		return "", fmt.Errorf("steps: prompt path escapes prompts directory: %s", step.PromptFile)
+	}
 	data, err := os.ReadFile(promptPath)
 	if err != nil {
 		return "", fmt.Errorf("steps: could not read prompt %s: %w", promptPath, err)

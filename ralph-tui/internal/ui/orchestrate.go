@@ -17,6 +17,12 @@ type StepHeader interface {
 type ResolvedStep struct {
 	Name    string
 	Command []string
+	// IsClaude is true for steps that run inside the Docker sandbox via
+	// RunSandboxedStep. Shell command steps leave this false.
+	IsClaude bool
+	// CidfilePath is the docker --cidfile path for sandboxed steps.
+	// Non-empty only when IsClaude is true.
+	CidfilePath string
 }
 
 // Orchestrate runs steps in sequence. On step failure (non-zero exit, not

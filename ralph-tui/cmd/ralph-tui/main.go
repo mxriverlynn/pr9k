@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
@@ -28,68 +30,72 @@ func stepNames(ss []steps.Step) []string {
 	return names
 }
 
-// services bundles the dependencies wired from cfg and the captured working
-// directory. Split out so tests can verify each constructor receives the
-// correct dir (logger/runner bound to workingDir; steps/validator bound to
-// cfg.ProjectDir).
+// services bundles the logger, runner, and step file returned by startup.
 type services struct {
 	log      *logger.Logger
 	runner   *workflow.Runner
 	stepFile steps.StepFile
 }
 
-// newServices wires the logger, runner, and step file. workingDir is the
-// shell CWD captured at startup and governs subprocess cmd.Dir and log file
-// location. cfg.ProjectDir is the install dir (where ralph-steps.json,
-// scripts/, prompts/ live). On validation failure, errors are written to
-// stderr and ok=false is returned.
-func newServices(cfg *cli.Config, workingDir string) (s *services, ok bool) {
-	log, err := logger.NewLogger(workingDir)
+// startup performs the full pre-run sequence: load steps, run D13 config
+// validation, run preflight checks. Errors from both are collected before
+// any output is written, so all problems appear together. On success the
+// services are fully initialised and warnings (if any) have been printed.
+// profileDir must be resolved by the caller (preflight.ResolveProfileDir).
+func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, stderr io.Writer) (*services, bool) {
+	stepFile, err := steps.LoadSteps(cfg.WorkflowDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return nil, false
 	}
 
-	stepFile, err := steps.LoadSteps(cfg.ProjectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		_ = log.Close()
-		return nil, false
-	}
+	validationErrs := validator.Validate(cfg.WorkflowDir)
+	preflightResult := preflight.Run(profileDir, prober)
 
-	if validationErrs := validator.Validate(cfg.ProjectDir); len(validationErrs) > 0 {
+	if len(validationErrs) > 0 || len(preflightResult.Errors) > 0 {
 		for _, ve := range validationErrs {
-			fmt.Fprintln(os.Stderr, ve.Error())
+			_, _ = fmt.Fprintln(stderr, ve.Error())
 		}
-		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
-		_ = log.Close()
+		if len(validationErrs) > 0 {
+			_, _ = fmt.Fprintf(stderr, "%d validation error(s)\n", len(validationErrs))
+		}
+		for _, e := range preflightResult.Errors {
+			_, _ = fmt.Fprintln(stderr, e.Error())
+		}
+		return nil, false
+	}
+
+	for _, w := range preflightResult.Warnings {
+		_, _ = fmt.Fprintln(stderr, w)
+	}
+
+	log, err := logger.NewLogger(projectDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return nil, false
 	}
 
 	return &services{
 		log:      log,
-		runner:   workflow.NewRunner(log, workingDir),
+		runner:   workflow.NewRunner(log, projectDir),
 		stepFile: stepFile,
 	}, true
 }
 
 func main() {
-	workingDir, err := os.Getwd()
+	cfg, err := cli.Execute(newSandboxCmd())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "main: could not resolve working dir: %v\n", err)
-		os.Exit(1)
-	}
-
-	cfg, err := cli.Execute()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+		if !errors.Is(err, errSilentExit) {
+			fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+		}
 		os.Exit(1)
 	}
 	if cfg == nil {
 		os.Exit(0)
 	}
 
-	svc, ok := newServices(cfg, workingDir)
+	profileDir := preflight.ResolveProfileDir()
+	svc, ok := startup(cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, os.Stderr)
 	if !ok {
 		os.Exit(1)
 	}
@@ -111,7 +117,9 @@ func main() {
 		header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
 	} else {
 		header.SetPhaseSteps(stepNames(stepFile.Iteration))
-		header.SetStepState(0, ui.StepActive)
+		if len(stepFile.Iteration) > 0 {
+			header.SetStepState(0, ui.StepActive)
+		}
 		if cfg.Iterations > 0 {
 			header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
 		} else {
@@ -139,8 +147,9 @@ func main() {
 	}
 
 	runCfg := workflow.RunConfig{
-		ProjectDir:      cfg.ProjectDir,
+		WorkflowDir:     cfg.WorkflowDir,
 		Iterations:      cfg.Iterations,
+		Env:             stepFile.Env,
 		InitializeSteps: stepFile.Initialize,
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,

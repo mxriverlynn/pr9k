@@ -280,6 +280,51 @@ func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) { ..
 
 Apply this checklist any time you write or modify a grid/table rendering function that pads or aligns cells.
 
+## Test validation rules across all applicable lifecycle phases
+
+When a validator rule applies to multiple lifecycle phases (initialize, iteration, finalize), write a test for each phase separately — not just the one that was convenient at the time. Phase-specific behavior is a common source of gaps: a rule may fire correctly in the iteration phase but silently miss the initialize or finalize phase due to how the validation loop is structured.
+
+```go
+// Covers iteration — but that's only one of three phases.
+func TestValidate_RuleA_CaptureAsOnClaudeStepInIterationPhase(t *testing.T) { ... }
+
+// Required: cover all phases the rule applies to.
+func TestValidate_RuleA_CaptureAsOnClaudeStepInInitializePhase(t *testing.T) { ... }
+func TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizationPhase(t *testing.T) { ... }
+```
+
+Checklist when adding a new validator rule:
+1. Identify all phases the rule applies to.
+2. Write one test per phase.
+3. If the implementation shares a single `validatePhase` helper, a per-phase test still matters — it verifies the helper is actually called for each phase and receives the right data.
+
+The same principle applies to any code that processes items phase-by-phase: a loop over phases can silently skip a phase if the data structure is inconsistent.
+
+## Test empty-array vs. absent-key distinction for optional JSON fields
+
+When a Go struct field is a slice (`[]T`) with an `omitempty` JSON tag (or no tag), test both:
+- **Absent key** — field omitted from JSON entirely → should deserialize to `nil`
+- **Empty array** — key present with `[]` value → should deserialize to a non-nil empty slice
+
+These two states often need different treatment downstream (e.g., "user did not specify" vs. "user explicitly said none"), and the distinction is easy to lose when one case is untested.
+
+```go
+func TestLoadSteps_EnvAbsentKeyIsNil(t *testing.T) {
+    // JSON step with no "env" key
+    step := loadStep(t, `{"name":"s","isClaude":true,"command":["c"]}`)
+    require.Nil(t, step.Env)
+}
+
+func TestLoadSteps_EnvEmptyArrayIsNonNil(t *testing.T) {
+    // JSON step with "env": []
+    step := loadStep(t, `{"name":"s","isClaude":true,"command":["c"],"env":[]}`)
+    require.NotNil(t, step.Env)
+    require.Empty(t, step.Env)
+}
+```
+
+Apply whenever a new optional slice field is added to a JSON-deserialized struct.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)

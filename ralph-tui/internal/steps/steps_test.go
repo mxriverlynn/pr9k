@@ -81,7 +81,7 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 		"Test planning",
 		"Test writing",
 		"Code review",
-		"Review fixes",
+		"Fix review items",
 		"Close issue",
 		"Update docs",
 		"Git push",
@@ -376,6 +376,66 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 	}
 }
 
+// TP-001: StepFile.Env deserialization — populated array
+func TestLoadSteps_EnvPopulatedArray(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"env":["GITHUB_TOKEN","AWS_KEY"],"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	want := []string{"GITHUB_TOKEN", "AWS_KEY"}
+	if len(got.Env) != len(want) {
+		t.Fatalf("expected Env length %d, got %d: %v", len(want), len(got.Env), got.Env)
+	}
+	for i, w := range want {
+		if got.Env[i] != w {
+			t.Errorf("Env[%d]: expected %q, got %q", i, w, got.Env[i])
+		}
+	}
+}
+
+// TP-002: StepFile.Env deserialization — absent key defaults to nil/empty
+func TestLoadSteps_EnvAbsentKeyIsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(got.Env) != 0 {
+		t.Errorf("expected Env to be nil or empty when absent from JSON, got %v", got.Env)
+	}
+}
+
+// TP-009: StepFile.Env deserialization — empty array is non-nil with length 0
+func TestLoadSteps_EnvEmptyArrayIsNonNil(t *testing.T) {
+	dir := t.TempDir()
+	json := `{"env":[],"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.Env == nil {
+		t.Error("expected Env to be non-nil for explicit empty array, got nil")
+	}
+	if len(got.Env) != 0 {
+		t.Errorf("expected Env length 0, got %d: %v", len(got.Env), got.Env)
+	}
+}
+
 // BuildPrompt tests
 
 func makeTempProjectWithPrompt(t *testing.T, filename, content string) string {
@@ -394,7 +454,7 @@ func makeTempProjectWithPrompt(t *testing.T, filename, content string) string {
 func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "do the thing\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {
@@ -410,7 +470,7 @@ func TestBuildPrompt_ReturnsFileContent(t *testing.T) {
 func TestBuildPrompt_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	step := steps.Step{PromptFile: "missing.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -422,7 +482,7 @@ func TestBuildPrompt_ErrorIncludesPathAndWrapsOSError(t *testing.T) {
 	dir := t.TempDir()
 	// No prompts/ subdirectory — file will not exist
 	step := steps.Step{PromptFile: "missing.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -446,7 +506,7 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := steps.Step{PromptFile: ""}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	_, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err == nil {
@@ -457,7 +517,7 @@ func TestBuildPrompt_EmptyPromptFile(t *testing.T) {
 func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "implement issue {{ISSUE_ID}}\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 
@@ -475,7 +535,7 @@ func TestBuildPrompt_SubstitutesVarsInContent(t *testing.T) {
 func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
 	dir := makeTempProjectWithPrompt(t, "feature.txt", "value: {{UNKNOWN}}\n")
 	step := steps.Step{PromptFile: "feature.txt"}
-	vt := vars.New(dir, 0)
+	vt := vars.New(dir, dir, 0)
 
 	result, err := steps.BuildPrompt(dir, step, vt, vars.Iteration)
 	if err != nil {

@@ -68,9 +68,10 @@ type Step struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Initialize []Step `json:"initialize"`
-    Iteration  []Step `json:"iteration"`
-    Finalize   []Step `json:"finalize"`
+    Env        []string `json:"env,omitempty"`
+    Initialize []Step   `json:"initialize"`
+    Iteration  []Step   `json:"iteration"`
+    Finalize   []Step   `json:"finalize"`
 }
 ```
 
@@ -78,11 +79,11 @@ type StepFile struct {
 
 ### Step Loading
 
-`LoadSteps` reads `ralph-steps.json` relative to the project directory and unmarshals into a `StepFile`:
+`LoadSteps` reads `ralph-steps.json` relative to the workflow directory and unmarshals into a `StepFile`:
 
 ```go
-func LoadSteps(projectDir string) (StepFile, error) {
-    path := filepath.Join(projectDir, "ralph-steps.json")
+func LoadSteps(workflowDir string) (StepFile, error) {
+    path := filepath.Join(workflowDir, "ralph-steps.json")
     data, err := os.ReadFile(path)
     // ... unmarshal JSON into StepFile
 }
@@ -97,7 +98,7 @@ Two steps run once before the iteration loop begins:
 | 1 | Splash | Shell | — |
 | 2 | Get GitHub user | Shell | `GITHUB_USER` |
 
-"Splash" runs `cat {{PROJECT_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
+"Splash" runs `cat {{WORKFLOW_DIR}}/ralph-art.txt` to display the startup banner. "Get GitHub user" runs `scripts/get_gh_user` and captures the result as `GITHUB_USER`, making it available to all subsequent phases.
 
 ### Iteration Steps
 
@@ -111,7 +112,7 @@ The 10 iteration steps run in sequence for each GitHub issue:
 | 4 | Test planning | Claude | opus | — |
 | 5 | Test writing | Claude | sonnet | — |
 | 6 | Code review | Claude | opus | — |
-| 7 | Review fixes | Claude | sonnet | — |
+| 7 | Fix review items | Claude | sonnet | — |
 | 8 | Close issue | Shell | — | — |
 | 9 | Update docs | Claude | sonnet | — |
 | 10 | Git push | Shell | — | — |
@@ -133,11 +134,16 @@ Three steps run once after all iterations complete:
 `BuildPrompt` reads the prompt file, applies `{{VAR}}` substitution using the supplied `VarTable` and phase, and returns the result:
 
 ```go
-func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
+func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
     if step.PromptFile == "" {
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
-    promptPath := filepath.Join(projectDir, "prompts", step.PromptFile)
+    promptPath := filepath.Join(workflowDir, "prompts", step.PromptFile)
+    absPath, absErr := filepath.Abs(promptPath)
+    absPrompts, absPromptsErr := filepath.Abs(filepath.Join(workflowDir, "prompts"))
+    if absErr != nil || absPromptsErr != nil || !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+        return "", fmt.Errorf("steps: prompt path escapes prompts directory: %s", step.PromptFile)
+    }
     data, err := os.ReadFile(promptPath)
     // ...
     content, err := vars.Substitute(string(data), vt, phase)
@@ -145,6 +151,8 @@ func BuildPrompt(projectDir string, step Step, vt *vars.VarTable, phase vars.Pha
     return content, nil
 }
 ```
+
+The path containment check prevents `promptFile` values containing `..` segments (e.g., `"../../../etc/passwd"`) from reading files outside the `prompts/` directory. Both the resolved path and the prompts directory are converted to absolute paths before comparison.
 
 All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` before the string is returned. Unresolved variables log a warning and substitute the empty string.
 
@@ -155,6 +163,7 @@ All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` 
 | Config file unreadable | `"steps: could not read {path}: ..."` | Returned to caller |
 | Malformed JSON | `"steps: malformed JSON in {path}: ..."` | Returned to caller |
 | Empty PromptFile | `"steps: PromptFile must not be empty"` | Returned to caller |
+| Path traversal attempt | `"steps: prompt path escapes prompts directory: {promptFile}"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 | Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
 

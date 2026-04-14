@@ -25,12 +25,13 @@ const (
 // must not overwrite. The VarTable enforces this as a defense-in-depth check;
 // the validator (#40) is the primary enforcement point.
 var reservedNames = map[string]bool{
-	"PROJECT_DIR": true,
-	"MAX_ITER":    true,
-	"ITER":        true,
-	"STEP_NUM":    true,
-	"STEP_COUNT":  true,
-	"STEP_NAME":   true,
+	"WORKFLOW_DIR": true,
+	"PROJECT_DIR":  true,
+	"MAX_ITER":     true,
+	"ITER":         true,
+	"STEP_NUM":     true,
+	"STEP_COUNT":   true,
+	"STEP_NAME":    true,
 }
 
 // VarTable holds runtime variable state for a single ralph-tui run.
@@ -52,14 +53,16 @@ type VarTable struct {
 }
 
 // New creates a VarTable seeded with the built-in variables derived from
-// the CLI flags. projectDir is the resolved project directory; maxIter is the
+// the CLI flags. workflowDir is the resolved workflow bundle directory (install
+// dir); projectDir is the resolved target repository directory; maxIter is the
 // value of --iterations (0 means unbounded).
-func New(projectDir string, maxIter int) *VarTable {
+func New(workflowDir, projectDir string, maxIter int) *VarTable {
 	vt := &VarTable{
 		persistent: make(map[string]string),
 		iteration:  make(map[string]string),
 		phase:      Initialize,
 	}
+	vt.persistent["WORKFLOW_DIR"] = workflowDir
 	vt.persistent["PROJECT_DIR"] = projectDir
 	vt.persistent["MAX_ITER"] = strconv.Itoa(maxIter)
 	return vt
