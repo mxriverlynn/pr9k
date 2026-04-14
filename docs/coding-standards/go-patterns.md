@@ -1,8 +1,10 @@
 # Go Patterns
 
-## Resolve binary path with os.Executable + filepath.EvalSymlinks
+## Resolve directories with os.Executable / os.Getwd + filepath.EvalSymlinks
 
-When a binary needs to locate sibling files (e.g., configs, scripts) relative to itself, use `os.Executable()` followed by `filepath.EvalSymlinks` to get the real path. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink.
+ralph-tui resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
+
+**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/ralph-tui` → `pr9k/bin/ralph-tui`).
 
 ```go
 exe, err := os.Executable()
@@ -13,8 +15,23 @@ exe, err = filepath.EvalSymlinks(exe)
 if err != nil {
     return "", err
 }
-projectDir := filepath.Dir(exe)
+workflowDir := filepath.Dir(exe)
 ```
+
+**Project directory** (target repo — the git repo the workflow operates against): resolved from the shell CWD at startup. `EvalSymlinks` ensures the path matches what Docker receives for bind-mount arguments.
+
+```go
+cwd, err := os.Getwd()
+if err != nil {
+    return "", err
+}
+projectDir, err := filepath.EvalSymlinks(cwd)
+if err != nil {
+    return "", err
+}
+```
+
+This is why `go run` does not work for ralph-tui: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
 
 ## Use runtime.Caller(0) in test helpers for path resolution
 

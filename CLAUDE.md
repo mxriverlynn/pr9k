@@ -71,6 +71,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with buffered I/O
 - [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
 - [`docs/features/config-validation.md`](docs/features/config-validation.md) — D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules A/B/C, and structured error collection
+- [`docs/features/docker-sandbox.md`](docs/features/docker-sandbox.md) — Docker sandbox architecture: mount layout (`<projectDir>` → `/home/agent/workspace`, `<profileDir>` → `/home/agent/.claude`), `BuildRunArgs` command shape, env allowlist behavior, UID/GID mapping, cidfile-driven termination, and residual risks
 - [`docs/features/sandbox.md`](docs/features/sandbox.md) — Docker sandbox package: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
 - [`docs/features/preflight.md`](docs/features/preflight.md) — Preflight package: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 - [`docs/features/create-sandbox.md`](docs/features/create-sandbox.md) — `create-sandbox` subcommand: Docker check, image pull, smoke test with ANSI sanitization, `createSandboxDeps` injection design, and `--force` flag
@@ -80,6 +81,8 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/adr/20260409135303-cobra-cli-framework.md`](docs/adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing (POSIX flags, subcommands). Apply when modifying CLI argument handling or adding new commands.
 - [`docs/adr/20260410170952-narrow-reading-principle.md`](docs/adr/20260410170952-narrow-reading-principle.md) — Narrow-reading principle: ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code. Apply when evaluating any PR that adds Ralph-specific knowledge to Go code.
 - [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](docs/adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate the TUI from Glyph to Bubble Tea + Lip Gloss + bubbles/viewport for dynamic window title, mouse-wheel scrolling, and long-term ecosystem stability. Apply when modifying any TUI rendering, keyboard dispatch, or subprocess-streaming code.
+- [`docs/adr/20260413160000-require-docker-sandbox.md`](docs/adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker an unconditional runtime requirement for claude steps. Apply when evaluating changes to the sandbox or any proposal to make Docker optional.
+- [`docs/adr/20260413162428-workflow-project-dir-split.md`](docs/adr/20260413162428-workflow-project-dir-split.md) — Decision to split the single `--project-dir` flag into `--workflow-dir` (workflow bundle) and `--project-dir` (target repo). Apply when modifying CLI flags, `{{VAR}}` tokens, or any code that distinguishes the workflow bundle from the target repository.
 
 ## Coding Standards
 
@@ -96,6 +99,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 Problem-focused guides for users running ralph-tui against their own projects. When adding a new how-to, keep each guide focused on solving one specific problem or using one specific feature.
 
 - [`docs/how-to/getting-started.md`](docs/how-to/getting-started.md) — Install ralph-tui, point it at a target repo, and interpret the first run of the default workflow
+- [`docs/how-to/setting-up-docker-sandbox.md`](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `ralph-tui create-sandbox`, authenticate the claude profile, and configure `CLAUDE_CONFIG_DIR` for multi-profile setups
 - [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (checkbox grid, iteration line, log panel, shortcut footer with version label) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
 - [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files

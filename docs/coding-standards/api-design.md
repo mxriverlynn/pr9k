@@ -32,7 +32,7 @@ func (h *StatusHeader) SetStepState(idx int, state StepState) {
 Check invariants at the start of a function and return a clear error. Do not let invalid inputs propagate into deeper I/O or OS calls where the resulting error is harder to interpret.
 
 ```go
-func BuildPrompt(projectDir string, step Step, issueID, sha string) (string, error) {
+func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Phase) (string, error) {
     if step.PromptFile == "" {
         return "", fmt.Errorf("steps: PromptFile must not be empty")
     }
@@ -175,7 +175,7 @@ If a function uses platform-specific behavior (e.g., `/` as the path separator t
 // Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
 exe := result[0]
 if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
-    result[0] = filepath.Join(projectDir, exe)
+    result[0] = filepath.Join(workflowDir, exe)
 }
 ```
 

@@ -12,6 +12,11 @@ When a workflow does something unexpected — a Claude step generated the wrong 
 
 If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
 
+> **Tip:** Since ralph-tui 0.2.3, logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> ```
+> echo 'logs/' >> .gitignore
+> ```
+
 ## Reading the log file
 
 The log file is plain text, UTF-8, one line per logical log event. You can use standard tools like `less`, `grep`, `tail -f` (during a run), or `rg` — nothing is binary-encoded.
@@ -108,7 +113,7 @@ If you want to reproduce a bug without running the whole workflow, narrow the sc
 ralph-tui -n 1
 ```
 
-Combined with a specific `--project-dir` pointing at a scratch ralph-tui checkout with a custom `ralph-steps.json` that only includes the steps leading up to the failure, you can get a minimal repro in seconds.
+Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
 
 If the bug is inside a specific step's prompt or script, you can also run that step directly:
 

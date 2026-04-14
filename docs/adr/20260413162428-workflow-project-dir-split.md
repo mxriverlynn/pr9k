@@ -27,8 +27,15 @@ have coexisted implicitly:
    every subprocess. Today this is implicit: `CLAUDE.md:35` states
    *"Ralph is invoked from the target repo — all subprocesses inherit
    that cwd,"* and there is no `TargetRepo` field in `cli.Config` or
-   `workflow.RunConfig`, no flag for it, and no call to `os.Getwd()`
-   anywhere in the codebase.
+   `workflow.RunConfig`, and no flag for it. An internal `workingDir`
+   capture via `os.Getwd()` was introduced in commit `4f4481b` (0.2.3)
+   at `cmd/ralph-tui/main.go:77` and routed to the logger and runner,
+   but it is not surfaced as a user-facing flag or variable. The split
+   promotes that internal capture to first-class surface: `--project-dir`
+   / `{{PROJECT_DIR}}` / `ProjectDir` add `filepath.EvalSymlinks`, an
+   override flag, and VarTable seeding on top of the existing
+   `os.Getwd()` call. The `workingDir` identifier in current code is
+   renamed to `projectDir` as part of the split.
 
 These are two distinct directories. In the pr9k project itself they
 happen to be siblings (the binary lives under `bin/`, which is a
@@ -226,7 +233,7 @@ follow-up doc updates are recorded in
 | `ralph-tui/internal/cli/args.go` | Flag registration for both `--workflow-dir` and `--project-dir`; `resolveWorkflowDir()` + `resolveProjectDir()` |
 | `ralph-tui/internal/vars/vars.go` | Seeds `WORKFLOW_DIR` and `PROJECT_DIR` persistent-scope variables |
 | `ralph-tui/internal/validator/validator.go` | Prompt-scan pass rejecting both tokens in claude prompts |
-| `ralph-tui/internal/workflow/run.go` | `RunConfig.WorkflowDir` + `RunConfig.ProjectDir`; target repo wired through to `sandbox.BuildRunArgs` |
+| `ralph-tui/internal/workflow/run.go` | `RunConfig.WorkflowDir`; target repo reaches `BuildRunArgs` via `Runner.ProjectDir()` / `StepExecutor.ProjectDir()` per Option B |
 | `ralph-tui/ralph-steps.json` | Default workflow; line 3's Splash step migrated from `{{PROJECT_DIR}}` to `{{WORKFLOW_DIR}}` |
 
 ### Related Docs

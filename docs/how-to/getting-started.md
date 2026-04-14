@@ -5,8 +5,9 @@ This guide walks you through installing ralph-tui, pointing it at a target repo,
 ## Prerequisites
 
 - **[Go 1.26.2](https://go.dev/dl/)** — ralph-tui compiles to a single static binary
+- **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS/Windows) or Docker Engine (Linux), running. ralph-tui runs every Claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
 - **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`)
-- **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`)
+- **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`). The CLI's credentials are used inside the sandbox container
 - A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `ralph-steps.json`
 - A Unix-like terminal — ralph-tui uses `ioctl TIOCGWINSZ` for terminal sizing, so it runs on macOS and Linux but not Windows
 
@@ -33,6 +34,13 @@ make build
 If you just want to rebuild the Go binary without copying assets, run `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`. Don't use `go run`: the orchestrator resolves its project directory from the executable path (`os.Executable()` + `filepath.EvalSymlinks`), and `go run` uses a temp dir that doesn't contain the prompts or scripts.
 
 ## First run against the default workflow
+
+Before the first run, add `logs/` to your target repo's `.gitignore`. Since ralph-tui 0.2.3, log files land under `<project-dir>/logs/` — that is, inside your target repo — and will appear as untracked changes if the directory is not ignored:
+
+```bash
+echo 'logs/' >> .gitignore
+git add .gitignore && git commit -m "ignore ralph-tui log directory"
+```
 
 From the **target repo's working directory** (not pr9k's — ralph-tui runs subprocesses with the current working directory):
 
@@ -111,6 +119,7 @@ See [Recovering from Step Failures](recovering-from-step-failures.md) and [Quitt
 
 ## Where to go next
 
+- **Setting up the Docker sandbox (first-time):** [Setting Up Docker Sandbox](setting-up-docker-sandbox.md)
 - **Adapting the workflow for your project:** [Building Custom Workflows](building-custom-workflows.md)
 - **Learning the variable substitution engine:** [Variable Output & Injection](variable-output-and-injection.md)
 - **Capturing a step's output for later steps:** [Capturing Step Output](capturing-step-output.md)
