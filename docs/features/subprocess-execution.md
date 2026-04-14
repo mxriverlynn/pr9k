@@ -252,7 +252,7 @@ func (r *Runner) Terminate() {
 
 ### Sandboxed Step Execution (RunSandboxedStep)
 
-`RunSandboxedStep` runs a command inside a Docker sandbox. It differs from `RunStep` in three ways: it installs `opts.Terminator` so that `Terminate()` dispatches signals through the container (not the host `docker` CLI process), it provides explicit empty stdin (`bytes.NewReader(nil)`) to prevent raw-mode keyboard inheritance, and it cleans up the cidfile at `opts.CidfilePath` after the step exits (ENOENT-tolerant via `sandbox.Cleanup`):
+`RunSandboxedStep` runs a command inside a Docker sandbox. It differs from `RunStep` in three ways: it routes terminator construction to `runCommand` (not the Lock block), it provides explicit empty stdin (`bytes.NewReader(nil)`) to prevent raw-mode keyboard inheritance, and it cleans up the cidfile at `opts.CidfilePath` after the step exits (ENOENT-tolerant via `sandbox.Cleanup`):
 
 ```go
 func (r *Runner) RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error {
@@ -262,20 +262,25 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 
     r.processMu.Lock()
     r.terminated = false
-    r.currentTerminator = opts.Terminator
     r.processMu.Unlock()
 
     defer func() {
         _ = sandbox.Cleanup(opts.CidfilePath)
     }()
 
-    return r.runCommand(stepName, command, bytes.NewReader(nil))
+    return r.runCommand(stepName, command, bytes.NewReader(nil), &opts)
 }
 ```
 
 ### Shared Subprocess Core (runCommand)
 
-`runCommand` is the private shared core used by both `RunStep` and `RunSandboxedStep`. It starts the subprocess, creates two scanner goroutines, waits for both pipes to drain, and then calls `cmd.Wait()`. A key correctness detail: the `currentTerminator` is cleared **before** the `procDone` channel is closed, so any `Terminate()` racing with natural step completion observes a nil terminator and short-circuits instead of dispatching a stale signal:
+`runCommand` is the private shared core used by both `RunStep` and `RunSandboxedStep`. It takes a `*SandboxOptions` parameter (nil for `RunStep`) that drives terminator selection. Terminator construction happens **after** the `*exec.Cmd` is created but **before** `cmd.Start()` — this resolves the construction-ordering constraint where `sandbox.NewTerminator` needs the cmd pointer:
+
+- If `opts.Terminator != nil`: use it directly (test-injection path)
+- If `opts.Terminator == nil` and `opts.CidfilePath != ""`: auto-construct via `sandbox.NewTerminator(cmd, opts.CidfilePath)`
+- If `opts == nil` (RunStep): no terminator installed; `currentTerminator` stays nil throughout
+
+A key correctness detail: `currentTerminator` is cleared **before** the `procDone` channel is closed, so any `Terminate()` racing with natural step completion observes a nil terminator and short-circuits instead of dispatching a stale signal:
 
 ```go
 defer func() {

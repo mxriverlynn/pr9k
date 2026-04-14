@@ -81,6 +81,10 @@ Key files:
 type RunConfig struct {
     WorkflowDir     string
     Iterations      int
+    // Env is the per-workflow env allowlist loaded from the "env" field of
+    // ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+    // when building docker run args for claude steps.
+    Env             []string
     InitializeSteps []steps.Step  // run once before the iteration loop
     Steps           []steps.Step  // run each iteration
     FinalizeSteps   []steps.Step  // run once after the loop
@@ -123,8 +127,10 @@ type RunHeader interface {
 
 // ResolvedStep holds a step's name and its fully-resolved command argv.
 type ResolvedStep struct {
-    Name    string
-    Command []string
+    Name        string
+    Command     []string
+    IsClaude    bool   // true for claude steps; routes to RunSandboxedStep
+    CidfilePath string // docker cidfile path; passed to SandboxOptions.CidfilePath
 }
 ```
 
@@ -240,15 +246,27 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 `buildStep` converts a single `Step` into a `ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution:
 
 ```go
-func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase) (ui.ResolvedStep, error) {
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
     if s.IsClaude {
         prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
         if err != nil {
             return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
         }
+        uid, gid := sandbox.HostUIDGID()
+        cidfile, err := sandbox.Path()
+        if err != nil {
+            return ui.ResolvedStep{}, fmt.Errorf("step %q: cidfile: %w", s.Name, err)
+        }
+        profileDir := preflight.ResolveProfileDir()
+        projectDir := executor.ProjectDir()
+        envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
+        envAllowlist = append(envAllowlist, env...)
+        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
         return ui.ResolvedStep{
-            Name:    s.Name,
-            Command: []string{"claude", "--permission-mode", "bypassPermissions", "--model", s.Model, "-p", prompt},
+            Name:        s.Name,
+            Command:     argv,
+            IsClaude:    true,
+            CidfilePath: cidfile,
         }, nil
     }
     return ui.ResolvedStep{
@@ -316,6 +334,39 @@ func runStepWithErrorHandling(...) StepAction {
         }
     }
 }
+```
+
+### stepDispatcher
+
+`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions{CidfilePath: d.current.CidfilePath}`. Non-claude steps pass through to the executor's `RunStep` unchanged.
+
+A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed:
+
+```go
+type stepDispatcher struct {
+    exec    StepExecutor
+    current ui.ResolvedStep
+}
+
+func (d *stepDispatcher) RunStep(name string, command []string) error {
+    if d.current.IsClaude {
+        return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+    }
+    return d.exec.RunStep(name, command)
+}
+```
+
+Each phase in `Run()` creates a fresh dispatcher per step and passes it as the `runner` to `Orchestrate`:
+
+```go
+// initialize phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
+
+// iteration phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
+
+// finalize phase
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 ```
 
 ### Header Adapters

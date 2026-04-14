@@ -20,13 +20,14 @@ import (
 // --- Test doubles ---
 
 type fakeExecutor struct {
-	runStepCalls           []runStepCall
-	runStepErrors          []error  // per-call errors; nil entries mean success
-	runStepCaptures        []string // per-call LastCapture values (indexed by call order)
-	lastCapture            string
-	logLines               []string
-	projectDir             string
-	runSandboxedStepCalls  []runSandboxedStepCall
+	runStepCalls              []runStepCall
+	runStepErrors             []error  // per-call errors; nil entries mean success
+	runStepCaptures           []string // per-call LastCapture values (indexed by call order)
+	lastCapture               string
+	logLines                  []string
+	projectDir                string
+	runSandboxedStepCalls     []runSandboxedStepCall
+	runSandboxedStepErrors    []error  // per-call errors; nil entries mean success
 	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
 	// Tests use it to observe the log stream from another goroutine without
 	// racing on logLines. The callback runs synchronously on the writer
@@ -63,7 +64,11 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 func (f *fakeExecutor) WasTerminated() bool { return false }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
+	idx := len(f.runSandboxedStepCalls)
 	f.runSandboxedStepCalls = append(f.runSandboxedStepCalls, runSandboxedStepCall{name, command, opts})
+	if idx < len(f.runSandboxedStepErrors) && f.runSandboxedStepErrors[idx] != nil {
+		return f.runSandboxedStepErrors[idx]
+	}
 	return nil
 }
 
@@ -2862,6 +2867,70 @@ func TestRunStep_CurrentTerminatorStaysNilDuringExecution(t *testing.T) {
 
 	if got := <-sawNonNil; got {
 		t.Error("currentTerminator was set during RunStep — expected nil for non-sandboxed steps")
+	}
+}
+
+// TP-011: TestStepDispatcher_ClaudeStep_PropagatesRunSandboxedStepError verifies
+// that an error returned by RunSandboxedStep flows through stepDispatcher.RunStep
+// to the caller unchanged. If this propagation were broken (e.g., error silently
+// swallowed), Orchestrate's runStepWithErrorHandling would treat a failed claude
+// step as successful, bypassing error-mode recovery entirely.
+func TestStepDispatcher_ClaudeStep_PropagatesRunSandboxedStepError(t *testing.T) {
+	wantErr := errors.New("sandbox: container exited with code 1")
+	exec := &fakeExecutor{
+		runSandboxedStepErrors: []error{wantErr},
+	}
+	current := ui.ResolvedStep{
+		Name:     "claude-step",
+		IsClaude: true,
+		Command:  []string{"docker", "run", "image"},
+	}
+	d := &stepDispatcher{exec: exec, current: current}
+
+	gotErr := d.RunStep("claude-step", current.Command)
+	if gotErr != wantErr {
+		t.Errorf("expected error %v, got %v", wantErr, gotErr)
+	}
+}
+
+// TP-012: TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep verifies
+// that a claude step in the finalize phase is dispatched to RunSandboxedStep
+// (not RunStep), confirming the stepDispatcher wiring is consistent across all
+// three phases.
+func TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "final-prompt.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	claudeFinalStep := steps.Step{
+		Name:       "claude-final",
+		IsClaude:   true,
+		Model:      "m",
+		PromptFile: "final-prompt.txt",
+	}
+
+	cfg := RunConfig{
+		WorkflowDir:   dir,
+		Iterations:    1,
+		Steps:         nonClaudeSteps("shell-step"),
+		FinalizeSteps: []steps.Step{claudeFinalStep},
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call (finalize claude), got %d", len(exec.runSandboxedStepCalls))
+	}
+	if exec.runSandboxedStepCalls[0].name != "claude-final" {
+		t.Errorf("expected RunSandboxedStep called for %q, got %q", "claude-final", exec.runSandboxedStepCalls[0].name)
 	}
 }
 
