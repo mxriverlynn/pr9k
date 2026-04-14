@@ -38,7 +38,8 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
 │  │  │  │  for each step:                                  │   │    ││
 │  │  │  │    drain Actions channel (check for quit)        │   │    ││
 │  │  │  │    set step → Active                             │   │    ││
-│  │  │  │    runner.RunStep(name, command)                 │   │    ││
+│  │  │  │    stepDispatcher → RunStep / RunSandboxedStep   │   │    ││
+│  │  │  │      (IsClaude: docker sandbox; else: direct)    │   │    ││
 │  │  │  │      ├─ success → step → Done                    │   │    ││
 │  │  │  │      ├─ terminated → step → Done (skip)          │   │    ││
 │  │  │  │      └─ failure → step → Failed                  │   │    ││
@@ -82,11 +83,13 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
        └────────┬─────────┘    └──────────────────┘
                 │
                 ▼
-       ┌──────────────────┐     ┌────────────────┐
-       │ runner.RunStep() │────▶│  Subprocess    │
-       │                  │     │  (claude/git/  │
-       │                  │     │   scripts)     │
-       │                  │     └───────┬────────┘
+       ┌──────────────────┐     ┌────────────────────────────┐
+       │  stepDispatcher  │────▶│  IsClaude?                 │
+       │  (per step)      │     │  yes: RunSandboxedStep     │
+       │                  │     │    → docker run (sandbox)  │
+       │                  │     │  no: RunStep               │
+       │                  │     │    → direct subprocess     │
+       │                  │     └───────┬────────────────────┘
        │                  │             │ stdout/stderr
        │                  │             ▼
        │                  │     ┌────────────────┐

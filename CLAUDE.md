@@ -35,6 +35,7 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
   - **WorkflowDir (install dir)** — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
   - **ProjectDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup, or overridden with `--project-dir`. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo), the `logs/` output location, and `{{PROJECT_DIR}}` substitution.
 - The `get_next_issue` script sorts open issues and picks the lowest number
+- Claude steps run inside an ephemeral Docker container (image `docker/sandbox-templates:claude-code`) via `RunSandboxedStep`, with the target repo and Claude profile directory bind-mounted. Non-claude steps run directly on the host.
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
 ## ralph-tui (Go/Bubble Tea)

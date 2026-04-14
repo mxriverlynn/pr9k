@@ -19,7 +19,7 @@ At startup, ralph-tui must confirm three things before launching any Claude subp
 func ResolveProfileDir() string
 ```
 
-Returns `$CLAUDE_CONFIG_DIR` if set and non-empty, otherwise `$HOME/.claude`. The path is passed through `filepath.Abs` but symlinks are not resolved — realpath is not material for the stat check.
+Returns `$CLAUDE_CONFIG_DIR` if set and non-empty (trailing whitespace is trimmed to guard against `.env` parser artifacts), otherwise `$HOME/.claude`. The path is passed through `filepath.Abs` but symlinks are not resolved — realpath is not material for the stat check.
 
 ## CheckProfileDir
 
@@ -75,13 +75,13 @@ An `*exec.ExitError` from `docker image inspect` is treated as "image absent" (r
 func CheckDocker(p Prober) []error
 ```
 
-Runs the three-step docker check and collects errors before returning:
-1. Binary missing → `"docker is not installed. Install Docker and try again"`
-2. Binary present, daemon unreachable → `"docker daemon isn't running. Start Docker and try again"`
-3. Daemon reachable, image missing → `"claude sandbox image is missing. Run: ralph-tui create-sandbox"`
+Runs the three-step docker check, short-circuiting on the first failure and returning a nil or empty slice on success:
+1. Binary missing → `"preflight: docker is not installed. Install Docker and try again"`
+2. Binary present, daemon unreachable → `"preflight: docker daemon isn't running. Start Docker and try again"`
+3. Daemon reachable, image missing → `"preflight: claude sandbox image is missing. Run: ralph-tui create-sandbox"`
 4. All green → nil or empty slice
 
-Each failure stops further checks in the sequence (a missing binary makes the daemon check meaningless), but multiple failures across profile and docker are surfaced together by `Run`.
+At most one error is returned per `CheckDocker` call. Multiple failures across profile and docker are surfaced together by `Run`.
 
 ## Result and Run
 
