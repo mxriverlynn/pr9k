@@ -408,7 +408,19 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestLastCapture_StripsTrailingCarriageReturn` — verifies trailing `\r` is stripped
   - `TestLastCapture_StderrNotCaptured` — verifies stderr output does not appear in `LastCapture`
   - `TestCaptureOutput_UsesWorkingDir` — verifies `CaptureOutput` sets `cmd.Dir`
-  - `TestBuildStep_*` — tests for `buildStep` including Claude step variants (iteration, var substitution, missing prompt file, finalize phase)
+  - `TestBuildStep_ClaudeStepIteration` — verifies a claude iteration step resolves to a docker run command with the correct model and prompt
+  - `TestBuildStep_ClaudeStepWithVarSubstitution` — verifies `{{VAR}}` tokens in a claude step's prompt file path are substituted before the prompt is read
+  - `TestBuildStep_ClaudeStepMissingPromptFile` — verifies a missing prompt file returns an error wrapped with the step name
+  - `TestBuildStep_ClaudeStepFinalize` — verifies a finalize-phase claude step resolves with the correct argv
+  - `TestBuildStep_ClaudeStep_SandboxBindMount` — verifies the resolved command contains the project dir as a docker bind mount
+  - `TestBuildStep_ClaudeStep_SandboxOptionsCidfile` — verifies `ResolvedStep.CidfilePath` is populated from the sandbox cidfile path
+  - `TestBuildStep_ClaudeStep_EnvPassthrough` — verifies env vars listed in the step config produce `-e` flags in the docker run command
+  - `TestBuildStep_ClaudeStep_DispatchesToSandboxedRunner` — integration: verifies `Run` dispatches a claude iteration step to `RunSandboxedStep` (not `RunStep`)
+  - `TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser` (TP-004) — verifies both builtin env vars (e.g. `ANTHROPIC_API_KEY`) and user-supplied env vars appear as `-e` flags in the resolved command
+  - `TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude` (TP-005) — verifies non-claude steps resolve with `IsClaude=false` and empty `CidfilePath`
+  - `TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy` (TP-009) — verifies `buildStep` does not mutate `sandbox.BuiltinEnvAllowlist` when appending user-supplied env vars
+  - `TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath` (TP-003) — verifies a non-nil terminator is auto-constructed via `sandbox.NewTerminator` when `opts.CidfilePath` is set and `opts.Terminator` is nil; cleared to nil after the step exits
+  - `TestRunStep_CurrentTerminatorStaysNilDuringExecution` (TP-010) — verifies `currentTerminator` remains nil throughout a `RunStep` call, confirming the `opts==nil` guard in `runCommand` skips terminator installation for non-sandboxed steps
 
 ## Additional Information
 

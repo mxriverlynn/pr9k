@@ -449,6 +449,13 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_CaptureLogNotWrittenForNonCaptureStep` — negative test: no `Captured ` line appears when the step has no `captureAs`
   - `TestRun_ProjectDirFlowsIntoVarTable` — verifies `executor.ProjectDir()` flows into the VarTable as `PROJECT_DIR`, not `WorkflowDir`; a step with `command: ["echo", "{{PROJECT_DIR}}"]` receives the target repo path
   - `TestRun_WorkflowDirFlowsIntoVarTable` — verifies `cfg.WorkflowDir` flows into the VarTable as `WORKFLOW_DIR`, not `executor.ProjectDir()`; a step with `command: ["echo", "{{WORKFLOW_DIR}}"]` receives the install directory
+  - `TestStepDispatcher_ClaudeStep_RoutesToRunSandboxedStep` (TP-001) — verifies `stepDispatcher.RunStep` dispatches a step with `IsClaude=true` to `RunSandboxedStep` with the correct `SandboxOptions.CidfilePath`; the underlying `RunStep` is not called
+  - `TestStepDispatcher_NonClaudeStep_RoutesToRunStep` (TP-002) — verifies `stepDispatcher.RunStep` delegates a non-claude step to the underlying executor's `RunStep`; `RunSandboxedStep` is not called
+  - `TestStepDispatcher_ClaudeStep_ForwardsCidfilePathToSandboxOptions` (TP-006) — verifies `ResolvedStep.CidfilePath` flows through `stepDispatcher.RunStep` into `SandboxOptions.CidfilePath` passed to `RunSandboxedStep`
+  - `TestStepDispatcher_DelegatesWasTerminatedAndWriteToLog` (TP-007) — verifies `WasTerminated()` and `WriteToLog()` delegate to the wrapped executor unchanged
+  - `TestStepDispatcher_ClaudeStep_PropagatesRunSandboxedStepError` (TP-011) — verifies errors from `RunSandboxedStep` flow through `stepDispatcher.RunStep` to the caller; prevents silent error swallowing that would bypass error-mode recovery in `Orchestrate`
+  - `TestRun_InitializePhase_PassesEnvThroughBuildStep` (TP-008) — verifies `RunConfig.Env` is threaded through the initialize phase into `buildStep`, producing `-e` flags for the custom env var in the sandboxed step command
+  - `TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep` (TP-012) — verifies claude steps in the finalize phase route to `RunSandboxedStep`, confirming `stepDispatcher` wiring is consistent across initialize, iteration, and finalize phases
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
