@@ -20,7 +20,7 @@ Key files:
 - `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
 - `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
 - `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
-- `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper and `newServices` wiring
+- `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
 
 ## Architecture
 

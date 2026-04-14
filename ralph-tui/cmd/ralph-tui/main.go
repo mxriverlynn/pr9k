@@ -30,49 +30,11 @@ func stepNames(ss []steps.Step) []string {
 	return names
 }
 
-// services bundles the dependencies wired from cfg and the resolved project
-// directory. Split out so tests can verify each constructor receives the
-// correct dir (logger/runner bound to projectDir; steps/validator bound to
-// cfg.WorkflowDir).
+// services bundles the logger, runner, and step file returned by startup.
 type services struct {
 	log      *logger.Logger
 	runner   *workflow.Runner
 	stepFile steps.StepFile
-}
-
-// newServices wires the logger, runner, and step file. projectDir is the
-// target repository directory and governs subprocess cmd.Dir and log file
-// location. cfg.WorkflowDir is the install dir (where ralph-steps.json,
-// scripts/, prompts/ live). On validation failure, errors are written to
-// stderr and ok=false is returned.
-func newServices(cfg *cli.Config, projectDir string) (s *services, ok bool) {
-	log, err := logger.NewLogger(projectDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return nil, false
-	}
-
-	stepFile, err := steps.LoadSteps(cfg.WorkflowDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		_ = log.Close()
-		return nil, false
-	}
-
-	if validationErrs := validator.Validate(cfg.WorkflowDir); len(validationErrs) > 0 {
-		for _, ve := range validationErrs {
-			fmt.Fprintln(os.Stderr, ve.Error())
-		}
-		fmt.Fprintf(os.Stderr, "%d validation error(s)\n", len(validationErrs))
-		_ = log.Close()
-		return nil, false
-	}
-
-	return &services{
-		log:      log,
-		runner:   workflow.NewRunner(log, projectDir),
-		stepFile: stepFile,
-	}, true
 }
 
 // startup performs the full pre-run sequence: load steps, run D13 config
@@ -155,7 +117,9 @@ func main() {
 		header.IterationLine = "Initializing 1/" + strconv.Itoa(len(stepFile.Initialize)) + ": " + stepFile.Initialize[0].Name
 	} else {
 		header.SetPhaseSteps(stepNames(stepFile.Iteration))
-		header.SetStepState(0, ui.StepActive)
+		if len(stepFile.Iteration) > 0 {
+			header.SetStepState(0, ui.StepActive)
+		}
 		if cfg.Iterations > 0 {
 			header.IterationLine = "Iteration 1/" + strconv.Itoa(cfg.Iterations)
 		} else {

@@ -2,7 +2,7 @@
 
 The `internal/preflight` package performs startup validation before the main orchestration loop runs. It resolves and validates the Claude profile directory, checks that Docker is installed and reachable, and verifies the sandbox image is present locally. All checks are collected before returning (collect-all-errors pattern), so the caller receives the full list of failures in one pass.
 
-No wiring into `main()` is present — that happens in ticket 8. The package is fully injectable via `Prober` for unit testing.
+The package is fully injectable via `Prober` for unit testing. It is wired into `startup()` in `cmd/ralph-tui/main.go`, which collects both D13 validation errors and preflight errors before printing any output.
 
 ## Overview
 
@@ -99,7 +99,7 @@ Orchestrates the full preflight sequence. All results are collected before retur
 2. `CheckDocker(p)`
 3. `CheckCredentials(profileDir)` — warnings only
 
-The caller (ticket 8) prints all D13 + preflight errors together before exiting.
+The caller (`startup()`) prints all D13 + preflight errors together before exiting.
 
 ## Package
 

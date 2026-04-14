@@ -3222,3 +3222,61 @@ func TestRun_WorkflowDirFlowsIntoVarTable(t *testing.T) {
 		}
 	}
 }
+
+// TestRun_FinalizeCaptureAsIgnored documents that the finalize phase does not
+// bind captureAs values into the VarTable, unlike the initialize and iteration
+// phases. A finalize step with CaptureAs set will not make its captured value
+// available to subsequent finalize steps via {{VAR}} substitution. This
+// asymmetry is intentional — finalize steps run after all iteration work is
+// complete and do not need to pass state forward.
+func TestRun_FinalizeCaptureAsIgnored(t *testing.T) {
+	// Step 1 (finalize): CaptureAs="FINAL_VAR", fakeExecutor returns "captured-value".
+	// Step 2 (finalize): command contains {{FINAL_VAR}}; if CaptureAs were honoured
+	// the substituted value would be "captured-value", but since it is not, the
+	// variable resolves to the empty string and the arg is "".
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"captured-value", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	captureStep := steps.Step{
+		Name:      "capture-final",
+		IsClaude:  false,
+		Command:   []string{"echo", "captured-value"},
+		CaptureAs: "FINAL_VAR",
+	}
+	useStep := steps.Step{
+		Name:     "use-final",
+		IsClaude: false,
+		Command:  []string{"echo", "{{FINAL_VAR}}"},
+	}
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: []steps.Step{captureStep, useStep},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Find the "use-final" RunStep call and verify {{FINAL_VAR}} was NOT substituted
+	// — it should resolve to empty string because finalize does not call vt.Bind.
+	var useFinalCall *runStepCall
+	for i := range executor.runStepCalls {
+		if executor.runStepCalls[i].name == "use-final" {
+			c := executor.runStepCalls[i]
+			useFinalCall = &c
+			break
+		}
+	}
+	if useFinalCall == nil {
+		t.Fatal("expected 'use-final' step to have run")
+	}
+	for _, arg := range useFinalCall.command {
+		if arg == "captured-value" {
+			t.Errorf("finalize CaptureAs must not bind into VarTable: expected {{FINAL_VAR}} to resolve to empty string, but got %q in command %v", arg, useFinalCall.command)
+		}
+	}
+}
