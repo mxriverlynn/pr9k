@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-11
+- **Last Updated:** 2026-04-13
 - **Authors:**
   - River Bailey
 
@@ -396,6 +396,8 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_CaptureLogWrittenAfterCaptureStep` — verifies an iteration step with `captureAs: "ISSUE_ID"` produces a `Captured ISSUE_ID = "42"` log line after the step
   - `TestRun_CaptureLogWrittenForInitializePhase` — verifies the same behavior for an initialize-phase capture
   - `TestRun_CaptureLogNotWrittenForNonCaptureStep` — negative test: no `Captured ` line appears when the step has no `captureAs`
+  - `TestRun_ProjectDirFlowsIntoVarTable` — verifies `executor.ProjectDir()` flows into the VarTable as `PROJECT_DIR`, not `WorkflowDir`; a step with `command: ["echo", "{{PROJECT_DIR}}"]` receives the target repo path
+  - `TestRun_WorkflowDirFlowsIntoVarTable` — verifies `cfg.WorkflowDir` flows into the VarTable as `WORKFLOW_DIR`, not `executor.ProjectDir()`; a step with `command: ["echo", "{{WORKFLOW_DIR}}"]` receives the install directory
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`

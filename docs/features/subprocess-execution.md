@@ -2,7 +2,7 @@
 
 Executes workflow steps as subprocesses with real-time stdout/stderr streaming to both the TUI and a file logger, with support for graceful termination and per-step stdout capture.
 
-- **Last Updated:** 2026-04-12
+- **Last Updated:** 2026-04-13
 - **Authors:**
   - River Bailey
 
@@ -27,9 +27,9 @@ Key files:
                     ┌──────────────────────────────────┐
                     │             Runner                │
                     │                                   │
-  RunStep()         │  ┌─────────────────────────────┐ │
-  ──────────────────┼─▶│       exec.Command()        │ │
-                    │  │       cmd.Dir = workDir      │ │
+  RunStep() /       │  ┌─────────────────────────────┐ │
+  RunSandboxedStep()│  │       exec.Command()        │ │
+  ──────────────────┼─▶│       cmd.Dir = projectDir  │ │
                     │  └──────────────┬──────────────┘ │
                     │                 │                 │
                     │         ┌───────┴───────┐         │
@@ -383,8 +383,12 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestRunSandboxedStep_ReturnsErrorForEmptyCommandSlice`, `TestRunSandboxedStep_ReturnsErrorForNilCommand` — verifies RunSandboxedStep returns an error for empty and nil command slices
   - `TestRunSandboxedStep_OutputForwarding` — verifies stdout/stderr are forwarded via sendLine
   - `TestRunSandboxedStep_LastCapturePopulation` — verifies last non-empty stdout line is stored after a successful sandboxed step
+  - `TestRunSandboxedStep_CleansCidfile` — verifies cidfile is removed after a successful step
+  - `TestRunSandboxedStep_CleansCidfile_NonexistentPath` — verifies that a nonexistent cidfile path is tolerated (ENOENT-tolerant cleanup)
   - `TestRunSandboxedStep_CleansCidfileOnError` — verifies cidfile is removed even when the command exits non-zero
   - `TestRunSandboxedStep_ResetTerminatedFlag` — verifies `terminated` is reset at the start of `RunSandboxedStep`
+  - `TestRunSandboxedStep_InstallsAndClearsTerminator` — verifies terminator is installed in `currentTerminator` during execution and cleared to nil after the step returns
+  - `TestRunSandboxedStep_UsesEmptyStdin` — verifies RunSandboxedStep provides explicit empty stdin so Docker does not inherit the parent's raw-mode keyboard reader
   - `TestRunSandboxedStep_TerminatorClearedBeforeWaitReturn` — verifies `currentTerminator` is cleared before `procDone` is closed (prevents stale signal dispatch on natural exit)
   - `TestRunSandboxedStep_ReturnsErrorForNonExistentCommand` — verifies error is returned when the command does not exist
   - `TestRunSandboxedStep_ReturnsErrorOnNonZeroExit` — verifies error is returned for a non-zero exit code
