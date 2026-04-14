@@ -263,6 +263,169 @@ func TestStartupPreflight_SkippedForCreateSandbox(t *testing.T) {
 	}
 }
 
+// TestStartup_HappyPath verifies the startup() happy path: valid step file,
+// passing prober, and a zero-byte .credentials.json that triggers a warning.
+// It asserts all returned services are wired correctly and that the warning
+// text appears in the output buffer.
+func TestStartup_HappyPath(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeMinimalStepFile(t, workflowDir)
+
+	// Write a zero-byte .credentials.json to trigger the credentials warning.
+	credPath := filepath.Join(profileDir, ".credentials.json")
+	if err := os.WriteFile(credPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if !ok {
+		t.Fatalf("startup() returned ok=false; want true on happy path. stderr=%q", buf.String())
+	}
+	if svc == nil {
+		t.Fatal("startup() returned nil services on happy path")
+	}
+	defer func() { _ = svc.log.Close() }()
+
+	if svc.log == nil {
+		t.Error("svc.log is nil")
+	}
+	if svc.runner == nil {
+		t.Error("svc.runner is nil")
+	}
+	if len(svc.stepFile.Iteration) == 0 {
+		t.Error("svc.stepFile.Iteration is empty; expected at least one step")
+	}
+
+	// Warning text for zero-byte credentials must appear in output.
+	got := buf.String()
+	if !strings.Contains(got, "Warning:") {
+		t.Errorf("expected credentials warning in output, got: %q", got)
+	}
+	if !strings.Contains(got, "is empty") {
+		t.Errorf("expected 'is empty' in credentials warning, got: %q", got)
+	}
+
+	// logs/ directory must be created under projectDir (not workflowDir).
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); err != nil {
+		t.Errorf("expected logs/ under projectDir, got error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workflowDir, "logs")); !os.IsNotExist(err) {
+		t.Errorf("logs/ should NOT exist under workflowDir; Stat err=%v", err)
+	}
+}
+
+// TestStartup_LoadStepsFailure verifies that startup() returns (nil, false) and
+// prints an error when ralph-steps.json is missing — before creating the logger
+// or running validation/preflight.
+func TestStartup_LoadStepsFailure(t *testing.T) {
+	workflowDir := t.TempDir() // no ralph-steps.json
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false when ralph-steps.json is missing")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on LoadSteps failure")
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "error:") {
+		t.Errorf("expected 'error:' in output, got: %q", got)
+	}
+
+	// Logger must NOT have been created — logs/ must not exist under projectDir.
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); !os.IsNotExist(err) {
+		t.Errorf("logs/ should NOT exist under projectDir when LoadSteps fails before logger creation; Stat err=%v", err)
+	}
+}
+
+// TestStartup_LoggerFailure verifies that startup() returns (nil, false) when
+// logger creation fails due to an unwritable projectDir, after validation and
+// preflight have passed.
+func TestStartup_LoggerFailure(t *testing.T) {
+	workflowDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeMinimalStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: "/nonexistent/unwritable/path"}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, "/nonexistent/unwritable/path", profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false when logger creation fails")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on logger failure")
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "error:") {
+		t.Errorf("expected 'error:' in output, got: %q", got)
+	}
+}
+
+// TestStartup_ValidationOnlyErrors verifies that startup() returns (nil, false)
+// when the step file fails D13 validation while preflight passes cleanly. The
+// output must contain validation error markers but no "preflight:" lines.
+func TestStartup_ValidationOnlyErrors(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeInvalidStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false on validation failure")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on validation failure")
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "config error:") {
+		t.Errorf("expected 'config error:' in output, got: %q", got)
+	}
+	if !strings.Contains(got, "validation error(s)") {
+		t.Errorf("expected 'validation error(s)' in output, got: %q", got)
+	}
+	if strings.Contains(got, "preflight:") {
+		t.Errorf("clean preflight should produce no 'preflight:' output, got: %q", got)
+	}
+}
+
 // TestStartupPreflight_CollectsAllErrors verifies that startup() collects D13
 // config errors AND preflight errors before printing, so all problems appear
 // together rather than short-circuiting after the first failure.
