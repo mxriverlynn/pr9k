@@ -189,15 +189,15 @@ The following residual risks are accepted:
 |----------|----------|
 | `docker` not on `PATH` | Preflight exits 1 before the TUI starts |
 | Docker daemon not running | Preflight exits 1 before the TUI starts |
-| Sandbox image missing | Preflight exits 1 with message `Run: ralph-tui create-sandbox` |
+| Sandbox image missing | Preflight exits 1 with message `Run: ralph-tui sandbox create` |
 | `docker run` exits non-zero | `RunSandboxedStep` returns the error; orchestrator enters error mode |
 | Cidfile never appears (container crashed instantly) | Terminator falls back to signaling host docker CLI |
 | Cidfile cleanup fails (ENOENT) | Silently ignored — file may not exist if docker run failed before start |
 
 ## Additional Information
 
-- [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — User-facing setup guide: install Docker, run `create-sandbox`, authenticate claude profile
-- [Create Sandbox Subcommand](create-sandbox.md) — `ralph-tui create-sandbox` implementation: Docker check, image pull, smoke test
+- [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — User-facing setup guide: install Docker, run `sandbox create`, authenticate via `sandbox login`
+- [sandbox Subcommand](sandbox-subcommand.md) — `ralph-tui sandbox create` and `ralph-tui sandbox login` implementations: Docker check, image pull, smoke test, interactive login flow
 - [Preflight](preflight.md) — Startup checks that reject a missing Docker daemon or sandbox image before the TUI starts
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
 - [Config Validation](config-validation.md) — Sandbox rules A/B/C (captureAs-on-claude, prompt-token ban, captureAs+tokens-in-command)

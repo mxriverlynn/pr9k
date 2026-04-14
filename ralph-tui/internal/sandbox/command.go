@@ -60,3 +60,22 @@ func BuildRunArgs(
 
 	return args
 }
+
+// BuildLoginArgs constructs the `docker run -it ...` argv for an interactive
+// `claude` REPL session used by `ralph-tui sandbox login`. The user runs
+// `/login` inside the REPL to write `.credentials.json` to the bind-mounted
+// profile directory. No project directory is mounted — login is an auth-only
+// operation and exposing host files is accidental attack surface.
+func BuildLoginArgs(profileDir string, uid, gid int) []string {
+	return []string{
+		"docker", "run",
+		"-it",
+		"--rm",
+		"--init",
+		"-u", fmt.Sprintf("%d:%d", uid, gid),
+		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),
+		"-e", "CLAUDE_CONFIG_DIR=" + ContainerProfilePath,
+		ImageTag,
+		"claude",
+	}
+}

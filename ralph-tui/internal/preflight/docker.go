@@ -68,7 +68,7 @@ func CheckDocker(p Prober) []error {
 		return []error{fmt.Errorf("preflight: check sandbox image: %w", err)}
 	}
 	if !present {
-		return []error{errors.New("preflight: claude sandbox image is missing. Run: ralph-tui create-sandbox")}
+		return []error{errors.New("preflight: claude sandbox image is missing. Run: ralph-tui sandbox create")}
 	}
 
 	return nil

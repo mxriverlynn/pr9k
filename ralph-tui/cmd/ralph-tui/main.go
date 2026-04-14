@@ -83,7 +83,7 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 }
 
 func main() {
-	cfg, err := cli.Execute(newCreateSandboxCmd())
+	cfg, err := cli.Execute(newSandboxCmd())
 	if err != nil {
 		if !errors.Is(err, errSilentExit) {
 			fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)

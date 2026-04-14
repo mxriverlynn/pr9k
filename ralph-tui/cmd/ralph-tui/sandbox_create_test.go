@@ -52,10 +52,10 @@ func (f *fakeRun) run(args []string, stdout, stderr io.Writer) (int, error) {
 	return resp.exitCode, nil
 }
 
-// newTestDeps builds a createSandboxDeps with captured stdout/stderr writers
+// newTestDeps builds a sandboxCreateDeps with captured stdout/stderr writers
 // and the provided prober and fakeRun, using uid=501 gid=20.
-func newTestDeps(prober *fakeProber, fr *fakeRun, outBuf, errBuf *bytes.Buffer) *createSandboxDeps {
-	return &createSandboxDeps{
+func newTestDeps(prober *fakeProber, fr *fakeRun, outBuf, errBuf *bytes.Buffer) *sandboxCreateDeps {
+	return &sandboxCreateDeps{
 		prober:    prober,
 		dockerRun: fr.run,
 		uid:       501,
@@ -67,15 +67,15 @@ func newTestDeps(prober *fakeProber, fr *fakeRun, outBuf, errBuf *bytes.Buffer) 
 
 // runCmd builds a command from deps, sets args, and executes it. Returns the
 // error from cobra's Execute (which equals RunE's return value due to SilenceErrors).
-func runCmd(deps *createSandboxDeps, args ...string) error {
-	cmd := newCreateSandboxCmdWith(deps)
+func runCmd(deps *sandboxCreateDeps, args ...string) error {
+	cmd := newSandboxCreateCmdWith(deps)
 	cmd.SetArgs(args)
 	return cmd.Execute()
 }
 
-// TestCreateSandbox_DockerBinaryMissing verifies the exact error message and
+// TestSandboxCreate_DockerBinaryMissing verifies the exact error message and
 // errSilentExit when the docker binary is not on PATH.
-func TestCreateSandbox_DockerBinaryMissing(t *testing.T) {
+func TestSandboxCreate_DockerBinaryMissing(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{binaryAvailable: false}
@@ -95,9 +95,9 @@ func TestCreateSandbox_DockerBinaryMissing(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_DaemonUnreachable verifies the exact error message and
+// TestSandboxCreate_DaemonUnreachable verifies the exact error message and
 // errSilentExit when the daemon is not running.
-func TestCreateSandbox_DaemonUnreachable(t *testing.T) {
+func TestSandboxCreate_DaemonUnreachable(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -117,10 +117,10 @@ func TestCreateSandbox_DaemonUnreachable(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_ImagePresent_NoForce verifies that pull is skipped when
+// TestSandboxCreate_ImagePresent_NoForce verifies that pull is skipped when
 // the image is already present and --force is not passed, and that a green
 // smoke test produces "Sandbox ready."
-func TestCreateSandbox_ImagePresent_NoForce(t *testing.T) {
+func TestSandboxCreate_ImagePresent_NoForce(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -149,9 +149,9 @@ func TestCreateSandbox_ImagePresent_NoForce(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_ImagePresent_Force verifies that pull runs when --force is
+// TestSandboxCreate_ImagePresent_Force verifies that pull runs when --force is
 // set even though the image is already present, and that smoke test also runs.
-func TestCreateSandbox_ImagePresent_Force(t *testing.T) {
+func TestSandboxCreate_ImagePresent_Force(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -185,9 +185,9 @@ func TestCreateSandbox_ImagePresent_Force(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_PullFails_SmokeNotRun verifies that a non-zero pull exit
+// TestSandboxCreate_PullFails_SmokeNotRun verifies that a non-zero pull exit
 // emits the failure message and returns errSilentExit without running smoke test.
-func TestCreateSandbox_PullFails_SmokeNotRun(t *testing.T) {
+func TestSandboxCreate_PullFails_SmokeNotRun(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -215,9 +215,9 @@ func TestCreateSandbox_PullFails_SmokeNotRun(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_NonZeroExit verifies the exact failure message
+// TestSandboxCreate_SmokeTest_NonZeroExit verifies the exact failure message
 // (including captured stderr) when the smoke test container exits non-zero.
-func TestCreateSandbox_SmokeTest_NonZeroExit(t *testing.T) {
+func TestSandboxCreate_SmokeTest_NonZeroExit(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -244,9 +244,9 @@ func TestCreateSandbox_SmokeTest_NonZeroExit(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_EmptyOutput verifies the "no version output"
+// TestSandboxCreate_SmokeTest_EmptyOutput verifies the "no version output"
 // failure when the container exits 0 but writes nothing to stdout or stderr.
-func TestCreateSandbox_SmokeTest_EmptyOutput(t *testing.T) {
+func TestSandboxCreate_SmokeTest_EmptyOutput(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -269,9 +269,9 @@ func TestCreateSandbox_SmokeTest_EmptyOutput(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_UnexpectedOutput verifies the warning (not failure)
+// TestSandboxCreate_SmokeTest_UnexpectedOutput verifies the warning (not failure)
 // path when exit 0 output does not match a semver pattern.
-func TestCreateSandbox_SmokeTest_UnexpectedOutput(t *testing.T) {
+func TestSandboxCreate_SmokeTest_UnexpectedOutput(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -299,9 +299,9 @@ func TestCreateSandbox_SmokeTest_UnexpectedOutput(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_Success verifies the "Sandbox verified:" success
+// TestSandboxCreate_SmokeTest_Success verifies the "Sandbox verified:" success
 // line with injected uid/gid values.
-func TestCreateSandbox_SmokeTest_Success(t *testing.T) {
+func TestSandboxCreate_SmokeTest_Success(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -327,9 +327,9 @@ func TestCreateSandbox_SmokeTest_Success(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_VersionFromStderr verifies that a version string
+// TestSandboxCreate_SmokeTest_VersionFromStderr verifies that a version string
 // emitted on stderr (not stdout) is still accepted.
-func TestCreateSandbox_SmokeTest_VersionFromStderr(t *testing.T) {
+func TestSandboxCreate_SmokeTest_VersionFromStderr(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -352,10 +352,10 @@ func TestCreateSandbox_SmokeTest_VersionFromStderr(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_ImagePresentErr verifies that when SandboxImagePresent returns
+// TestSandboxCreate_ImagePresentErr verifies that when SandboxImagePresent returns
 // an error, the command prints the error to stderr and returns errSilentExit
 // without making any docker exec calls.
-func TestCreateSandbox_ImagePresentErr(t *testing.T) {
+func TestSandboxCreate_ImagePresentErr(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -378,10 +378,10 @@ func TestCreateSandbox_ImagePresentErr(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_PullExecError verifies that when dockerRun returns an
+// TestSandboxCreate_PullExecError verifies that when dockerRun returns an
 // exec-level error during pull (distinct from a non-zero exit code), the command
 // prints the error to stderr, returns errSilentExit, and does not run the smoke test.
-func TestCreateSandbox_PullExecError(t *testing.T) {
+func TestSandboxCreate_PullExecError(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -409,10 +409,10 @@ func TestCreateSandbox_PullExecError(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeExecError verifies that when dockerRun returns an
+// TestSandboxCreate_SmokeExecError verifies that when dockerRun returns an
 // exec-level error during the smoke test, the command prints the error to stderr
 // and returns errSilentExit.
-func TestCreateSandbox_SmokeExecError(t *testing.T) {
+func TestSandboxCreate_SmokeExecError(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -434,10 +434,10 @@ func TestCreateSandbox_SmokeExecError(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_PullFails_StderrForwarded verifies that when docker pull
+// TestSandboxCreate_PullFails_StderrForwarded verifies that when docker pull
 // exits non-zero with stderr output, the captured stderr is forwarded to the
 // user after the "Failed to pull" message.
-func TestCreateSandbox_PullFails_StderrForwarded(t *testing.T) {
+func TestSandboxCreate_PullFails_StderrForwarded(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -463,10 +463,10 @@ func TestCreateSandbox_PullFails_StderrForwarded(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_PullFails_EmptyStderr verifies that when docker pull exits
+// TestSandboxCreate_PullFails_EmptyStderr verifies that when docker pull exits
 // non-zero but produces no stderr, only "Failed to pull sandbox image." appears
 // (no extra blank line or empty content appended).
-func TestCreateSandbox_PullFails_EmptyStderr(t *testing.T) {
+func TestSandboxCreate_PullFails_EmptyStderr(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -488,9 +488,9 @@ func TestCreateSandbox_PullFails_EmptyStderr(t *testing.T) {
 	}
 }
 
-// TestCreateSandbox_SmokeTest_ArgsIncludeUID verifies that the smoke test docker
+// TestSandboxCreate_SmokeTest_ArgsIncludeUID verifies that the smoke test docker
 // run argv includes -u <uid>:<gid> using the injected uid/gid values.
-func TestCreateSandbox_SmokeTest_ArgsIncludeUID(t *testing.T) {
+func TestSandboxCreate_SmokeTest_ArgsIncludeUID(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -500,7 +500,7 @@ func TestCreateSandbox_SmokeTest_ArgsIncludeUID(t *testing.T) {
 	fr := &fakeRun{responses: []fakeRunResponse{
 		{exitCode: 0, stdout: "claude 2.1.101"},
 	}}
-	deps := &createSandboxDeps{
+	deps := &sandboxCreateDeps{
 		prober:    prober,
 		dockerRun: fr.run,
 		uid:       1000,

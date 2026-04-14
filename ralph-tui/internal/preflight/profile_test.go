@@ -148,18 +148,40 @@ func TestResolveProfileDir_LeadingAndTrailingWhitespace_Trimmed(t *testing.T) {
 	}
 }
 
-func TestCheckCredentials_NoCredentialsFile(t *testing.T) {
+func TestCheckCredentials_MissingFile_Warns(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
+
+	w, err := CheckCredentials(dir)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+	if w == "" {
+		t.Fatalf("expected non-empty warning for missing credentials, got empty")
+	}
+	expectedPath := filepath.Join(dir, ".credentials.json")
+	for _, want := range []string{expectedPath, "sandbox login", "ANTHROPIC_API_KEY"} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning %q does not contain %q", w, want)
+		}
+	}
+}
+
+func TestCheckCredentials_MissingFile_WithAPIKey_Silent(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
+	dir := t.TempDir()
+
 	w, err := CheckCredentials(dir)
 	if err != nil {
 		t.Errorf("expected nil error, got %v", err)
 	}
 	if w != "" {
-		t.Errorf("expected empty warning, got %q", w)
+		t.Errorf("expected empty warning when ANTHROPIC_API_KEY is set, got %q", w)
 	}
 }
 
 func TestCheckCredentials_ZeroByteCredentials(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".credentials.json")
 	if err := os.WriteFile(path, []byte{}, 0600); err != nil {
@@ -175,11 +197,29 @@ func TestCheckCredentials_ZeroByteCredentials(t *testing.T) {
 	}
 }
 
+func TestCheckCredentials_ZeroByteCredentials_WithAPIKey_Silent(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(path, []byte{}, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := CheckCredentials(dir)
+	if err != nil {
+		t.Errorf("expected nil error, got %v", err)
+	}
+	if w != "" {
+		t.Errorf("expected empty warning when ANTHROPIC_API_KEY is set, got %q", w)
+	}
+}
+
 // SUGG-003: CheckCredentials propagates non-ErrNotExist stat errors directly.
 func TestCheckCredentials_StatPermissionError_PropagatedWrapped(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("requires non-root: root bypasses permission checks")
 	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	parent := t.TempDir()
 	credPath := filepath.Join(parent, ".credentials.json")
@@ -207,6 +247,7 @@ func TestCheckCredentials_StatPermissionError_PropagatedWrapped(t *testing.T) {
 }
 
 func TestCheckCredentials_NonEmptyCredentials(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".credentials.json")
 	if err := os.WriteFile(path, []byte(`{"token":"abc"}`), 0600); err != nil {

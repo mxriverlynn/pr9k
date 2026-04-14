@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 
@@ -16,18 +14,9 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 )
 
-// errSilentExit signals that the subcommand printed its own error to stderr and
-// main should exit 1 without printing anything further.
-var errSilentExit = errors.New("silent exit")
-
-// dockerRunFunc runs a docker command, directing stdout and stderr to the
-// provided writers. Returns the process exit code (0 on success) and any
-// exec-level error (distinct from a non-zero exit code).
-type dockerRunFunc func(args []string, stdout, stderr io.Writer) (exitCode int, err error)
-
-// createSandboxDeps holds injected dependencies so unit tests can drive every
+// sandboxCreateDeps holds injected dependencies so unit tests can drive every
 // branch without shelling out to a real docker daemon.
-type createSandboxDeps struct {
+type sandboxCreateDeps struct {
 	prober    preflight.Prober
 	dockerRun dockerRunFunc
 	uid       int
@@ -36,29 +25,11 @@ type createSandboxDeps struct {
 	stderr    io.Writer
 }
 
-// realDockerRun is the production implementation of dockerRunFunc.
-func realDockerRun(args []string, stdout, stderr io.Writer) (int, error) {
-	if len(args) == 0 {
-		return -1, errors.New("realDockerRun: args must not be empty")
-	}
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), nil
-		}
-		return -1, err
-	}
-	return 0, nil
-}
-
-// newCreateSandboxCmd returns the production create-sandbox cobra command wired
-// with real docker dependencies.
-func newCreateSandboxCmd() *cobra.Command {
+// newSandboxCreateCmd returns the production `sandbox create` cobra command
+// wired with real docker dependencies.
+func newSandboxCreateCmd() *cobra.Command {
 	uid, gid := sandbox.HostUIDGID()
-	return newCreateSandboxCmdWith(&createSandboxDeps{
+	return newSandboxCreateCmdWith(&sandboxCreateDeps{
 		prober:    preflight.RealProber{},
 		dockerRun: realDockerRun,
 		uid:       uid,
@@ -68,18 +39,18 @@ func newCreateSandboxCmd() *cobra.Command {
 	})
 }
 
-// newCreateSandboxCmdWith builds the cobra command using the provided deps.
-// Separated from newCreateSandboxCmd so tests can inject fakes.
-func newCreateSandboxCmdWith(deps *createSandboxDeps) *cobra.Command {
+// newSandboxCreateCmdWith builds the cobra command using the provided deps.
+// Separated from newSandboxCreateCmd so tests can inject fakes.
+func newSandboxCreateCmdWith(deps *sandboxCreateDeps) *cobra.Command {
 	var force bool
 
 	cmd := &cobra.Command{
-		Use:           "create-sandbox",
+		Use:           "create",
 		Short:         "Pull the sandbox image and verify it can run under the current user",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCreateSandbox(deps, force)
+			return runSandboxCreate(deps, force)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "re-pull the sandbox image even if it is already present")
@@ -89,19 +60,7 @@ func newCreateSandboxCmdWith(deps *createSandboxDeps) *cobra.Command {
 // semverRe matches a semver-shaped pattern (e.g. "2.1.101") anywhere in a string.
 var semverRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
-// ansiEscapeRe matches ANSI/VT terminal escape sequences: CSI sequences
-// (\x1b[...m), OSC sequences (\x1b]...\x07), and Fe sequences (\x1b[@-_]).
-// Used to strip terminal injection from untrusted subprocess output before
-// reflecting it to the user's terminal (SEC-001).
-var ansiEscapeRe = regexp.MustCompile(`\x1b(?:[@-Z\\-_]|\[[0-9;]*[ -/]*[@-~]|\][^\x07]*\x07)`)
-
-// stripANSI removes ANSI/VT escape sequences from s so that untrusted
-// subprocess output cannot inject terminal control codes when printed.
-func stripANSI(s string) string {
-	return ansiEscapeRe.ReplaceAllString(s, "")
-}
-
-func runCreateSandbox(deps *createSandboxDeps, force bool) error {
+func runSandboxCreate(deps *sandboxCreateDeps, force bool) error {
 	// Step 1: Docker reachability check.
 	_, _ = fmt.Fprint(deps.stdout, "Checking Docker... ")
 	if !deps.prober.DockerBinaryAvailable() {

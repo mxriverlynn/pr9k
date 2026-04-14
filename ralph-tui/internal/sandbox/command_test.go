@@ -381,3 +381,52 @@ func indexOf(args []string, s string) int {
 	}
 	return -1
 }
+
+func TestBuildLoginArgs_Shape(t *testing.T) {
+	args := BuildLoginArgs(testProfileDir, testUID, testGID)
+
+	wantFlags := []string{"-it", "--rm", "--init"}
+	for _, flag := range wantFlags {
+		if indexOf(args, flag) < 0 {
+			t.Errorf("argv missing %q; got %v", flag, args)
+		}
+	}
+
+	uidArg := fmt.Sprintf("%d:%d", testUID, testGID)
+	uidIdx := indexOf(args, "-u")
+	if uidIdx < 0 || uidIdx+1 >= len(args) || args[uidIdx+1] != uidArg {
+		t.Errorf("expected -u %s; got %v", uidArg, args)
+	}
+
+	mountSpec := fmt.Sprintf("type=bind,source=%s,target=%s", testProfileDir, ContainerProfilePath)
+	mountCount := countFlag(args, "--mount")
+	if mountCount != 1 {
+		t.Errorf("expected exactly 1 --mount (profile only, no project); got %d", mountCount)
+	}
+	if indexOf(args, mountSpec) < 0 {
+		t.Errorf("argv missing profile mount %q; got %v", mountSpec, args)
+	}
+
+	envSpec := "CLAUDE_CONFIG_DIR=" + ContainerProfilePath
+	if indexOf(args, envSpec) < 0 {
+		t.Errorf("argv missing %q; got %v", envSpec, args)
+	}
+
+	// Must end with ImageTag then "claude" with nothing after (no -p prompt trailer).
+	if args[len(args)-2] != ImageTag || args[len(args)-1] != "claude" {
+		t.Errorf("argv must end with [ImageTag, 'claude']; got tail %v", args[len(args)-3:])
+	}
+
+	// Must NOT contain -p, -w, --cidfile, --permission-mode (create-only plumbing).
+	forbidden := []string{"-p", "-w", "--cidfile", "--permission-mode"}
+	for _, f := range forbidden {
+		if indexOf(args, f) >= 0 {
+			t.Errorf("argv must NOT contain %q; got %v", f, args)
+		}
+	}
+
+	// Must NOT contain a project-dir mount (login is auth-only).
+	if strings.Contains(strings.Join(args, " "), "source="+testProjectDir) {
+		t.Errorf("argv must NOT mount project dir %q; got %v", testProjectDir, args)
+	}
+}

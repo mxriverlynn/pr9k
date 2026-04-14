@@ -45,16 +45,24 @@ func CheckProfileDir(path string) error {
 	return nil
 }
 
-// CheckCredentials performs a best-effort check for a zero-byte
-// .credentials.json inside profileDir. A missing file is not a warning
-// (fresh profile is valid). A zero-byte file returns a warning string.
-// Any other stat error (besides ErrNotExist) is returned as an error.
+// CheckCredentials performs a best-effort check that the sandboxed claude
+// will have credentials to authenticate with. A missing or zero-byte
+// .credentials.json returns a warning string; non-ErrNotExist stat errors
+// are returned as errors. When ANTHROPIC_API_KEY is set on the host, the
+// sandbox authenticates via the BuiltinEnvAllowlist passthrough and the
+// credentials file is not required — the file check is skipped entirely.
 func CheckCredentials(profileDir string) (warning string, _ error) {
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return "", nil
+	}
 	path := filepath.Join(profileDir, ".credentials.json")
 	fi, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "", nil
+			return fmt.Sprintf(
+				"Warning: %s does not exist. The sandboxed claude has no credentials to authenticate with. Run 'ralph-tui sandbox login' to authenticate, or set ANTHROPIC_API_KEY in the host environment.",
+				path,
+			), nil
 		}
 		return "", fmt.Errorf("preflight: stat credentials %s: %w", path, err)
 	}

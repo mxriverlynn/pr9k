@@ -50,7 +50,7 @@
 
 - Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
 - Run: `./bin/ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]` (omit `-n` for until-done mode)
-- Setup (Docker sandbox): `./bin/ralph-tui create-sandbox [--force]` — pulls sandbox image and runs smoke test
+- Setup (Docker sandbox): `./bin/ralph-tui sandbox create [--force]` pulls the sandbox image and runs a smoke test; `./bin/ralph-tui sandbox login` launches an interactive `claude` REPL so the user can run `/login` and write `.credentials.json` to the profile directory
 - Test: `make test` or `cd ralph-tui && go test -race ./...`
 - Lint: `make lint` (requires golangci-lint)
 - Format check: `make format`
@@ -75,7 +75,7 @@
 - [Config Validation](features/config-validation.md) — D13 validator: ten categories, sandbox rules A/B/C, env passthrough validation
 - [Docker Sandbox](features/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, cidfile lifecycle, and `NewTerminator`
 - [Preflight Checks](features/preflight.md) — `Prober` interface, `CheckDocker`, profile dir validation, collect-all-errors `Run`
-- [create-sandbox Subcommand](features/create-sandbox.md) — Docker image pull and smoke test for sandbox setup
+- [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test) and `sandbox login` (interactive auth REPL)
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps

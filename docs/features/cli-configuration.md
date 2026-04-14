@@ -255,7 +255,8 @@ All errors are written to stderr followed by a `Run 'ralph-tui --help' for usage
 
 ```
 ralph-tui [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
-ralph-tui create-sandbox [--force]
+ralph-tui sandbox create [--force]
+ralph-tui sandbox login
 ralph-tui --version
 ```
 
@@ -308,7 +309,8 @@ The two version tests read the expected string from `version.Version` rather tha
 | `TestStepNames_Single` | Single step → step name with no separator |
 | `TestStepNames_Multiple` | Multiple steps → comma-separated names |
 | `TestStartupPreflight_RunsBeforeOrchestrator` | Fake prober with image missing → startup returns (nil, false) and error message |
-| `TestStartupPreflight_SkippedForCreateSandbox` | `create-sandbox` subcommand → root RunE does not fire; preflight is not invoked |
+| `TestStartupPreflight_SkippedForSandboxCreate` | `sandbox create` subcommand → root RunE does not fire; preflight is not invoked |
+| `TestStartupPreflight_SkippedForSandboxLogin` | `sandbox login` subcommand → root RunE does not fire; preflight is not invoked |
 | `TestStartupPreflight_CollectsAllErrors` | D13 error + missing profile dir + docker unavailable → all errors appear in output |
 | `TestStartup_HappyPath` (TP-001) | Valid step file + passing prober + zero-byte credentials → ok=true, all services wired, credentials warning in output |
 | `TestStartup_LoadStepsFailure` (TP-002) | Missing `ralph-steps.json` → early return: ok=false, svc=nil, no logs/ directory created |

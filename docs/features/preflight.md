@@ -78,7 +78,7 @@ func CheckDocker(p Prober) []error
 Runs the three-step docker check, short-circuiting on the first failure and returning a nil or empty slice on success:
 1. Binary missing → `"preflight: docker is not installed. Install Docker and try again"`
 2. Binary present, daemon unreachable → `"preflight: docker daemon isn't running. Start Docker and try again"`
-3. Daemon reachable, image missing → `"preflight: claude sandbox image is missing. Run: ralph-tui create-sandbox"`
+3. Daemon reachable, image missing → `"preflight: claude sandbox image is missing. Run: ralph-tui sandbox create"`
 4. All green → nil or empty slice
 
 At most one error is returned per `CheckDocker` call. Multiple failures across profile and docker are surfaced together by `Run`.

@@ -107,32 +107,53 @@ func TestStartupPreflight_RunsBeforeOrchestrator(t *testing.T) {
 	}
 
 	got := buf.String()
-	const wantSubstr = "preflight: claude sandbox image is missing. Run: ralph-tui create-sandbox"
+	const wantSubstr = "preflight: claude sandbox image is missing. Run: ralph-tui sandbox create"
 	if !strings.Contains(got, wantSubstr) {
 		t.Errorf("stderr %q does not contain %q", got, wantSubstr)
 	}
 }
 
-// TestStartupPreflight_SkippedForCreateSandbox verifies that when create-sandbox
-// is dispatched, the root RunE does NOT fire. Because startup() is only called
-// from the root RunE path, its non-execution proves preflight is skipped for
-// the create-sandbox subcommand.
-func TestStartupPreflight_SkippedForCreateSandbox(t *testing.T) {
+// TestStartupPreflight_SkippedForSandboxCreate verifies that when the
+// `sandbox create` subcommand is dispatched, the root RunE does NOT fire.
+// Because startup() is only called from the root RunE path, its non-execution
+// proves preflight is skipped for sandbox subcommands.
+func TestStartupPreflight_SkippedForSandboxCreate(t *testing.T) {
 	cfg := &cli.Config{}
 	rootCmd := cli.NewCommand(cfg)
-	stub := &cobra.Command{
-		Use:  "create-sandbox",
+	parent := &cobra.Command{Use: "sandbox"}
+	parent.AddCommand(&cobra.Command{
+		Use:  "create",
 		RunE: func(_ *cobra.Command, _ []string) error { return nil },
-	}
-	rootCmd.AddCommand(stub)
-	rootCmd.SetArgs([]string{"create-sandbox"})
+	})
+	rootCmd.AddCommand(parent)
+	rootCmd.SetArgs([]string{"sandbox", "create"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Root RunE populates WorkflowDir when it fires. If it remains empty,
 	// root RunE did not run — startup() (and therefore preflight) was not called.
 	if cfg.WorkflowDir != "" {
-		t.Errorf("root RunE fired for create-sandbox; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
+		t.Errorf("root RunE fired for `sandbox create`; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
+	}
+}
+
+// TestStartupPreflight_SkippedForSandboxLogin verifies the same non-dispatch
+// behavior for the `sandbox login` subcommand.
+func TestStartupPreflight_SkippedForSandboxLogin(t *testing.T) {
+	cfg := &cli.Config{}
+	rootCmd := cli.NewCommand(cfg)
+	parent := &cobra.Command{Use: "sandbox"}
+	parent.AddCommand(&cobra.Command{
+		Use:  "login",
+		RunE: func(_ *cobra.Command, _ []string) error { return nil },
+	})
+	rootCmd.AddCommand(parent)
+	rootCmd.SetArgs([]string{"sandbox", "login"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.WorkflowDir != "" {
+		t.Errorf("root RunE fired for `sandbox login`; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
 	}
 }
 

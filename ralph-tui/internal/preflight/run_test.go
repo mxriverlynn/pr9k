@@ -34,6 +34,9 @@ func TestRun_ProfileDirMissing(t *testing.T) {
 	if !found {
 		t.Errorf("expected 'Claude profile directory not found' in errors, got: %v", result.Errors)
 	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no warnings when profile dir is missing (CheckCredentials should be gated), got: %v", result.Warnings)
+	}
 }
 
 func TestRun_ProfileDirIsFile(t *testing.T) {
@@ -59,9 +62,13 @@ func TestRun_ProfileDirIsFile(t *testing.T) {
 	if !found {
 		t.Errorf("expected 'not a directory' in errors, got: %v", result.Errors)
 	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no warnings when profile path is a file (CheckCredentials should be gated), got: %v", result.Warnings)
+	}
 }
 
 func TestRun_DockerBinaryMissing(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
 	dir := t.TempDir()
 	result := Run(dir, missingBinaryProber)
 
@@ -80,6 +87,7 @@ func TestRun_DockerBinaryMissing(t *testing.T) {
 }
 
 func TestRun_DockerDaemonUnreachable(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
 	dir := t.TempDir()
 	p := fakeProber{
 		binaryAvailable: true,
@@ -103,6 +111,7 @@ func TestRun_DockerDaemonUnreachable(t *testing.T) {
 }
 
 func TestRun_ImageNotPresent(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
 	dir := t.TempDir()
 	p := fakeProber{
 		binaryAvailable: true,
@@ -117,16 +126,17 @@ func TestRun_ImageNotPresent(t *testing.T) {
 	}
 	found := false
 	for _, e := range result.Errors {
-		if strings.Contains(e.Error(), "create-sandbox") {
+		if strings.Contains(e.Error(), "sandbox create") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected 'create-sandbox' in errors, got: %v", result.Errors)
+		t.Errorf("expected 'sandbox create' in errors, got: %v", result.Errors)
 	}
 }
 
 func TestRun_ZeroByteCredentials_WarningNotFatal(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".credentials.json")
 	if err := os.WriteFile(path, []byte{}, 0600); err != nil {
@@ -151,6 +161,7 @@ func TestRun_CredentialsPermissionError_CollectedAsError(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("requires non-root: root bypasses permission checks")
 	}
+	t.Setenv("ANTHROPIC_API_KEY", "")
 
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "profile")
@@ -189,7 +200,13 @@ func TestRun_CredentialsPermissionError_CollectedAsError(t *testing.T) {
 }
 
 func TestRun_AllGreen(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
+	path := filepath.Join(dir, ".credentials.json")
+	if err := os.WriteFile(path, []byte(`{"token":"abc"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
 	result := Run(dir, allGreenProber)
 
 	if len(result.Errors) != 0 {
@@ -197,6 +214,44 @@ func TestRun_AllGreen(t *testing.T) {
 	}
 	if len(result.Warnings) != 0 {
 		t.Errorf("expected no warnings, got: %v", result.Warnings)
+	}
+}
+
+func TestRun_MissingCredentials_EmitsWarning(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	dir := t.TempDir()
+
+	result := Run(dir, allGreenProber)
+
+	if len(result.Errors) != 0 {
+		t.Errorf("expected no errors, got: %v", result.Errors)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly 1 warning for missing credentials, got %d: %v", len(result.Warnings), result.Warnings)
+	}
+	for _, want := range []string{"does not exist", "sandbox login", "ANTHROPIC_API_KEY"} {
+		if !strings.Contains(result.Warnings[0], want) {
+			t.Errorf("warning %q does not contain %q", result.Warnings[0], want)
+		}
+	}
+}
+
+func TestRun_MissingProfileDir_NoCredentialsWarning(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	result := Run("/tmp/ralph-run-test-nonexistent-credgate-xyzzy", allGreenProber)
+
+	hasProfileErr := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), "claude profile directory not found") {
+			hasProfileErr = true
+		}
+	}
+	if !hasProfileErr {
+		t.Errorf("expected profile-not-found error, got: %v", result.Errors)
+	}
+	if len(result.Warnings) != 0 {
+		t.Errorf("expected no credentials warning when profile dir is missing (gating), got: %v", result.Warnings)
 	}
 }
 
