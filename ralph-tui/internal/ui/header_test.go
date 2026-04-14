@@ -119,7 +119,7 @@ func TestSetPhaseSteps_OverflowPanics(t *testing.T) {
 func TestSetStepState_UpdatesRightRowCol(t *testing.T) {
 	h := NewStatusHeader(8)
 	names := []string{"Feature work", "Test planning", "Test writing", "Code review",
-		"Review fixes", "Close issue", "Update docs", "Git push"}
+		"Fix review items", "Close issue", "Update docs", "Git push"}
 	h.SetPhaseSteps(names)
 
 	h.SetStepState(0, StepDone)
@@ -136,7 +136,7 @@ func TestSetStepState_UpdatesRightRowCol(t *testing.T) {
 		{0, 1, "[✓] Test planning"},
 		{0, 2, "[✓] Test writing"},
 		{0, 3, "[▸] Code review"},
-		{1, 0, "[ ] Review fixes"},
+		{1, 0, "[ ] Fix review items"},
 		{1, 1, "[ ] Close issue"},
 		{1, 2, "[ ] Update docs"},
 		{1, 3, "[ ] Git push"},

@@ -10,7 +10,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 ╭── Power-Ralph.9000 — Iteration 2/3 — Issue #42 ─────╮  ← top border + title
 │ [✓] Feature work      [✓] Test planning             │
 │ [▸] Test writing      [ ] Code review               │  ← checkbox grid
-│ [ ] Review fixes      [ ] Close issue               │
+│ [ ] Fix review items  [ ] Close issue               │
 │ [ ] Update docs       [ ] Git push                  │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
 │                                                     │

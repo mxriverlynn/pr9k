@@ -126,6 +126,7 @@ docker run -it --rm --init
   -u <uid>:<gid>
   --mount type=bind,source=<profileDir>,target=/home/agent/.claude
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude
+  [-e TERM]
   <ImageTag>
   claude
 ```
@@ -135,7 +136,8 @@ Differences from `BuildRunArgs`:
 - `-it` instead of `-i` (allocates a TTY for interactive use).
 - No project-dir bind-mount. No `-w`. No `--cidfile` (terminator lifecycle isn't needed — user Ctrl-Cs or `/exit`s).
 - No `-p <prompt>`, no `--permission-mode bypassPermissions`, no `--model` — the user drives the session directly.
-- No env passthrough — `CLAUDE_CONFIG_DIR` is set explicitly; `/login` doesn't need API keys.
+- No `CLAUDE_CONFIG_DIR` env passthrough from `BuiltinEnvAllowlist` — it is set explicitly; `/login` doesn't need API keys.
+- `TERM` is forwarded bare (`-e TERM`, name only) when the host has it set. Without this, Docker's pty defaults `TERM` inside the container to a bare `xterm` and the inner `claude` REPL can silently drop bracketed-paste sequences emitted by modern terminals (e.g. macOS Terminal.app) — making `Cmd+V` of the OAuth code appear to do nothing.
 
 ## Error Handling
 

@@ -130,11 +130,12 @@ docker run -it --rm --init \
   -u $(id -u):$(id -g) \
   -v ~/.claude:/home/agent/.claude \
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+  -e TERM \
   docker/sandbox-templates:claude-code \
   claude
 ```
 
-Type `/login` inside the REPL; type `/exit` when done. This is the same argv `sandbox login` builds via `sandbox.BuildLoginArgs`.
+Type `/login` inside the REPL; type `/exit` when done. This is the same argv `sandbox login` builds via `sandbox.BuildLoginArgs` — `-e TERM` is forwarded bare so the container pty inherits the host's `TERM` value and the REPL can read bracketed-paste sequences from modern terminals (without it, pasting the OAuth code into the REPL may silently fail).
 
 ### Verifying the profile is authenticated
 

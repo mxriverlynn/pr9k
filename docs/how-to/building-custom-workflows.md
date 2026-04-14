@@ -75,7 +75,7 @@ The default iteration workflow has 8 steps:
 2. **Test planning** (opus) — Creates a test plan
 3. **Test writing** (sonnet) — Writes tests from the plan
 4. **Code review** (opus) — Reviews changes since the starting SHA
-5. **Review fixes** (sonnet) — Implements review findings
+5. **Fix review items** (sonnet) — Implements review findings
 6. **Close issue** (shell) — Closes the GitHub issue via `gh`
 7. **Update docs** (sonnet) — Updates project documentation
 8. **Git push** (shell) — Pushes all commits

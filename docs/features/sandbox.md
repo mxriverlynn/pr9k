@@ -113,6 +113,21 @@ The closure captures `*exec.Cmd` (not bare `*os.Process`) so `cmd.ProcessState` 
 
 `pollCidfile` validates candidate container IDs with `isValidCID`, which requires exactly 64 lowercase-hex characters. This rejects partial writes (truncated IDs), whitespace-only content, and any non-hex string docker might write on error.
 
+## BuildLoginArgs
+
+```go
+func BuildLoginArgs(profileDir string, uid, gid int) []string
+```
+
+Constructs the `docker run -it ...` argv for an interactive `claude` REPL used by `ralph-tui sandbox login`. The user runs `/login` inside the REPL to write `.credentials.json` to the bind-mounted profile directory. Key differences from `BuildRunArgs`:
+
+- `-it` instead of `-i` — allocates a TTY for interactive use.
+- Only the profile directory is bind-mounted (no project dir, no `-w`) — login is auth-only and host project files are accidental attack surface.
+- No `--cidfile` and no terminator plumbing — the user exits via Ctrl-C or `/exit`.
+- No `--permission-mode`, `--model`, or `-p <prompt>` — the user drives the REPL directly.
+- `CLAUDE_CONFIG_DIR` is the only unconditional env entry; `BuiltinEnvAllowlist` is not consulted here.
+- `TERM` is forwarded bare (`-e TERM`, name only) when the host has it set, so the inner pty reports the host's real terminal capabilities. Without this, Docker defaults `TERM` to `xterm` and modern terminals' bracketed-paste sequences can be silently dropped by the `claude` REPL, making paste of the OAuth code appear to do nothing.
+
 ## Package
 
 **Package:** `internal/sandbox/` (`image.go`, `command.go`, `cidfile.go`, `terminator.go`)

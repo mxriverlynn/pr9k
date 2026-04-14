@@ -135,7 +135,7 @@ These files are created by one step and consumed by a later step within the same
 | File | Created By | Consumed By | Lifecycle |
 |------|-----------|-------------|-----------|
 | `test-plan.md` | Test planning step | Test writing step (`@test-plan.md`) | Deleted by test writing step |
-| `code-review.md` | Code review step | Review fixes step (`@code-review.md`) | Deleted by review fixes step |
+| `code-review.md` | Code review step | Fix review items step (`@code-review.md`) | Deleted by fix review items step |
 
 The consuming step checks whether the file exists and has content. If the file is empty or missing, the step skips to cleanup.
 
@@ -147,7 +147,7 @@ Iteration N:
   Test planning ──writes──▶ test-plan.md, progress.txt
   Test writing ──reads───▶ test-plan.md ──deletes──▶ test-plan.md
   Code review ──writes──▶ code-review.md, progress.txt
-  Review fixes ──reads───▶ code-review.md ──deletes──▶ code-review.md
+  Fix review items ──reads───▶ code-review.md ──deletes──▶ code-review.md
   Update docs ──reads───▶ progress.txt
 
 Finalization:

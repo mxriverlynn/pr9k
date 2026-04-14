@@ -20,7 +20,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 Each iteration:
 1. Find next open issue assigned to user with label "ralph" (lowest number first)
-2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Code review (opus) → Review fixes (sonnet) → Close issue → Update docs (sonnet) → Git push
+2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Code review (opus) → Fix review items (sonnet) → Close issue → Update docs (sonnet) → Git push
 
 After all iterations, three finalization steps run:
 1. Deferred work — creates issues from `deferred.txt`

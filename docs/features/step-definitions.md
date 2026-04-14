@@ -112,7 +112,7 @@ The 10 iteration steps run in sequence for each GitHub issue:
 | 4 | Test planning | Claude | opus | — |
 | 5 | Test writing | Claude | sonnet | — |
 | 6 | Code review | Claude | opus | — |
-| 7 | Review fixes | Claude | sonnet | — |
+| 7 | Fix review items | Claude | sonnet | — |
 | 8 | Close issue | Shell | — | — |
 | 9 | Update docs | Claude | sonnet | — |
 | 10 | Git push | Shell | — | — |

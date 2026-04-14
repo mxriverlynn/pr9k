@@ -81,7 +81,7 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 		"Test planning",
 		"Test writing",
 		"Code review",
-		"Review fixes",
+		"Fix review items",
 		"Close issue",
 		"Update docs",
 		"Git push",

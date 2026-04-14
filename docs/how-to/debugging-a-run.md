@@ -136,7 +136,7 @@ Several Claude steps communicate by writing files into the target repo and havin
 | File | Written by | Read by | Lifecycle |
 |------|-----------|---------|-----------|
 | `test-plan.md` | Test planning | Test writing | Deleted by Test writing |
-| `code-review.md` | Code review | Review fixes | Deleted by Review fixes |
+| `code-review.md` | Code review | Fix review items | Deleted by Fix review items |
 | `progress.txt` | All Claude steps (append) | Update docs, Lessons learned | Cleared by Lessons learned |
 | `deferred.txt` | All Claude steps (append) | Deferred work | Cleared by Deferred work |
 
