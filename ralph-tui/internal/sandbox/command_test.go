@@ -430,3 +430,25 @@ func TestBuildLoginArgs_Shape(t *testing.T) {
 		t.Errorf("argv must NOT mount project dir %q; got %v", testProjectDir, args)
 	}
 }
+
+// TestBuildLoginArgs_ForwardsTERMWhenSet asserts that BuildLoginArgs adds
+// `-e TERM` (name only, value inherited by docker) when the host has TERM set.
+// Without TERM forwarded, the container's pty defaults to a bare "xterm" and
+// the inner claude REPL can silently drop bracketed-paste sequences sent by
+// macOS Terminal.app, making Cmd+V appear to do nothing.
+func TestBuildLoginArgs_ForwardsTERMWhenSet(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+
+	args := BuildLoginArgs(testProfileDir, testUID, testGID)
+
+	found := false
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && args[i+1] == "TERM" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("argv missing consecutive `-e TERM` pair; got %v", args)
+	}
+}

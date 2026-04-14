@@ -67,7 +67,7 @@ func BuildRunArgs(
 // profile directory. No project directory is mounted — login is an auth-only
 // operation and exposing host files is accidental attack surface.
 func BuildLoginArgs(profileDir string, uid, gid int) []string {
-	return []string{
+	args := []string{
 		"docker", "run",
 		"-it",
 		"--rm",
@@ -75,7 +75,15 @@ func BuildLoginArgs(profileDir string, uid, gid int) []string {
 		"-u", fmt.Sprintf("%d:%d", uid, gid),
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),
 		"-e", "CLAUDE_CONFIG_DIR=" + ContainerProfilePath,
-		ImageTag,
-		"claude",
 	}
+
+	// Forward TERM so the inner claude REPL sees the host's terminal
+	// capabilities — without it, Docker's pty defaults TERM to a bare
+	// "xterm" and bracketed-paste sequences can be silently dropped.
+	if _, ok := os.LookupEnv("TERM"); ok {
+		args = append(args, "-e", "TERM")
+	}
+
+	args = append(args, ImageTag, "claude")
+	return args
 }
