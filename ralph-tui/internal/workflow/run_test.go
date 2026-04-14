@@ -3280,3 +3280,41 @@ func TestRun_FinalizeCaptureAsIgnored(t *testing.T) {
 		}
 	}
 }
+
+// SUGG-004: TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand verifies
+// that buildStep with a nil user-env slice does not include any user-supplied
+// env var in the command. This is the common default configuration where
+// ralph-steps.json has no top-level env field.
+func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set a custom env var that would appear if user-env were non-nil.
+	t.Setenv("CUSTOM_USER_VAR", "should-not-appear")
+	t.Setenv("ANTHROPIC_API_KEY", "builtin-key")
+
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The builtin must appear.
+	if !containsSequence(resolved.Command, "-e", "ANTHROPIC_API_KEY") {
+		t.Errorf("expected -e ANTHROPIC_API_KEY (builtin) in command; got %v", resolved.Command)
+	}
+
+	// The user var must NOT appear — nil env means no user additions.
+	if containsSequence(resolved.Command, "-e", "CUSTOM_USER_VAR") {
+		t.Errorf("expected CUSTOM_USER_VAR to be absent with nil user-env; got %v", resolved.Command)
+	}
+}

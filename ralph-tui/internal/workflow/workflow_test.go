@@ -1986,3 +1986,38 @@ func TestRunSandboxedStep_UsesProjectDir(t *testing.T) {
 		t.Errorf("expected RunSandboxedStep cmd.Dir=%q in captured output, got %v", wantDir, captured)
 	}
 }
+
+// WARN-008 — RunSandboxedStep cleans up the cidfile even when cmd.Start()
+// fails (e.g., the command binary does not exist). In this case the container
+// never starts so the cidfile was never written by Docker, but the reserved
+// path must still be cleaned up via sandbox.Cleanup (ENOENT-tolerant).
+func TestRunSandboxedStep_CleansCidfile_OnStartError(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	// Reserve a real path (cidfile does NOT exist — mirrors docker --cidfile
+	// semantics where the file is absent until the container starts).
+	f, err := os.CreateTemp(t.TempDir(), "ralph-cid-*.cid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cidPath := f.Name()
+	_ = f.Close()
+	if err := os.Remove(cidPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a command that cannot be started (binary does not exist).
+	opts := SandboxOptions{CidfilePath: cidPath}
+	runErr := r.RunSandboxedStep("start-fail-step", []string{"/nonexistent-binary-ralph-test"}, opts)
+	if runErr == nil {
+		t.Fatal("expected non-nil error when command binary does not exist, got nil")
+	}
+
+	// The cidfile path did not exist before and does not exist now — Cleanup
+	// must have run without error (ENOENT is tolerated). If Cleanup panicked
+	// or the defer was skipped, the test would have already failed above.
+	if _, statErr := os.Stat(cidPath); !os.IsNotExist(statErr) {
+		t.Errorf("expected cidfile %q to remain absent after Start() failure, got stat err: %v", cidPath, statErr)
+	}
+}

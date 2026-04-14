@@ -136,6 +136,18 @@ func TestResolveProfileDir_TrailingWhitespace_Trimmed(t *testing.T) {
 	}
 }
 
+// SUGG-003: ResolveProfileDir trims leading and trailing whitespace from
+// CLAUDE_CONFIG_DIR (strings.TrimSpace, not just TrimRight).
+func TestResolveProfileDir_LeadingAndTrailingWhitespace_Trimmed(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "  /custom/claude/dir  ")
+
+	got := ResolveProfileDir()
+
+	if got != "/custom/claude/dir" {
+		t.Errorf("ResolveProfileDir() = %q, want %q", got, "/custom/claude/dir")
+	}
+}
+
 func TestCheckCredentials_NoCredentialsFile(t *testing.T) {
 	dir := t.TempDir()
 	w, err := CheckCredentials(dir)

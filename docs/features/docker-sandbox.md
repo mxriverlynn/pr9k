@@ -16,9 +16,12 @@ Executes every Claude CLI step inside an ephemeral Docker container, limiting bl
 - `--cidfile` captures the container ID so `Terminate()` can issue a real `docker kill` rather than signaling the host docker CLI (which would orphan the container)
 
 Key files:
-- `ralph-tui/internal/sandbox/sandbox.go` — `BuildRunArgs`, `BuiltinEnvAllowlist`, `Cidfile` struct (`Path`, `Cleanup`)
+- `ralph-tui/internal/sandbox/command.go` — `BuildRunArgs`
+- `ralph-tui/internal/sandbox/image.go` — `BuiltinEnvAllowlist`, `ImageTag`, container path constants
+- `ralph-tui/internal/sandbox/cidfile.go` — `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal)
 - `ralph-tui/internal/sandbox/terminator.go` — `NewTerminator` closure for SIGTERM/SIGKILL via `docker kill`
-- `ralph-tui/internal/sandbox/sandbox_test.go` — Unit tests for `BuildRunArgs` and `Cleanup`
+- `ralph-tui/internal/sandbox/command_test.go` — Unit tests for `BuildRunArgs` and env allowlist merging
+- `ralph-tui/internal/sandbox/cidfile_test.go` — Unit tests for `Cleanup`
 - `ralph-tui/internal/workflow/run.go` — `buildStep` dispatches claude steps to `RunSandboxedStep`
 
 ## Architecture
@@ -85,9 +88,12 @@ docker run                                              \
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/sandbox/sandbox.go` | `BuildRunArgs` (constructs the `docker run` argv), `BuiltinEnvAllowlist` (the five sandbox-plumbing vars), `Cidfile` struct |
+| `ralph-tui/internal/sandbox/command.go` | `BuildRunArgs` (constructs the `docker run` argv) |
+| `ralph-tui/internal/sandbox/image.go` | `BuiltinEnvAllowlist` (the five sandbox-plumbing vars), `ImageTag`, container path constants |
+| `ralph-tui/internal/sandbox/cidfile.go` | `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal) |
 | `ralph-tui/internal/sandbox/terminator.go` | `NewTerminator` — returns a closure that calls `docker kill --signal=TERM|KILL <cid>` |
-| `ralph-tui/internal/sandbox/sandbox_test.go` | Tests for `BuildRunArgs`, `Cleanup` (ENOENT tolerance), env allowlist merging |
+| `ralph-tui/internal/sandbox/command_test.go` | Tests for `BuildRunArgs`, env allowlist merging |
+| `ralph-tui/internal/sandbox/cidfile_test.go` | Tests for `Cleanup` (ENOENT tolerance) |
 | `ralph-tui/internal/workflow/run.go` | `buildStep` reads `stepFile.Env`, calls `sandbox.BuildRunArgs`, returns `ResolvedStep` with `CidfilePath` |
 | `ralph-tui/internal/workflow/workflow.go` | `RunSandboxedStep` — installs terminator, provides empty stdin, delegates to `runCommand` |
 
@@ -109,16 +115,16 @@ var BuiltinEnvAllowlist = []string{
     "NO_PROXY",
 }
 
-// Cidfile manages the --cidfile path for a single container invocation.
-type Cidfile struct {
-    // Path is the absolute path passed to --cidfile. Generated under
-    // os.TempDir() with a unique suffix per invocation.
-    Path string
-}
+// cidfile package-level functions (cidfile.go)
 
-// Cleanup removes the cidfile. ENOENT is tolerated (the file may not
-// exist if docker run failed before the container started).
-func (c Cidfile) Cleanup() error { ... }
+// Path reserves a unique, non-existent path for `docker run --cidfile`.
+// Creates a temp file, captures its name, then removes it so the path
+// is reserved but does not exist (docker requires --cidfile to be absent).
+func Path() (string, error) { ... }
+
+// Cleanup removes the cidfile at path. ENOENT is tolerated (the file
+// may not exist if docker run failed before the container started).
+func Cleanup(path string) error { ... }
 ```
 
 ```go

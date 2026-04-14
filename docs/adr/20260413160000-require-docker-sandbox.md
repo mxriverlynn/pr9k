@@ -123,10 +123,11 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/sandbox/sandbox.go` | `BuildRunArgs` constructs the `docker run` argv for every claude step |
+| `ralph-tui/internal/sandbox/command.go` | `BuildRunArgs` constructs the `docker run` argv for every claude step |
 | `ralph-tui/internal/sandbox/terminator.go` | `NewTerminator` — `docker kill` via cidfile for clean termination |
-| `ralph-tui/internal/preflight/preflight.go` | `CheckDocker`, `Run` — startup checks that enforce the requirement |
-| `ralph-tui/internal/cli/create_sandbox.go` | `create-sandbox` subcommand — guided image pull and smoke test |
+| `ralph-tui/internal/preflight/docker.go` | `CheckDocker` — startup check that Docker CLI and daemon are reachable |
+| `ralph-tui/internal/preflight/run.go` | `Run` — orchestrates all preflight checks and returns structured results |
+| `ralph-tui/cmd/ralph-tui/create_sandbox.go` | `create-sandbox` subcommand — guided image pull and smoke test |
 
 ### Related Docs
 
