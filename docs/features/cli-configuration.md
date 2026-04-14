@@ -298,6 +298,24 @@ ralph-tui --version
 
 The two version tests read the expected string from `version.Version` rather than hardcoding `"0.1.0"` — the pattern required by [Versioning](../coding-standards/versioning.md) so a version bump does not require touching the test file.
 
+### startup() Tests
+
+`ralph-tui/cmd/ralph-tui/main_test.go` covers `startup()` wiring and the `stepNames` helper:
+
+| Test | What It Validates |
+|------|-------------------|
+| `TestStepNames_Empty` | Empty step list → empty string |
+| `TestStepNames_Single` | Single step → step name with no separator |
+| `TestStepNames_Multiple` | Multiple steps → comma-separated names |
+| `TestStartupPreflight_RunsBeforeOrchestrator` | Fake prober with image missing → startup returns (nil, false) and error message |
+| `TestStartupPreflight_SkippedForCreateSandbox` | `create-sandbox` subcommand → root RunE does not fire; preflight is not invoked |
+| `TestStartupPreflight_CollectsAllErrors` | D13 error + missing profile dir + docker unavailable → all errors appear in output |
+| `TestStartup_HappyPath` (TP-001) | Valid step file + passing prober + zero-byte credentials → ok=true, all services wired, credentials warning in output |
+| `TestStartup_LoadStepsFailure` (TP-002) | Missing `ralph-steps.json` → early return: ok=false, svc=nil, no logs/ directory created |
+| `TestStartup_LoggerFailure` (TP-003) | Unwritable projectDir → ok=false, svc=nil after validation and preflight pass |
+| `TestStartup_ValidationOnlyErrors` (TP-004) | Invalid step file + passing prober → ok=false; "config error:" and "validation error(s)" in output; no "preflight:" line |
+| `TestStartup_PreflightOnlyErrors` (WARN-005) | Valid step file + failing prober (docker binary unavailable) → ok=false; "preflight:" in output; no "validation error(s)" line |
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow

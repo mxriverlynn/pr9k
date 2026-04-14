@@ -101,6 +101,42 @@ Orchestrates the full preflight sequence. All results are collected before retur
 
 The caller (`startup()`) prints all D13 + preflight errors together before exiting.
 
+## Testing
+
+- `ralph-tui/internal/preflight/profile_test.go` — `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`:
+  - `TestResolveProfileDir_WithCLAUDE_CONFIG_DIR` — verifies `$CLAUDE_CONFIG_DIR` is returned when set and non-empty
+  - `TestResolveProfileDir_FallsBackToHomeClaud` — verifies fallback to `$HOME/.claude` when `$CLAUDE_CONFIG_DIR` is unset
+  - `TestResolveProfileDir_TrailingWhitespace_Trimmed` — verifies trailing whitespace in `$CLAUDE_CONFIG_DIR` is trimmed
+  - `TestResolveProfileDir_LeadingAndTrailingWhitespace_Trimmed` (SUGG-003) — verifies both leading and trailing whitespace are trimmed (not just trailing), guarding against `.env` parser artifacts
+  - `TestResolveProfileDir_RelativePath_BecomeAbsolute` — verifies a relative path is made absolute via `filepath.Abs`
+  - `TestResolveProfileDir_BothEnvVarsEmpty_FallsBackToCwdClaud` — verifies fallback when both `$CLAUDE_CONFIG_DIR` and `$HOME` are empty
+  - `TestCheckProfileDir_NonexistentPath` — verifies "not found" error message when the path does not exist
+  - `TestCheckProfileDir_FilePath` — verifies "not a directory" error message when the path points to a file
+  - `TestCheckProfileDir_ValidDirectory` — verifies nil error for an existing directory
+  - `TestCheckProfileDir_StatPermissionError_WrappedWithContext` — verifies non-ENOENT stat errors are propagated with context
+  - `TestCheckCredentials_NoCredentialsFile` — verifies missing `.credentials.json` returns empty warning and nil error
+  - `TestCheckCredentials_ZeroByteCredentials` — verifies a zero-byte credentials file returns a non-empty warning
+  - `TestCheckCredentials_NonEmptyCredentials` — verifies a non-empty credentials file returns no warning
+  - `TestCheckCredentials_StatPermissionError_PropagatedWrapped` — verifies permission errors are propagated as errors (not warnings)
+- `ralph-tui/internal/preflight/docker_test.go` — `CheckDocker`:
+  - `TestCheckDocker_BinaryMissing` — verifies "docker is not installed" error when binary is absent
+  - `TestCheckDocker_DaemonUnreachable` — verifies "docker daemon isn't running" error when binary present but daemon unreachable
+  - `TestCheckDocker_ImageMissing` — verifies "claude sandbox image is missing" error when daemon is up but image absent
+  - `TestCheckDocker_AllGreen` — verifies nil slice when binary, daemon, and image are all available
+  - `TestCheckDocker_ImageNonExitError_WrappedWithContext` — verifies non-exit-error from `docker image inspect` propagates with context
+  - `TestCheckDocker_BinaryMissing_ShortCircuits` — verifies daemon check is skipped when binary is absent
+  - `TestCheckDocker_DaemonUnreachable_ShortCircuits` — verifies image check is skipped when daemon is unreachable
+- `ralph-tui/internal/preflight/run_test.go` — `Run`:
+  - `TestRun_ProfileDirMissing` — verifies missing profile dir produces error in Result
+  - `TestRun_ProfileDirIsFile` — verifies file-path profile dir produces error in Result
+  - `TestRun_DockerBinaryMissing` — verifies docker binary missing produces error in Result
+  - `TestRun_DockerDaemonUnreachable` — verifies docker daemon unreachable produces error in Result
+  - `TestRun_ImageNotPresent` — verifies sandbox image missing produces error in Result
+  - `TestRun_ZeroByteCredentials_WarningNotFatal` — verifies zero-byte credentials produces a warning but no error (non-fatal)
+  - `TestRun_CredentialsPermissionError_CollectedAsError` — verifies credentials stat permission error is collected as an error
+  - `TestRun_AllGreen` — verifies nil errors and no warnings when all checks pass with non-empty credentials
+  - `TestRun_CollectsAllErrors_ProfileAndDocker` — verifies both profile and docker errors are collected even when profile check fails first
+
 ## Package
 
 **Package:** `internal/preflight/` (`profile.go`, `docker.go`, `run.go`)

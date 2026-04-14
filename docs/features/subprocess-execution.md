@@ -391,6 +391,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestRunSandboxedStep_CleansCidfile` — verifies cidfile is removed after a successful step
   - `TestRunSandboxedStep_CleansCidfile_NonexistentPath` — verifies that a nonexistent cidfile path is tolerated (ENOENT-tolerant cleanup)
   - `TestRunSandboxedStep_CleansCidfileOnError` — verifies cidfile is removed even when the command exits non-zero
+  - `TestRunSandboxedStep_CleansCidfile_OnStartError` — verifies the ENOENT-tolerant `defer sandbox.Cleanup` runs even when `cmd.Start()` fails before the container starts (cidfile never written, cleanup must not panic)
   - `TestRunSandboxedStep_ResetTerminatedFlag` — verifies `terminated` is reset at the start of `RunSandboxedStep`
   - `TestRunSandboxedStep_InstallsAndClearsTerminator` — verifies terminator is installed in `currentTerminator` during execution and cleared to nil after the step returns
   - `TestRunSandboxedStep_UsesEmptyStdin` — verifies RunSandboxedStep provides explicit empty stdin so Docker does not inherit the parent's raw-mode keyboard reader
@@ -419,6 +420,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser` (TP-004) — verifies both builtin env vars (e.g. `ANTHROPIC_API_KEY`) and user-supplied env vars appear as `-e` flags in the resolved command
   - `TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude` (TP-005) — verifies non-claude steps resolve with `IsClaude=false` and empty `CidfilePath`
   - `TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy` (TP-009) — verifies `buildStep` does not mutate `sandbox.BuiltinEnvAllowlist` when appending user-supplied env vars
+  - `TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand` (SUGG-004) — verifies that a claude step with a nil user-env slice (no top-level `env` field in `ralph-steps.json`) produces only builtin `-e` flags and no user-supplied vars
   - `TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath` (TP-003) — verifies a non-nil terminator is auto-constructed via `sandbox.NewTerminator` when `opts.CidfilePath` is set and `opts.Terminator` is nil; cleared to nil after the step exits
   - `TestRunStep_CurrentTerminatorStaysNilDuringExecution` (TP-010) — verifies `currentTerminator` remains nil throughout a `RunStep` call, confirming the `opts==nil` guard in `runCommand` skips terminator installation for non-sandboxed steps
 

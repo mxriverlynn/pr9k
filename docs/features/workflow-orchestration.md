@@ -456,6 +456,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestStepDispatcher_ClaudeStep_PropagatesRunSandboxedStepError` (TP-011) — verifies errors from `RunSandboxedStep` flow through `stepDispatcher.RunStep` to the caller; prevents silent error swallowing that would bypass error-mode recovery in `Orchestrate`
   - `TestRun_InitializePhase_PassesEnvThroughBuildStep` (TP-008) — verifies `RunConfig.Env` is threaded through the initialize phase into `buildStep`, producing `-e` flags for the custom env var in the sandboxed step command
   - `TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep` (TP-012) — verifies claude steps in the finalize phase route to `RunSandboxedStep`, confirming `stepDispatcher` wiring is consistent across initialize, iteration, and finalize phases
+  - `TestRun_FinalizeCaptureAsIgnored` (WARN-004) — documents that the finalize phase intentionally does not call `vt.Bind()` after `Orchestrate`; a `captureAs` binding in a finalize step does not propagate to subsequent finalize steps (asymmetry with initialize/iteration is by design)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
