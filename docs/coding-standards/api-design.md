@@ -179,6 +179,40 @@ if !filepath.IsAbs(exe) && strings.ContainsRune(exe, '/') {
 }
 ```
 
+## Use an errSilentExit sentinel when a subcommand owns its own error output
+
+When a cobra subcommand prints its own error message before returning, return a private sentinel error instead of a descriptive error string. This prevents the parent's error handler from printing a second, redundant "error: <message>" line to the user.
+
+```go
+// sentinel — signals the subcommand already printed its error; parent should not re-print.
+var errSilentExit = errors.New("silent exit")
+
+func newCreateSandboxCmd(...) *cobra.Command {
+    return &cobra.Command{
+        RunE: func(cmd *cobra.Command, args []string) error {
+            if err := checkDocker(); err != nil {
+                fmt.Fprintf(cmd.ErrOrStderr(), "error: %v\n", err)
+                return errSilentExit // parent sees non-nil, but suppresses the message
+            }
+            // ...
+            return nil
+        },
+    }
+}
+
+// In the parent's error handler:
+if err != nil && !errors.Is(err, errSilentExit) {
+    fmt.Fprintf(os.Stderr, "error: %v\n", err)
+    os.Exit(1)
+}
+```
+
+Apply this pattern whenever a subcommand:
+1. Needs richer formatting for its error (e.g., multi-line output, bullet lists, suggestions), or
+2. Has error context that would be misleadingly terse if re-printed by the generic handler.
+
+The sentinel must be unexported. Only the parent's error gate and the subcommand itself need to reference it.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
