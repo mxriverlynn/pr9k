@@ -20,14 +20,14 @@ import (
 // --- Test doubles ---
 
 type fakeExecutor struct {
-	runStepCalls              []runStepCall
-	runStepErrors             []error  // per-call errors; nil entries mean success
-	runStepCaptures           []string // per-call LastCapture values (indexed by call order)
-	lastCapture               string
-	logLines                  []string
-	projectDir                string
-	runSandboxedStepCalls     []runSandboxedStepCall
-	runSandboxedStepErrors    []error  // per-call errors; nil entries mean success
+	runStepCalls           []runStepCall
+	runStepErrors          []error  // per-call errors; nil entries mean success
+	runStepCaptures        []string // per-call LastCapture values (indexed by call order)
+	lastCapture            string
+	logLines               []string
+	projectDir             string
+	runSandboxedStepCalls  []runSandboxedStepCall
+	runSandboxedStepErrors []error // per-call errors; nil entries mean success
 	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
 	// Tests use it to observe the log stream from another goroutine without
 	// racing on logLines. The callback runs synchronously on the writer
@@ -435,10 +435,6 @@ func TestRun_BreakLoopIfEmptyStepFails(t *testing.T) {
 	// Let Orchestrate reach the blocked error-mode state, then send ActionContinue.
 	time.Sleep(30 * time.Millisecond)
 	actions <- ui.ActionContinue
-	// After ActionContinue is consumed, remaining steps complete near-instantly.
-	// Inject ActionQuit to unblock the completion sequence's final blocking receive.
-	time.Sleep(10 * time.Millisecond)
-	actions <- ui.ActionQuit
 
 	select {
 	case <-done:
@@ -2140,13 +2136,6 @@ func TestRun_Integration_FullFlow(t *testing.T) {
 	// Actions channel for KeyHandler.
 	actions := make(chan ui.StepAction, 10)
 	kh := ui.NewKeyHandler(func() {}, actions)
-	// Inject ActionQuit to unblock the completion sequence after all steps finish.
-	// Real subprocesses take only milliseconds; 500ms is sufficient margin.
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		actions <- ui.ActionQuit
-	}()
-
 	initSteps := []steps.Step{
 		{Name: "Get GitHub user", IsClaude: false, Command: []string{"scripts/get_gh_user"}, CaptureAs: "GITHUB_USER"},
 	}
@@ -2361,10 +2350,6 @@ func TestRun_BreakLoopIfEmpty_FailedStepNoSkips(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 	actions <- ui.ActionContinue
-	// After ActionContinue is consumed, remaining steps complete near-instantly.
-	// Inject ActionQuit to unblock the completion sequence's final blocking receive.
-	time.Sleep(10 * time.Millisecond)
-	actions <- ui.ActionQuit
 
 	select {
 	case <-done:

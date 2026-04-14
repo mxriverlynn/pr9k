@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
@@ -73,6 +75,51 @@ func newServices(cfg *cli.Config, projectDir string) (s *services, ok bool) {
 	}, true
 }
 
+// startup performs the full pre-run sequence: load steps, run D13 config
+// validation, run preflight checks. Errors from both are collected before
+// any output is written, so all problems appear together. On success the
+// services are fully initialised and warnings (if any) have been printed.
+// profileDir must be resolved by the caller (preflight.ResolveProfileDir).
+func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, stderr io.Writer) (*services, bool) {
+	stepFile, err := steps.LoadSteps(cfg.WorkflowDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return nil, false
+	}
+
+	validationErrs := validator.Validate(cfg.WorkflowDir)
+	preflightResult := preflight.Run(profileDir, prober)
+
+	if len(validationErrs) > 0 || len(preflightResult.Errors) > 0 {
+		for _, ve := range validationErrs {
+			_, _ = fmt.Fprintln(stderr, ve.Error())
+		}
+		if len(validationErrs) > 0 {
+			_, _ = fmt.Fprintf(stderr, "%d validation error(s)\n", len(validationErrs))
+		}
+		for _, e := range preflightResult.Errors {
+			_, _ = fmt.Fprintln(stderr, e.Error())
+		}
+		return nil, false
+	}
+
+	for _, w := range preflightResult.Warnings {
+		_, _ = fmt.Fprintln(stderr, w)
+	}
+
+	log, err := logger.NewLogger(projectDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return nil, false
+	}
+
+	return &services{
+		log:      log,
+		runner:   workflow.NewRunner(log, projectDir),
+		stepFile: stepFile,
+	}, true
+}
+
 func main() {
 	cfg, err := cli.Execute(newCreateSandboxCmd())
 	if err != nil {
@@ -85,7 +132,8 @@ func main() {
 		os.Exit(0)
 	}
 
-	svc, ok := newServices(cfg, cfg.ProjectDir)
+	profileDir := preflight.ResolveProfileDir()
+	svc, ok := startup(cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, os.Stderr)
 	if !ok {
 		os.Exit(1)
 	}

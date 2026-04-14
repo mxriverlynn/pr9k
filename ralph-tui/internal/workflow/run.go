@@ -55,8 +55,8 @@ type RunHeader interface {
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-	WorkflowDir     string
-	Iterations      int
+	WorkflowDir string
+	Iterations  int
 	// Env is the per-workflow env allowlist loaded from the "env" field of
 	// ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
 	// when building docker run args for claude steps.

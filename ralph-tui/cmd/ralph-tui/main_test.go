@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
 func TestStepNames_Empty(t *testing.T) {
@@ -193,4 +198,104 @@ func TestNewServices_LoadsStepsFromWorkflowDir(t *testing.T) {
 		t.Fatal("newServices returned ok=false; ralph-steps.json should have been loaded from WorkflowDir")
 	}
 	_ = svc.log.Close()
+}
+
+// TestVersion_Is030 verifies the version constant matches the 0.3.0 release.
+func TestVersion_Is030(t *testing.T) {
+	if version.Version != "0.3.0" {
+		t.Errorf("version.Version = %q, want \"0.3.0\"", version.Version)
+	}
+}
+
+// TestStartupPreflight_RunsBeforeOrchestrator verifies that startup() fails
+// fast when the sandbox image is missing, returning (nil, false) and printing
+// the preflight error to stderr. Because startup returns false, the
+// runner/orchestrator is never started (the caller exits before reaching it).
+func TestStartupPreflight_RunsBeforeOrchestrator(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir() // real dir so profile check passes
+	writeMinimalStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    false, // image missing → preflight error
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false when sandbox image is missing")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on preflight failure")
+	}
+
+	got := buf.String()
+	const wantSubstr = "preflight: claude sandbox image is missing. Run: ralph-tui create-sandbox"
+	if !strings.Contains(got, wantSubstr) {
+		t.Errorf("stderr %q does not contain %q", got, wantSubstr)
+	}
+}
+
+// TestStartupPreflight_SkippedForCreateSandbox verifies that when create-sandbox
+// is dispatched, the root RunE does NOT fire. Because startup() is only called
+// from the root RunE path, its non-execution proves preflight is skipped for
+// the create-sandbox subcommand.
+func TestStartupPreflight_SkippedForCreateSandbox(t *testing.T) {
+	cfg := &cli.Config{}
+	rootCmd := cli.NewCommand(cfg)
+	stub := &cobra.Command{
+		Use:  "create-sandbox",
+		RunE: func(_ *cobra.Command, _ []string) error { return nil },
+	}
+	rootCmd.AddCommand(stub)
+	rootCmd.SetArgs([]string{"create-sandbox"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Root RunE populates WorkflowDir when it fires. If it remains empty,
+	// root RunE did not run — startup() (and therefore preflight) was not called.
+	if cfg.WorkflowDir != "" {
+		t.Errorf("root RunE fired for create-sandbox; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
+	}
+}
+
+// TestStartupPreflight_CollectsAllErrors verifies that startup() collects D13
+// config errors AND preflight errors before printing, so all problems appear
+// together rather than short-circuiting after the first failure.
+func TestStartupPreflight_CollectsAllErrors(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	// Profile dir that does not exist → preflight profile error.
+	profileDir := filepath.Join(t.TempDir(), "nonexistent-profile")
+	writeInvalidStepFile(t, workflowDir) // produces a D13 validation error
+
+	// Docker binary unavailable → preflight docker error.
+	prober := &fakeProber{binaryAvailable: false}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false when D13 and preflight errors exist")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on combined error")
+	}
+
+	got := buf.String()
+	checks := []string{
+		"config error:",                      // D13 error line
+		"validation error(s)",                // D13 count line
+		"preflight: claude profile",          // preflight profile error
+		"preflight: docker is not installed", // preflight docker error
+	}
+	for _, want := range checks {
+		if !strings.Contains(got, want) {
+			t.Errorf("stderr %q missing expected substring %q", got, want)
+		}
+	}
 }
