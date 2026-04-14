@@ -2543,6 +2543,328 @@ func lastNonBlankLine(lines []string) string {
 	return ""
 }
 
+// TP-001: TestStepDispatcher_ClaudeStep_RoutesToRunSandboxedStep verifies that
+// stepDispatcher.RunStep dispatches IsClaude=true steps to RunSandboxedStep
+// with a SandboxOptions containing the step's CidfilePath, and does NOT call
+// the underlying executor's RunStep.
+func TestStepDispatcher_ClaudeStep_RoutesToRunSandboxedStep(t *testing.T) {
+	exec := &fakeExecutor{}
+	current := ui.ResolvedStep{
+		Name:        "claude-step",
+		IsClaude:    true,
+		CidfilePath: "test.cid",
+		Command:     []string{"docker", "run", "image"},
+	}
+	d := &stepDispatcher{exec: exec, current: current}
+
+	if err := d.RunStep("claude-step", current.Command); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+	if exec.runSandboxedStepCalls[0].opts.CidfilePath != "test.cid" {
+		t.Errorf("expected CidfilePath %q, got %q", "test.cid", exec.runSandboxedStepCalls[0].opts.CidfilePath)
+	}
+	if len(exec.runStepCalls) != 0 {
+		t.Errorf("expected 0 RunStep calls for IsClaude=true, got %d", len(exec.runStepCalls))
+	}
+}
+
+// TP-002: TestStepDispatcher_NonClaudeStep_RoutesToRunStep verifies that
+// stepDispatcher.RunStep delegates IsClaude=false steps to the underlying
+// executor's RunStep and does NOT call RunSandboxedStep.
+func TestStepDispatcher_NonClaudeStep_RoutesToRunStep(t *testing.T) {
+	exec := &fakeExecutor{}
+	current := ui.ResolvedStep{
+		Name:     "shell-step",
+		IsClaude: false,
+		Command:  []string{"echo", "hi"},
+	}
+	d := &stepDispatcher{exec: exec, current: current}
+
+	if err := d.RunStep("shell-step", current.Command); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.runStepCalls) != 1 {
+		t.Fatalf("expected 1 RunStep call, got %d", len(exec.runStepCalls))
+	}
+	if len(exec.runSandboxedStepCalls) != 0 {
+		t.Errorf("expected 0 RunSandboxedStep calls for IsClaude=false, got %d", len(exec.runSandboxedStepCalls))
+	}
+}
+
+// TP-003: TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath verifies
+// that runCommand installs a non-nil currentTerminator when opts.CidfilePath is
+// non-empty and opts.Terminator is nil (the auto-construction path via
+// sandbox.NewTerminator). After the step exits, currentTerminator must be nil.
+func TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	cidfile, err := os.CreateTemp("", "ralph-tp003-*.cid")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	cidPath := cidfile.Name()
+	_ = cidfile.Close()
+
+	observedNonNil := make(chan bool, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			r.processMu.Lock()
+			v := r.currentTerminator
+			r.processMu.Unlock()
+			if v != nil {
+				observedNonNil <- true
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		observedNonNil <- false
+	}()
+
+	opts := SandboxOptions{CidfilePath: cidPath} // Terminator intentionally nil
+	if err := r.RunSandboxedStep("auto-term-step", []string{"sh", "-c", "sleep 0.05"}, opts); err != nil {
+		t.Fatalf("RunSandboxedStep: %v", err)
+	}
+
+	r.processMu.Lock()
+	afterTerm := r.currentTerminator
+	r.processMu.Unlock()
+	if afterTerm != nil {
+		t.Error("expected currentTerminator to be nil after RunSandboxedStep returned")
+	}
+
+	if !<-observedNonNil {
+		t.Error("expected to observe non-nil currentTerminator while RunSandboxedStep was running with auto-constructed terminator")
+	}
+}
+
+// TP-004: TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser verifies
+// that buildStep produces -e flags for both a sandbox.BuiltinEnvAllowlist entry
+// (ANTHROPIC_API_KEY) and a user-supplied env var (CUSTOM_VAR).
+func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ANTHROPIC_API_KEY", "builtin-key")
+	t.Setenv("CUSTOM_VAR", "custom-val")
+
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR"}, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !containsSequence(resolved.Command, "-e", "ANTHROPIC_API_KEY") {
+		t.Errorf("expected -e ANTHROPIC_API_KEY (builtin) in command; got %v", resolved.Command)
+	}
+	if !containsSequence(resolved.Command, "-e", "CUSTOM_VAR") {
+		t.Errorf("expected -e CUSTOM_VAR (user env) in command; got %v", resolved.Command)
+	}
+}
+
+// TP-005: TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude verifies
+// that a non-claude step resolves with IsClaude=false, CidfilePath="", and
+// Command equal to the original step command.
+func TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude(t *testing.T) {
+	dir := t.TempDir()
+	step := steps.Step{
+		Name:     "echo-step",
+		IsClaude: false,
+		Command:  []string{"echo", "hi"},
+	}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if resolved.IsClaude {
+		t.Error("expected IsClaude=false for non-claude step")
+	}
+	if resolved.CidfilePath != "" {
+		t.Errorf("expected empty CidfilePath for non-claude step, got %q", resolved.CidfilePath)
+	}
+	if len(resolved.Command) != 2 || resolved.Command[0] != "echo" || resolved.Command[1] != "hi" {
+		t.Errorf("expected command [echo hi], got %v", resolved.Command)
+	}
+}
+
+// TP-006: TestStepDispatcher_ClaudeStep_ForwardsCidfilePathToSandboxOptions
+// verifies that the CidfilePath from the current ResolvedStep flows through
+// stepDispatcher.RunStep into the SandboxOptions passed to RunSandboxedStep.
+func TestStepDispatcher_ClaudeStep_ForwardsCidfilePathToSandboxOptions(t *testing.T) {
+	exec := &fakeExecutor{}
+	wantCid := "/tmp/ralph-xyz.cid"
+	current := ui.ResolvedStep{
+		Name:        "claude-step",
+		IsClaude:    true,
+		CidfilePath: wantCid,
+		Command:     []string{"docker", "run"},
+	}
+	d := &stepDispatcher{exec: exec, current: current}
+
+	if err := d.RunStep("claude-step", current.Command); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+	got := exec.runSandboxedStepCalls[0].opts.CidfilePath
+	if got != wantCid {
+		t.Errorf("expected CidfilePath %q forwarded to SandboxOptions, got %q", wantCid, got)
+	}
+}
+
+// TP-007: TestStepDispatcher_DelegatesWasTerminatedAndWriteToLog verifies
+// that stepDispatcher.WasTerminated and WriteToLog delegate to the wrapped
+// executor unchanged.
+func TestStepDispatcher_DelegatesWasTerminatedAndWriteToLog(t *testing.T) {
+	exec := &fakeExecutor{}
+	d := &stepDispatcher{exec: exec, current: ui.ResolvedStep{}}
+
+	wasTerminated := d.WasTerminated()
+	if wasTerminated != exec.WasTerminated() {
+		t.Errorf("WasTerminated: got %v, want %v", wasTerminated, exec.WasTerminated())
+	}
+
+	d.WriteToLog("test line")
+	if len(exec.logLines) != 1 || exec.logLines[0] != "test line" {
+		t.Errorf("WriteToLog: expected logLines=[%q], got %v", "test line", exec.logLines)
+	}
+}
+
+// TP-008: TestRun_InitializePhase_PassesEnvThroughBuildStep verifies that
+// RunConfig.Env is threaded through Run's initialize phase into buildStep,
+// producing -e flags for the custom env var in the sandboxed step command.
+func TestRun_InitializePhase_PassesEnvThroughBuildStep(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "init-prompt.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CUSTOM_VAR", "v")
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	claudeInitStep := steps.Step{
+		Name:       "init-claude",
+		IsClaude:   true,
+		Model:      "m",
+		PromptFile: "init-prompt.txt",
+	}
+
+	cfg := RunConfig{
+		WorkflowDir:     dir,
+		Iterations:      1,
+		InitializeSteps: []steps.Step{claudeInitStep},
+		Steps:           nonClaudeSteps("shell-step"),
+		Env:             []string{"CUSTOM_VAR"},
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call (initialize claude), got %d", len(exec.runSandboxedStepCalls))
+	}
+	argv := exec.runSandboxedStepCalls[0].command
+	if !containsSequence(argv, "-e", "CUSTOM_VAR") {
+		t.Errorf("expected -e CUSTOM_VAR in initialize step command argv; got %v", argv)
+	}
+}
+
+// TP-009: TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy verifies that
+// buildStep does not mutate sandbox.BuiltinEnvAllowlist when appending the
+// user-supplied env slice. The original slice length and contents must be
+// unchanged after the call.
+func TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	originalLen := len(sandbox.BuiltinEnvAllowlist)
+	originalCopy := make([]string, originalLen)
+	copy(originalCopy, sandbox.BuiltinEnvAllowlist)
+
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+
+	if _, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR", "ANOTHER_VAR"}, exec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(sandbox.BuiltinEnvAllowlist) != originalLen {
+		t.Errorf("BuiltinEnvAllowlist length changed: was %d, now %d (defensive copy mutated original)",
+			originalLen, len(sandbox.BuiltinEnvAllowlist))
+	}
+	for i, v := range originalCopy {
+		if sandbox.BuiltinEnvAllowlist[i] != v {
+			t.Errorf("BuiltinEnvAllowlist[%d] changed: was %q, now %q", i, v, sandbox.BuiltinEnvAllowlist[i])
+		}
+	}
+}
+
+// TP-010: TestRunStep_CurrentTerminatorStaysNilDuringExecution verifies that
+// RunStep installs no terminator — currentTerminator remains nil throughout
+// the duration of a RunStep call. This confirms the opts==nil guard in
+// runCommand skips terminator installation for non-sandboxed steps.
+func TestRunStep_CurrentTerminatorStaysNilDuringExecution(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	sawNonNil := make(chan bool, 1)
+	go func() {
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			r.processMu.Lock()
+			v := r.currentTerminator
+			r.processMu.Unlock()
+			if v != nil {
+				sawNonNil <- true
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		sawNonNil <- false
+	}()
+
+	if err := r.RunStep("plain-step", []string{"sh", "-c", "sleep 0.05"}); err != nil {
+		t.Fatalf("RunStep: %v", err)
+	}
+
+	if got := <-sawNonNil; got {
+		t.Error("currentTerminator was set during RunStep — expected nil for non-sandboxed steps")
+	}
+}
+
 // indexOfLine returns the index of the first line matching pred, or -1 if
 // no line matches. Used by log-ordering assertions.
 func indexOfLine(lines []string, pred func(string) bool) int {
