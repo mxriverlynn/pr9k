@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
@@ -824,8 +825,20 @@ func TestRun_InitializeBuildErrorContinuesToNextInitStep(t *testing.T) {
 	}
 }
 
+// indexOf returns the index of the first occurrence of target in slice, or -1.
+func indexOf(slice []string, target string) int {
+	for i, v := range slice {
+		if v == target {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestBuildStep_ClaudeStepIteration verifies that a claude iteration step
-// produces the correct CLI command with the expected flags and prompt content.
+// produces a docker run argv wrapping the claude CLI with the expected flags
+// and prompt content. Assertions search for tokens by value rather than fixed
+// index because the docker preamble sits before the claude argv.
 func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
@@ -846,7 +859,8 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
-	resolved, err := buildStep(dir, step, vt, vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -854,20 +868,27 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	if resolved.Name != "test-step" {
 		t.Errorf("expected name %q, got %q", "test-step", resolved.Name)
 	}
-	if len(resolved.Command) < 7 || resolved.Command[0] != "claude" {
-		t.Fatalf("unexpected command: %v", resolved.Command)
+	if len(resolved.Command) == 0 || resolved.Command[0] != "docker" {
+		t.Fatalf("expected command[0] == %q, got %v", "docker", resolved.Command)
 	}
-	if resolved.Command[1] != "--permission-mode" || resolved.Command[2] != "bypassPermissions" {
-		t.Errorf("expected --permission-mode bypassPermissions, got %v %v", resolved.Command[1], resolved.Command[2])
+	imageIdx := indexOf(resolved.Command, sandbox.ImageTag)
+	if imageIdx < 0 {
+		t.Fatalf("image tag %q not found in command: %v", sandbox.ImageTag, resolved.Command)
 	}
-	if resolved.Command[3] != "--model" || resolved.Command[4] != "claude-opus-4-6" {
-		t.Errorf("expected --model claude-opus-4-6, got %v %v", resolved.Command[3], resolved.Command[4])
+	if resolved.Command[imageIdx+1] != "claude" {
+		t.Errorf("expected %q after image tag, got %q", "claude", resolved.Command[imageIdx+1])
 	}
-	if resolved.Command[5] != "-p" {
-		t.Errorf("expected -p flag, got %q", resolved.Command[5])
+	if resolved.Command[imageIdx+2] != "--permission-mode" || resolved.Command[imageIdx+3] != "bypassPermissions" {
+		t.Errorf("expected --permission-mode bypassPermissions after image, got %v %v",
+			resolved.Command[imageIdx+2], resolved.Command[imageIdx+3])
 	}
-	if got := resolved.Command[6]; got != "do something" {
-		t.Errorf("expected prompt %q, got %q", "do something", got)
+	modelIdx := indexOf(resolved.Command, "--model")
+	if modelIdx < 0 || resolved.Command[modelIdx+1] != "claude-opus-4-6" {
+		t.Errorf("expected --model claude-opus-4-6, not found or wrong value")
+	}
+	promptIdx := indexOf(resolved.Command, "-p")
+	if promptIdx < 0 || resolved.Command[promptIdx+1] != "do something" {
+		t.Errorf("expected -p %q, not found or wrong value", "do something")
 	}
 }
 
@@ -894,16 +915,18 @@ func TestBuildStep_ClaudeStepWithVarSubstitution(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
-	resolved, err := buildStep(dir, step, vt, vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(resolved.Command) < 7 {
-		t.Fatalf("expected at least 7 command elements, got %d: %v", len(resolved.Command), resolved.Command)
-	}
 	want := "implement issue 42 from sha abc123"
-	if got := resolved.Command[6]; got != want {
+	promptIdx := indexOf(resolved.Command, "-p")
+	if promptIdx < 0 || promptIdx+1 >= len(resolved.Command) {
+		t.Fatalf("-p flag not found in command: %v", resolved.Command)
+	}
+	if got := resolved.Command[promptIdx+1]; got != want {
 		t.Errorf("expected substituted prompt %q, got %q", want, got)
 	}
 }
@@ -922,7 +945,8 @@ func TestBuildStep_ClaudeStepMissingPromptFile(t *testing.T) {
 
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
-	_, err := buildStep(dir, step, vt, vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+	_, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -932,7 +956,7 @@ func TestBuildStep_ClaudeStepMissingPromptFile(t *testing.T) {
 }
 
 // TestBuildStep_ClaudeStepFinalize verifies that a finalize claude step
-// produces the correct CLI command.
+// produces a docker-wrapped argv with the correct model flag.
 func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
@@ -951,7 +975,8 @@ func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Finalize)
-	resolved, err := buildStep(dir, step, vt, vars.Finalize)
+	exec := &fakeExecutor{projectDir: dir}
+	resolved, err := buildStep(dir, step, vt, vars.Finalize, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -959,15 +984,177 @@ func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 	if resolved.Name != "finalize-claude" {
 		t.Errorf("expected name %q, got %q", "finalize-claude", resolved.Name)
 	}
-	if len(resolved.Command) < 7 || resolved.Command[0] != "claude" {
-		t.Fatalf("unexpected command: %v", resolved.Command)
+	if len(resolved.Command) == 0 || resolved.Command[0] != "docker" {
+		t.Fatalf("expected docker command, got %v", resolved.Command)
 	}
-	if resolved.Command[3] != "--model" || resolved.Command[4] != "claude-sonnet-4-6" {
-		t.Errorf("expected --model claude-sonnet-4-6, got %v %v", resolved.Command[3], resolved.Command[4])
+	modelIdx := indexOf(resolved.Command, "--model")
+	if modelIdx < 0 || resolved.Command[modelIdx+1] != "claude-sonnet-4-6" {
+		t.Errorf("expected --model claude-sonnet-4-6, not found or wrong value")
 	}
-	if resolved.Command[6] != "finalize this" {
-		t.Errorf("expected prompt %q, got %q", "finalize this", resolved.Command[6])
+	promptIdx := indexOf(resolved.Command, "-p")
+	if promptIdx < 0 || resolved.Command[promptIdx+1] != "finalize this" {
+		t.Errorf("expected -p %q, not found or wrong value", "finalize this")
 	}
+}
+
+// TestBuildStep_ClaudeStep_SandboxBindMount verifies that the resolved command
+// includes a bind-mount of the project directory to the container workspace.
+func TestBuildStep_ClaudeStep_SandboxBindMount(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectDir := "/tmp/fake-repo"
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: projectDir}
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	mountVal := fmt.Sprintf("type=bind,source=%s,target=%s", projectDir, sandbox.ContainerRepoPath)
+	mountIdx := indexOf(resolved.Command, "--mount")
+	found := false
+	for i := mountIdx; i < len(resolved.Command); i++ {
+		if resolved.Command[i] == mountVal {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected bind-mount %q in command %v", mountVal, resolved.Command)
+	}
+}
+
+// TestBuildStep_ClaudeStep_SandboxOptionsCidfile verifies that the resolved
+// step carries a non-empty CidfilePath under os.TempDir() matching the
+// ralph-*.cid pattern.
+func TestBuildStep_ClaudeStep_SandboxOptionsCidfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !resolved.IsClaude {
+		t.Error("expected resolved.IsClaude to be true")
+	}
+	if resolved.CidfilePath == "" {
+		t.Fatal("expected non-empty CidfilePath")
+	}
+	if !strings.HasPrefix(resolved.CidfilePath, os.TempDir()) {
+		t.Errorf("expected CidfilePath under os.TempDir() %q, got %q", os.TempDir(), resolved.CidfilePath)
+	}
+	base := filepath.Base(resolved.CidfilePath)
+	if !strings.HasPrefix(base, "ralph-") || !strings.HasSuffix(base, ".cid") {
+		t.Errorf("expected CidfilePath base to match ralph-*.cid, got %q", base)
+	}
+}
+
+// TestBuildStep_ClaudeStep_EnvPassthrough verifies that env vars listed in the
+// step file's env allowlist are included as -e flags when set on the host and
+// omitted when unset.
+func TestBuildStep_ClaudeStep_EnvPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	vt := vars.New(dir, dir, 0)
+	vt.SetPhase(vars.Iteration)
+	exec := &fakeExecutor{projectDir: dir}
+
+	// With GITHUB_TOKEN set: expect -e GITHUB_TOKEN in command.
+	t.Setenv("GITHUB_TOKEN", "tok123")
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !containsSequence(resolved.Command, "-e", "GITHUB_TOKEN") {
+		t.Errorf("expected -e GITHUB_TOKEN in command when env var is set; got %v", resolved.Command)
+	}
+
+	// With GITHUB_TOKEN unset: expect no -e GITHUB_TOKEN entry.
+	// Unset directly (os.Unsetenv) so the key is absent, not empty.
+	if err := os.Unsetenv("GITHUB_TOKEN"); err != nil {
+		t.Fatalf("os.Unsetenv: %v", err)
+	}
+	resolved2, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if containsSequence(resolved2.Command, "-e", "GITHUB_TOKEN") {
+		t.Errorf("expected no -e GITHUB_TOKEN when env var is unset; got %v", resolved2.Command)
+	}
+}
+
+// TestBuildStep_ClaudeStep_DispatchesToSandboxedRunner verifies that Run
+// dispatches IsClaude steps to RunSandboxedStep and non-claude steps to RunStep.
+func TestBuildStep_ClaudeStep_DispatchesToSandboxedRunner(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	claudeStep := steps.Step{Name: "claude-step", IsClaude: true, Model: "m", PromptFile: "p.txt"}
+	shellStep := steps.Step{Name: "shell-step", IsClaude: false, Command: []string{"echo", "hi"}}
+
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{claudeStep, shellStep},
+	}
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Errorf("expected 1 RunSandboxedStep call (for claude step), got %d", len(exec.runSandboxedStepCalls))
+	} else if exec.runSandboxedStepCalls[0].name != "claude-step" {
+		t.Errorf("expected RunSandboxedStep called for %q, got %q", "claude-step", exec.runSandboxedStepCalls[0].name)
+	}
+
+	if len(exec.runStepCalls) != 1 {
+		t.Errorf("expected 1 RunStep call (for shell step), got %d", len(exec.runStepCalls))
+	} else if exec.runStepCalls[0].name != "shell-step" {
+		t.Errorf("expected RunStep called for %q, got %q", "shell-step", exec.runStepCalls[0].name)
+	}
+}
+
+// containsSequence reports whether slice contains a and b as consecutive elements.
+func containsSequence(slice []string, a, b string) bool {
+	for i := 0; i+1 < len(slice); i++ {
+		if slice[i] == a && slice[i+1] == b {
+			return true
+		}
+	}
+	return false
 }
 
 // TestRun_IterationsRunOnNormalCompletion verifies that IterationsRun equals the

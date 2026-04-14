@@ -166,15 +166,19 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	r.terminated = false
 	r.processMu.Unlock()
 
-	return r.runCommand(stepName, command, nil)
+	return r.runCommand(stepName, command, nil, nil)
 }
 
-// RunSandboxedStep executes command inside a Docker sandbox. It installs
-// opts.Terminator so that Terminate() dispatches signals through the container
-// rather than the host docker CLI process directly. An explicit empty stdin
-// (bytes.NewReader(nil)) is used so that docker does not inherit the parent's
-// raw-mode keyboard reader. The cidfile at opts.CidfilePath is removed after
-// the step exits (ENOENT-tolerant).
+// RunSandboxedStep executes command inside a Docker sandbox. An explicit empty
+// stdin (bytes.NewReader(nil)) is used so that docker does not inherit the
+// parent's raw-mode keyboard reader. The cidfile at opts.CidfilePath is removed
+// after the step exits (ENOENT-tolerant).
+//
+// Terminator construction order: opts.Terminator takes precedence when set
+// (test-injection path). When opts.Terminator is nil, runCommand constructs a
+// terminator closure via sandbox.NewTerminator(cmd, opts.CidfilePath) after
+// the *exec.Cmd exists but before cmd.Start() — resolving the construction-
+// ordering constraint (the terminator needs the cmd pointer).
 func (r *Runner) RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error {
 	if len(command) == 0 {
 		return fmt.Errorf("workflow: RunSandboxedStep %q: empty command", stepName)
@@ -182,23 +186,26 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 
 	r.processMu.Lock()
 	r.terminated = false
-	r.currentTerminator = opts.Terminator
 	r.processMu.Unlock()
 
 	defer func() {
 		_ = sandbox.Cleanup(opts.CidfilePath)
 	}()
 
-	return r.runCommand(stepName, command, bytes.NewReader(nil))
+	return r.runCommand(stepName, command, bytes.NewReader(nil), &opts)
 }
 
 // runCommand is the shared private core for RunStep and RunSandboxedStep. It
 // executes command as a subprocess, streaming stdout and stderr in real-time.
 // If stdin is non-nil it is set on the command; otherwise the subprocess
-// inherits the parent's stdin (RunStep behaviour). The currentTerminator field
-// is cleared before the procDone channel is closed so that any Terminate()
-// racing with natural step completion sees a nil terminator and short-circuits.
-func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader) error {
+// inherits the parent's stdin (RunStep behaviour). opts, when non-nil, drives
+// terminator selection: if opts.Terminator is set it is used directly (test-
+// injection path); if opts.Terminator is nil but opts.CidfilePath is non-empty,
+// sandbox.NewTerminator is called after cmd is created (so the closure captures
+// the correct *exec.Cmd). The currentTerminator field is cleared before the
+// procDone channel is closed so that any Terminate() racing with natural step
+// completion sees a nil terminator and short-circuits.
+func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.projectDir
 	if stdin != nil {
@@ -214,6 +221,17 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader) 
 		return fmt.Errorf("workflow: stderr pipe: %w", err)
 	}
 
+	// Determine the terminator to install. For sandboxed steps, construct it
+	// here — after cmd exists — so the closure captures the correct *exec.Cmd.
+	var terminator func(syscall.Signal) error
+	if opts != nil {
+		if opts.Terminator != nil {
+			terminator = opts.Terminator
+		} else if opts.CidfilePath != "" {
+			terminator = sandbox.NewTerminator(cmd, opts.CidfilePath)
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("workflow: start %q: %w", command[0], err)
 	}
@@ -221,6 +239,7 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader) 
 	done := make(chan struct{})
 	r.processMu.Lock()
 	r.currentProc = cmd.Process
+	r.currentTerminator = terminator
 	r.procDone = done
 	r.processMu.Unlock()
 	defer func() {

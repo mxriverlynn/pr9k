@@ -137,6 +137,7 @@ func main() {
 	runCfg := workflow.RunConfig{
 		WorkflowDir:     cfg.WorkflowDir,
 		Iterations:      cfg.Iterations,
+		Env:             stepFile.Env,
 		InitializeSteps: stepFile.Initialize,
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,
