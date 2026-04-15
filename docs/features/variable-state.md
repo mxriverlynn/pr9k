@@ -77,6 +77,16 @@ type VarTable struct {
 
 Built-in names are reserved: `Bind` panics if a `captureAs` binding attempts to overwrite any of them. The step validator is the primary enforcement point; the panic is a defense-in-depth check.
 
+## captureAs Binding Source
+
+For non-claude steps (`isClaude: false`), `captureAs` binds to the **last non-empty stdout line** from the step (via `runner.LastCapture()`). This is the historical behavior: a shell script prints its result as the last line and ralph-tui captures it.
+
+For claude steps (`isClaude: true`), `captureAs` binds to **`result.result`** — the `result` field of the `ResultEvent` emitted by `claude -p --output-format stream-json --verbose`. This is the authoritative final answer text, parsed from the NDJSON stream by the `claudestream.Aggregator`. The raw JSON on stdout is never meaningful for binding; `result.result` is.
+
+The `captureAs` variable scoping rules (phase routing to persistent vs. iteration table) apply identically to both step types.
+
+See [Capturing Step Output](../how-to/capturing-step-output.md) for usage examples.
+
 ## Key Methods
 
 ### New
