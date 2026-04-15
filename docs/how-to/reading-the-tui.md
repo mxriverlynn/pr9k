@@ -126,6 +126,8 @@ Starting step: Deferred work
 
 [final step output]
 
+total claude spend across 4 step invocations (including 1 retry): 42 turns · 18432/6144 tokens (cache: 512/2048) · $0.0420000 · 3m22s
+
 Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 ```
 
@@ -135,6 +137,7 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 | `── Iteration N ─────────────` | Marks the top of each iteration inside the iterations phase |
 | `Starting step: <name>` + `─` underline (matching width) | Marks the start of every individual step, in every phase |
 | `Captured VAR = "value"` | Logged after any step with `captureAs`, showing the bound value |
+| `total claude spend across N step invocation[s]...` | Run-level cumulative summary: total token spend, cost, duration, and retry count across all claude steps; omitted when no claude steps ran |
 | `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine calls `program.Quit()` and exits |
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.
