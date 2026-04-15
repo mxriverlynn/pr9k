@@ -14,6 +14,9 @@ import (
 // timestampPrefix matches "[YYYY-MM-DD HH:MM:SS]"
 var timestampRe = regexp.MustCompile(`^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`)
 
+// runStampRe matches the RunStamp() value: "ralph-YYYY-MM-DD-HHMMSS.mmm"
+var runStampRe = regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+
 func TestLogLineHasTimestampAndStepPrefix(t *testing.T) {
 	dir := t.TempDir()
 	l, err := NewLogger(dir)
@@ -137,9 +140,10 @@ func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
 		t.Fatalf("expected 1 log file, got %d", len(entries))
 	}
 
-	nameRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$`)
-	if !nameRe.MatchString(entries[0].Name()) {
-		t.Errorf("unexpected filename: %q", entries[0].Name())
+	name := entries[0].Name()
+	stem := strings.TrimSuffix(name, ".log")
+	if stem == name || !runStampRe.MatchString(stem) {
+		t.Errorf("unexpected filename: %q", name)
 	}
 }
 
@@ -371,7 +375,6 @@ func TestRunStampFormat(t *testing.T) {
 	}
 	defer func() { _ = l.Close() }()
 
-	runStampRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
 	if !runStampRe.MatchString(l.RunStamp()) {
 		t.Errorf("RunStamp() %q does not match expected pattern", l.RunStamp())
 	}
@@ -408,7 +411,6 @@ func TestRunStampReadableAfterClose(t *testing.T) {
 	if stamp == "" {
 		t.Fatal("RunStamp() returned empty string after Close")
 	}
-	runStampRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
 	if !runStampRe.MatchString(stamp) {
 		t.Errorf("RunStamp() after Close %q does not match expected pattern", stamp)
 	}
