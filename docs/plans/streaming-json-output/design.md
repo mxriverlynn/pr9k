@@ -1,6 +1,6 @@
 # Streaming JSON Output from Claude — Design Plan
 
-**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review + smoke validation + iteration 7 correctness pass 2026-04-15)
+**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review + smoke validation + iteration 7 correctness pass + iteration 8 pre-implementation gap-fix 2026-04-15)
 **Author:** River + Claude
 **Date:** 2026-04-14 (updated 2026-04-15)
 
@@ -132,7 +132,7 @@ Emitted last. The authoritative final answer:
 ### D5. New package `internal/claudestream` houses the parser + extractor
 - **Why:** Keeps `internal/workflow/workflow.go` generic (no JSON knowledge in the subprocess layer). The package exposes:
   - A `Parser` that consumes raw NDJSON lines and emits typed events.
-  - A `Renderer` that converts typed events into display lines (the strings sent to `sendLine`).
+  - A `Renderer` with two entry points: `Render(ev Event) []string` for per-event display lines (the strings sent to `sendLine`), and `Finalize(stats StepStats) []string` for the closing summary line per D13 2a. `Finalize` is called once by the wrapper after the subprocess exits and the aggregator has been frozen.
   - An `Aggregator` that accumulates the final `result.result`, total tokens, total cost.
 - **Reversible:** Package-level abstraction; can be reshaped without touching subprocess code.
 
@@ -194,7 +194,7 @@ Emitted last. The authoritative final answer:
 - **Why:** Mirrors what users currently see from claude in plain `-p` mode. The per-tool table is short and lives in one place in `internal/claudestream/render.go`. Unknown tools degrade gracefully without code changes.
 
 ### D13. Token usage and cost: per-step summary line + cumulative run total
-- **Per-step (2a):** Renderer emits a closing line at step completion containing `<turns> turns · <in>/<out> tokens (cache: <creation>/<read>) · $<cost> · <duration>`. Visible in TUI; persisted in file logger via the existing prefix.
+- **Per-step (2a):** The wrapper calls `Renderer.Finalize(Aggregator.Stats())` (see D5) once after the subprocess exits cleanly, which returns exactly one closing line containing `<turns> turns · <in>/<out> tokens (cache: <creation>/<read>) · $<cost> · <duration>`. The line flows through `sendLine` and so is visible in the TUI and persisted in the file logger via the existing prefix. `Finalize` is not called when `Aggregator.Err()` is non-nil (D15 short-circuits before summary emission).
 - **Variables (2b) — deferred, do not revisit unless trigger fires:** No auto-populated `{{VAR}}` tokens for token/cost are added. Trigger to revisit: a concrete workflow step or script needs to read per-step token/cost from a `{{VAR}}`. Until that trigger fires, adding the surface is a speculative schema expansion disallowed by ADR-2 narrow-reading. The data is still preserved in the `.jsonl` artifacts (D14) and the finalize summary line (2c), so nothing is lost — it's just not bound to the variable namespace.
 - **Run total (2c):** Orchestrator's finalize phase emits a closing line summing cost, in/out tokens, and turn count across every claude step in the run.
 - **Where the totals live:** A small accumulator in the workflow runner (e.g., `RunStats`) collects each step's `Aggregator` snapshot. The accumulator is reset at run start.
@@ -280,8 +280,11 @@ Emitted last. The authoritative final answer:
 ### D23. Heartbeat indicator for long silent turns
 - **Behavior:** When no stream-json event arrives for N seconds (default 15s) during a claude step, the TUI renders a transient `⋯ thinking (Ns)` line in the iteration line area (not the log body — it must not be appended to the ring buffer). The line updates in place each tick; it is cleared as soon as the next event arrives.
 - **Why:** Without `--include-partial-messages` (D2), there is no visible activity between assistant turns. Plain-text `-p` mode today streams tokens progressively, so the user sees continuous output. Stream-json can be silent for 30+ seconds during explicit-thinking-budget turns or while claude waits on a slow tool. A passive heartbeat replaces token-level streaming's "feels alive" contribution without the parsing/scope cost of `--include-partial-messages`.
-- **Implementation:** Tick driven by a `tea.Tick` every 1s; the wrapper records `lastEventAt` on every observed event; the status header reads it and renders the heartbeat when `time.Since(lastEventAt) > threshold`.
-- **Reversible:** Isolated to one rendering path in the status header.
+- **Implementation:**
+  - **Owner of `lastEventAt`:** the `claudestream.Pipeline` stores it as an `atomic.Int64` (unix-nano); `Pipeline.observe()` updates it before dispatching to `Renderer.Render` / `Aggregator.Observe` so a malformed event still counts as activity (the point is "something arrived," not "something parsed"). Atomic storage is required because the writer is `runCommand`'s stdout goroutine and the reader is the Bubble Tea update goroutine.
+  - **Accessor chain:** `Runner` holds a pointer to the active pipeline behind `processMu` (cleared on step exit via the same defer that clears `currentTerminator` in `workflow.go:245-256`). `Runner.HeartbeatSilence() (silentFor time.Duration, active bool)` returns `active == false` when no claude step is in flight, otherwise the elapsed time since the pipeline's `lastEventAt`.
+  - **Tick loop:** `main.go` starts a `tea.Tick(time.Second, ...)` that emits a `HeartbeatTickMsg` consumed by `ui.StatusHeader`. The header reads `HeartbeatSilence()` through a lightweight interface (e.g. `type heartbeatReader interface { HeartbeatSilence() (time.Duration, bool) }`) passed in at construction. When `active && silentFor > 15s`, the iteration line is suffixed with `  ⋯ thinking (Ns)`; otherwise the suffix is cleared. The suffix is pure view state — never appended to the log ring buffer.
+- **Reversible:** Isolated to one rendering path in the status header plus one atomic field on Pipeline.
 
 ### D24. RunStamp gains subsecond precision to prevent same-second collisions
 - **Change:** `Logger.RunStamp()` and the log filename use the Go time format `ralph-2006-01-02-150405.000` (milliseconds). The existing `ralph-YYYY-MM-DD-HHMMSS.log` pattern becomes `ralph-YYYY-MM-DD-HHMMSS.mmm.log` — **dot** separator between seconds and milliseconds, matching what Go's `.000` format verb produces (e.g., `ralph-2026-04-14-173022.123.log`). Do not invent a dash-separated variant; the Go format literal is the canonical shape.
@@ -294,7 +297,8 @@ Emitted last. The authoritative final answer:
 - **Enforcement:** The `RunStats` struct lives in `internal/workflow/run.go`, is not exported from the package, and carries a single-line comment stating the constraint. No mutex is added prophylactically.
 
 ### D26. Crash-mid-step resilience
-- **Behavior:** After each parsed event, `RawWriter` calls `f.Sync()` is **not** done (cost too high). Instead, after observing the `result` event, `RawWriter` writes a trailing sentinel line: `{"type":"ralph_end","ok":true,"schema":"v1"}`. Files without a trailing `ralph_end` line indicate a crashed or terminated run; downstream analytics can reject them.
+- **Behavior:** After each parsed event, `RawWriter` calls `f.Sync()` is **not** done (cost too high). Instead, when the `Pipeline` observes a `result` event, it writes a trailing sentinel line to `RawWriter` immediately after the verbatim `result` line itself: `{"type":"ralph_end","ok":true,"schema":"v1"}`. Files without a trailing `ralph_end` line indicate a crashed or terminated run; downstream analytics can reject them.
+- **Write site and ordering:** the sentinel is written inside `Pipeline.observe` (or equivalent) on the same goroutine as the verbatim write, so the two lines cannot interleave with each other or with a concurrent Close. `RawWriter.Close()` is a pure flush-and-close with **no** implicit sentinel emission — that keeps Close idempotent and keeps the "sentinel present ⇔ result observed" invariant honest even when Close runs on the terminator path before a result arrived.
 - **Sentinel semantics vs. `is_error` (clarified iteration 7):** The sentinel is written whenever a `result` event is observed, regardless of `is_error`. Its meaning is "claude finished emitting a result-shaped event," not "the step succeeded." Sentinel absence means the stream was truncated (crash, SIGKILL, terminator path before `result` arrived). `is_error` semantics are carried by the `result` event itself — downstream tools read `is_error` inside the preceding `result` line and the sentinel only to detect truncation.
 - **Why:** Balances write throughput (no per-line fsync) against being able to detect truncated artifacts. A host-level crash (OOM, power loss, SIGKILL) bypasses `defer`, so no amount of `defer`-based cleanup is a guarantee; a sentinel line is the cheapest file-level integrity signal.
 
@@ -558,6 +562,16 @@ Re-read the stabilised plan end-to-end looking specifically for contradictions b
 | G2 | D24 specified the Go format `"ralph-2006-01-02-150405.000"` (which produces `.123`, dot-separated) but the English copy said `ralph-YYYY-MM-DD-HHMMSS-mmm.log` (dash). Step 8's regex advice was "`\.\d{3}\.log$` or whatever Go produces — verify by running the test" — the "or" read as unresolved. | Re-read of D24 + Step 8 | Accepted | **D24 rewritten** to commit to the dot separator matching Go's `.000` verb; **Step 7 and Step 8 rewritten** to cite the single canonical shape without hedging |
 | G3 | D26 said the `ralph_end` sentinel is written "after observing the `result` event" but didn't say whether an `is_error: true` result gets one. Downstream analytics need to distinguish "stream truncated" from "stream finished but step failed." | Re-read of D26 + D15 + smoke-auth-failure fixture | Accepted | **D26 extended** with a "Sentinel semantics vs. `is_error`" paragraph: sentinel means "claude finished emitting," not "step succeeded"; `is_error` is carried by the `result` event itself |
 | G4 | D28 handled `rate_limit_event` specifically but any future new top-level `type` value would reproduce the same `[malformed-json]` log noise. D7 closes the type taxonomy; D8 only tolerates unknown *fields within* known types. | Re-read of D7/D8/D28 interaction | Surfaced, **deferred — do not revisit unless the trigger fires** | **No plan change.** Trigger to revisit: a new claude schema addition produces persistent `[malformed-json]` noise in a user's log. The fix is well-understood (split malformed into "invalid JSON / missing `type`" vs. "valid JSON, unknown `type`" in the parser; route the latter to RawWriter silently, no Renderer output, no Aggregator effect). Implementing it now would be speculative per ADR-2 |
+
+### Iteration 8 — pre-implementation gap-fix (2026-04-15)
+
+Final readiness pass before breaking the plan into work items. Three minor gaps surfaced during a re-read against the verified codebase; each was a cross-reference omission rather than a structural flaw, so the fixes are inline clarifications, not new decisions.
+
+| ID | Finding | Disposition | Plan change |
+|---|---|---|---|
+| H1 | `Renderer.Finalize` was referenced in Step 4 of the Implementation sketch but not listed in D5's Renderer API nor cross-referenced from D13 2a. | Accepted | **D5 extended** to enumerate `Render` and `Finalize` as the two Renderer entry points; **D13 2a rewritten** to name `Finalize` as the call site and to state it is skipped when `Aggregator.Err()` is non-nil |
+| H2 | D23's heartbeat indicator named `lastEventAt` but did not say which type owns it or how the TUI reaches it. Three reasonable placements existed (Pipeline, Runner, StatusHeader), so an implementer would have to guess. | Accepted | **D23 Implementation paragraph rewritten**: `lastEventAt` is an `atomic.Int64` on `Pipeline`; `Runner.HeartbeatSilence()` exposes it; `ui.StatusHeader` consumes it through a `heartbeatReader` interface driven by a `tea.Tick(1s)` |
+| H3 | D26 did not state whether the `ralph_end` sentinel is written inside `RawWriter.Close` or earlier, which matters for the terminator path: if Close writes it, a terminated-before-result step would still get a sentinel, violating the "sentinel absence ⇔ truncation" invariant. | Accepted | **D26 extended** with a "Write site and ordering" paragraph: sentinel is written inside `Pipeline.observe` on the same goroutine as the verbatim result line; `Close` is a pure flush-and-close with no implicit sentinel emission |
 
 ## Out of scope
 
