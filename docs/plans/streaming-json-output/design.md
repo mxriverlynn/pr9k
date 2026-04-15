@@ -1,8 +1,8 @@
 # Streaming JSON Output from Claude — Design Plan
 
-**Status:** Reviewed (iterations 1–3 + agent validation complete)
+**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review)
 **Author:** River + Claude
-**Date:** 2026-04-14
+**Date:** 2026-04-14 (updated 2026-04-15)
 
 ## Goal
 
@@ -150,6 +150,7 @@ Emitted last. The authoritative final answer:
 | D17 | Per-step opt-in/out | Uniform — all `isClaude: true` steps use stream-json |
 | D18 | Rollout strategy | Hard switch in one PR; no fallback; patch version bump |
 | D19 | Multi-block formatting | Inline with natural newline splits; blank line between assistant turns |
+| D27 | `[stderr] ` prefix | Applied only to claude-step stderr; non-claude steps unaffected |
 
 ### D11. TUI shows assistant text + one-line tool-use indicators (Option C)
 - **Why:** Preserves "feels alive" UX. Tool-result content is excluded to avoid flooding the 500-line viewport.
@@ -251,7 +252,7 @@ Emitted last. The authoritative final answer:
 - **Summary-line semantics:** The finalize summary line is labeled `total claude spend across <N> step invocations (including <R> retries)` so the number is self-describing. `N` is the total count of `RunSandboxedStep` returns; `R` is the subset that were followed by a user `r` retry.
 
 ### D22. TUI ring buffer raised from 500 to 2000 lines
-- **Change:** `internal/ui/log_panel.go:65-94` — raise the ring buffer cap from 500 to 2000 lines.
+- **Change:** `internal/ui/log_panel.go` — raise the ring buffer cap from 500 to 2000 lines. The literal `500` appears at **line 17** (comment in the `logModel` type doc), **line 22** (`lines []string // ring buffer, cap 500`), and **lines 72-74** (the trim branch inside `Update`). All three sites must be updated. Extract a package-level `const logRingBufferCap = 2000` so the three sites reference a single source of truth and a future tuning does not drift.
 - **Why:** Under stream-json, each claude step renders multiple assistant turns (each turn's text may span several lines after `\n` split) plus per-tool-use indicators plus system/retry banners plus a step summary. A single feature-work step can legitimately emit 200–800 lines; at 500, phase banners scroll off before the step finishes, breaking the "navigate by chrome landmarks" affordance documented in `docs/how-to/reading-the-tui.md`. 2000 lines keeps an iteration's worth of chrome visible. Cost: ~4× the memory footprint of the string slice (negligible).
 - **Alternative considered:** Compressing assistant turns into a one-line summary. Rejected — loses the "feels alive" UX that D11 explicitly preserves.
 - **Reversible:** Single constant; trivial to tune.
@@ -276,6 +277,12 @@ Emitted last. The authoritative final answer:
 - **Behavior:** After each parsed event, `RawWriter` calls `f.Sync()` is **not** done (cost too high). Instead, after observing the `result` event, `RawWriter` writes a trailing sentinel line: `{"type":"ralph_end","ok":true,"schema":"v1"}`. Files without a trailing `ralph_end` line indicate a crashed or terminated run; downstream analytics can reject them.
 - **Why:** Balances write throughput (no per-line fsync) against being able to detect truncated artifacts. A host-level crash (OOM, power loss, SIGKILL) bypasses `defer`, so no amount of `defer`-based cleanup is a guarantee; a sentinel line is the cheapest file-level integrity signal.
 
+### D27. `[stderr] ` line prefix applies to claude steps only
+- **Behavior:** Under the new pipeline, claude-step stderr lines are prepended with the literal `[stderr] ` in both the TUI log body and the persisted log file. Non-claude steps' stderr (e.g., `git push` diagnostics) is unaffected and continues to flow unprefixed.
+- **Why:** Without the prefix, a docker-layer error on stdout vs stderr would be indistinguishable in the rendered log. Since claude-step stdout under stream-json is parsed/rendered (not verbatim), an unprefixed stderr line would look exactly like a rendered assistant turn. The prefix makes diagnostics visually distinct without inventing a second output stream.
+- **Relation to D9:** D9 preserves the file-logging **wrapper** format (`[timestamp] [iter] [step] line`). D27 introduces a content-level prefix inside the `line` portion, which is not what D9 protects. No contradiction.
+- **Reversible:** One string literal in the stderr forwarder.
+
 ## Implementation sketch
 
 ### New code
@@ -294,7 +301,7 @@ Emitted last. The authoritative final answer:
 
 3. **`ralph-tui/internal/sandbox/command.go:53-59`** — Append `"--output-format", "stream-json", "--verbose"` to the claude argv, after the existing `-p`, `prompt` pair. (D1)
 
-4. **`ralph-tui/internal/workflow/workflow.go`** — `RunSandboxedStep` becomes claude-aware. The JSON pipeline context is carried in an extended `SandboxOptions`:
+4. **`ralph-tui/internal/workflow/workflow.go`** — `RunSandboxedStep` and `runCommand` both become claude-aware. The JSON pipeline context is carried in an extended `SandboxOptions`:
    ```go
    type SandboxOptions struct {
        Terminator  func(syscall.Signal) error
@@ -310,21 +317,46 @@ Emitted last. The authoritative final answer:
        CaptureMode CaptureMode
    }
    ```
-   - `RunSandboxedStep` constructs a per-step `claudestream.Pipeline` (`Parser` + `Renderer` + `Aggregator` + `RawWriter`) when `CaptureMode == CaptureResult`. For claude steps, stdout and stderr are handled **separately** (D20):
-     - **Stdout** is read by a custom pipe-reader (D3 replacement for the 256KB scanner): a `bufio.Reader.ReadString('\n')` loop that (a) writes each line verbatim to `RawWriter` before any parsing, (b) feeds the same bytes to `Parser.Parse`. Parsed events go to `Aggregator.Observe` and `Renderer.Render`; rendered display lines flow out through the original `sendLine` (so the file logger and TUI both see rendered output). Malformed lines are logged via `logger.Log` with the raw bytes prefixed `[malformed-json]` and skipped (D7).
-     - **Stderr** keeps its current `bufio.Scanner` (256KB buffer) and forwards each line to `sendLine` with a `[stderr] ` prefix and to `logger.Log`. Stderr is **not** fed to `Parser.Parse` and **not** written to `RawWriter`.
-   - A `defer pipeline.Close()` inside the wrapper guarantees `RawWriter` is flushed and closed on natural exit, terminator/SIGTERM path, and `cmd.Start()` failure path. Close is idempotent.
-   - On step completion: call `Aggregator.Err()` — if non-nil, return it (D15). Otherwise call `Renderer.Finalize(Aggregator.Stats())` to emit the summary line (D13 2a) through the sendLine path, and set `lastCapture = Aggregator.Result()` (D6).
-   - `runCommand`'s `forwardPipe` is unchanged — the JSON-awareness lives entirely in the wrapper above `runCommand`. Non-claude steps (`RunStep`, and claude-less sandbox callers like `sandbox create` smoke test) never construct the pipeline (D9).
+   - **Where the claude-aware branch lives.** The stdout/stderr pipes are owned by `runCommand` (`workflow.go:215-222`); the `RunSandboxedStep` wrapper cannot read them without cooperation from `runCommand`. Therefore the claude branch must live inside `runCommand` itself — the earlier-draft claim that "`runCommand`'s `forwardPipe` is unchanged" was wrong and has been withdrawn (see Iteration 5, F3). Concretely:
+     - `runCommand` gains an optional `pipeline *claudestream.Pipeline` parameter (passed through from `RunSandboxedStep` when `opts.CaptureMode == CaptureResult`). When `pipeline == nil`, the current dual `forwardPipe` 256KB-scanner behavior is preserved verbatim for non-claude `RunStep` callers — D9 holds.
+     - When `pipeline != nil`, `runCommand` swaps in two replacement forwarders (the existing `forwardPipe` closure is either replaced or split into stdout/stderr variants — implementation detail):
+       - **Stdout forwarder (D3/D20):** a `bufio.Reader.ReadString('\n')` loop that (a) writes each line verbatim to `pipeline.RawWriter` before any parsing, (b) feeds the same bytes to `pipeline.Parser.Parse`. Parsed events go to `pipeline.Aggregator.Observe` and `pipeline.Renderer.Render`; rendered display lines flow through the existing `sendLine` (so the file logger and TUI both see rendered output). Malformed lines are logged via `logger.Log` with the raw bytes prefixed `[malformed-json]` and skipped (D7). Hard safety cap at 64MB per line — beyond that, a sentinel truncation marker is written per D3.
+       - **Stderr forwarder (D20):** keeps a `bufio.Scanner` (256KB buffer) and forwards each line to `sendLine` prepended with `[stderr] ` and to `logger.Log`. Stderr is **not** fed to `pipeline.Parser.Parse` and **not** written to `pipeline.RawWriter`.
+     - The `WaitGroup` drain discipline from today's `runCommand` (`workflow.go:258-297`) is preserved — both forwarders still `wg.Done()` on exit and `cmd.Wait()` still follows `wg.Wait()`.
+   - `RunSandboxedStep` constructs the per-step `claudestream.Pipeline` (`Parser` + `Renderer` + `Aggregator` + `RawWriter`) when `opts.CaptureMode == CaptureResult`, passes it into `runCommand`, and `defer pipeline.Close()` guarantees `RawWriter` is flushed and closed on natural exit, terminator/SIGTERM path, and `cmd.Start()` failure path. Close is idempotent.
+   - On step completion: call `pipeline.Aggregator.Err()` — if non-nil, the wrapper returns it **instead of** `cmd.Wait()`'s nil error (D15). Otherwise call `pipeline.Renderer.Finalize(Aggregator.Stats())` to emit the summary line (D13 2a) through the sendLine path, and set `r.lastCapture = pipeline.Aggregator.Result()` (D6) instead of `lastNonEmptyLine(capturedLines)`. The existing `r.lastCapture = ""` on `waitErr != nil` path remains for non-claude steps and for the claude path when both `waitErr` and `Aggregator.Err()` are non-nil.
+   - Claude-less sandbox callers (e.g. `sandbox create` smoke test) never set `CaptureMode == CaptureResult`, so they take the nil-pipeline path and behave exactly as today (D9). The `[stderr] ` prefix is therefore a claude-only addition; non-claude stderr keeps its current unprefixed shape.
 
-5. **`ralph-tui/internal/workflow/run.go`** — Two changes in `Run`:
-   - `buildStep` fills `SandboxOptions.ArtifactPath` for every claude step using the shape from D14 (`<projectDir>/logs/<runstamp>/<phase-prefix><NN>-<slug>.jsonl`). The phase prefix and the 2-digit step index come from the enclosing phase loop (`initialize-`, `iterNN-`, `finalize-`), and the slug is produced by `claudestream.Slug(step.Name)`. Sets `CaptureMode = CaptureResult` for every claude step.
-   - Introduce a `RunStats` accumulator (sum of `claudestream.StepStats`). After each claude step returns successfully, the orchestrator reads `executor.LastStats()` (a new method that returns the `StepStats` from the most recent `RunSandboxedStep`, mirroring `LastCapture()`) and adds it into `RunStats`. At the end of the finalize phase, a single cumulative summary line is emitted via `executor.WriteToLog` (D13 2c). Because `WriteToLog` bypasses the file logger (see `docs/features/subprocess-execution.md`), the orchestrator **also** writes the cumulative summary through `log.Log("Run summary", ...)` so the cumulative total is persisted to disk.
+5. **`ralph-tui/internal/workflow/run.go`** — Three changes in `Run`, plus an extension to `ui.ResolvedStep`:
+   - **`ui.ResolvedStep` gains two fields** (`internal/ui/orchestrate.go:17-26`): `ArtifactPath string` and `CaptureMode workflow.CaptureMode` (or an unexported `int` equivalent exported via a typed constant from the workflow package — exact placement TBD during implementation to avoid a ui→workflow import cycle; if that cycle materializes, define `CaptureMode` in the `ui` package instead and have `workflow` alias it). These fields are populated only for `IsClaude == true` steps; non-claude steps leave them zero-valued, and the dispatcher passes only the CidfilePath through in that case (preserving today's behavior, D9).
+   - **`stepDispatcher.RunStep` (`run.go:36-41`) forwards the new fields** into `SandboxOptions` when `d.current.IsClaude == true`:
+     ```go
+     return d.exec.RunSandboxedStep(name, command, workflow.SandboxOptions{
+         CidfilePath:  d.current.CidfilePath,
+         ArtifactPath: d.current.ArtifactPath,
+         CaptureMode:  d.current.CaptureMode,
+     })
+     ```
+   - **Phase loops populate the new fields after `buildStep` returns.** The artifact layout depends on phase-prefix + in-phase step index + RunStamp — none of which `buildStep`'s current signature exposes. Rather than thread those parameters through `buildStep` (which would bleed orchestration concerns into what is today a pure resolver), the phase loops in `Run` assign `ArtifactPath` and `CaptureMode` onto the returned `ResolvedStep` before calling `Orchestrate`:
+     ```go
+     resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, executor)
+     if err != nil { ... }
+     if resolved.IsClaude {
+         resolved.ArtifactPath = filepath.Join(
+             executor.ProjectDir(), "logs", cfg.RunStamp,
+             fmt.Sprintf("iter%02d-%02d-%s.jsonl", i, j+1, claudestream.Slug(s.Name)),
+         )
+         resolved.CaptureMode = workflow.CaptureResult
+     }
+     ```
+     The same pattern applies in the initialize loop (`initialize-<NN>-<slug>.jsonl`) and finalize loop (`finalize-<NN>-<slug>.jsonl`). `buildStep`'s signature is unchanged.
+   - **`RunStats` accumulator.** Introduce `RunStats` (sum of `claudestream.StepStats`). After each claude step returns (successfully **or** failed — per D21), the orchestrator reads `executor.LastStats()` (a new method that returns the `StepStats` from the most recent `RunSandboxedStep`, mirroring `LastCapture()`) and adds it into `RunStats`. At the end of the finalize phase, a single cumulative summary line is emitted via `executor.WriteToLog` (D13 2c). Because `WriteToLog` bypasses the file logger (see `docs/features/subprocess-execution.md`), the orchestrator **also** writes the cumulative summary through `log.Log("Run summary", ...)` so the cumulative total is persisted to disk. (Requires a new accessor on `StepExecutor` for `*logger.Logger`, or equivalent; the cleanest implementation adds a thin `Runner.LogSummary(line string)` method that writes to both sinks.)
 
-6. **`ralph-tui/cmd/ralph-tui/main.go`** — Two changes:
+6. **`ralph-tui/cmd/ralph-tui/main.go`** — Two changes (both inside `startup()` so the error path funnels through the existing stderr-print-and-return branch):
    - Add `RunStamp` to `workflow.RunConfig` and populate it from `svc.log.RunStamp()`.
-   - Create the per-run artifact directory (`projectDir/logs/<runstamp>/`) eagerly after `NewLogger` succeeds so later per-step file opens cannot race on directory creation. `MkdirAll` with mode 0o700 — same mode as the existing `logs/` directory.
-7. **`ralph-tui/internal/logger/logger.go`** — Add `Logger.RunStamp() string` returning the basename captured in `NewLogger` (the `ralph-YYYY-MM-DD-HHMMSS` portion). Backed by a new unexported `runStamp` field set in `NewLogger` alongside the file creation. No behavior change to existing log-line formatting.
+   - Create the per-run artifact directory (`projectDir/logs/<runstamp>/`) eagerly after `NewLogger` succeeds so later per-step file opens cannot race on directory creation. `os.MkdirAll` with mode 0o700 — same mode as the existing `logs/` directory. If `MkdirAll` returns an error, `startup` prints it via the same `fmt.Fprintf(stderr, "error: %v\n", err)` branch used today for `NewLogger` failures (`main.go:72-76`) and returns `nil, false` so `main` exits 1 without starting the TUI.
+7. **`ralph-tui/internal/logger/logger.go`** — Add `Logger.RunStamp() string` returning the basename captured in `NewLogger` (the `ralph-YYYY-MM-DD-HHMMSS-mmm` portion per D24). Backed by a new unexported `runStamp` field set in `NewLogger` alongside the file creation. No behavior change to existing log-line formatting. Update the log filename `time.Format` template at `logger.go:31` from `"ralph-2006-01-02-150405.log"` to `"ralph-2006-01-02-150405.000.log"` per D24.
+8. **`ralph-tui/internal/logger/logger_test.go:139`** — Update the filename regex `^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$` to match D24's millisecond format (`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$`, or the exact shape Go's `time.Format("2006-01-02-150405.000")` produces — verify by running the test). This is a direct consequence of D24 and would otherwise fail the existing test.
 
 ### Existing behavior unchanged (per scope decisions)
 
@@ -380,7 +412,7 @@ Emitted last. The authoritative final answer:
 
 ## Iteration review log
 
-**Scope:** 3 iterations + agent validation performed 2026-04-14.
+**Scope:** 3 iterations + agent validation performed 2026-04-14; iteration 5 re-review performed 2026-04-15.
 
 ### Iteration 1 — assumption surfacing
 
@@ -430,6 +462,22 @@ Emitted last. The authoritative final answer:
 | External overlap: no existing NDJSON parser in ralph-tui | Verified (grepped `encoding/json` usage: only `steps.LoadSteps` uses it for static config) | No consolidation available |
 | Test plan missed: retry overwrite, start-failure close, slug assembly, RunStamp format | Gap | Added `slug_test.go`, expanded `rawwriter_test.go`, added logger RunStamp test and e2e retry assertion |
 | Stability assessment | Low structural churn expected in iteration 4 | **Stop iterating**; proceed to agent validation |
+
+### Iteration 5 — re-review for completeness/correctness/consistency (2026-04-15)
+
+Re-read against the current state of the codebase (`workflow.go`, `run.go`, `orchestrate.go`, `log_panel.go`, `logger.go`, `logger_test.go`, `ralph-steps.json`, `validator.go`) to catch any drift introduced by the earlier wiring descriptions.
+
+| ID | Finding | Source | Disposition | Plan change |
+|---|---|---|---|---|
+| F1 | Plan Step 5 said "`buildStep` fills `SandboxOptions.ArtifactPath`", but `buildStep` returns a `ui.ResolvedStep`, not a `SandboxOptions`. The dispatcher — not `buildStep` — constructs `SandboxOptions` (see `run.go:36-41`). | Re-read of `internal/workflow/run.go` | Accepted — plan wiring was imprecise | **Step 5 rewritten**: extend `ui.ResolvedStep` with `ArtifactPath` + `CaptureMode`; phase loops in `Run` populate them after `buildStep` returns; `stepDispatcher.RunStep` forwards them into `SandboxOptions` |
+| F2 | `buildStep`'s current signature has no phase-prefix or step-index argument, so the plan's original claim that `buildStep` computes the artifact path cannot hold without signature churn. | Re-read of `internal/workflow/run.go:267` | Accepted | **Step 5 rewritten**: `ArtifactPath` is composed in the phase loops (which already have `phase`, `i`, `j` in scope), not inside `buildStep`. `buildStep`'s signature stays unchanged |
+| F3 | Plan's earlier draft said "`runCommand`'s `forwardPipe` is unchanged — the JSON-awareness lives entirely in the wrapper above `runCommand`." That is incompatible with D3 (new stdout reader) and D20 (per-pipe stderr branch): the stdout/stderr pipes are owned by `runCommand` (`workflow.go:215-222`), so `RunSandboxedStep` cannot reshape them without `runCommand`'s cooperation. | Re-read of `internal/workflow/workflow.go:208-309` | Accepted | **Step 4 rewritten**: `runCommand` gains an optional `pipeline *claudestream.Pipeline` parameter; the claude branch with the new stdout reader + `[stderr] ` forwarder lives inside `runCommand` behind a nil check. Non-claude RunStep callers retain verbatim current behavior, preserving D9 |
+| F4 | `internal/logger/logger_test.go:139` hard-codes `^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$`. D24's millisecond filename format would regress that test. | Re-read of `internal/logger/logger_test.go` | Accepted | **Step 8 added**: update the filename regex to include the `.mmm` component. D24 already mentioned test impact; Step 8 now names the exact site |
+| F5 | D22's cited range `log_panel.go:65-94` covers the `Update` method, but the `500` literal actually lives at lines 17, 22, and 72-74. The comment + two-site-trim pair would drift if only one is updated. | Re-read of `internal/ui/log_panel.go` | Accepted | **D22 rewritten**: enumerate the three sites and introduce a `const logRingBufferCap = 2000` as a single source of truth |
+| F6 | Plan Step 6 said "Create the per-run artifact directory eagerly after `NewLogger` succeeds" without specifying the `MkdirAll` error path. Startup today prints-and-exits on any logger failure; the new directory creation should funnel into the same branch. | Re-read of `cmd/ralph-tui/main.go:72-76` | Accepted | **Step 6 rewritten**: place the `MkdirAll` inside `startup()` and route its error through the existing `fmt.Fprintf(stderr, "error: %v\n", err)` return path |
+| F7 | D20's `[stderr] ` prefix is a user-visible content change applied only to claude-step stderr. The plan did not have a top-level decision documenting this asymmetry, which made D9 ("file-logging format unchanged") confusable with "no content changes anywhere." | Re-read of D9 + D20 | Accepted | **New D27 added**: explicitly scopes the `[stderr] ` prefix to claude steps, distinguishes content-prefix from wrapper-format, and confirms no contradiction with D9 |
+| F8 | `ResolvedStep` living in the `ui` package while `CaptureMode` is a workflow-layer concept may introduce a `ui → workflow` import cycle during implementation. | Re-read of `internal/ui/orchestrate.go:17-26` | Acknowledged — resolved by fallback in Step 5 | **Step 5 text includes fallback:** if the cycle materializes, define `CaptureMode` in the `ui` package and have `workflow` alias it. No new decision needed; this is an implementation-time choice |
+| F9 | Plan's "Non-claude steps and claude-less sandbox callers like `sandbox create` smoke test never construct the pipeline" was correct but the mechanism was implicit. Making it explicit — "`CaptureMode == CaptureResult` is the single gate" — reduces ambiguity for the implementer. | Re-read of Step 4 | Accepted | **Step 4 rewritten**: the single gate is named explicitly and the `sandbox create` smoke test is called out as passing through the nil-pipeline branch |
 
 ## Out of scope
 
