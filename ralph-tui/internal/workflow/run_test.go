@@ -29,6 +29,12 @@ type fakeExecutor struct {
 	projectDir             string
 	runSandboxedStepCalls  []runSandboxedStepCall
 	runSandboxedStepErrors []error // per-call errors; nil entries mean success
+	// lastStatsReturn holds per-call return values for LastStats(). Index 0 is
+	// returned on the first call, index 1 on the second, etc. If the call index
+	// exceeds the slice length, a zero StepStats is returned.
+	lastStatsReturn []claudestream.StepStats
+	// lastStatsCalls counts how many times LastStats() has been called.
+	lastStatsCalls int
 	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
 	// Tests use it to observe the log stream from another goroutine without
 	// racing on logLines. The callback runs synchronously on the writer
@@ -85,6 +91,11 @@ func (f *fakeExecutor) LastCapture() string {
 }
 
 func (f *fakeExecutor) LastStats() claudestream.StepStats {
+	idx := f.lastStatsCalls
+	f.lastStatsCalls++
+	if idx < len(f.lastStatsReturn) {
+		return f.lastStatsReturn[idx]
+	}
 	return claudestream.StepStats{}
 }
 
@@ -3321,5 +3332,515 @@ func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 	// The user var must NOT appear — nil env means no user additions.
 	if containsSequence(resolved.Command, "-e", "CUSTOM_USER_VAR") {
 		t.Errorf("expected CUSTOM_USER_VAR to be absent with nil user-env; got %v", resolved.Command)
+	}
+}
+
+// --- TP-W4: runStats.add unit tests ---
+
+// TP-W4a: TestRunStats_ZeroValue verifies that a freshly allocated runStats has
+// all zero fields, confirming the zero-value contract relied upon by Run.
+func TestRunStats_ZeroValue(t *testing.T) {
+	var rs runStats
+	if rs.invocations != 0 {
+		t.Errorf("expected invocations=0, got %d", rs.invocations)
+	}
+	if rs.retries != 0 {
+		t.Errorf("expected retries=0, got %d", rs.retries)
+	}
+	if rs.total.InputTokens != 0 || rs.total.OutputTokens != 0 ||
+		rs.total.CacheCreationTokens != 0 || rs.total.CacheReadTokens != 0 ||
+		rs.total.NumTurns != 0 || rs.total.TotalCostUSD != 0 || rs.total.DurationMS != 0 {
+		t.Errorf("expected all total fields to be zero, got %+v", rs.total)
+	}
+}
+
+// TP-W4b: TestRunStats_Add_AccumulatesAllFields verifies that calling add twice
+// sums every StepStats field independently.
+func TestRunStats_Add_AccumulatesAllFields(t *testing.T) {
+	var rs runStats
+
+	s1 := claudestream.StepStats{
+		InputTokens:         10,
+		OutputTokens:        20,
+		CacheCreationTokens: 3,
+		CacheReadTokens:     4,
+		NumTurns:            2,
+		TotalCostUSD:        0.01,
+		DurationMS:          500,
+	}
+	s2 := claudestream.StepStats{
+		InputTokens:         5,
+		OutputTokens:        15,
+		CacheCreationTokens: 1,
+		CacheReadTokens:     2,
+		NumTurns:            1,
+		TotalCostUSD:        0.005,
+		DurationMS:          300,
+	}
+
+	rs.add(s1, false)
+	rs.add(s2, false)
+
+	if rs.total.InputTokens != 15 {
+		t.Errorf("InputTokens: want 15, got %d", rs.total.InputTokens)
+	}
+	if rs.total.OutputTokens != 35 {
+		t.Errorf("OutputTokens: want 35, got %d", rs.total.OutputTokens)
+	}
+	if rs.total.CacheCreationTokens != 4 {
+		t.Errorf("CacheCreationTokens: want 4, got %d", rs.total.CacheCreationTokens)
+	}
+	if rs.total.CacheReadTokens != 6 {
+		t.Errorf("CacheReadTokens: want 6, got %d", rs.total.CacheReadTokens)
+	}
+	if rs.total.NumTurns != 3 {
+		t.Errorf("NumTurns: want 3, got %d", rs.total.NumTurns)
+	}
+	if rs.total.TotalCostUSD != 0.015 {
+		t.Errorf("TotalCostUSD: want 0.015, got %f", rs.total.TotalCostUSD)
+	}
+	if rs.total.DurationMS != 800 {
+		t.Errorf("DurationMS: want 800, got %d", rs.total.DurationMS)
+	}
+	if rs.invocations != 2 {
+		t.Errorf("invocations: want 2, got %d", rs.invocations)
+	}
+}
+
+// TP-W4c: TestRunStats_Add_RetryIncrement verifies that add increments retries
+// only when isRetry is true, and does not increment it otherwise.
+func TestRunStats_Add_RetryIncrement(t *testing.T) {
+	var rs runStats
+	s := claudestream.StepStats{InputTokens: 1}
+
+	rs.add(s, false) // not a retry
+	if rs.retries != 0 {
+		t.Errorf("after non-retry add: want retries=0, got %d", rs.retries)
+	}
+
+	rs.add(s, true) // retry
+	if rs.retries != 1 {
+		t.Errorf("after retry add: want retries=1, got %d", rs.retries)
+	}
+
+	rs.add(s, false) // not a retry
+	if rs.retries != 1 {
+		t.Errorf("after second non-retry add: want retries=1 (unchanged), got %d", rs.retries)
+	}
+
+	if rs.invocations != 3 {
+		t.Errorf("want invocations=3, got %d", rs.invocations)
+	}
+}
+
+// --- TP-W1: stepDispatcher stats folding tests ---
+
+// TP-W1a: TestStepDispatcher_ClaudeStep_FoldsStatsIntoRunStats verifies that
+// when a claude step succeeds, LastStats() is called and the returned StepStats
+// are folded into the shared runStats via add.
+func TestStepDispatcher_ClaudeStep_FoldsStatsIntoRunStats(t *testing.T) {
+	wantStats := claudestream.StepStats{
+		InputTokens:  50,
+		OutputTokens: 30,
+		NumTurns:     2,
+		TotalCostUSD: 0.02,
+		DurationMS:   1000,
+	}
+	exec := &fakeExecutor{
+		lastStatsReturn: []claudestream.StepStats{wantStats},
+	}
+	rs := &runStats{}
+	current := ui.ResolvedStep{
+		Name:     "claude-step",
+		IsClaude: true,
+		Command:  []string{"docker", "run"},
+	}
+	d := &stepDispatcher{exec: exec, current: current, stats: rs}
+
+	if err := d.RunStep("claude-step", current.Command); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if exec.lastStatsCalls != 1 {
+		t.Errorf("expected LastStats() called once, got %d", exec.lastStatsCalls)
+	}
+	if rs.invocations != 1 {
+		t.Errorf("expected invocations=1, got %d", rs.invocations)
+	}
+	if rs.total.InputTokens != wantStats.InputTokens {
+		t.Errorf("InputTokens: want %d, got %d", wantStats.InputTokens, rs.total.InputTokens)
+	}
+	if rs.total.OutputTokens != wantStats.OutputTokens {
+		t.Errorf("OutputTokens: want %d, got %d", wantStats.OutputTokens, rs.total.OutputTokens)
+	}
+	if rs.total.NumTurns != wantStats.NumTurns {
+		t.Errorf("NumTurns: want %d, got %d", wantStats.NumTurns, rs.total.NumTurns)
+	}
+	if rs.total.TotalCostUSD != wantStats.TotalCostUSD {
+		t.Errorf("TotalCostUSD: want %f, got %f", wantStats.TotalCostUSD, rs.total.TotalCostUSD)
+	}
+}
+
+// TP-W1b: TestStepDispatcher_ClaudeStep_FoldsStatsOnError verifies that stats
+// are folded into runStats even when RunSandboxedStep returns an error (D21:
+// "the spend was real"). The error is still propagated to the caller.
+func TestStepDispatcher_ClaudeStep_FoldsStatsOnError(t *testing.T) {
+	wantStats := claudestream.StepStats{InputTokens: 99, TotalCostUSD: 0.05}
+	wantErr := errors.New("sandbox: container exited non-zero")
+	exec := &fakeExecutor{
+		runSandboxedStepErrors: []error{wantErr},
+		lastStatsReturn:        []claudestream.StepStats{wantStats},
+	}
+	rs := &runStats{}
+	current := ui.ResolvedStep{
+		Name:     "failing-claude-step",
+		IsClaude: true,
+		Command:  []string{"docker", "run"},
+	}
+	d := &stepDispatcher{exec: exec, current: current, stats: rs}
+
+	gotErr := d.RunStep("failing-claude-step", current.Command)
+	if gotErr != wantErr {
+		t.Fatalf("expected error %v, got %v", wantErr, gotErr)
+	}
+
+	// Stats must be folded even on error.
+	if exec.lastStatsCalls != 1 {
+		t.Errorf("expected LastStats() called once even on error, got %d", exec.lastStatsCalls)
+	}
+	if rs.invocations != 1 {
+		t.Errorf("expected invocations=1 even on error, got %d", rs.invocations)
+	}
+	if rs.total.InputTokens != wantStats.InputTokens {
+		t.Errorf("InputTokens must be folded on error: want %d, got %d", wantStats.InputTokens, rs.total.InputTokens)
+	}
+}
+
+// --- TP-W2: stepDispatcher prevFailed retry tracking tests ---
+
+// TP-W2a: TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError
+// verifies that when a claude step errors on the first call and succeeds on the
+// second call (as happens during a retry loop), the second call's stats are
+// folded with isRetry=true, incrementing runStats.retries.
+func TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError(t *testing.T) {
+	wantErr := errors.New("exit 1")
+	exec := &fakeExecutor{
+		runSandboxedStepErrors: []error{wantErr, nil}, // first call fails, second succeeds
+		lastStatsReturn: []claudestream.StepStats{
+			{InputTokens: 10},
+			{InputTokens: 20},
+		},
+	}
+	rs := &runStats{}
+	current := ui.ResolvedStep{
+		Name:     "claude-step",
+		IsClaude: true,
+		Command:  []string{"docker", "run"},
+	}
+	d := &stepDispatcher{exec: exec, current: current, stats: rs}
+
+	// First call errors.
+	gotErr := d.RunStep("claude-step", current.Command)
+	if gotErr != wantErr {
+		t.Fatalf("first call: expected error %v, got %v", wantErr, gotErr)
+	}
+	if d.prevFailed != true {
+		t.Error("expected prevFailed=true after first error")
+	}
+
+	// Second call succeeds. Because prevFailed=true, this is counted as a retry.
+	if err := d.RunStep("claude-step", current.Command); err != nil {
+		t.Fatalf("second call: unexpected error: %v", err)
+	}
+
+	if rs.invocations != 2 {
+		t.Errorf("expected invocations=2, got %d", rs.invocations)
+	}
+	if rs.retries != 1 {
+		t.Errorf("expected retries=1, got %d", rs.retries)
+	}
+	// prevFailed is cleared after a successful second call.
+	if d.prevFailed != false {
+		t.Error("expected prevFailed=false after successful second call")
+	}
+}
+
+// TP-W2b: TestStepDispatcher_NonClaudeStep_ResetsRetryTracking verifies that
+// when a non-claude step runs (even after prevFailed is set), prevFailed is
+// cleared to false, so a subsequent claude step is not miscounted as a retry.
+func TestStepDispatcher_NonClaudeStep_ResetsRetryTracking(t *testing.T) {
+	exec := &fakeExecutor{
+		runSandboxedStepErrors: []error{errors.New("fail"), nil},
+		lastStatsReturn: []claudestream.StepStats{
+			{InputTokens: 10}, // first claude call (failed)
+			{InputTokens: 20}, // third call (claude again, should not count as retry)
+		},
+	}
+	rs := &runStats{}
+
+	// Step 1: claude step errors → prevFailed = true.
+	d := &stepDispatcher{exec: exec, current: ui.ResolvedStep{
+		Name: "claude-step", IsClaude: true, Command: []string{"docker", "run"},
+	}, stats: rs}
+	_ = d.RunStep("claude-step", d.current.Command)
+	if !d.prevFailed {
+		t.Fatal("expected prevFailed=true after first error")
+	}
+
+	// Step 2: non-claude step → prevFailed must reset to false.
+	d.current = ui.ResolvedStep{Name: "shell-step", IsClaude: false, Command: []string{"echo"}}
+	if err := d.RunStep("shell-step", d.current.Command); err != nil {
+		t.Fatalf("non-claude step: unexpected error: %v", err)
+	}
+	if d.prevFailed {
+		t.Error("expected prevFailed=false after non-claude step")
+	}
+
+	// Step 3: claude step succeeds. Because prevFailed=false, this is NOT a retry.
+	d.current = ui.ResolvedStep{Name: "claude-step", IsClaude: true, Command: []string{"docker", "run"}}
+	if err := d.RunStep("claude-step", d.current.Command); err != nil {
+		t.Fatalf("third call: unexpected error: %v", err)
+	}
+
+	if rs.retries != 0 {
+		t.Errorf("expected retries=0 (non-claude step reset prevFailed), got %d", rs.retries)
+	}
+}
+
+// --- TP-W3: stepDispatcher forwards ArtifactPath and CaptureMode ---
+
+// TP-W3: TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode
+// verifies that ArtifactPath and CaptureMode from current are forwarded to the
+// SandboxOptions passed to RunSandboxedStep.
+func TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode(t *testing.T) {
+	exec := &fakeExecutor{}
+	wantPath := "/logs/test-stamp/iter01-01-my-step.jsonl"
+	current := ui.ResolvedStep{
+		Name:         "my-step",
+		IsClaude:     true,
+		Command:      []string{"docker", "run"},
+		ArtifactPath: wantPath,
+		CaptureMode:  ui.CaptureResult,
+	}
+	d := &stepDispatcher{exec: exec, current: current}
+
+	if err := d.RunStep("my-step", current.Command); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+	opts := exec.runSandboxedStepCalls[0].opts
+	if opts.ArtifactPath != wantPath {
+		t.Errorf("ArtifactPath: want %q, got %q", wantPath, opts.ArtifactPath)
+	}
+	if opts.CaptureMode != ui.CaptureResult {
+		t.Errorf("CaptureMode: want CaptureResult, got %v", opts.CaptureMode)
+	}
+}
+
+// --- TP-W5: artifactPath helper in Run ---
+
+// claudeIterStep creates a temporary workflow directory with prompts/name.txt and
+// returns a claude step suitable for use in the iteration phase of Run.
+func claudeIterStep(t *testing.T, dir, name string) steps.Step {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	promptFile := name + ".txt"
+	if err := os.WriteFile(filepath.Join(dir, "prompts", promptFile), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return steps.Step{Name: name, IsClaude: true, Model: "m", PromptFile: promptFile}
+}
+
+// TP-W5a: TestRun_ClaudeStep_ArtifactPathInSandboxOptions verifies that when
+// RunStamp is non-empty, a claude step in the iteration phase receives an
+// ArtifactPath of the form
+// <projectDir>/logs/<runStamp>/iter<iter>-<stepIdx>-<slug>.jsonl.
+func TestRun_ClaudeStep_ArtifactPathInSandboxOptions(t *testing.T) {
+	dir := t.TempDir()
+	stepName := "feature-work"
+	claudeStep := claudeIterStep(t, dir, stepName)
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	runStamp := "ralph-2026-04-14-173022.123"
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{claudeStep},
+		RunStamp:    runStamp,
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+
+	// Iteration 1, step index j=0 → j+1=1; iter%02d=01, step%02d=01.
+	wantPath := filepath.Join(dir, "logs", runStamp, "iter01-01-feature-work.jsonl")
+	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
+	if gotPath != wantPath {
+		t.Errorf("ArtifactPath: want %q, got %q", wantPath, gotPath)
+	}
+}
+
+// TP-W5b: TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath verifies that when
+// RunStamp is empty, ArtifactPath in SandboxOptions is "" (persistence disabled).
+func TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath(t *testing.T) {
+	dir := t.TempDir()
+	claudeStep := claudeIterStep(t, dir, "my-step")
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{claudeStep},
+		RunStamp:    "", // empty → no artifact path
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+	if gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath; gotPath != "" {
+		t.Errorf("expected empty ArtifactPath when RunStamp is empty, got %q", gotPath)
+	}
+}
+
+// TP-W5c: TestRun_InitializePhase_ArtifactPathPrefix verifies that claude steps
+// in the initialize phase receive an ArtifactPath with the "initialize-" prefix.
+func TestRun_InitializePhase_ArtifactPathPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "init-step.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	claudeInitStep := steps.Step{Name: "init-step", IsClaude: true, Model: "m", PromptFile: "init-step.txt"}
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	runStamp := "ralph-2026-04-14-173022.123"
+	cfg := RunConfig{
+		WorkflowDir:     dir,
+		Iterations:      1,
+		InitializeSteps: []steps.Step{claudeInitStep},
+		Steps:           nonClaudeSteps("shell-step"),
+		RunStamp:        runStamp,
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call (initialize), got %d", len(exec.runSandboxedStepCalls))
+	}
+	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
+	wantPath := filepath.Join(dir, "logs", runStamp, "initialize-01-init-step.jsonl")
+	if gotPath != wantPath {
+		t.Errorf("initialize phase ArtifactPath: want %q, got %q", wantPath, gotPath)
+	}
+}
+
+// TP-W5d: TestRun_FinalizePhase_ArtifactPathPrefix verifies that claude steps
+// in the finalize phase receive an ArtifactPath with the "finalize-" prefix.
+func TestRun_FinalizePhase_ArtifactPathPrefix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "final-step.txt"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	claudeFinalStep := steps.Step{Name: "final-step", IsClaude: true, Model: "m", PromptFile: "final-step.txt"}
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	runStamp := "ralph-2026-04-14-173022.123"
+	cfg := RunConfig{
+		WorkflowDir:   dir,
+		Iterations:    1,
+		Steps:         nonClaudeSteps("shell-step"),
+		FinalizeSteps: []steps.Step{claudeFinalStep},
+		RunStamp:      runStamp,
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call (finalize), got %d", len(exec.runSandboxedStepCalls))
+	}
+	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
+	wantPath := filepath.Join(dir, "logs", runStamp, "finalize-01-final-step.jsonl")
+	if gotPath != wantPath {
+		t.Errorf("finalize phase ArtifactPath: want %q, got %q", wantPath, gotPath)
+	}
+}
+
+// --- TP-W6: CaptureMode = CaptureResult on claude steps ---
+
+// TP-W6a: TestRun_ClaudeStep_CaptureModeIsResult verifies that a claude step
+// dispatched by Run receives CaptureMode=CaptureResult in its SandboxOptions.
+func TestRun_ClaudeStep_CaptureModeIsResult(t *testing.T) {
+	dir := t.TempDir()
+	claudeStep := claudeIterStep(t, dir, "my-claude-step")
+
+	exec := &fakeExecutor{projectDir: dir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{claudeStep},
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 1 {
+		t.Fatalf("expected 1 RunSandboxedStep call, got %d", len(exec.runSandboxedStepCalls))
+	}
+	gotMode := exec.runSandboxedStepCalls[0].opts.CaptureMode
+	if gotMode != ui.CaptureResult {
+		t.Errorf("CaptureMode: want CaptureResult, got %v", gotMode)
+	}
+}
+
+// TP-W6b: TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine verifies that
+// non-claude steps do not set CaptureMode in SandboxOptions (they call RunStep,
+// not RunSandboxedStep). The fakeExecutor receives no RunSandboxedStep calls.
+func TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine(t *testing.T) {
+	exec := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("shell-step"),
+	}
+
+	Run(exec, header, kh, cfg)
+
+	if len(exec.runSandboxedStepCalls) != 0 {
+		t.Errorf("expected 0 RunSandboxedStep calls for non-claude step, got %d", len(exec.runSandboxedStepCalls))
+	}
+	if len(exec.runStepCalls) != 1 {
+		t.Fatalf("expected 1 RunStep call for non-claude step, got %d", len(exec.runStepCalls))
 	}
 }

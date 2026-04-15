@@ -759,3 +759,17 @@ func TestOrchestrate_Quit_ReturnsActionQuit(t *testing.T) {
 		t.Fatal("Orchestrate did not return after ActionQuit")
 	}
 }
+
+// --- TP-W13: CaptureMode zero-value contract ---
+
+// TP-W13: TestCaptureMode_ZeroValueIsCaptureLastLine documents that
+// CaptureMode(0) == CaptureLastLine. This is the zero-value contract that
+// SandboxOptions relies on: an unset CaptureMode field means CaptureLastLine.
+func TestCaptureMode_ZeroValueIsCaptureLastLine(t *testing.T) {
+	if CaptureMode(0) != CaptureLastLine {
+		t.Errorf("expected CaptureMode(0) == CaptureLastLine, but iota ordering has changed")
+	}
+	if CaptureLastLine == CaptureResult {
+		t.Errorf("CaptureLastLine and CaptureResult must be distinct values")
+	}
+}
