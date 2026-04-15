@@ -1,5 +1,18 @@
 package ui
 
+// CaptureMode selects how a step's output is bound to LastCapture after the
+// step succeeds.
+type CaptureMode int
+
+const (
+	// CaptureLastLine is the default: binds the last non-empty stdout line
+	// (current behaviour for non-claude steps).
+	CaptureLastLine CaptureMode = iota
+	// CaptureResult binds the Aggregator.Result() value from the
+	// claudestream pipeline (D6: used for all isClaude steps).
+	CaptureResult
+)
+
 // StepRunner is the workflow execution interface for running steps, writing to
 // the log, and checking termination state.
 type StepRunner interface {
@@ -23,6 +36,12 @@ type ResolvedStep struct {
 	// CidfilePath is the docker --cidfile path for sandboxed steps.
 	// Non-empty only when IsClaude is true.
 	CidfilePath string
+	// ArtifactPath is the per-step .jsonl file path for claude steps (D14).
+	// Empty for non-claude steps; the runner skips JSONL persistence when empty.
+	ArtifactPath string
+	// CaptureMode selects how LastCapture is populated after the step succeeds.
+	// Zero value (CaptureLastLine) preserves current non-claude behaviour.
+	CaptureMode CaptureMode
 }
 
 // Orchestrate runs steps in sequence. On step failure (non-zero exit, not

@@ -63,9 +63,13 @@ The current phase/step text is rendered as part of the top border's title, not a
 
 After the finalize phase ends, the title keeps its last finalize value — **the completion summary is not in the header**, it's the last line of the log panel (see Region 2).
 
+### Heartbeat indicator
+
+When ralph-tui is waiting on a `claude` step and no stream-json event arrives for ≥15 seconds, the iteration title appends a `  ⋯ thinking (Ns)` suffix showing how many seconds have elapsed since the last event. The suffix updates in-place every second and disappears as soon as the next event arrives. It is pure view state — never written to the log panel or persisted to disk.
+
 ## Region 2 — the log panel
 
-The bulk of the screen. This is a `bubbles/viewport` sub-model that caps at 500 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
+The bulk of the screen. This is a `bubbles/viewport` sub-model that caps at 2000 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
 
 1. **Subprocess stdout/stderr** — every line a running step emits, streamed in real time via the `sendLine` callback through a buffered channel
 2. **Structural chrome** — phase banners, iteration separators, per-step banners, capture logs, and the completion summary, all written by `workflow.Run` or `ui.Orchestrate` via `executor.WriteToLog`
@@ -103,6 +107,8 @@ Starting step: Feature work
 
 [long claude output…]
 
+5 turns · 3200/1024 tokens (cache: 256/0) · $0.0120000 · 47s
+
 ── Iteration 2 ─────────────
 
 Starting step: Get next issue
@@ -122,6 +128,8 @@ Starting step: Deferred work
 
 [final step output]
 
+total claude spend across 4 step invocations (including 1 retry): 42 turns · 18432/6144 tokens (cache: 512/2048) · $0.0420000 · 3m22s
+
 Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 ```
 
@@ -131,6 +139,8 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 | `── Iteration N ─────────────` | Marks the top of each iteration inside the iterations phase |
 | `Starting step: <name>` + `─` underline (matching width) | Marks the start of every individual step, in every phase |
 | `Captured VAR = "value"` | Logged after any step with `captureAs`, showing the bound value |
+| `N turns · in/out tokens (cache: C/R) · $cost · duration` | Per-step summary emitted after each `isClaude: true` step completes; shows token spend, cost, and wall-clock duration for that single invocation |
+| `total claude spend across N step invocation[s]...` | Run-level cumulative summary: total token spend, cost, duration, and retry count across all claude steps; omitted when no claude steps ran |
 | `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine calls `program.Quit()` and exits |
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.

@@ -12,8 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 )
 
 // terminateGracePeriod is the time Terminate() waits after SIGTERM before
@@ -46,7 +48,20 @@ type Runner struct {
 	// successful RunStep call. Empty string if the last step failed or produced
 	// no non-empty stdout lines.
 	lastCapture string
+
+	// lastStats holds the StepStats from the most recent RunSandboxedStep call
+	// that used the claudestream pipeline. Reset on each RunSandboxedStep entry.
+	lastStats claudestream.StepStats
+
+	// activePipeline is the claudestream.Pipeline for the currently running
+	// claude step. Protected by processMu. Nil when no claude step is in flight.
+	// Read by HeartbeatSilence() to compute the silence duration for D23.
+	activePipeline          *claudestream.Pipeline
+	activePipelineStartedAt time.Time
 }
+
+// Compile-time assertion that *Runner satisfies ui.HeartbeatReader.
+var _ ui.HeartbeatReader = (*Runner)(nil)
 
 // SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
 type SandboxOptions struct {
@@ -57,6 +72,15 @@ type SandboxOptions struct {
 	// CidfilePath is the path of the Docker --cidfile to clean up after the
 	// step exits. May be empty. Cleanup is ENOENT-tolerant.
 	CidfilePath string
+	// ArtifactPath is the path for the per-step .jsonl file (D14). When
+	// non-empty and CaptureMode == CaptureResult, a RawWriter is opened here
+	// to persist verbatim NDJSON output. Callers set this from
+	// ui.ResolvedStep.ArtifactPath.
+	ArtifactPath string
+	// CaptureMode selects the capture semantics for the step. CaptureResult
+	// activates the claudestream pipeline (D6). Zero value (CaptureLastLine)
+	// preserves current non-pipeline behaviour.
+	CaptureMode ui.CaptureMode
 }
 
 // NewRunner creates a Runner that streams subprocess output through the sendLine
@@ -166,13 +190,18 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	r.terminated = false
 	r.processMu.Unlock()
 
-	return r.runCommand(stepName, command, nil, nil)
+	return r.runCommand(stepName, command, nil, nil, nil)
 }
 
 // RunSandboxedStep executes command inside a Docker sandbox. An explicit empty
 // stdin (bytes.NewReader(nil)) is used so that docker does not inherit the
 // parent's raw-mode keyboard reader. The cidfile at opts.CidfilePath is removed
 // after the step exits (ENOENT-tolerant).
+//
+// When opts.CaptureMode == CaptureResult, a claudestream.Pipeline is
+// constructed and passed to runCommand to handle NDJSON parsing, rendering, and
+// JSONL persistence (D14). After the subprocess exits, the aggregator is
+// consulted for errors (D15) and the finalize summary line is emitted (D13 2a).
 //
 // Terminator construction order: opts.Terminator takes precedence when set
 // (test-injection path). When opts.Terminator is nil, runCommand constructs a
@@ -188,11 +217,91 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	r.terminated = false
 	r.processMu.Unlock()
 
+	// Reset lastStats so LastStats() returns a zero value if no pipeline is used.
+	r.mu.Lock()
+	r.lastStats = claudestream.StepStats{}
+	r.mu.Unlock()
+
 	defer func() {
 		_ = sandbox.Cleanup(opts.CidfilePath)
 	}()
 
-	return r.runCommand(stepName, command, bytes.NewReader(nil), &opts)
+	if opts.CaptureMode != ui.CaptureResult {
+		return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil)
+	}
+
+	// Construct the claudestream pipeline (D14, D15, D6).
+	var rw *claudestream.RawWriter
+	if opts.ArtifactPath != "" {
+		var err error
+		rw, err = claudestream.NewRawWriter(opts.ArtifactPath)
+		if err != nil {
+			// Log the error but continue — JSONL persistence is best-effort; the
+			// step should not fail because the artifact directory is missing.
+			_ = r.log.Log(stepName, fmt.Sprintf("[artifact] open failed: %v", err))
+		}
+	}
+	pipeline := claudestream.NewPipeline(rw)
+	defer func() {
+		_ = pipeline.Close()
+		// Log any RawWriter write error — persistence is best-effort (see above),
+		// but operators need visibility into JSONL artifact failures (M1).
+		if wErr := pipeline.WriteErr(); wErr != nil {
+			_ = r.log.Log(stepName, fmt.Sprintf("[artifact] write error: %v", wErr))
+		}
+	}()
+
+	// Register the active pipeline for heartbeat monitoring (D23). The clear
+	// defer is registered last so it executes first (LIFO), before pipeline.Close().
+	now := time.Now()
+	r.processMu.Lock()
+	r.activePipeline = pipeline
+	r.activePipelineStartedAt = now
+	r.processMu.Unlock()
+	defer func() {
+		r.processMu.Lock()
+		r.activePipeline = nil
+		r.activePipelineStartedAt = time.Time{}
+		r.processMu.Unlock()
+	}()
+
+	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
+
+	// Fold stats into lastStats (D21) — always, regardless of error.
+	r.mu.Lock()
+	r.lastStats = pipeline.Aggregator().Stats()
+	r.mu.Unlock()
+
+	// D15: check aggregator error before subprocess exit code.
+	if aggErr := pipeline.Aggregator().Err(); aggErr != nil {
+		r.mu.Lock()
+		r.lastCapture = ""
+		r.mu.Unlock()
+		return aggErr
+	}
+
+	if cmdErr != nil {
+		r.mu.Lock()
+		r.lastCapture = ""
+		r.mu.Unlock()
+		return cmdErr
+	}
+
+	// D13 2a: emit the per-step summary line through sendLine.
+	for _, line := range pipeline.Renderer().Finalize(pipeline.Aggregator().Stats()) {
+		r.mu.Lock()
+		send := r.sendLine
+		r.mu.Unlock()
+		send(line)
+		_ = r.log.Log(stepName, line)
+	}
+
+	// D6: bind result.result to lastCapture.
+	r.mu.Lock()
+	r.lastCapture = pipeline.Aggregator().Result()
+	r.mu.Unlock()
+
+	return nil
 }
 
 // runCommand is the shared private core for RunStep and RunSandboxedStep. It
@@ -205,7 +314,20 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 // the correct *exec.Cmd). The currentTerminator field is cleared before the
 // procDone channel is closed so that any Terminate() racing with natural step
 // completion sees a nil terminator and short-circuits.
-func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions) error {
+//
+// When pipeline is non-nil, the claude-aware path is activated (D3, D20, D27):
+//   - stdout is forwarded through a bufio.Reader loop (no 256KB line cap) that
+//     feeds each raw line to pipeline.Observe and sends rendered display lines
+//     via sendLine.
+//   - stderr is forwarded with a 256KB bufio.Scanner and each line is prefixed
+//     with "[stderr] " before being sent to sendLine and the file logger (D27).
+//
+// When pipeline is nil, both stdout and stderr use the existing 256KB-scanner
+// path unchanged (D9).
+//
+// lastCapture is NOT set by runCommand when pipeline is non-nil; the caller
+// (RunSandboxedStep) sets it after inspecting the aggregator.
+func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions, pipeline *claudestream.Pipeline) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.projectDir
 	if stdin != nil {
@@ -258,54 +380,129 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// capturedLines accumulates stdout lines for lastCapture. Written only by
-	// the stdout goroutine; read only after wg.Wait(), so no mutex is needed.
-	var capturedLines []string
-
-	forwardPipe := func(pipe interface{ Read([]byte) (int, error) }, capture bool) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(pipe)
-		buf := make([]byte, 256*1024)
-		scanner.Buffer(buf, 256*1024)
-		var logErr error
-		for scanner.Scan() {
-			line := scanner.Text()
-			if capture {
-				capturedLines = append(capturedLines, line)
-			}
-			if logErr == nil {
-				logErr = r.log.Log(stepName, line)
-				if logErr != nil {
-					_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+	if pipeline != nil {
+		// Claude-aware stdout forwarder (D3, D20): uses bufio.Reader to avoid
+		// the 256KB line cap that would truncate large tool_result payloads.
+		const maxLineBytes = 64 * 1024 * 1024 // 64MB hard safety cap
+		go func() {
+			defer wg.Done()
+			br := bufio.NewReader(stdout)
+			var logErr error
+			for {
+				line, err := br.ReadString('\n')
+				if len(line) > 0 {
+					// Trim the trailing newline for display/logging, but keep
+					// raw bytes verbatim for pipeline.Observe (which writes to RawWriter).
+					raw := []byte(strings.TrimRight(line, "\n"))
+					if len(raw) > maxLineBytes {
+						// Safety cap: write a truncation sentinel and warn.
+						sentinel := fmt.Sprintf(`{"type":"ralph_truncation_marker","reason":"line_too_long","bytes":%d}`, len(raw))
+						if logErr == nil {
+							logErr = r.log.Log(stepName, fmt.Sprintf("[truncated line: %d bytes]", len(raw)))
+						}
+						_ = pipeline.Observe([]byte(sentinel))
+					} else {
+						for _, display := range pipeline.Observe(raw) {
+							if logErr == nil {
+								logErr = r.log.Log(stepName, display)
+								if logErr != nil {
+									_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+								}
+							}
+							r.mu.Lock()
+							send := r.sendLine
+							r.mu.Unlock()
+							send(display)
+						}
+					}
+				}
+				if err != nil {
+					if err != io.EOF {
+						_ = r.log.Log(stepName, fmt.Sprintf("stdout read error: %v", err))
+					}
+					break
 				}
 			}
-			// Snapshot sendLine outside r.mu is safe: program.Send is
-			// goroutine-safe and the channel adapter never blocks.
-			r.mu.Lock()
-			send := r.sendLine
-			r.mu.Unlock()
-			send(line)
-		}
-		if err := scanner.Err(); err != nil {
-			_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
-		}
-	}
+		}()
 
-	go forwardPipe(stdout, true)
-	go forwardPipe(stderr, false)
+		// Claude-aware stderr forwarder (D20, D27): 256KB scanner, [stderr] prefix.
+		go func() {
+			defer wg.Done()
+			scanner := bufio.NewScanner(stderr)
+			buf := make([]byte, 256*1024)
+			scanner.Buffer(buf, 256*1024)
+			var logErr error
+			for scanner.Scan() {
+				line := "[stderr] " + scanner.Text()
+				if logErr == nil {
+					logErr = r.log.Log(stepName, line)
+					if logErr != nil {
+						_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+					}
+				}
+				r.mu.Lock()
+				send := r.sendLine
+				r.mu.Unlock()
+				send(line)
+			}
+			if err := scanner.Err(); err != nil {
+				_ = r.log.Log(stepName, fmt.Sprintf("stderr scanner error: %v", err))
+			}
+		}()
+	} else {
+		// Non-claude path: original dual 256KB-scanner forwarder (D9).
+		// capturedLines accumulates stdout lines for lastCapture. Written only by
+		// the stdout goroutine; read only after wg.Wait(), so no mutex is needed.
+		var capturedLines []string
+
+		forwardPipe := func(pipe interface{ Read([]byte) (int, error) }, capture bool) {
+			defer wg.Done()
+			scanner := bufio.NewScanner(pipe)
+			buf := make([]byte, 256*1024)
+			scanner.Buffer(buf, 256*1024)
+			var logErr error
+			for scanner.Scan() {
+				line := scanner.Text()
+				if capture {
+					capturedLines = append(capturedLines, line)
+				}
+				if logErr == nil {
+					logErr = r.log.Log(stepName, line)
+					if logErr != nil {
+						_ = r.log.Log(stepName, fmt.Sprintf("logger error: %v", logErr))
+					}
+				}
+				// Snapshot sendLine outside r.mu is safe: program.Send is
+				// goroutine-safe and the channel adapter never blocks.
+				r.mu.Lock()
+				send := r.sendLine
+				r.mu.Unlock()
+				send(line)
+			}
+			if err := scanner.Err(); err != nil {
+				_ = r.log.Log(stepName, fmt.Sprintf("scanner error: %v", err))
+			}
+		}
+
+		go forwardPipe(stdout, true)
+		go forwardPipe(stderr, false)
+
+		wg.Wait()
+		waitErr := cmd.Wait()
+
+		r.mu.Lock()
+		if waitErr == nil {
+			r.lastCapture = lastNonEmptyLine(capturedLines)
+		} else {
+			r.lastCapture = ""
+		}
+		r.mu.Unlock()
+
+		return waitErr
+	}
 
 	wg.Wait()
-	waitErr := cmd.Wait()
-
-	r.mu.Lock()
-	if waitErr == nil {
-		r.lastCapture = lastNonEmptyLine(capturedLines)
-	} else {
-		r.lastCapture = ""
-	}
-	r.mu.Unlock()
-
-	return waitErr
+	return cmd.Wait()
 }
 
 // LastCapture returns the last non-empty stdout line from the most recent
@@ -315,6 +512,43 @@ func (r *Runner) LastCapture() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastCapture
+}
+
+// LastStats returns the StepStats from the most recent RunSandboxedStep call
+// that used the claudestream pipeline. Returns a zero value if no such call has
+// occurred. The dispatcher calls this immediately after each RunSandboxedStep
+// returns to fold the stats into RunStats (D21).
+func (r *Runner) LastStats() claudestream.StepStats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastStats
+}
+
+// HeartbeatSilence returns the duration since the last observed event from
+// the active claude pipeline, and whether a claude step is currently running.
+// Returns (0, false) when no pipeline is active.
+//
+// When a step just started but no event has arrived yet (pipeline.LastEventAt()
+// is zero), the duration is measured from the moment the pipeline was created
+// so the heartbeat begins counting immediately rather than showing stale zero.
+//
+// Implements ui.HeartbeatReader. Safe for concurrent use: reads are taken
+// under processMu, then released before computing time.Since.
+func (r *Runner) HeartbeatSilence() (time.Duration, bool) {
+	r.processMu.Lock()
+	pipeline := r.activePipeline
+	startedAt := r.activePipelineStartedAt
+	r.processMu.Unlock()
+
+	if pipeline == nil {
+		return 0, false
+	}
+	t := pipeline.LastEventAt()
+	if t.IsZero() {
+		// No events observed yet — count silence from pipeline creation.
+		return time.Since(startedAt), true
+	}
+	return time.Since(t), true
 }
 
 // lastNonEmptyLine walks lines in reverse, strips trailing \r and whitespace,
@@ -337,6 +571,20 @@ func (r *Runner) WriteToLog(line string) {
 	send := r.sendLine
 	r.mu.Unlock()
 	send(line)
+}
+
+// WriteRunSummary writes a single line to both the TUI (via sendLine) and the
+// file logger. Use this for the run-level cumulative summary (D13 2c) so the
+// line is visible in the TUI and persisted to disk — unlike WriteToLog, which
+// only sends to the TUI.
+func (r *Runner) WriteRunSummary(line string) {
+	r.mu.Lock()
+	send := r.sendLine
+	r.mu.Unlock()
+	send(line)
+	if err := r.log.Log("run summary", line); err != nil {
+		send(fmt.Sprintf("[log] run summary write failed: %v", err))
+	}
 }
 
 // CaptureOutput runs command in projectDir and returns its trimmed stdout.

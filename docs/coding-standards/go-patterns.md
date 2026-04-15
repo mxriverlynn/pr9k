@@ -353,6 +353,30 @@ if profileDir == "" {
 
 Apply to any `os.Getenv` result that will be used as a file path, URL, identifier, or comparison value.
 
+## Nil guards must encompass all dependent side effects
+
+When a message handler (or any function) contains a nil guard that conditionally processes a resource, all side effects that are predicated on the resource being non-nil must be inside the guard's positive branch. Placing a dependent operation (such as rescheduling a ticker) outside the guard creates a perpetual loop that does nothing — unreachable in practice, but inconsistent and fragile.
+
+```go
+// Bad — reschedule runs unconditionally; if heartbeat is nil, the ticker
+// fires forever without doing anything useful
+case HeartbeatTickMsg:
+    if m.heartbeat != nil {
+        m.header.HandleHeartbeatTick()
+    }
+    return m, heartbeatTick() // ← always reschedules, even when heartbeat == nil
+
+// Good — both the action and the reschedule are inside the non-nil branch
+case HeartbeatTickMsg:
+    if m.heartbeat != nil {
+        m.header.HandleHeartbeatTick()
+        return m, heartbeatTick()
+    }
+    // When heartbeat is nil, do nothing and return no cmd.
+```
+
+The general rule: every operation that depends on a resource being non-nil belongs inside the non-nil check for that resource, including cleanup, rescheduling, and return values. An operation placed after the guard implicitly assumes the resource is always available — but the guard was written precisely because that assumption is not always true.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -367,3 +391,4 @@ Apply to any `os.Getenv` result that will be used as a file path, URL, identifie
 - [Concurrency](concurrency.md) — Complementary concurrency patterns
 - [Error Handling](error-handling.md) — Complementary error handling conventions
 - [TUI Display](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example
+- [TUI Display](../features/tui-display.md) — HeartbeatTickMsg handler nil guard fix as the canonical nil-guard completeness example (issue #94)

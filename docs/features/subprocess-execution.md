@@ -13,7 +13,8 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 - Two scanner goroutines (one for stdout, one for stderr) forward lines to both the pipe and the file logger, coordinated by a `sync.WaitGroup`; only the stdout goroutine captures lines for `LastCapture`
 - After each successful `RunStep`, the last non-empty stdout line is stored and retrievable via `LastCapture()`; the orchestrator calls this to bind `CaptureAs` values into the `VarTable`
 - `Terminate()` sends SIGTERM with a 3-second SIGKILL fallback (via `terminateGracePeriod`); for sandboxed steps it dispatches through an installed terminator closure rather than signaling the host process directly; `WasTerminated()` lets the orchestrator distinguish user-initiated skips from genuine failures
-- `RunSandboxedStep` executes a command inside a Docker sandbox, installing a terminator closure and using explicit empty stdin to prevent raw-mode keyboard inheritance; the cidfile is cleaned up (ENOENT-tolerant) after the step exits
+- `RunSandboxedStep` executes a command inside a Docker sandbox, installing a terminator closure and using explicit empty stdin to prevent raw-mode keyboard inheritance; the cidfile is cleaned up (ENOENT-tolerant) after the step exits. When `opts.CaptureMode == CaptureResult`, a `claudestream.Pipeline` is constructed and the claude-aware stdout path is activated (`bufio.Reader.ReadString('\n')` with a 64MB hard safety cap — lines exceeding the cap emit a `{"type":"ralph_truncation_marker","reason":"line_too_long","bytes":<n>}` sentinel instead of being parsed; each normal line is fed to `pipeline.Observe`); after the subprocess exits, `lastStats` is populated from the pipeline's aggregator and the aggregator error is checked before the process exit code
+- `LastStats()` returns the `claudestream.StepStats` from the most recent `RunSandboxedStep` call that used the pipeline; the `stepDispatcher` in `workflow/run.go` calls this after each sandboxed step to fold stats into the run-level accumulator
 
 Key files:
 - `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
@@ -100,6 +101,11 @@ type Runner struct {
     // successful RunStep call. Empty string if the last step failed or produced no output.
     // Protected by mu; written by runCommand, read by LastCapture.
     lastCapture string
+
+    // lastStats holds the StepStats from the most recent RunSandboxedStep call
+    // that used the claudestream pipeline. Reset on each RunSandboxedStep entry.
+    // Protected by mu; read by LastStats.
+    lastStats claudestream.StepStats
 }
 
 // SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
@@ -111,6 +117,13 @@ type SandboxOptions struct {
     // CidfilePath is the path of the Docker --cidfile to clean up after the
     // step exits. May be empty. Cleanup is ENOENT-tolerant.
     CidfilePath string
+    // ArtifactPath is the path for the per-step .jsonl file (D14). When
+    // non-empty and CaptureMode == CaptureResult, a RawWriter is opened here.
+    ArtifactPath string
+    // CaptureMode selects the capture semantics for the step. CaptureResult
+    // activates the claudestream pipeline. Zero value (CaptureLastLine)
+    // preserves current non-pipeline behaviour.
+    CaptureMode ui.CaptureMode
 }
 ```
 
@@ -206,7 +219,19 @@ func (r *Runner) LastCapture() string {
 
 `lastNonEmptyLine` walks the captured slice in reverse, trims trailing `\r` and whitespace, and returns the first non-empty line found. Stderr lines are never captured — `forwardPipe` is called with `capture=false` for stderr, so only stdout contributes to `LastCapture`.
 
-`LastCapture()` is part of the `StepExecutor` interface. `CaptureOutput` is not — it exists only as a concrete method on `*Runner` (see below).
+`LastCapture()` and `LastStats()` are both part of the `StepExecutor` interface. `CaptureOutput` is not — it exists only as a concrete method on `*Runner` (see below).
+
+`LastStats()` returns the `claudestream.StepStats` from the most recent `RunSandboxedStep` call that used the pipeline:
+
+```go
+func (r *Runner) LastStats() claudestream.StepStats {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    return r.lastStats
+}
+```
+
+`lastStats` is reset to a zero value at the start of every `RunSandboxedStep` call, so the result is always scoped to the most recent step.
 
 ### Graceful Termination
 
@@ -252,33 +277,70 @@ func (r *Runner) Terminate() {
 
 ### Sandboxed Step Execution (RunSandboxedStep)
 
-`RunSandboxedStep` runs a command inside a Docker sandbox. It differs from `RunStep` in three ways: it routes terminator construction to `runCommand` (not the Lock block), it provides explicit empty stdin (`bytes.NewReader(nil)`) to prevent raw-mode keyboard inheritance, and it cleans up the cidfile at `opts.CidfilePath` after the step exits (ENOENT-tolerant via `sandbox.Cleanup`):
+`RunSandboxedStep` runs a command inside a Docker sandbox. It differs from `RunStep` in: terminator construction is deferred to `runCommand`, explicit empty stdin (`bytes.NewReader(nil)`) prevents raw-mode keyboard inheritance, cidfile cleanup runs after the step exits, and when `opts.CaptureMode == CaptureResult` the claudestream pipeline is activated.
+
+**Non-pipeline path** (`CaptureMode != CaptureResult`): delegates directly to `runCommand` with a plain 256 KB dual-scanner, identical to `RunStep` except for empty stdin and terminator installation.
+
+**Pipeline path** (`CaptureMode == CaptureResult`): constructs a `claudestream.Pipeline` (optionally backed by a `RawWriter` at `opts.ArtifactPath`), passes it to `runCommand`, then post-processes the result:
 
 ```go
 func (r *Runner) RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error {
-    if len(command) == 0 {
-        return fmt.Errorf("workflow: RunSandboxedStep %q: empty command", stepName)
+    // ... reset terminated, defer cidfile cleanup ...
+
+    r.lastStats = claudestream.StepStats{} // reset before each call
+
+    if opts.CaptureMode != ui.CaptureResult {
+        return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil)
     }
 
-    r.processMu.Lock()
-    r.terminated = false
-    r.processMu.Unlock()
-
+    // Construct pipeline (RawWriter may be nil if ArtifactPath is empty or open failed).
+    pipeline := claudestream.NewPipeline(rw)
     defer func() {
-        _ = sandbox.Cleanup(opts.CidfilePath)
+        _ = pipeline.Close()
+        if wErr := pipeline.WriteErr(); wErr != nil {
+            _ = r.log.Log(stepName, fmt.Sprintf("[artifact] write error: %v", wErr))
+        }
     }()
 
-    return r.runCommand(stepName, command, bytes.NewReader(nil), &opts)
+    cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
+
+    r.lastStats = pipeline.Aggregator().Stats() // always fold, even on error (D21)
+
+    // D15: aggregator error takes precedence over process exit code.
+    if aggErr := pipeline.Aggregator().Err(); aggErr != nil {
+        r.lastCapture = ""
+        return aggErr
+    }
+    if cmdErr != nil {
+        r.lastCapture = ""
+        return cmdErr
+    }
+
+    // D13 2a: emit per-step summary line.
+    for _, line := range pipeline.Renderer().Finalize(pipeline.Aggregator().Stats()) {
+        send(line); r.log.Log(stepName, line)
+    }
+
+    // D6: bind result.result to lastCapture for captureAs.
+    r.lastCapture = pipeline.Aggregator().Result()
+    return nil
 }
 ```
 
 ### Shared Subprocess Core (runCommand)
 
-`runCommand` is the private shared core used by both `RunStep` and `RunSandboxedStep`. It takes a `*SandboxOptions` parameter (nil for `RunStep`) that drives terminator selection. Terminator construction happens **after** the `*exec.Cmd` is created but **before** `cmd.Start()` — this resolves the construction-ordering constraint where `sandbox.NewTerminator` needs the cmd pointer:
+`runCommand` is the private shared core used by both `RunStep` and `RunSandboxedStep`. It takes a `*SandboxOptions` parameter (nil for `RunStep`) and an optional `*claudestream.Pipeline` (nil for non-claude steps). Terminator construction happens **after** the `*exec.Cmd` is created but **before** `cmd.Start()` — this resolves the construction-ordering constraint where `sandbox.NewTerminator` needs the cmd pointer:
 
 - If `opts.Terminator != nil`: use it directly (test-injection path)
 - If `opts.Terminator == nil` and `opts.CidfilePath != ""`: auto-construct via `sandbox.NewTerminator(cmd, opts.CidfilePath)`
 - If `opts == nil` (RunStep): no terminator installed; `currentTerminator` stays nil throughout
+
+**Stdout handling depends on whether a pipeline is provided:**
+
+- **Pipeline nil (non-claude path):** 256 KB bufio.Scanner, same as stderr. Last non-empty line stored for `LastCapture`.
+- **Pipeline non-nil (claude path):** `bufio.Reader.ReadString('\n')` loop with a 64MB hard safety cap (`maxLineBytes`). Lines within the cap are passed verbatim to `pipeline.Observe`; returned display lines are forwarded via `sendLine` and logged. Lines exceeding the cap emit a `{"type":"ralph_truncation_marker","reason":"line_too_long","bytes":<n>}` sentinel to the pipeline and log a `[truncated line: N bytes]` warning — the oversized payload is discarded. `lastCapture` is not set here — `RunSandboxedStep` sets it from `pipeline.Aggregator().Result()` after the pipeline is closed.
+
+Stderr always uses the 256 KB scanner path, prefixing each line with `[stderr] ` for visibility in the TUI log panel.
 
 A key correctness detail: `currentTerminator` is cleared **before** the `procDone` channel is closed, so any `Terminate()` racing with natural step completion observes a nil terminator and short-circuits instead of dispatching a stale signal:
 

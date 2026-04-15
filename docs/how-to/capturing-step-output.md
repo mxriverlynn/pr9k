@@ -21,6 +21,10 @@ After this step runs, `{{ISSUE_ID}}` is bound to the trimmed last non-empty stdo
 
 ## What gets captured
 
+The captured value depends on the step type.
+
+### Non-claude steps (`isClaude: false`)
+
 `LastCapture()` returns the **last non-empty stdout line** from the most recent step, with leading/trailing whitespace trimmed. Specifically:
 
 - Only `stdout` is captured — `stderr` is discarded for this purpose (but still streamed to the TUI log)
@@ -29,6 +33,14 @@ After this step runs, `{{ISSUE_ID}}` is bound to the trimmed last non-empty stdo
 - If the step fails (non-zero exit or user-terminated), the capture value is reset to `""`
 
 This means you should design capture scripts to print the captured value **last** — for example, a script that prints debug info to stderr and the result to stdout. Don't print the result first and then print progress messages.
+
+### Claude steps (`isClaude: true`)
+
+For claude steps, `captureAs` binds to **`result.result`** — the authoritative final-answer text from the `ResultEvent` in the `claude -p --output-format stream-json --verbose` output stream. The raw JSON on stdout is never meaningful to bind; the `claudestream.Aggregator` parses the stream and extracts `result.result` for you.
+
+This is the value that appears in the TUI and log as the last substantive assistant message (after the per-step summary line). If the step fails (`is_error: true` or no result event emitted), the capture value is reset to `""`.
+
+Design your prompts so that `result.result` contains the value you want to capture. If claude emits multi-paragraph prose, the full text is captured — use downstream steps to extract the piece you need.
 
 ### Good capture script
 
@@ -147,6 +159,6 @@ When `get_next_issue` prints an empty line (no more issues), `LastCapture()` is 
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit when the capture is empty
 - [Building Custom Workflows](building-custom-workflows.md) — Full step schema and workflow structure
 - [Debugging a Run](debugging-a-run.md) — Reading capture logs in the log file
-- [Variable State Management](../features/variable-state.md) — VarTable internals: scopes, phase transitions, binding semantics
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How `LastCapture()` extracts the last non-empty stdout line
+- [Variable State Management](../features/variable-state.md) — VarTable internals: scopes, phase transitions, binding semantics, and the difference between non-claude and claude captureAs binding
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How `LastCapture()` extracts the last non-empty stdout line (non-claude) or `result.result` (claude)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where in the Run loop the bind happens

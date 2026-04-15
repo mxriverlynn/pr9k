@@ -188,9 +188,9 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 ### [TUI Status Header & Log Display](features/tui-display.md)
 
-A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built rounded frame (no `lipgloss.Border` wrapper, so the two internal horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders). The current iteration/issue is embedded into the top-border title — `Power-Ralph.9000 — Iteration N/M — Issue #<id>` in bounded mode, or `Power-Ralph.9000 — Iteration N — Issue #<id>` when running unbounded (`--iterations 0`); the same string is set as the OS window title via `tea.SetWindowTitle`. The app name `Power-Ralph.9000` (from the `AppTitle` constant) renders green and the iteration detail after the ` — ` separator renders white. Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is rendered in white and is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback.
+A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built rounded frame (no `lipgloss.Border` wrapper, so the two internal horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders). The current iteration/issue is embedded into the top-border title — `Power-Ralph.9000 — Iteration N/M — Issue #<id>` in bounded mode, or `Power-Ralph.9000 — Iteration N — Issue #<id>` when running unbounded (`--iterations 0`); the same string is set as the OS window title via `tea.SetWindowTitle`. The app name `Power-Ralph.9000` (from the `AppTitle` constant) renders green and the iteration detail after the ` — ` separator renders white. Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is rendered in white and is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback. D23 heartbeat: when no stream-json event arrives for ≥15 s during an active claude step, the iteration title appends `  ⋯ thinking (Ns)`; the suffix updates in-place each second and is cleared as soon as the next event arrives. The heartbeat reader is installed via `StatusHeader.SetHeartbeatReader(runner)` in `main.go` before the model is constructed; a separate 1-second ticker goroutine in `main.go` dispatches `HeartbeatTickMsg` via `program.Send` — `Model.Init()` returns nil and the ticker is not owned by the Bubble Tea event loop. `Model.Update()` delegates `HeartbeatTickMsg` to `StatusHeader.HandleHeartbeatTick()`. The `Runner` in `workflow.go` implements `HeartbeatReader` by exposing `HeartbeatSilence() (time.Duration, bool)` under `processMu`.
 
-**Package:** `internal/ui/` (`header.go`, `log.go`, `terminal.go`)
+**Package:** `internal/ui/` (`header.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `terminal.go`)
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
@@ -206,7 +206,7 @@ Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHan
 
 ### [File Logging](features/file-logging.md)
 
-A concurrent-safe file logger that writes timestamped, context-prefixed lines to `logs/ralph-YYYY-MM-DD-HHMMSS.log`. Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close.
+A concurrent-safe file logger that writes timestamped, context-prefixed lines to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (millisecond precision). Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close. Exposes `RunStamp()` — the log basename without `.log` — which `main.go` passes into `RunConfig.RunStamp` for artifact directory naming by `claudestream.Pipeline`.
 
 **Package:** `internal/logger/`
 
@@ -218,7 +218,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Config Validation](features/config-validation.md)
 
-Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules A/B/C (captureAs on Claude steps, host-path tokens in prompts, and captureAs+host-path in commands). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
@@ -234,26 +234,36 @@ Startup validation that runs before the main orchestration loop. Resolves and va
 
 **Package:** `internal/preflight/`
 
+### [Stream JSON Pipeline](features/stream-json-pipeline.md)
+
+Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. `Parser` dispatches raw lines to typed event structs (`SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`, `RateLimitEvent`); malformed lines return a `*MalformedLineError` carrying the raw bytes. `Renderer` converts events to human-readable display lines for the TUI (assistant text split on newlines, tool_use as `→ Name summary` indicators, nothing for thinking/user/result events) and produces a per-step closing summary via `Finalize`. `Aggregator` folds events into `StepStats` (token counts, cost, duration, session ID) and exposes `Result()` for `captureAs` binding and `Err()` for `is_error` detection. `RawWriter` persists verbatim bytes to a per-step `.jsonl` file (`O_TRUNC` on open so retries overwrite). `Slug` converts step names to kebab-case identifiers for filenames. `Pipeline` composes all four behind a single `Observe(line []byte) []string` entry point, tracks the first write error via `WriteErr()`, stamps `LastEventAt` atomically for the heartbeat goroutine, and appends a sentinel line after the result event for crash-resilience.
+
+**Package:** `internal/claudestream/`
+
 ## Package Dependency Graph
 
 ```
 cmd/ralph-tui/main.go
-    ├── internal/cli        (argument parsing)
+    ├── internal/cli           (argument parsing)
     │       └── internal/version
-    ├── internal/logger     (file logging)
-    ├── internal/preflight  (startup validation)
+    ├── internal/logger        (file logging)
+    ├── internal/preflight     (startup validation)
     │       └── internal/sandbox
-    ├── internal/sandbox    (docker run argv, cidfile, terminator)
-    ├── internal/steps      (step loading)
-    ├── internal/ui         (key handling, header, orchestration)
-    ├── internal/validator  (config validation)
+    ├── internal/sandbox       (docker run argv, cidfile, terminator)
+    ├── internal/steps         (step loading)
+    ├── internal/ui            (key handling, header, orchestration)
+    ├── internal/validator     (config validation)
     │       └── internal/vars
-    ├── internal/vars       (runtime variable state)
-    ├── internal/version    (compile-time Version constant)
-    └── internal/workflow   (subprocess execution, run loop)
+    ├── internal/vars          (runtime variable state)
+    ├── internal/version       (compile-time Version constant)
+    └── internal/workflow      (subprocess execution, run loop)
+            ├── internal/claudestream  (stream-json pipeline)
             ├── internal/logger
             ├── internal/steps
             └── internal/ui
+
+internal/claudestream          (stream-json parsing, rendering, aggregation)
+    (no internal dependencies)
 ```
 
 ## Key Design Principles

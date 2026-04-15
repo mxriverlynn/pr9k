@@ -325,6 +325,71 @@ func TestLoadSteps_EnvEmptyArrayIsNonNil(t *testing.T) {
 
 Apply whenever a new optional slice field is added to a JSON-deserialized struct.
 
+## Extract shared test patterns into package-level variables
+
+When the same regex pattern or format string appears in three or more test functions within the same file, extract it to a package-level `var`. Duplicated patterns diverge silently: one test's pattern gets updated while others lag behind, creating invisible gaps in the contract they document.
+
+```go
+// Bad — same regex compiled independently in three tests; updating one leaves others stale
+func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
+    re := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$`)
+    // ...
+}
+
+func TestRunStampFormat(t *testing.T) {
+    re := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+    // ...
+}
+
+// Good — extract to a package-level variable; all tests stay in sync
+var runStampRe = regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+
+func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
+    re := regexp.MustCompile(runStampRe.String() + `\.log$`) // builds on the shared base
+    // ...
+}
+
+func TestRunStampFormat(t *testing.T) {
+    if !runStampRe.MatchString(l.RunStamp()) { ... }
+}
+```
+
+Apply to regex patterns, format strings, and any other literal that expresses an invariant tested in multiple functions. Two copies of a pattern can diverge; one source of truth cannot.
+
+## Each fake method must have its own call counter
+
+When a fake or spy implements multiple interface methods, give each method its own dedicated counter or capture slice. Sharing a single `logLines` or `calls` slice across methods means a call to `WriteToLog` can satisfy an assertion that was meant to verify `WriteRunSummary`, producing a false pass.
+
+```go
+// Bad — WriteToLog and WriteRunSummary share logLines;
+// a WriteToLog call passes any assertion that only checks len(logLines)
+type fakeExecutor struct {
+    logLines []string
+}
+func (f *fakeExecutor) WriteToLog(line string)      { f.logLines = append(f.logLines, line) }
+func (f *fakeExecutor) WriteRunSummary(line string) { f.logLines = append(f.logLines, line) }
+
+// Good — separate counter per method; assertions are unambiguous
+type fakeExecutor struct {
+    logLines              []string // shared for content inspection
+    writeRunSummaryCalls  int      // dedicated call count for WriteRunSummary
+}
+func (f *fakeExecutor) WriteToLog(line string) {
+    f.logLines = append(f.logLines, line)
+}
+func (f *fakeExecutor) WriteRunSummary(line string) {
+    f.writeRunSummaryCalls++
+    f.logLines = append(f.logLines, line)
+}
+
+// Assertion is now specific:
+if exec.writeRunSummaryCalls != 1 {
+    t.Errorf("WriteRunSummary called %d times, want 1", exec.writeRunSummaryCalls)
+}
+```
+
+A shared slice can still be useful for content inspection (verifying what was written), but the call count for each distinct method must be independent so the test distinguishes which method was called.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -339,3 +404,5 @@ Apply whenever a new optional slice field is added to a JSON-deserialized struct
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify; channel priming before blocking receives
 - [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests
 - [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage
+- [File Logging](../features/file-logging.md) — `runStampRe` package-level variable as the canonical shared-regex example (issue #90)
+- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)

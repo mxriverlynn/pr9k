@@ -1177,27 +1177,27 @@ func TestValidate_Env_Denylist(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// Rule A — captureAs on claude step
+// captureAs on claude steps (D6 — Rule A removed)
 // ----------------------------------------------------------------------------
 
-// TestValidate_RuleA_CaptureAsOnClaudeStepIsError confirms that a step with
-// isClaude:true and a non-empty captureAs is rejected.
-func TestValidate_RuleA_CaptureAsOnClaudeStepIsError(t *testing.T) {
+// TestValidate_ClaudeStepWithCaptureAsIsClean confirms that a step with
+// isClaude:true and a non-empty captureAs is accepted (D6: captureAs on claude
+// steps binds to result.result, not docker stdout).
+func TestValidate_ClaudeStepWithCaptureAsIsClean(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "p.md", "hello\n")
 	writeStepsJSON(t, dir, `{
 		"initialize": [],
-		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md","captureAs":"X"}],
+		"iteration": [{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"p.md","captureAs":"RESULT"}],
 		"finalize": []
 	}`)
 	errs := validator.Validate(dir)
-	requireError(t, errs, "captureAs on a claude step is not allowed")
-	requireError(t, errs, "docker's output, not claude's")
+	requireNoErrors(t, errs)
 }
 
-// TestValidate_RuleA_ClaudeStepWithoutCaptureAsIsClean confirms that a claude
+// TestValidate_ClaudeStepWithoutCaptureAsIsClean confirms that a claude
 // step without captureAs is accepted.
-func TestValidate_RuleA_ClaudeStepWithoutCaptureAsIsClean(t *testing.T) {
+func TestValidate_ClaudeStepWithoutCaptureAsIsClean(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "p.md", "hello\n")
 	writeStepsJSON(t, dir, `{
@@ -1209,9 +1209,9 @@ func TestValidate_RuleA_ClaudeStepWithoutCaptureAsIsClean(t *testing.T) {
 	requireNoErrors(t, errs)
 }
 
-// TestValidate_RuleA_NonClaudeStepWithCaptureAsIsClean confirms that a
-// non-claude step with captureAs is not affected by Rule A.
-func TestValidate_RuleA_NonClaudeStepWithCaptureAsIsClean(t *testing.T) {
+// TestValidate_NonClaudeStepWithCaptureAsIsClean confirms that a
+// non-claude step with captureAs is accepted.
+func TestValidate_NonClaudeStepWithCaptureAsIsClean(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "s")
 	writeStepsJSON(t, dir, `{
@@ -1398,8 +1398,8 @@ func TestValidate_Env_ContinuesAfterInvalidEntry(t *testing.T) {
 	}
 }
 
-// TP-004: Rule A — captureAs on claude step in initialize phase
-func TestValidate_RuleA_CaptureAsOnClaudeStepInInitializePhase(t *testing.T) {
+// TP-004: claude step with captureAs in initialize phase is valid (D6)
+func TestValidate_ClaudeStepWithCaptureAsInInitializePhaseIsClean(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "init.md", "setting up\n")
 	writeStepsJSON(t, dir, `{
@@ -1408,7 +1408,7 @@ func TestValidate_RuleA_CaptureAsOnClaudeStepInInitializePhase(t *testing.T) {
 		"finalize": []
 	}`)
 	errs := validator.Validate(dir)
-	requireError(t, errs, "captureAs on a claude step is not allowed")
+	requireNoErrors(t, errs)
 }
 
 // TP-005: Rule B — prompt-token ban in initialize phase
@@ -1470,12 +1470,12 @@ func TestValidate_Env_ErrorsDoNotBlockPhaseValidation(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// WARN-008: Rule A — captureAs on claude step in finalize phase
+// D6 — claude step with captureAs in finalize phase is valid
 // ----------------------------------------------------------------------------
 
-// TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizePhase confirms that Rule A
-// fires in the finalize phase, not just initialize and iteration.
-func TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizePhase(t *testing.T) {
+// TestValidate_ClaudeStepWithCaptureAsInFinalizePhaseIsClean confirms that
+// captureAs on a claude step is accepted in the finalize phase (D6).
+func TestValidate_ClaudeStepWithCaptureAsInFinalizePhaseIsClean(t *testing.T) {
 	dir := tempProject(t)
 	writePrompt(t, dir, "fin.md", "wrapping up\n")
 	writeStepsJSON(t, dir, `{
@@ -1484,7 +1484,7 @@ func TestValidate_RuleA_CaptureAsOnClaudeStepInFinalizePhase(t *testing.T) {
 		"finalize": [{"name":"Wrap","isClaude":true,"model":"sonnet","promptFile":"fin.md","captureAs":"WRAP_OUT"}]
 	}`)
 	errs := validator.Validate(dir)
-	requireError(t, errs, "captureAs on a claude step is not allowed")
+	requireNoErrors(t, errs)
 }
 
 // ----------------------------------------------------------------------------

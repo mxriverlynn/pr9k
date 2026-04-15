@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
@@ -2019,5 +2020,84 @@ func TestRunSandboxedStep_CleansCidfile_OnStartError(t *testing.T) {
 	// or the defer was skipped, the test would have already failed above.
 	if _, statErr := os.Stat(cidPath); !os.IsNotExist(statErr) {
 		t.Errorf("expected cidfile %q to remain absent after Start() failure, got stat err: %v", cidPath, statErr)
+	}
+}
+
+// --- D23: HeartbeatSilence ---
+
+// TestRunner_HeartbeatSilence_InactiveWhenNoPipeline verifies that
+// HeartbeatSilence returns (0, false) when no claude pipeline is active.
+func TestRunner_HeartbeatSilence_InactiveWhenNoPipeline(t *testing.T) {
+	r, log := newTestRunner(t)
+	defer func() { _ = log.Close() }()
+
+	silentFor, active := r.HeartbeatSilence()
+	if active {
+		t.Error("expected active=false when no pipeline is running")
+	}
+	if silentFor != 0 {
+		t.Errorf("expected silentFor=0 when inactive, got %v", silentFor)
+	}
+}
+
+// TestRunner_HeartbeatSilence_ActiveWithPipeline verifies that HeartbeatSilence
+// returns active=true and a non-negative duration when a pipeline is registered.
+// Uses package-internal access to set activePipeline directly (avoids needing
+// a real Docker subprocess).
+func TestRunner_HeartbeatSilence_ActiveWithPipeline(t *testing.T) {
+	r, log := newTestRunner(t)
+	defer func() { _ = log.Close() }()
+
+	pipeline := claudestream.NewPipeline(nil)
+	now := time.Now()
+	r.processMu.Lock()
+	r.activePipeline = pipeline
+	r.activePipelineStartedAt = now
+	r.processMu.Unlock()
+
+	// No events observed yet — silence should count from startedAt.
+	silentFor, active := r.HeartbeatSilence()
+	if !active {
+		t.Error("expected active=true when pipeline is set")
+	}
+	if silentFor < 0 {
+		t.Errorf("expected silentFor >= 0, got %v", silentFor)
+	}
+
+	// Simulate an event arriving (updates lastEventAt in the pipeline).
+	_ = pipeline.Observe([]byte(`{"type":"system","subtype":"init","session_id":"x","tools":[],"mcp_servers":[]}`))
+	silentFor2, active2 := r.HeartbeatSilence()
+	if !active2 {
+		t.Error("expected active=true after event observed")
+	}
+	if silentFor2 > time.Second {
+		t.Errorf("expected silentFor < 1s right after event, got %v", silentFor2)
+	}
+}
+
+// TestRunner_HeartbeatSilence_InactiveAfterClear verifies that after clearing
+// activePipeline the method returns active=false again.
+func TestRunner_HeartbeatSilence_InactiveAfterClear(t *testing.T) {
+	r, log := newTestRunner(t)
+	defer func() { _ = log.Close() }()
+
+	pipeline := claudestream.NewPipeline(nil)
+	r.processMu.Lock()
+	r.activePipeline = pipeline
+	r.activePipelineStartedAt = time.Now()
+	r.processMu.Unlock()
+
+	_, active := r.HeartbeatSilence()
+	if !active {
+		t.Fatal("expected active=true after set")
+	}
+
+	r.processMu.Lock()
+	r.activePipeline = nil
+	r.processMu.Unlock()
+
+	_, active = r.HeartbeatSilence()
+	if active {
+		t.Error("expected active=false after pipeline cleared")
 	}
 }

@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-11
+- **Last Updated:** 2026-04-15
 - **Authors:**
   - River Bailey
 
@@ -10,6 +10,7 @@ Manages the visual status display for the ralph-tui terminal interface, showing 
 
 - `StatusHeader` is a struct that holds the checkbox grid state and iteration line; mutations are applied on the Bubble Tea Update goroutine via `headerProxy` message-passing
 - The iteration line is embedded into the top-border title (not rendered as a separate inner row); it shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
+- When no stream-json event arrives for ≥15s during an active claude step, the title is suffixed with `  ⋯ thinking (Ns)` — a passive heartbeat indicator (D23) that replaces the "feels alive" contribution of token-level streaming without requiring `--include-partial-messages`. The suffix is pure view state: it updates in-place each second and is never appended to the log ring buffer
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
 - Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped; the active step marker (`▸`) is rendered in green; all other chrome is light gray
 - Switches between phases (initialize, iteration, finalize) by sending `headerPhaseStepsMsg` through `headerProxy`
@@ -27,15 +28,16 @@ Key files:
 - `ralph-tui/internal/ui/log.go` — Log-body helpers: StepSeparator, RetryStepSeparator, StepStartBanner, PhaseBanner, CaptureLog, CompletionSummary
 - `ralph-tui/internal/ui/log_test.go` — Unit tests for log-body helper formatting
 - `ralph-tui/internal/ui/terminal.go` — TerminalWidth() and DefaultTerminalWidth for sizing full-width banners
+- `ralph-tui/internal/ui/messages.go` — Message types including `HeartbeatReader` interface and `HeartbeatTickMsg` (D23)
 
 ## Architecture
 
 ```
-  Orchestration goroutine
-  (calls headerProxy methods)
-         │
-         │  program.Send(headerMsg)
-         ▼
+  Orchestration goroutine        main.go heartbeat goroutine
+  (calls headerProxy methods)    (1-second ticker, D23)
+         │                              │
+         │  program.Send(headerMsg)     │  program.Send(HeartbeatTickMsg)
+         ▼                              ▼
   ┌──────────────────────────────────────────────────┐
   │            Bubble Tea Update goroutine            │
   │                                                   │
@@ -45,6 +47,7 @@ Key files:
   │  ├─ headerIterationLineMsg → apply + SetWindowTitle│
   │  ├─ LogLinesMsg          → logModel.Update()     │
   │  ├─ tea.KeyMsg           → keysModel.Update()    │
+  │  ├─ HeartbeatTickMsg     → StatusHeader.HandleHeartbeatTick()│
   │  └─ tea.WindowSizeMsg    → resize viewport        │
   │                                                   │
   │  Model.View() assembles (hand-built frame,       │
@@ -73,7 +76,7 @@ Key files:
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
 | `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
 | `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
-| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 500-entry ring buffer, auto-scroll, logContentStyle |
+| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 2000-entry ring buffer (`logRingBufferCap`), auto-scroll, logContentStyle |
 | `ralph-tui/internal/ui/log_panel_test.go` | Tests for logModel ring buffer, auto-scroll, Home/End key handling |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
@@ -110,6 +113,10 @@ type StatusHeader struct {
     NameColors   [][HeaderCols]lipgloss.Color
 
     stepNames []string // current phase's step name list
+
+    // D23 heartbeat indicator fields (set via SetHeartbeatReader / HandleHeartbeatTick).
+    heartbeat       HeartbeatReader // nil when disabled; set by main.go before program.Run
+    heartbeatSuffix string          // "  ⋯ thinking (Ns)" when active; "" otherwise
 }
 ```
 
@@ -185,6 +192,76 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
     p.send(headerStepStateMsg{idx: idx, state: state})
 }
 // ... RenderIterationLine, SetPhaseSteps, etc. similarly
+```
+
+### Heartbeat Indicator (D23)
+
+During active claude steps, stream-json can be silent for 30+ seconds while claude thinks or waits on a slow tool. The heartbeat indicator shows `  ⋯ thinking (Ns)` in the top-border title after 15 seconds of silence, updating in place each second until the next event arrives.
+
+**Architecture:**
+- `ui.HeartbeatReader` interface (in `messages.go`) exposes `HeartbeatSilence() (time.Duration, bool)` — implemented by `workflow.Runner`
+- `Runner.HeartbeatSilence()` reads `activePipeline.LastEventAt()` under `processMu`. When no events have arrived yet (zero `LastEventAt`), it counts silence from `activePipelineStartedAt` instead
+- `Runner.activePipeline` is set when a claude step starts (in `RunSandboxedStep`) and cleared in a LIFO defer before `pipeline.Close()`
+- `StatusHeader.SetHeartbeatReader(r HeartbeatReader)` installs the reader; in `main.go` this is called directly on the `*StatusHeader` before constructing the `Model`
+- `Model.WithHeartbeat(h HeartbeatReader)` is a convenience wrapper that delegates to `StatusHeader.SetHeartbeatReader`; used in tests to avoid calling `header.SetHeartbeatReader` directly
+- `Model.Init()` returns nil unconditionally — the ticker is **not** started here
+- The 1-second `HeartbeatTickMsg` ticker is owned by an explicit goroutine in `main.go` that calls `program.Send(HeartbeatTickMsg{})` once per second; the goroutine terminates with the process
+- `Model.Update()` handles `HeartbeatTickMsg` by calling `m.header.header.HandleHeartbeatTick()` — no reschedule cmd is returned because the ticker is managed by the main.go goroutine, not by the Bubble Tea event loop
+- `StatusHeader.HandleHeartbeatTick()` queries the installed reader: if `silentFor >= 15s` and active, sets `heartbeatSuffix`; otherwise clears it. If no reader is installed, clears the suffix (safe no-op)
+- `Model.titleString()` appends `m.header.header.heartbeatSuffix` to the iteration line: `"Power-Ralph.9000 — Iteration 2/5 — Issue #42  ⋯ thinking (17s)"`
+
+The suffix is pure view state — it is never sent to the log ring buffer and does not affect the log body.
+
+```go
+// ui.HeartbeatReader — implemented by workflow.Runner
+type HeartbeatReader interface {
+    HeartbeatSilence() (time.Duration, bool)
+}
+
+// StatusHeader fields added for D23:
+//   heartbeat       HeartbeatReader  // nil when disabled
+//   heartbeatSuffix string           // "  ⋯ thinking (Ns)"; empty when inactive
+
+// StatusHeader.SetHeartbeatReader installs the reader.
+func (h *StatusHeader) SetHeartbeatReader(r HeartbeatReader) { h.heartbeat = r }
+
+// StatusHeader.HandleHeartbeatTick updates heartbeatSuffix. Call on every HeartbeatTickMsg.
+func (h *StatusHeader) HandleHeartbeatTick() {
+    if h.heartbeat == nil { h.heartbeatSuffix = ""; return }
+    silentFor, active := h.heartbeat.HeartbeatSilence()
+    if active && silentFor >= heartbeatSilenceThreshold {
+        h.heartbeatSuffix = fmt.Sprintf("  ⋯ thinking (%ds)", int(silentFor.Seconds()))
+    } else {
+        h.heartbeatSuffix = ""
+    }
+}
+
+// main.go — wiring (runs before program.Run):
+header.SetHeartbeatReader(runner)
+go func() {
+    ticker := time.NewTicker(time.Second)
+    defer ticker.Stop()
+    for range ticker.C {
+        program.Send(ui.HeartbeatTickMsg(time.Now()))
+    }
+}()
+
+// workflow.Runner — satisfies HeartbeatReader
+func (r *Runner) HeartbeatSilence() (time.Duration, bool) {
+    r.processMu.Lock()
+    pipeline := r.activePipeline
+    startedAt := r.activePipelineStartedAt
+    r.processMu.Unlock()
+
+    if pipeline == nil {
+        return 0, false
+    }
+    t := pipeline.LastEventAt()
+    if t.IsZero() {
+        return time.Since(startedAt), true
+    }
+    return time.Since(t), true
+}
 ```
 
 ### View Assembly
@@ -362,7 +439,8 @@ if len(stepFile.Initialize) > 0 {
 
 - `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for every log-body helper: StepSeparator / RetryStepSeparator formatting, StepStartBanner (ASCII/empty/Unicode rune-count assertions), PhaseBanner (width matching, clamp on non-positive width, `═` fill), CaptureLog (simple/empty/multi-line-escaped/embedded-quotes), CompletionSummary (format exactness)
-- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through
+- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds
+- `ralph-tui/internal/ui/header_test.go` — D23 heartbeat unit tests on `StatusHeader` directly: `TestStatusHeader_HandleHeartbeatTick_NilReader` (clears suffix, no-op), `TestStatusHeader_HandleHeartbeatTick_ShowsSuffix` (≥15s silence → suffix set), `TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold` (<15s → no suffix), `TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive` (inactive → suffix cleared), `TestStatusHeader_HandleHeartbeatTick_CallsReader` (reader call count incremented), `TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables` (nil after non-nil → suffix cleared on next tick)
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 
 ## Additional Information

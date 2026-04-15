@@ -125,6 +125,19 @@ func TestResolveProfileDir_BothEnvVarsEmpty_FallsBackToCwdClaud(t *testing.T) {
 	}
 }
 
+// T5: ResolveProfileDir with whitespace-only CLAUDE_CONFIG_DIR falls back to $HOME/.claude.
+func TestResolveProfileDir_WhitespaceOnlyCLAUDE_CONFIG_DIR_FallsBackToHome(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", "   ")
+	t.Setenv("HOME", "/test/home")
+
+	got := ResolveProfileDir()
+	want := "/test/home/.claude"
+
+	if got != want {
+		t.Errorf("ResolveProfileDir() = %q, want %q", got, want)
+	}
+}
+
 // SUGG-004: ResolveProfileDir trims trailing whitespace from CLAUDE_CONFIG_DIR.
 func TestResolveProfileDir_TrailingWhitespace_Trimmed(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/custom/claude/dir  ")

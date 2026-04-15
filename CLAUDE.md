@@ -68,13 +68,14 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
 - [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Four-mode keyboard state machine (Normal/Error/QuitConfirm/Quitting) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
-- [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with buffered I/O
+- [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
 - [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
-- [`docs/features/config-validation.md`](docs/features/config-validation.md) — D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules A/B/C, and structured error collection
+- [`docs/features/config-validation.md`](docs/features/config-validation.md) — D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules B and C, and structured error collection
 - [`docs/features/docker-sandbox.md`](docs/features/docker-sandbox.md) — Docker sandbox architecture: mount layout (`<projectDir>` → `/home/agent/workspace`, `<profileDir>` → `/home/agent/.claude`), `BuildRunArgs` command shape, env allowlist behavior, UID/GID mapping, cidfile-driven termination, and residual risks
 - [`docs/features/sandbox.md`](docs/features/sandbox.md) — Docker sandbox package: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
 - [`docs/features/preflight.md`](docs/features/preflight.md) — Preflight package: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 - [`docs/features/sandbox-subcommand.md`](docs/features/sandbox-subcommand.md) — `sandbox create` and `sandbox login` subcommands: Docker check, image pull, smoke test with ANSI sanitization for create; interactive claude REPL with auto-pull and profile-dir auto-create for login; shared helpers and dependency injection design
+- [`docs/features/stream-json-pipeline.md`](docs/features/stream-json-pipeline.md) — `internal/claudestream` package: Parser (NDJSON line → typed Event), Renderer (events → TUI display lines, tool summary, Finalize), Aggregator (StepStats, captureAs result, is_error detection), RawWriter (per-step .jsonl persistence with O_TRUNC retry semantics), Slug (kebab filename generation), and Pipeline (single Observe entry point, atomic LastEventAt, crash-resilience sentinel)
 
 ## ADRs
 

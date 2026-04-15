@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+// heartbeatSilenceThreshold is the minimum silence duration before the
+// heartbeat indicator is shown in the iteration line (D23).
+const heartbeatSilenceThreshold = 15 * time.Second
 
 // Status-header color scheme. These are package vars so main.go can bind
 // fixed colors by value for static widgets (iteration line, HRules, footer)
@@ -69,6 +74,10 @@ type StatusHeader struct {
 	NameColors   [][HeaderCols]lipgloss.Color
 
 	stepNames []string // current phase's step name list
+
+	// D23 heartbeat indicator fields.
+	heartbeat       HeartbeatReader // nil when heartbeat is disabled
+	heartbeatSuffix string          // current "  ⋯ thinking (Ns)" suffix; empty when inactive
 }
 
 // NewStatusHeader constructs a header sized to fit the largest phase.
@@ -83,6 +92,32 @@ func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
 		Suffixes:     make([][HeaderCols]string, rowCount),
 		MarkerColors: make([][HeaderCols]lipgloss.Color, rowCount),
 		NameColors:   make([][HeaderCols]lipgloss.Color, rowCount),
+	}
+}
+
+// SetHeartbeatReader installs a HeartbeatReader so HandleHeartbeatTick can
+// query silence duration. Pass nil to disable the indicator.
+func (h *StatusHeader) SetHeartbeatReader(r HeartbeatReader) {
+	h.heartbeat = r
+}
+
+// HandleHeartbeatTick updates heartbeatSuffix based on the current silence
+// duration reported by the installed reader. Call this on every
+// HeartbeatTickMsg arriving in Model.Update. When no reader is installed,
+// heartbeatSuffix is cleared (safe no-op).
+//
+// The suffix is pure view state — HandleHeartbeatTick never writes to the
+// log ring buffer.
+func (h *StatusHeader) HandleHeartbeatTick() {
+	if h.heartbeat == nil {
+		h.heartbeatSuffix = ""
+		return
+	}
+	silentFor, active := h.heartbeat.HeartbeatSilence()
+	if active && silentFor >= heartbeatSilenceThreshold {
+		h.heartbeatSuffix = fmt.Sprintf("  ⋯ thinking (%ds)", int(silentFor.Seconds()))
+	} else {
+		h.heartbeatSuffix = ""
 	}
 }
 

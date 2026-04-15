@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-13
+- **Last Updated:** 2026-04-15
 - **Authors:**
   - River Bailey
 
@@ -15,7 +15,7 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - `Run` writes full-width `PhaseBanner` headings (`Initializing`, `Iterations`, `Finalizing`) on entering each phase, and a `Captured VAR = "value"` line after any step with `captureAs` set
 - All steps — initialize, iteration, and finalize — are resolved per-phase via the `VarTable` using `{{VAR}}` substitution; there are no hardcoded script calls in `Run()`
 - The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
-- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
+- After the finalize phase, `Run` emits the run-level cumulative claude spend summary via `WriteRunSummary` (D13 2c), then writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
 - `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
@@ -77,6 +77,14 @@ Key files:
 ## Core Types
 
 ```go
+// CaptureMode selects how a step's output is bound to LastCapture after it succeeds.
+type CaptureMode int
+
+const (
+    CaptureLastLine CaptureMode = iota  // default: last non-empty stdout line (non-claude steps)
+    CaptureResult                        // Aggregator.Result() from the claudestream pipeline (claude steps)
+)
+
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
     WorkflowDir     string
@@ -93,6 +101,11 @@ type RunConfig struct {
     // main.go computes ui.TerminalWidth() - 2 (for rounded border glyphs)
     // and passes it here.
     LogWidth        int
+    // RunStamp is the per-run identifier used to name the artifact directory
+    // (e.g. "ralph-2026-04-14-173022.123"). Populated from Logger.RunStamp() in
+    // main.go. When empty, JSONL artifact paths are not populated for claude
+    // steps (persistence is skipped).
+    RunStamp        string
 }
 
 // RunResult holds the outcome of a completed Run call.
@@ -103,13 +116,19 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture + ProjectDir + RunSandboxedStep.
+// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep + WriteRunSummary.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
-    LastCapture() string  // last non-empty stdout line from the most recent RunStep
-    ProjectDir() string   // target repository directory used as cmd.Dir for every subprocess
+    LastCapture() string                  // last non-empty stdout line (or Aggregator.Result() for claude steps)
+    LastStats() claudestream.StepStats    // StepStats from the most recent RunSandboxedStep pipeline call
+    ProjectDir() string                   // target repository directory used as cmd.Dir for every subprocess
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+    // WriteRunSummary writes line to both the TUI (via sendLine) and the file
+    // logger. Used by Run() for the run-level cumulative summary (D13 2c) so
+    // the total spend line is persisted to disk, unlike WriteToLog which is
+    // TUI-only.
+    WriteRunSummary(line string)
 }
 
 // RunHeader updates the TUI status header during workflow execution.
@@ -131,6 +150,12 @@ type ResolvedStep struct {
     Command     []string
     IsClaude    bool   // true for claude steps; routes to RunSandboxedStep
     CidfilePath string // docker cidfile path; passed to SandboxOptions.CidfilePath
+    // ArtifactPath is the per-step .jsonl file path for claude steps (D14).
+    // Empty for non-claude steps; the runner skips JSONL persistence when empty.
+    ArtifactPath string
+    // CaptureMode selects how LastCapture is populated after the step succeeds.
+    // Zero value (CaptureLastLine) preserves current non-claude behaviour.
+    CaptureMode CaptureMode
 }
 ```
 
@@ -138,7 +163,7 @@ type ResolvedStep struct {
 
 ### Pre-Run Validation
 
-Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules A/B/C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
+Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
 See [Config Validation](config-validation.md) for the full list of validation rules.
 
@@ -198,7 +223,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     }
     for j, s := range cfg.FinalizeSteps { ... }
 
-    // Phase 4: Completion — write summary to log body and return
+    // Phase 4: Completion — run-level summary, then completion line, then return
+    for _, line := range claudestream.Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total) {
+        executor.WriteRunSummary(line)
+    }
     emitBlank()
     executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
@@ -238,6 +266,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Runs through `Orchestrate()` with a `trackingOffsetIterHeader` adapter (same adapter as the iteration phase, reused since both phases use `SetStepState`)
 
 **Phase 4 — Completion:** after finalize completes normally:
+- Calls `Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total)` and writes each returned line via `executor.WriteRunSummary` (D13 2c) — the run-level cumulative summary (e.g. `total claude spend across 7 step invocations: …`) is written to both the TUI and the file logger. Skipped when `rs.invocations == 0` (no claude steps ran)
 - Calls `emitBlank` then writes `ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps))` — `"Ralph completed after N iteration(s) and M finalizing tasks."` — as the **last non-blank line of the log body**. The header's `IterationLine` retains the final `"Finalizing N/M: <step name>"` value from the last finalize step; there is no header-level completion line
 - Returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
 
@@ -275,6 +304,23 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
     }, nil
 }
 ```
+
+After `buildStep` returns, `Run` populates `ArtifactPath` and `CaptureMode` for every `IsClaude == true` step before passing it to `Orchestrate`:
+
+```go
+if resolved.IsClaude {
+    resolved.ArtifactPath = artifactPath(&resolved, phasePrefix, stepIdx)
+    resolved.CaptureMode  = ui.CaptureResult
+}
+```
+
+`artifactPath` is a local helper closure in `Run` that computes the per-step `.jsonl` path:
+
+```
+<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+```
+
+Phase prefixes: `"initialize-"`, `"iter<NN>-"` (1-indexed iteration), `"finalize-"`. Returns `""` when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
 
 The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
 
@@ -336,22 +382,56 @@ func runStepWithErrorHandling(...) StepAction {
 }
 ```
 
+### runStats
+
+`runStats` accumulates `claudestream.StepStats` across all claude step invocations in a run (D21). It lives exclusively on `Run`'s stack frame — no mutex required:
+
+```go
+type runStats struct {
+    invocations int
+    retries     int
+    total       claudestream.StepStats
+}
+
+func (rs *runStats) add(s claudestream.StepStats, isRetry bool) {
+    rs.invocations++
+    if isRetry { rs.retries++ }
+    rs.total.InputTokens += s.InputTokens
+    // ... all numeric StepStats fields accumulated ...
+}
+```
+
+After the finalize phase completes, `Run` calls `claudestream.Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total)` and writes each returned line via `executor.WriteRunSummary` (D13 2c). `FinalizeRun` returns nil when `rs.invocations == 0` (no claude steps ran), so no summary line appears for non-claude-only runs.
+
 ### stepDispatcher
 
-`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions{CidfilePath: d.current.CidfilePath}`. Non-claude steps pass through to the executor's `RunStep` unchanged.
+`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions` populated from the current step's `CidfilePath`, `ArtifactPath`, and `CaptureMode`. Non-claude steps pass through to the executor's `RunStep` unchanged.
 
-A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed:
+A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed, and `prevFailed` is intentionally reset between steps (retries only count re-executions of the same step):
 
 ```go
 type stepDispatcher struct {
-    exec    StepExecutor
-    current ui.ResolvedStep
+    exec       StepExecutor
+    current    ui.ResolvedStep
+    stats      *runStats
+    prevFailed bool  // true if the previous RunSandboxedStep returned an error
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
     if d.current.IsClaude {
-        return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+        err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
+            CidfilePath:  d.current.CidfilePath,
+            ArtifactPath: d.current.ArtifactPath,
+            CaptureMode:  d.current.CaptureMode,
+        })
+        // Fold stats regardless of outcome — D21: the spend was real.
+        if d.stats != nil {
+            d.stats.add(d.exec.LastStats(), d.prevFailed)
+        }
+        d.prevFailed = err != nil
+        return err
     }
+    d.prevFailed = false
     return d.exec.RunStep(name, command)
 }
 ```
@@ -360,13 +440,13 @@ Each phase in `Run()` creates a fresh dispatcher per step and passes it as the `
 
 ```go
 // initialize phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
 
 // iteration phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
 
 // finalize phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 ```
 
 ### Header Adapters
@@ -457,10 +537,28 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_InitializePhase_PassesEnvThroughBuildStep` (TP-008) — verifies `RunConfig.Env` is threaded through the initialize phase into `buildStep`, producing `-e` flags for the custom env var in the sandboxed step command
   - `TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep` (TP-012) — verifies claude steps in the finalize phase route to `RunSandboxedStep`, confirming `stepDispatcher` wiring is consistent across initialize, iteration, and finalize phases
   - `TestRun_FinalizeCaptureAsIgnored` (WARN-004) — documents that the finalize phase intentionally does not call `vt.Bind()` after `Orchestrate`; a `captureAs` binding in a finalize step does not propagate to subsequent finalize steps (asymmetry with initialize/iteration is by design)
+  - `TestRunStats_ZeroValue` — verifies all `runStats` fields start at zero for a zero-value struct
+  - `TestRunStats_Add_AccumulatesAllFields` — verifies `runStats.add` correctly sums all seven numeric `StepStats` fields (InputTokens, OutputTokens, CacheCreationTokens, CacheReadTokens, NumTurns, TotalCostUSD, DurationMS) across two invocations, and increments `invocations` for each call
+  - `TestRunStats_Add_RetryIncrement` — verifies `retries` increments only when `isRetry=true` and `invocations` always increments regardless
+  - `TestStepDispatcher_ClaudeStep_FoldsStatsIntoRunStats` — verifies `LastStats()` is called once after `RunSandboxedStep` succeeds and all returned fields are folded into `runStats`
+  - `TestStepDispatcher_ClaudeStep_FoldsStatsOnError` — verifies stats are folded into `runStats` even when `RunSandboxedStep` returns an error (D21: "the spend was real")
+  - `TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError` — exercises the first-error → second-success retry path: asserts `invocations=2`, `retries=1`, and `prevFailed` cleared after success
+  - `TestStepDispatcher_NonClaudeStep_ResetsRetryTracking` — verifies a non-claude step between two claude steps clears `prevFailed`, preventing spurious retry counts on the second claude step
+  - `TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode` — verifies `ResolvedStep.ArtifactPath` and `ResolvedStep.CaptureMode` flow through `stepDispatcher.RunStep` into `SandboxOptions` passed to `RunSandboxedStep`
+  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
+  - `TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath` — verifies `ArtifactPath` is empty (persistence disabled) when `RunConfig.RunStamp == ""`
+  - `TestRun_InitializePhase_ArtifactPathPrefix` — verifies the `"initialize-"` phase prefix appears in the artifact path for initialize-phase claude steps
+  - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps
+  - `TestRun_ClaudeStep_CaptureModeIsResult` — verifies `CaptureMode=CaptureResult` is set in `SandboxOptions` for claude steps
+  - `TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine` — verifies non-claude steps never reach `RunSandboxedStep`; `CaptureLastLine` (zero value) is preserved by default
+  - `TestRun_RunSummary_EmittedForClaudeSteps` — verifies the run-level cumulative summary line appears before `CompletionSummary`, contains expected token/cost fragments, and that `writeRunSummaryCalls == 1`
+  - `TestRun_RunSummary_NotEmittedForNonClaudeSteps` — verifies no summary line is written when no claude steps ran (FinalizeRun returns nil for zero invocations)
+  - `TestRun_RunSummary_MultipleClaudeStepsAccumulate` — verifies stats from two claude step invocations are accumulated (total cost and invocation count both reflected in the summary line)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
   - `TestOrchestrate_Retry_StateTransitionSequence` — verifies the `Active→Failed→Done` state transition sequence on retry (note: `StepActive` is not re-set on retry — this is documented in the test)
+  - `TestCaptureMode_ZeroValueIsCaptureLastLine` — documents the iota contract: `CaptureMode(0) == CaptureLastLine` and `CaptureLastLine != CaptureResult`; protects against silent breakage if iota ordering changes
 
 ## Additional Information
 

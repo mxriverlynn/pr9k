@@ -1,18 +1,19 @@
 # Debugging a Run
 
-When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the three places ralph-tui leaves evidence, and how to use them together.
+When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places ralph-tui leaves evidence, and how to use them together.
 
-## The three sources of evidence
+## The four sources of evidence
 
 | Source | Location | What it tells you |
 |--------|----------|-------------------|
-| **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
+| **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
 | **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when ralph-tui exits |
+| **JSONL artifacts** | `<project-dir>/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
 If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
 
-> **Tip:** Since ralph-tui 0.2.3, logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> **Tip:** Logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
 > ```
 > echo 'logs/' >> .gitignore
 > ```
@@ -33,6 +34,70 @@ Each line is timestamp-prefixed by `logger.Log()` and includes the current step 
 ```
 
 For details on the logger format, see [File Logging](../features/file-logging.md).
+
+## JSONL artifacts for claude steps
+
+Every `isClaude: true` step writes a per-step `.jsonl` file containing the verbatim NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. These files live in a per-run subdirectory alongside the `.log` file:
+
+```
+logs/
+  ralph-2026-04-14-173022.123.log        # human-readable log (unchanged)
+  ralph-2026-04-14-173022.123/           # JSONL artifacts for this run
+    initialize-02-get-gh-user.jsonl
+    iter01-03-feature-work.jsonl
+    iter01-04-test-planning.jsonl
+    iter02-03-feature-work.jsonl
+    finalize-02-lessons-learned.jsonl
+```
+
+Filename format: `<phase-prefix><NN>-<step-slug>.jsonl`. Phase prefixes are `initialize-`, `iter<NN>-` (1-indexed, zero-padded to 2 digits), and `finalize-`. `<NN>` is the step's position within the phase. Only claude steps have `.jsonl` files; non-claude steps write nothing here.
+
+Each line in a `.jsonl` file is one JSON object. The relevant types:
+
+| `type` field | What it contains |
+|---|---|
+| `system` | Session init (model name, session ID) and API retry notifications |
+| `rate_limit_event` | Rate-limit status (usually `"allowed"`) |
+| `assistant` | One complete turn: text blocks, tool-use indicators, token counts |
+| `user` | Tool results fed back to the model |
+| `result` | Final answer: `result` text, `is_error` flag, session ID, total cost, token counts |
+| `ralph_end` | Sentinel written by ralph-tui after the `result` event — its absence means the run was truncated |
+
+### Useful queries
+
+**Find the final captured value for a step:**
+
+```bash
+jq 'select(.type == "result") | .result' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+```
+
+**Check whether a step ended in error:**
+
+```bash
+jq 'select(.type == "result") | {is_error, result}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+```
+
+**Check token spend for a step:**
+
+```bash
+jq 'select(.type == "result") | {total_cost_usd, usage, num_turns}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+```
+
+**Verify the step's artifact was written completely (sentinel present):**
+
+```bash
+tail -1 logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
+# "ralph_end" → complete; any other output or an empty tail → truncated
+```
+
+**Read all assistant turns in order:**
+
+```bash
+jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text") | .text' \
+  logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+```
+
+> **Retry behavior:** When you press `r` (retry) in error mode, the next attempt overwrites the `.jsonl` file from the beginning. The prior attempt's raw events are lost from the artifact (but the rendered lines remain in the `.log` file, separated by a `(retry)` separator). Token spend from discarded retry attempts is still included in the per-step and run-level summary lines.
 
 ## Navigating with chrome landmarks
 
@@ -166,10 +231,11 @@ Fix the underlying config issue and re-run. See [Config Validation](../features/
 ## Related documentation
 
 - [Reading the TUI](reading-the-tui.md) — Log-panel layout and chrome rhythm (same content as the log file, live view)
-- [Capturing Step Output](capturing-step-output.md) — How `captureAs` values get into the log and the VarTable
+- [Capturing Step Output](capturing-step-output.md) — How `captureAs` values get into the log and the VarTable; includes the distinction between non-claude (last stdout line) and claude (`result.result`) capture
 - [Variable Output & Injection](variable-output-and-injection.md) — Substitution rules and file-based data passing
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` semantics and how to verify it fired
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions during a live run
-- [File Logging](../features/file-logging.md) — Log file format, timestamp, context prefix
+- [File Logging](../features/file-logging.md) — Log file format, timestamp, context prefix, and RunStamp (per-run artifact directory name)
+- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — The `claudestream` package that produces the JSONL artifacts: event types, parser, renderer, aggregator
 - [Config Validation](../features/config-validation.md) — Validator error format and rules
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where build errors get logged

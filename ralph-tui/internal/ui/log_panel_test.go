@@ -71,33 +71,33 @@ func TestLogModel_Update_EndKey_GotoBottom(t *testing.T) {
 	}
 }
 
-// --- SUGG-003: ring buffer boundary at exactly 500 and 501 lines ---
+// --- SUGG-003: ring buffer boundary at exactly logRingBufferCap and logRingBufferCap+1 lines ---
 
-func TestLogModel_RingBuffer_500Lines_NoTrim(t *testing.T) {
+func TestLogModel_RingBuffer_AtCapNoTrim(t *testing.T) {
 	m := newLogModel(80, 10)
 
-	lines := make([]string, 500)
-	for i := range 500 {
+	lines := make([]string, logRingBufferCap)
+	for i := range logRingBufferCap {
 		lines[i] = "line"
 	}
 	m, _ = m.Update(LogLinesMsg{Lines: lines})
 
-	if len(m.lines) != 500 {
-		t.Fatalf("expected exactly 500 lines, got %d", len(m.lines))
+	if len(m.lines) != logRingBufferCap {
+		t.Fatalf("expected exactly %d lines, got %d", logRingBufferCap, len(m.lines))
 	}
 }
 
-func TestLogModel_RingBuffer_501Lines_TrimsToLast500(t *testing.T) {
+func TestLogModel_RingBuffer_OverCapTrimsToLast(t *testing.T) {
 	m := newLogModel(80, 10)
 
-	lines := make([]string, 501)
-	for i := range 501 {
+	lines := make([]string, logRingBufferCap+1)
+	for i := range logRingBufferCap + 1 {
 		lines[i] = "line"
 	}
 	m, _ = m.Update(LogLinesMsg{Lines: lines})
 
-	if len(m.lines) != 500 {
-		t.Fatalf("expected 500 lines after trim, got %d", len(m.lines))
+	if len(m.lines) != logRingBufferCap {
+		t.Fatalf("expected %d lines after trim, got %d", logRingBufferCap, len(m.lines))
 	}
 }
 

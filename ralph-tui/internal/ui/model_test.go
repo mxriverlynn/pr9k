@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -41,27 +42,28 @@ func TestLogLines_AppendInOrder(t *testing.T) {
 	}
 }
 
-func TestLogLines_TrimsToLast500(t *testing.T) {
+func TestLogLines_TrimsToLastCap(t *testing.T) {
 	m := newTestModel(t)
 
-	// Send 600 lines — ring buffer should retain only the last 500.
-	lines := make([]string, 600)
-	for i := range 600 {
+	// Send logRingBufferCap+100 lines — ring buffer should retain only the last logRingBufferCap.
+	total := logRingBufferCap + 100
+	lines := make([]string, total)
+	for i := range total {
 		lines[i] = strings.Repeat("y", i+1)
 	}
 	next, _ := m.Update(LogLinesMsg{Lines: lines})
 	m = next.(Model)
 
-	if len(m.log.lines) != 500 {
-		t.Fatalf("expected 500 lines after trim, got %d", len(m.log.lines))
+	if len(m.log.lines) != logRingBufferCap {
+		t.Fatalf("expected %d lines after trim, got %d", logRingBufferCap, len(m.log.lines))
 	}
 	// First retained line should be the 101st original line (index 100).
 	if m.log.lines[0] != lines[100] {
 		t.Errorf("first retained line: want %q, got %q", lines[100], m.log.lines[0])
 	}
-	// Last retained line should be the last original line (index 599).
-	if m.log.lines[499] != lines[599] {
-		t.Errorf("last retained line: want %q, got %q", lines[599], m.log.lines[499])
+	// Last retained line should be the last original line.
+	if m.log.lines[logRingBufferCap-1] != lines[total-1] {
+		t.Errorf("last retained line: want %q, got %q", lines[total-1], m.log.lines[logRingBufferCap-1])
 	}
 }
 
@@ -891,6 +893,171 @@ func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) {
 	}
 	if got := string(runes[:len([]rune(prefix))]); got != prefix {
 		t.Errorf("expected cell at offset 0 to start with %q, got %q", prefix, got)
+	}
+}
+
+// --- D23: HeartbeatReader + HeartbeatTickMsg ---
+
+// stubHeartbeat is a test double for HeartbeatReader.
+type stubHeartbeat struct {
+	silentFor time.Duration
+	active    bool
+	calls     int
+}
+
+func (s *stubHeartbeat) HeartbeatSilence() (time.Duration, bool) {
+	s.calls++
+	return s.silentFor, s.active
+}
+
+// TestModel_HeartbeatTick_ShowsSuffix_WhenSilentFor15s verifies that when the
+// heartbeat reader reports active=true and silentFor >= 15s, the heartbeat
+// suffix is appended to the title string.
+func TestModel_HeartbeatTick_ShowsSuffix_WhenSilentFor15s(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 17 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 2/5 — Issue #42"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (17s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() does not contain heartbeat suffix %q: got %q", want, title)
+	}
+}
+
+// TestModel_HeartbeatTick_NoSuffix_WhenInactive verifies that when the
+// heartbeat reader reports active=false, no heartbeat suffix appears.
+func TestModel_HeartbeatTick_NoSuffix_WhenInactive(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 30 * time.Second, active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 2/5"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	if strings.Contains(title, "⋯") {
+		t.Errorf("titleString() should not contain heartbeat suffix when inactive, got %q", title)
+	}
+}
+
+// TestModel_HeartbeatTick_NoSuffix_WhenBelowThreshold verifies that when the
+// heartbeat reader reports active=true but silentFor < 15s, no suffix is shown.
+func TestModel_HeartbeatTick_NoSuffix_WhenBelowThreshold(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 14 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/3"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	if strings.Contains(title, "⋯") {
+		t.Errorf("titleString() should not contain heartbeat suffix below 15s threshold, got %q", title)
+	}
+}
+
+// TestModel_HeartbeatTick_ClearsSuffix_WhenTransitionsToInactive verifies that
+// the heartbeat suffix is cleared when a subsequent tick reports inactive.
+func TestModel_HeartbeatTick_ClearsSuffix_WhenTransitionsToInactive(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 20 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1"
+
+	// First tick: suffix should appear.
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+	if !strings.Contains(m.titleString(), "⋯") {
+		t.Fatal("expected suffix after first tick")
+	}
+
+	// Second tick: step ended, now inactive.
+	stub.active = false
+	next, _ = m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+	if strings.Contains(m.titleString(), "⋯") {
+		t.Errorf("expected suffix cleared after inactive tick, got %q", m.titleString())
+	}
+}
+
+// TP-HB1: stubHeartbeat call count — verifies the dispatch path reaches
+// HeartbeatSilence() during Update(HeartbeatTickMsg).
+func TestModel_HeartbeatTick_CallsHeartbeatSilence(t *testing.T) {
+	stub := &stubHeartbeat{active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+
+	_, _ = m.Update(HeartbeatTickMsg(time.Now()))
+
+	if stub.calls != 1 {
+		t.Errorf("expected HeartbeatSilence called once, got %d", stub.calls)
+	}
+}
+
+// TP-HB2: exact 15s boundary — silentFor == heartbeatSilenceThreshold must
+// produce the suffix (condition is >=, not >).
+func TestModel_HeartbeatTick_ExactThreshold_ShowsSuffix(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 15 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1 — Issue #1"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (15s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() at exact 15s threshold: want %q in %q", want, title)
+	}
+}
+
+// TP-HB3: suffix suppressed when iterLine is empty — titleString() must return
+// AppTitle only, even when heartbeatSuffix is non-empty.
+func TestTitleString_SuffixSuppressed_WhenNoIterationLine(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 20 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = ""
+
+	// Tick sets heartbeatSuffix on the model.
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	// iterLine is empty → titleString must return bare AppTitle with no suffix.
+	got := m.titleString()
+	if got != AppTitle {
+		t.Errorf("titleString() with empty iter line: want %q, got %q", AppTitle, got)
+	}
+}
+
+// TP-HB-R3: HeartbeatTickMsg handler returns no cmd — verifies that the
+// ticker goroutine in main.go is the sole owner of the heartbeat schedule.
+func TestModel_HeartbeatTick_ReturnsNilCmd(t *testing.T) {
+	stub := &stubHeartbeat{active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+
+	_, cmd := m.Update(HeartbeatTickMsg(time.Now()))
+
+	if cmd != nil {
+		t.Errorf("expected nil cmd from HeartbeatTickMsg handler (ticker is owned by main.go), got non-nil: %T", cmd)
+	}
+}
+
+// TP-HB4: fractional seconds are truncated (not rounded) — 15.9s must display
+// as "15s", not "16s".
+func TestModel_HeartbeatTick_FractionalSeconds_Truncated(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 15*time.Second + 900*time.Millisecond, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (15s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() with 15.9s: want %q in %q (truncation not rounding)", want, title)
 	}
 }
 

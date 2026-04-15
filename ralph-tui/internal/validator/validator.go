@@ -277,17 +277,6 @@ func validatePhase(
 					*errs = append(*errs, at("schema", fmt.Sprintf("duplicate captureAs %q in phase", ca)))
 				}
 				seenCaptureAs[ca] = true
-
-				// Rule A — captureAs on a claude step is rejected.
-				// After sandboxing, resolved.Command[0] becomes "docker", so captured
-				// stdout is docker's output, not claude's — corrupting downstream
-				// {{VAR}} substitution.
-				if isClaude {
-					*errs = append(*errs, at("sandbox", fmt.Sprintf(
-						"captureAs on a claude step is not allowed: after sandboxing, captured stdout is docker's output, not claude's, which would corrupt downstream {{%s}} substitution",
-						ca,
-					)))
-				}
 			}
 		}
 

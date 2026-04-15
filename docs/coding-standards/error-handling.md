@@ -117,6 +117,27 @@ func safePromptPath(workflowDir, promptFile string) (string, error) {
 
 Apply this check at every boundary where a file path is supplied by config or user input and opened from within a bounded directory. The check must happen after `filepath.Join` — not before — so that any `..` components are resolved against the root first.
 
+## Check accumulated error accessors after deferred Close
+
+When a type accumulates background write errors and exposes them via an accessor (e.g., `WriteErr()`), check the accessor after calling `Close()` in the defer. Implementing the tracker is only half the job — if the caller never reads it, data loss remains silent.
+
+```go
+// Bad — WriteErr() is tracked but never checked; silent data loss on artifact write failures
+defer pipeline.Close()
+
+// Good — check WriteErr after Close so disk failures are logged
+defer func() {
+    pipeline.Close()
+    if wErr := pipeline.WriteErr(); wErr != nil {
+        r.sendLine("[artifact] write error: " + wErr.Error())
+    }
+}()
+```
+
+This is the caller-side complement to the "track goroutine write errors" standard. Together they form a complete chain: the implementer tracks the first error into an accessor, and the caller reads the accessor at the cleanup point. Either half alone is insufficient.
+
+The log message should match the naming pattern of nearby I/O error messages (e.g., `[artifact] open failed: ...` and `[artifact] write error: ...` are in the same family and share a prefix).
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -128,3 +149,4 @@ Apply this check at every boundary where a file path is supplied by config or us
 - [API Design](api-design.md) — Complementary standards for precondition validation
 - [Concurrency](concurrency.md) — Complementary standards for goroutine error handling
 - [Testing](testing.md) — Standards for testing all file I/O error paths
+- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `pipeline.WriteErr()` check after `pipeline.Close()` as the canonical accumulated-error accessor example (issue #91)

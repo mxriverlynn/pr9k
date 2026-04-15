@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -75,6 +76,14 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 		return nil, false
 	}
 
+	// Create the per-run artifact directory eagerly so per-step file opens
+	// cannot race on directory creation (D14, Step 6).
+	artifactDir := filepath.Join(projectDir, "logs", log.RunStamp())
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return nil, false
+	}
+
 	return &services{
 		log:      log,
 		runner:   workflow.NewRunner(log, projectDir),
@@ -127,6 +136,10 @@ func main() {
 		}
 	}
 
+	// Wire the D23 heartbeat reader into the StatusHeader so HeartbeatTickMsg
+	// can query silence duration from the active claude pipeline.
+	header.SetHeartbeatReader(runner)
+
 	versionLabel := "ralph-tui v" + version.Version
 	model := ui.NewModel(header, keyHandler, versionLabel)
 
@@ -137,6 +150,17 @@ func main() {
 	)
 
 	proxy := ui.NewHeaderProxy(program.Send)
+
+	// D23 heartbeat ticker: sends HeartbeatTickMsg once per second so the TUI
+	// can render the "  ⋯ thinking (Ns)" suffix during silent claude turns.
+	// The goroutine terminates with the process — no explicit shutdown needed.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for range t.C {
+			program.Send(ui.HeartbeatTickMsg{})
+		}
+	}()
 
 	// logWidth sizes the full-width phase banner underline to fill the log
 	// panel. The panel sits inside a rounded border, so we subtract 2
@@ -154,6 +178,7 @@ func main() {
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,
 		LogWidth:        logWidth,
+		RunStamp:        log.RunStamp(),
 	}
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are

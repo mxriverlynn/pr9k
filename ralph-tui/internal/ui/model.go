@@ -67,8 +67,16 @@ func NewModel(initialHeader *StatusHeader, keyHandler *KeyHandler, versionLabel 
 	}
 }
 
-// Init satisfies tea.Model. No startup commands needed; the workflow goroutine
-// runs independently of the program event loop.
+// WithHeartbeat installs a HeartbeatReader on the underlying StatusHeader.
+// Convenience method for tests: production code should call
+// header.SetHeartbeatReader(runner) directly before constructing the model.
+func (m Model) WithHeartbeat(h HeartbeatReader) Model {
+	m.header.header.SetHeartbeatReader(h)
+	return m
+}
+
+// Init satisfies tea.Model. Returns nil — the 1-second HeartbeatTickMsg
+// ticker is owned by an explicit goroutine in main.go (D23).
 func (m Model) Init() tea.Cmd {
 	return nil
 }
@@ -131,6 +139,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var lcmd tea.Cmd
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
+
+	case HeartbeatTickMsg:
+		// Delegate to StatusHeader (D23). The ticker is owned by main.go —
+		// no reschedule cmd is needed here.
+		m.header.header.HandleHeartbeatTick()
 
 	case tea.QuitMsg:
 		return m, tea.Quit
@@ -261,12 +274,15 @@ func (m Model) View() string {
 }
 
 // titleString builds the OS window title and in-TUI border title from the
-// current header iteration line.
+// current header iteration line. When the heartbeat suffix is active (D23),
+// it is appended after the iteration detail — e.g.
+// "Power-Ralph.9000 — Iteration 2/5 — Issue #42  ⋯ thinking (17s)".
 func (m Model) titleString() string {
-	if m.header.iterLine() == "" {
+	iter := m.header.iterLine()
+	if iter == "" {
 		return AppTitle
 	}
-	return AppTitle + " — " + m.header.iterLine()
+	return AppTitle + " — " + iter + m.header.header.heartbeatSuffix
 }
 
 // colorShortcutLine applies the footer shortcut bar's two-tone palette: the

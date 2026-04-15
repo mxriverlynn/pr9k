@@ -28,7 +28,7 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- Current version: `0.3.0` (single source of truth: `ralph-tui/internal/version/version.go`)
+- Current version: `0.3.1` (single source of truth: `ralph-tui/internal/version/version.go`)
 - External dependencies: `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
@@ -58,7 +58,7 @@
 - Vulnerability check: `make vulncheck` (requires govulncheck)
 - CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`, `internal/sandbox/`, `internal/preflight/`, `cmd/ralph-tui/`
+- Test directories: `internal/claudestream/`, `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`, `internal/sandbox/`, `internal/preflight/`, `cmd/ralph-tui/`
 
 ### Configuration
 
@@ -72,7 +72,7 @@
 - [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
 - [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
 - [Variable State Management](features/variable-state.md) — `VarTable` scoped variable tables, built-in variables, and phase-based resolution
-- [Config Validation](features/config-validation.md) — D13 validator: ten categories, sandbox rules A/B/C, env passthrough validation
+- [Config Validation](features/config-validation.md) — D13 validator: ten categories, sandbox rules B and C, env passthrough validation
 - [Docker Sandbox](features/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, cidfile lifecycle, and `NewTerminator`
 - [Preflight Checks](features/preflight.md) — `Prober` interface, `CheckDocker`, profile dir validation, collect-all-errors `Run`
 - [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test) and `sandbox login` (interactive auth REPL)

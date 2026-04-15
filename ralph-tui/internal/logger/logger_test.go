@@ -8,10 +8,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // timestampPrefix matches "[YYYY-MM-DD HH:MM:SS]"
 var timestampRe = regexp.MustCompile(`^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`)
+
+// runStampRe matches the RunStamp() value: "ralph-YYYY-MM-DD-HHMMSS.mmm"
+var runStampRe = regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
 
 func TestLogLineHasTimestampAndStepPrefix(t *testing.T) {
 	dir := t.TempDir()
@@ -136,9 +140,54 @@ func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
 		t.Fatalf("expected 1 log file, got %d", len(entries))
 	}
 
-	nameRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$`)
-	if !nameRe.MatchString(entries[0].Name()) {
-		t.Errorf("unexpected filename: %q", entries[0].Name())
+	name := entries[0].Name()
+	stem := strings.TrimSuffix(name, ".log")
+	if stem == name || !runStampRe.MatchString(stem) {
+		t.Errorf("unexpected filename: %q", name)
+	}
+}
+
+func TestRunStampMatchesLogFilename(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	_ = l.Close()
+
+	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir logs: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	want := l.RunStamp() + ".log"
+	got := filepath.Base(entries[0].Name())
+	if got != want {
+		t.Errorf("RunStamp mismatch: RunStamp()=%q, filename=%q", l.RunStamp(), got)
+	}
+}
+
+func TestSubsecondRunStampDistinct(t *testing.T) {
+	dir := t.TempDir()
+	l1, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger l1: %v", err)
+	}
+	_ = l1.Close()
+
+	time.Sleep(1 * time.Millisecond)
+
+	l2, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger l2: %v", err)
+	}
+	_ = l2.Close()
+
+	if l1.RunStamp() == l2.RunStamp() {
+		t.Errorf("RunStamp values should differ but both are %q", l1.RunStamp())
 	}
 }
 
@@ -314,6 +363,56 @@ func TestSetContextSecondParameterIsUnused(t *testing.T) {
 	}
 	if strings.Contains(line, "[Feature work]") {
 		t.Errorf("line contains ignored SetContext second param: %q", line)
+	}
+}
+
+// TP-RS1: RunStamp() value matches the expected format pattern.
+func TestRunStampFormat(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	if !runStampRe.MatchString(l.RunStamp()) {
+		t.Errorf("RunStamp() %q does not match expected pattern", l.RunStamp())
+	}
+}
+
+// TP-RS2: RunStamp() returns the same value on repeated calls (immutability contract).
+func TestRunStampStable(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	first := l.RunStamp()
+	second := l.RunStamp()
+	if first != second {
+		t.Errorf("RunStamp() not stable: first=%q, second=%q", first, second)
+	}
+}
+
+// TP-RS3: RunStamp() is readable after Close (used by main.go during shutdown).
+func TestRunStampReadableAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stamp := l.RunStamp()
+	if stamp == "" {
+		t.Fatal("RunStamp() returned empty string after Close")
+	}
+	if !runStampRe.MatchString(stamp) {
+		t.Errorf("RunStamp() after Close %q does not match expected pattern", stamp)
 	}
 }
 
