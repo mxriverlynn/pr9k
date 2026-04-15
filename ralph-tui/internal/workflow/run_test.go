@@ -35,10 +35,11 @@ type fakeExecutor struct {
 	lastStatsReturn []claudestream.StepStats
 	// lastStatsCalls counts how many times LastStats() has been called.
 	lastStatsCalls int
-	// onLog, when non-nil, is invoked for every line passed to WriteToLog.
-	// Tests use it to observe the log stream from another goroutine without
-	// racing on logLines. The callback runs synchronously on the writer
-	// goroutine, so happens-before the receiver of any channel it sends to.
+	// onLog, when non-nil, is invoked for every line passed to WriteToLog or
+	// WriteRunSummary. Tests use it to observe the log stream from another
+	// goroutine without racing on logLines. The callback runs synchronously on
+	// the writer goroutine, so happens-before the receiver of any channel it
+	// sends to.
 	onLog func(line string)
 	// writeRunSummaryCalls counts how many times WriteRunSummary has been called.
 	writeRunSummaryCalls int

@@ -532,7 +532,9 @@ func (r *Runner) WriteRunSummary(line string) {
 	send := r.sendLine
 	r.mu.Unlock()
 	send(line)
-	_ = r.log.Log("run summary", line)
+	if err := r.log.Log("run summary", line); err != nil {
+		send(fmt.Sprintf("[log] run summary write failed: %v", err))
+	}
 }
 
 // CaptureOutput runs command in projectDir and returns its trimmed stdout.
