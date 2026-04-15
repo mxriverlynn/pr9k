@@ -213,6 +213,27 @@ Apply this pattern whenever a subcommand:
 
 The sentinel must be unexported. Only the parent's error gate and the subcommand itself need to reference it.
 
+## Install compile-time interface satisfaction assertions
+
+When a concrete type must satisfy an interface and the connection between them is made elsewhere (e.g., in `main.go` or at a distant call site), add a compile-time assertion at the type's declaration site. This catches satisfaction failures immediately — at the package where the type lives — rather than at the distant wiring point.
+
+```go
+// Good — assertion at the Runner declaration site, not at main.go:140 where it is used
+// Compile-time assertion that *Runner satisfies ui.HeartbeatReader.
+var _ ui.HeartbeatReader = (*Runner)(nil)
+
+type Runner struct { ... }
+```
+
+The pattern `var _ Interface = (*Type)(nil)` is zero-cost at runtime (the variable is discarded). The compiler rejects the package if `*Type` is missing any method required by `Interface`, reporting the error in the correct package instead of a file far from the type definition.
+
+Apply any time:
+- A concrete type is passed as an interface argument anywhere outside its own package.
+- The concrete type implements an interface that is tested via a fake, making it easy for the real type to drift.
+- The interface is defined in another package (which is the common case in this codebase — `workflow.Runner` satisfying `ui.HeartbeatReader`).
+
+Consistency note: this codebase also uses `var _ tea.Msg = LogLinesMsg{}` for message types — the same pattern, applied to a struct value rather than a pointer.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -225,3 +246,4 @@ The sentinel must be unexported. Only the parent's error gate and the subcommand
 - [Concurrency](concurrency.md) — Complementary standards for mutex-protected getters (unexported fields)
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
+- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
