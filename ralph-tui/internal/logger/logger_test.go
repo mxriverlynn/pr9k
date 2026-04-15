@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // timestampPrefix matches "[YYYY-MM-DD HH:MM:SS]"
@@ -136,9 +137,53 @@ func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
 		t.Fatalf("expected 1 log file, got %d", len(entries))
 	}
 
-	nameRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$`)
+	nameRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$`)
 	if !nameRe.MatchString(entries[0].Name()) {
 		t.Errorf("unexpected filename: %q", entries[0].Name())
+	}
+}
+
+func TestRunStampMatchesLogFilename(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	_ = l.Close()
+
+	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir logs: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	want := l.RunStamp() + ".log"
+	got := filepath.Base(entries[0].Name())
+	if got != want {
+		t.Errorf("RunStamp mismatch: RunStamp()=%q, filename=%q", l.RunStamp(), got)
+	}
+}
+
+func TestSubsecondRunStampDistinct(t *testing.T) {
+	dir := t.TempDir()
+	l1, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger l1: %v", err)
+	}
+	_ = l1.Close()
+
+	time.Sleep(1 * time.Millisecond)
+
+	l2, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger l2: %v", err)
+	}
+	_ = l2.Close()
+
+	if l1.RunStamp() == l2.RunStamp() {
+		t.Errorf("RunStamp values should differ but both are %q", l1.RunStamp())
 	}
 }
 

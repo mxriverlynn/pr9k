@@ -17,9 +17,10 @@ type Logger struct {
 	writer    *bufio.Writer
 	iteration string
 	closed    bool
+	runStamp  string
 }
 
-// NewLogger creates a new Logger that writes to logs/ralph-YYYY-MM-DD-HHMMSS.log
+// NewLogger creates a new Logger that writes to logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log
 // under projectDir (the target repository directory). The logs/ directory is
 // created if it does not exist.
 func NewLogger(projectDir string) (*Logger, error) {
@@ -28,7 +29,9 @@ func NewLogger(projectDir string) (*Logger, error) {
 		return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
 	}
 
-	filename := time.Now().Format("ralph-2006-01-02-150405.log")
+	now := time.Now()
+	filename := now.Format("ralph-2006-01-02-150405.000.log")
+	runStamp := now.Format("ralph-2006-01-02-150405.000")
 	logPath := filepath.Join(logsDir, filename)
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
@@ -37,9 +40,17 @@ func NewLogger(projectDir string) (*Logger, error) {
 	}
 
 	return &Logger{
-		file:   f,
-		writer: bufio.NewWriter(f),
+		file:     f,
+		writer:   bufio.NewWriter(f),
+		runStamp: runStamp,
 	}, nil
+}
+
+// RunStamp returns the run identifier for this logger, which is the log filename
+// without the .log suffix (e.g. "ralph-2026-04-14-173022.123"). It is set once
+// at construction and never changes.
+func (l *Logger) RunStamp() string {
+	return l.runStamp
 }
 
 // SetContext updates the iteration prefix used by subsequent Log calls.

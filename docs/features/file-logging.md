@@ -8,7 +8,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ## Overview
 
-- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.log` under the project directory (the target repository)
+- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` under the project directory (the target repository)
 - Each line is prefixed with a timestamp, optional iteration context, and step name
 - Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines
 - Uses `bufio.Writer` for buffered I/O with explicit flush on close
@@ -39,7 +39,8 @@ Key files:
                                     │  os.File     │
                                     │  logs/ralph- │
                                     │  YYYY-MM-DD- │
-                                    │  HHMMSS.log  │
+                                    │  HHMMSS.mmm  │
+                                    │  .log        │
                                     └──────────────┘
 ```
 
@@ -61,6 +62,7 @@ type Logger struct {
     writer    *bufio.Writer
     iteration string  // context prefix set by SetContext
     closed    bool    // prevents writes after close
+    runStamp  string  // set-once at construction; e.g. "ralph-2026-04-14-173022.123"
 }
 ```
 
@@ -68,7 +70,7 @@ type Logger struct {
 
 ### Logger Creation
 
-`NewLogger` creates the `logs/` directory if needed and opens a timestamped log file:
+`NewLogger` creates the `logs/` directory if needed and opens a millisecond-precision timestamped log file. `time.Now()` is captured once so the filename and `runStamp` cannot drift:
 
 ```go
 func NewLogger(projectDir string) (*Logger, error) {
@@ -77,12 +79,14 @@ func NewLogger(projectDir string) (*Logger, error) {
         return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
     }
 
-    filename := time.Now().Format("ralph-2006-01-02-150405.log")
+    now := time.Now()
+    filename := now.Format("ralph-2006-01-02-150405.000.log")
+    runStamp := now.Format("ralph-2006-01-02-150405.000")
     logPath := filepath.Join(logsDir, filename)
 
     f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
     // ...
-    return &Logger{file: f, writer: bufio.NewWriter(f)}, nil
+    return &Logger{file: f, writer: bufio.NewWriter(f), runStamp: runStamp}, nil
 }
 ```
 
