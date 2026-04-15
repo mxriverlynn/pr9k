@@ -120,6 +120,16 @@ func (l *Logger) Log(stepName string, line string) error {
 }
 ```
 
+### RunStamp
+
+`RunStamp()` returns the run identifier — the log filename without the `.log` suffix (e.g. `"ralph-2026-04-14-173022.123"`). It is set once at construction and never changes. `main.go` reads this after `NewLogger` and passes it into `RunConfig.RunStamp` so that `claudestream.Pipeline` can construct the per-run artifact directory (`projectDir/logs/<runstamp>/`):
+
+```go
+func (l *Logger) RunStamp() string {
+    return l.runStamp
+}
+```
+
 ### Iteration Context
 
 `SetContext` updates the iteration prefix for subsequent log lines:
