@@ -21,6 +21,10 @@ type StepExecutor interface {
 	LastStats() claudestream.StepStats
 	ProjectDir() string
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+	// WriteRunSummary writes line to both the TUI and the file logger. Used for
+	// the run-level cumulative summary (D13 2c) so it is visible in the TUI and
+	// persisted to disk, unlike WriteToLog which only sends to the TUI.
+	WriteRunSummary(line string)
 }
 
 // RunStats accumulates StepStats across all claude step invocations in a run
@@ -156,7 +160,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// rs accumulates StepStats across all claude step invocations in the run
 	// (D21, D25). Owned exclusively by this goroutine — no mutex required.
-	// Surfacing rs through RunResult or the completion summary is pending (M2).
+	// Emitted as the run-level cumulative summary after the finalize phase (D13 2c).
 	rs := &runStats{}
 
 	logWidth := cfg.LogWidth
@@ -327,6 +331,15 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
 		}
+	}
+
+	// D13 2c: emit the run-level cumulative summary after all phases complete.
+	// Written to both the TUI and the file logger via WriteRunSummary so the
+	// total claude spend is persisted to disk (unlike WriteToLog which is TUI-only).
+	var runRenderer claudestream.Renderer
+	for _, line := range runRenderer.FinalizeRun(rs.invocations, rs.retries, rs.total) {
+		emitBlank()
+		executor.WriteRunSummary(line)
 	}
 
 	// 4. Completion sequence: write summary as the last line of the main

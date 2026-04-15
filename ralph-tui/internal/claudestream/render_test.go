@@ -403,3 +403,100 @@ func TestRenderer_FinalizeZeroStats(t *testing.T) {
 		t.Errorf("expected '0 turns' in zero stats line, got %q", lines[0])
 	}
 }
+
+// --- FinalizeRun tests (D13 2c) ---
+
+// TestRenderer_FinalizeRun_ZeroInvocations verifies that FinalizeRun returns nil
+// when no claude steps ran (invocations == 0), suppressing the summary line.
+func TestRenderer_FinalizeRun_ZeroInvocations(t *testing.T) {
+	var r claudestream.Renderer
+	lines := r.FinalizeRun(0, 0, claudestream.StepStats{})
+	if lines != nil {
+		t.Errorf("expected nil for zero invocations, got %v", lines)
+	}
+}
+
+// TestRenderer_FinalizeRun_NoRetries verifies the summary line for multiple
+// invocations with no retries omits the retries parenthetical.
+func TestRenderer_FinalizeRun_NoRetries(t *testing.T) {
+	var r claudestream.Renderer
+	total := claudestream.StepStats{
+		NumTurns:            5,
+		InputTokens:         200,
+		OutputTokens:        100,
+		CacheCreationTokens: 50,
+		CacheReadTokens:     300,
+		TotalCostUSD:        0.0056789,
+		DurationMS:          10000,
+	}
+	lines := r.FinalizeRun(3, 0, total)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	line := lines[0]
+	for _, fragment := range []string{
+		"total claude spend across 3 step invocations",
+		"5 turns",
+		"200/100 tokens",
+		"cache: 50/300",
+		"$0.0056789",
+		"10s",
+	} {
+		if !strings.Contains(line, fragment) {
+			t.Errorf("FinalizeRun line %q missing fragment %q", line, fragment)
+		}
+	}
+	// No retries parenthetical.
+	if strings.Contains(line, "retr") {
+		t.Errorf("FinalizeRun line %q should not contain retry info when retries=0", line)
+	}
+}
+
+// TestRenderer_FinalizeRun_WithRetries verifies the summary line includes the
+// retries parenthetical when retries > 0.
+func TestRenderer_FinalizeRun_WithRetries(t *testing.T) {
+	var r claudestream.Renderer
+	lines := r.FinalizeRun(4, 2, claudestream.StepStats{NumTurns: 8, TotalCostUSD: 0.01})
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	line := lines[0]
+	if !strings.Contains(line, "4 step invocations") {
+		t.Errorf("FinalizeRun line %q missing invocation count", line)
+	}
+	if !strings.Contains(line, "including 2 retries") {
+		t.Errorf("FinalizeRun line %q missing retries clause", line)
+	}
+}
+
+// TestRenderer_FinalizeRun_SingleInvocationSingular verifies singular
+// "invocation" (not "invocations") when invocations == 1.
+func TestRenderer_FinalizeRun_SingleInvocationSingular(t *testing.T) {
+	var r claudestream.Renderer
+	lines := r.FinalizeRun(1, 0, claudestream.StepStats{})
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "1 step invocation") {
+		t.Errorf("expected singular 'invocation' in %q", lines[0])
+	}
+	if strings.Contains(lines[0], "1 step invocations") {
+		t.Errorf("unexpected plural 'invocations' in %q", lines[0])
+	}
+}
+
+// TestRenderer_FinalizeRun_SingleRetrySingular verifies singular "retry" (not
+// "retries") when retries == 1.
+func TestRenderer_FinalizeRun_SingleRetrySingular(t *testing.T) {
+	var r claudestream.Renderer
+	lines := r.FinalizeRun(2, 1, claudestream.StepStats{})
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "including 1 retry") {
+		t.Errorf("expected singular 'retry' in %q", lines[0])
+	}
+	if strings.Contains(lines[0], "including 1 retries") {
+		t.Errorf("unexpected plural 'retries' in %q", lines[0])
+	}
+}

@@ -86,6 +86,13 @@ func (f *fakeExecutor) WriteToLog(line string) {
 	}
 }
 
+func (f *fakeExecutor) WriteRunSummary(line string) {
+	f.logLines = append(f.logLines, line)
+	if f.onLog != nil {
+		f.onLog(line)
+	}
+}
+
 func (f *fakeExecutor) LastCapture() string {
 	return f.lastCapture
 }
@@ -3842,5 +3849,135 @@ func TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine(t *testing.T) {
 	}
 	if len(exec.runStepCalls) != 1 {
 		t.Fatalf("expected 1 RunStep call for non-claude step, got %d", len(exec.runStepCalls))
+	}
+}
+
+// --- D13 2c: run-level cumulative summary tests ---
+
+// TestRun_RunSummary_EmittedForClaudeSteps verifies that after a run with claude
+// steps, the run-level cumulative summary line is written to the log body (D13 2c).
+// The summary must appear before the CompletionSummary line and contain the key
+// token/cost fragments from the accumulated StepStats.
+func TestRun_RunSummary_EmittedForClaudeSteps(t *testing.T) {
+	dir := t.TempDir()
+	claudeStep := claudeIterStep(t, dir, "feature-work")
+
+	wantStats := claudestream.StepStats{
+		NumTurns:     3,
+		InputTokens:  120,
+		OutputTokens: 60,
+		TotalCostUSD: 0.0123456,
+		DurationMS:   5000,
+	}
+	exec := &fakeExecutor{
+		projectDir:      dir,
+		lastStatsReturn: []claudestream.StepStats{wantStats},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{claudeStep},
+	}
+
+	Run(exec, header, kh, cfg)
+
+	// Find the run summary line in logLines (it must start with "total claude spend").
+	var runSummaryIdx int = -1
+	var completionIdx int = -1
+	for i, line := range exec.logLines {
+		if strings.HasPrefix(line, "total claude spend") {
+			runSummaryIdx = i
+		}
+		if strings.HasPrefix(line, "Ralph completed after") {
+			completionIdx = i
+		}
+	}
+
+	if runSummaryIdx < 0 {
+		t.Fatalf("run summary line not found in log body; lines: %v", exec.logLines)
+	}
+	if completionIdx < 0 {
+		t.Fatalf("completion summary line not found in log body; lines: %v", exec.logLines)
+	}
+	if runSummaryIdx >= completionIdx {
+		t.Errorf("run summary (idx %d) must appear before completion summary (idx %d)", runSummaryIdx, completionIdx)
+	}
+
+	line := exec.logLines[runSummaryIdx]
+	for _, fragment := range []string{"1 step invocation", "120/60 tokens", "$0.0123456"} {
+		if !strings.Contains(line, fragment) {
+			t.Errorf("run summary %q missing fragment %q", line, fragment)
+		}
+	}
+}
+
+// TestRun_RunSummary_NotEmittedForNonClaudeSteps verifies that when no claude
+// steps run, no run-level summary line is written to the log body (D13 2c:
+// FinalizeRun returns nil for zero invocations).
+func TestRun_RunSummary_NotEmittedForNonClaudeSteps(t *testing.T) {
+	exec := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("shell-step"),
+	}
+
+	Run(exec, header, kh, cfg)
+
+	for _, line := range exec.logLines {
+		if strings.HasPrefix(line, "total claude spend") {
+			t.Errorf("unexpected run summary line in non-claude run: %q", line)
+		}
+	}
+}
+
+// TestRun_RunSummary_MultipleClaudeStepsAccumulate verifies that stats from
+// multiple claude step invocations are accumulated into the run summary (D13 2c,
+// D21: each invocation contributes to the cumulative total).
+func TestRun_RunSummary_MultipleClaudeStepsAccumulate(t *testing.T) {
+	dir := t.TempDir()
+	step1 := claudeIterStep(t, dir, "step-one")
+	step2 := claudeIterStep(t, dir, "step-two")
+
+	stats1 := claudestream.StepStats{InputTokens: 100, TotalCostUSD: 0.01}
+	stats2 := claudestream.StepStats{InputTokens: 200, TotalCostUSD: 0.02}
+	exec := &fakeExecutor{
+		projectDir:      dir,
+		lastStatsReturn: []claudestream.StepStats{stats1, stats2},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: dir,
+		Iterations:  1,
+		Steps:       []steps.Step{step1, step2},
+	}
+
+	Run(exec, header, kh, cfg)
+
+	var runSummary string
+	for _, line := range exec.logLines {
+		if strings.HasPrefix(line, "total claude spend") {
+			runSummary = line
+			break
+		}
+	}
+	if runSummary == "" {
+		t.Fatalf("run summary not found in log body; lines: %v", exec.logLines)
+	}
+	// Two invocations.
+	if !strings.Contains(runSummary, "2 step invocations") {
+		t.Errorf("run summary %q should reflect 2 invocations", runSummary)
+	}
+	// Combined cost.
+	if !strings.Contains(runSummary, "$0.0300000") {
+		t.Errorf("run summary %q should reflect combined cost $0.03", runSummary)
 	}
 }

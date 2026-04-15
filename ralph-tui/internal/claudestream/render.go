@@ -63,6 +63,45 @@ func (r *Renderer) Finalize(stats StepStats) []string {
 	return []string{line}
 }
 
+// FinalizeRun returns the run-level cumulative summary line (D13 2c).
+// Format: "total claude spend across N step invocations[ (including R retries)]:
+//
+//	<turns> turns · <in>/<out> tokens (cache: <creation>/<read>) · $<cost> · <duration>"
+//
+// Returns nil when invocations is zero (no claude steps ran this run).
+// FinalizeRun is a value-receiver method (uses no Renderer state) so it can be
+// called on a zero-value Renderer{} at the Run() call site.
+func (r Renderer) FinalizeRun(invocations, retries int, total StepStats) []string {
+	if invocations == 0 {
+		return nil
+	}
+	invLabel := "invocation"
+	if invocations != 1 {
+		invLabel = "invocations"
+	}
+	prefix := fmt.Sprintf("total claude spend across %d step %s", invocations, invLabel)
+	if retries > 0 {
+		retryLabel := "retry"
+		if retries != 1 {
+			retryLabel = "retries"
+		}
+		prefix += fmt.Sprintf(" (including %d %s)", retries, retryLabel)
+	}
+	dur := time.Duration(total.DurationMS) * time.Millisecond
+	line := fmt.Sprintf(
+		"%s: %d turns · %d/%d tokens (cache: %d/%d) · $%.7f · %s",
+		prefix,
+		total.NumTurns,
+		total.InputTokens,
+		total.OutputTokens,
+		total.CacheCreationTokens,
+		total.CacheReadTokens,
+		total.TotalCostUSD,
+		dur,
+	)
+	return []string{line}
+}
+
 func (r *Renderer) renderSystem(e *SystemEvent) []string {
 	switch e.Subtype {
 	case "init":

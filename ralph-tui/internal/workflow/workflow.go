@@ -523,6 +523,18 @@ func (r *Runner) WriteToLog(line string) {
 	send(line)
 }
 
+// WriteRunSummary writes a single line to both the TUI (via sendLine) and the
+// file logger. Use this for the run-level cumulative summary (D13 2c) so the
+// line is visible in the TUI and persisted to disk — unlike WriteToLog, which
+// only sends to the TUI.
+func (r *Runner) WriteRunSummary(line string) {
+	r.mu.Lock()
+	send := r.sendLine
+	r.mu.Unlock()
+	send(line)
+	_ = r.log.Log("run summary", line)
+}
+
 // CaptureOutput runs command in projectDir and returns its trimmed stdout.
 // Stderr is discarded. Use this for commands that return a single value
 // (e.g., get_next_issue, get_gh_user, git rev-parse HEAD).

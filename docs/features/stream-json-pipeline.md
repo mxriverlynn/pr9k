@@ -82,6 +82,18 @@ summary line after a step completes:
 <turns> turns · <in>/<out> tokens (cache: <creation>/<read>) · $<cost> · <duration>
 ```
 
+`Renderer.FinalizeRun(invocations, retries int, total StepStats) []string`
+returns the run-level cumulative summary line (D13 2c). Returns nil when
+`invocations == 0` (no claude steps ran):
+
+```
+total claude spend across N step invocations[ (including R retries)]: <turns> turns · <in>/<out> tokens (cache: <creation>/<read>) · $<cost> · <duration>
+```
+
+The retries parenthetical is omitted when `retries == 0`. `FinalizeRun` is a
+value-receiver method that uses no `Renderer` state; it can be called on a
+zero-value `Renderer{}` at the `Run()` call site.
+
 ### Tool summary (`toolSummary`)
 
 For `tool_use` content blocks, `toolSummary(name, input)` extracts the most
@@ -260,6 +272,12 @@ These flow through `stepDispatcher` into `SandboxOptions` for each
 stats via `rs.add(stats, isRetry)`. `prevFailed` on the dispatcher tracks
 whether the prior call ended in error so retry invocations are counted
 separately.
+
+After the finalize phase, `Run` calls `Renderer.FinalizeRun(rs.invocations,
+rs.retries, rs.total)` and writes each returned line via
+`executor.WriteRunSummary` (D13 2c). `WriteRunSummary` sends the line to both
+the TUI (via `sendLine`) and the file logger so the cumulative total is
+persisted to disk. No summary is emitted when `rs.invocations == 0`.
 
 ### logger/logger.go (D24)
 
