@@ -107,6 +107,8 @@ Starting step: Feature work
 
 [long claude output…]
 
+5 turns · 3200/1024 tokens (cache: 256/0) · $0.0120000 · 47s
+
 ── Iteration 2 ─────────────
 
 Starting step: Get next issue
@@ -137,6 +139,7 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 | `── Iteration N ─────────────` | Marks the top of each iteration inside the iterations phase |
 | `Starting step: <name>` + `─` underline (matching width) | Marks the start of every individual step, in every phase |
 | `Captured VAR = "value"` | Logged after any step with `captureAs`, showing the bound value |
+| `N turns · in/out tokens (cache: C/R) · $cost · duration` | Per-step summary emitted after each `isClaude: true` step completes; shows token spend, cost, and wall-clock duration for that single invocation |
 | `total claude spend across N step invocation[s]...` | Run-level cumulative summary: total token spend, cost, duration, and retry count across all claude steps; omitted when no claude steps ran |
 | `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine calls `program.Quit()` and exits |
 
