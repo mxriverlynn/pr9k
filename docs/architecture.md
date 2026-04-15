@@ -234,26 +234,36 @@ Startup validation that runs before the main orchestration loop. Resolves and va
 
 **Package:** `internal/preflight/`
 
+### [Stream JSON Pipeline](features/stream-json-pipeline.md)
+
+Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. `Parser` dispatches raw lines to typed event structs (`SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`, `RateLimitEvent`); malformed lines return a `*MalformedLineError` carrying the raw bytes. `Renderer` converts events to human-readable display lines for the TUI (assistant text split on newlines, tool_use as `→ Name summary` indicators, nothing for thinking/user/result events) and produces a per-step closing summary via `Finalize`. `Aggregator` folds events into `StepStats` (token counts, cost, duration, session ID) and exposes `Result()` for `captureAs` binding and `Err()` for `is_error` detection. `RawWriter` persists verbatim bytes to a per-step `.jsonl` file (`O_TRUNC` on open so retries overwrite). `Slug` converts step names to kebab-case identifiers for filenames. `Pipeline` composes all four behind a single `Observe(line []byte) []string` entry point, tracks the first write error via `WriteErr()`, stamps `LastEventAt` atomically for the heartbeat goroutine, and appends a sentinel line after the result event for crash-resilience.
+
+**Package:** `internal/claudestream/`
+
 ## Package Dependency Graph
 
 ```
 cmd/ralph-tui/main.go
-    ├── internal/cli        (argument parsing)
+    ├── internal/cli           (argument parsing)
     │       └── internal/version
-    ├── internal/logger     (file logging)
-    ├── internal/preflight  (startup validation)
+    ├── internal/logger        (file logging)
+    ├── internal/preflight     (startup validation)
     │       └── internal/sandbox
-    ├── internal/sandbox    (docker run argv, cidfile, terminator)
-    ├── internal/steps      (step loading)
-    ├── internal/ui         (key handling, header, orchestration)
-    ├── internal/validator  (config validation)
+    ├── internal/sandbox       (docker run argv, cidfile, terminator)
+    ├── internal/steps         (step loading)
+    ├── internal/ui            (key handling, header, orchestration)
+    ├── internal/validator     (config validation)
     │       └── internal/vars
-    ├── internal/vars       (runtime variable state)
-    ├── internal/version    (compile-time Version constant)
-    └── internal/workflow   (subprocess execution, run loop)
+    ├── internal/vars          (runtime variable state)
+    ├── internal/version       (compile-time Version constant)
+    └── internal/workflow      (subprocess execution, run loop)
+            ├── internal/claudestream  (stream-json pipeline — planned wiring)
             ├── internal/logger
             ├── internal/steps
             └── internal/ui
+
+internal/claudestream          (stream-json parsing, rendering, aggregation)
+    (no internal dependencies)
 ```
 
 ## Key Design Principles
