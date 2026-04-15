@@ -204,7 +204,7 @@ The following residual risks are accepted:
 - [sandbox Subcommand](sandbox-subcommand.md) — `ralph-tui sandbox create` and `ralph-tui sandbox login` implementations: Docker check, image pull, smoke test, interactive login flow
 - [Preflight](preflight.md) — Startup checks that reject a missing Docker daemon or sandbox image before the TUI starts
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
-- [Config Validation](config-validation.md) — Sandbox rules A/B/C (captureAs-on-claude, prompt-token ban, captureAs+tokens-in-command)
+- [Config Validation](config-validation.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)
 - [Step Definitions & Prompt Building](step-definitions.md) — `StepFile.Env` field and `BuildRunArgs` call site in `buildStep`
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — Why `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are banned in prompt files
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker a runtime requirement

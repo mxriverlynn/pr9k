@@ -72,7 +72,7 @@
 - [CLI & Configuration](features/cli-configuration.md) — CLI argument parsing and project directory resolution details
 - [Step Definitions & Prompt Building](features/step-definitions.md) — JSON step configuration format and prompt building
 - [Variable State Management](features/variable-state.md) — `VarTable` scoped variable tables, built-in variables, and phase-based resolution
-- [Config Validation](features/config-validation.md) — D13 validator: ten categories, sandbox rules A/B/C, env passthrough validation
+- [Config Validation](features/config-validation.md) — D13 validator: ten categories, sandbox rules B and C, env passthrough validation
 - [Docker Sandbox](features/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, cidfile lifecycle, and `NewTerminator`
 - [Preflight Checks](features/preflight.md) — `Prober` interface, `CheckDocker`, profile dir validation, collect-all-errors `Run`
 - [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test) and `sandbox login` (interactive auth REPL)
