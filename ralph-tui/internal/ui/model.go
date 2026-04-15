@@ -173,8 +173,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.heartbeatSuffix = ""
 			}
+			cmds = append(cmds, heartbeatTick())
 		}
-		cmds = append(cmds, heartbeatTick())
 
 	case tea.QuitMsg:
 		return m, tea.Quit

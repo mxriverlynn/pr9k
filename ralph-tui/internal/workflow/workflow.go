@@ -60,6 +60,9 @@ type Runner struct {
 	activePipelineStartedAt time.Time
 }
 
+// Compile-time assertion that *Runner satisfies ui.HeartbeatReader.
+var _ ui.HeartbeatReader = (*Runner)(nil)
+
 // SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
 type SandboxOptions struct {
 	// Terminator, when non-nil, is called by Runner.Terminate() instead of
@@ -258,6 +261,7 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	defer func() {
 		r.processMu.Lock()
 		r.activePipeline = nil
+		r.activePipelineStartedAt = time.Time{}
 		r.processMu.Unlock()
 	}()
 
