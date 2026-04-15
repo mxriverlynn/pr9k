@@ -1,8 +1,8 @@
 # Debugging a Run
 
-When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the three places ralph-tui leaves evidence, and how to use them together.
+When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places ralph-tui leaves evidence, and how to use them together.
 
-## The three sources of evidence
+## The four sources of evidence
 
 | Source | Location | What it tells you |
 |--------|----------|-------------------|
