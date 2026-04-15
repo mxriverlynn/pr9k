@@ -105,6 +105,7 @@ func (r *Renderer) renderRateLimit(e *RateLimitEvent) []string {
 	if e.RateLimitInfo.Status == "allowed" {
 		return nil
 	}
+	// ResetsAt is a Unix timestamp in seconds (verified against claude CLI output).
 	resetTime := time.Unix(e.RateLimitInfo.ResetsAt, 0).Local().Format("15:04:05")
 	line := fmt.Sprintf("⚠ rate limit %s: %s (resets %s)",
 		e.RateLimitInfo.RateLimitType,

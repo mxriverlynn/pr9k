@@ -23,6 +23,9 @@ type Pipeline struct {
 	// lastEventAt is updated atomically on every Observe call (even for
 	// malformed lines) so the heartbeat reader gets accurate silence duration.
 	lastEventAt atomic.Int64
+	// writeErr holds the first error returned by RawWriter.WriteLine. Subsequent
+	// write errors are discarded; callers check WriteErr() after the step ends.
+	writeErr error
 }
 
 // NewPipeline constructs a Pipeline that writes raw bytes to rawWriter.
@@ -47,7 +50,9 @@ func NewPipeline(rawWriter *RawWriter) *Pipeline {
 func (p *Pipeline) Observe(line []byte) []string {
 	// Step 1: verbatim write before any parsing.
 	if p.rawWriter != nil {
-		_ = p.rawWriter.WriteLine(line)
+		if err := p.rawWriter.WriteLine(line); err != nil && p.writeErr == nil {
+			p.writeErr = err
+		}
 	}
 
 	// Step 2: stamp activity time before dispatch (D23).
@@ -65,7 +70,9 @@ func (p *Pipeline) Observe(line []byte) []string {
 	// Step 5: sentinel after ResultEvent (D26).
 	if _, ok := ev.(*ResultEvent); ok {
 		if p.rawWriter != nil {
-			_ = p.rawWriter.WriteLine(sentinel)
+			if err := p.rawWriter.WriteLine(sentinel); err != nil && p.writeErr == nil {
+				p.writeErr = err
+			}
 		}
 	}
 
@@ -99,4 +106,11 @@ func (p *Pipeline) Close() error {
 		return nil
 	}
 	return p.rawWriter.Close()
+}
+
+// WriteErr returns the first error encountered while writing to the RawWriter,
+// or nil if all writes succeeded. Callers should check this after the step ends
+// to detect silent artifact corruption (e.g. disk-full mid-step).
+func (p *Pipeline) WriteErr() error {
+	return p.writeErr
 }

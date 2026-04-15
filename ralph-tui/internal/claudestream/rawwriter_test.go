@@ -123,11 +123,12 @@ func TestRawWriter_OpenCloseNoWrite(t *testing.T) {
 // TestRawWriter_InvalidPath verifies that NewRawWriter returns a wrapped error
 // containing the path when the directory does not exist (TP-W1).
 func TestRawWriter_InvalidPath(t *testing.T) {
-	_, err := claudestream.NewRawWriter("/nonexistent/dir/file.jsonl")
+	path := filepath.Join(t.TempDir(), "nonexistent", "file.jsonl")
+	_, err := claudestream.NewRawWriter(path)
 	if err == nil {
 		t.Fatal("expected error for path in nonexistent directory")
 	}
-	if !strings.Contains(err.Error(), "/nonexistent/dir/file.jsonl") {
+	if !strings.Contains(err.Error(), path) {
 		t.Errorf("error should contain the path, got: %v", err)
 	}
 }

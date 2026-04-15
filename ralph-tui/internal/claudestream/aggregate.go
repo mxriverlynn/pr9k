@@ -19,6 +19,7 @@ type Aggregator struct {
 }
 
 // Observe folds one parsed event into the aggregator's internal state.
+// nil events are silently ignored (fall through the type switch).
 func (a *Aggregator) Observe(ev Event) {
 	switch e := ev.(type) {
 	case *AssistantEvent:

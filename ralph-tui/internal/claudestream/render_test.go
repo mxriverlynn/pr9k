@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 )
@@ -233,11 +234,16 @@ func TestRenderer_ToolSummaryTruncation(t *testing.T) {
 	if len(lines) != 1 {
 		t.Fatalf("expected 1 line, got %d", len(lines))
 	}
-	// "→ Bash " prefix + 80 summary chars + "…"
+	// "→ Bash " prefix + 80 summary runes + "…"
 	indicator := lines[0]
 	// The summary portion (after "→ Bash ") should be truncated.
 	if !strings.HasSuffix(indicator, "…") {
 		t.Errorf("expected truncated summary ending in …, got %q", indicator)
+	}
+	summary := strings.TrimPrefix(indicator, "→ Bash ")
+	// 80 runes of content + 1 rune "…" = 81 total runes.
+	if got := utf8.RuneCountInString(summary); got != 81 {
+		t.Errorf("expected 81-rune summary (80 + …), got %d runes: %q", got, summary)
 	}
 }
 

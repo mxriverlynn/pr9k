@@ -7,7 +7,8 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 )
 
-func feed(a *claudestream.Aggregator, events ...claudestream.Event) {
+func feed(t *testing.T, a *claudestream.Aggregator, events ...claudestream.Event) {
+	t.Helper()
 	for _, ev := range events {
 		a.Observe(ev)
 	}
@@ -15,7 +16,7 @@ func feed(a *claudestream.Aggregator, events ...claudestream.Event) {
 
 func TestAggregator_SuccessPath(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a,
+	feed(t, a,
 		&claudestream.AssistantEvent{
 			Type: "assistant",
 			Message: claudestream.AssistantMsg{
@@ -74,7 +75,7 @@ func TestAggregator_SuccessPath(t *testing.T) {
 func TestAggregator_IsErrorTrue(t *testing.T) {
 	a := &claudestream.Aggregator{}
 	longResult := strings.Repeat("x", 300)
-	feed(a,
+	feed(t, a,
 		&claudestream.ResultEvent{
 			Type:       "result",
 			Subtype:    "success",
@@ -96,7 +97,7 @@ func TestAggregator_IsErrorTrue(t *testing.T) {
 	if !strings.Contains(msg, "ses-err") {
 		t.Errorf("error message should contain session id: %q", msg)
 	}
-	// Result is truncated to 200 chars in the message.
+	// Result is truncated to 200 runes in the message.
 	if strings.Contains(msg, longResult) {
 		t.Error("error message should NOT contain the full 300-char result")
 	}
@@ -109,7 +110,7 @@ func TestAggregator_IsErrorTrue(t *testing.T) {
 func TestAggregator_NoResultEvent(t *testing.T) {
 	a := &claudestream.Aggregator{}
 	// Feed only an assistant event — no result event.
-	feed(a, &claudestream.AssistantEvent{
+	feed(t, a, &claudestream.AssistantEvent{
 		Type: "assistant",
 		Message: claudestream.AssistantMsg{
 			Content: []claudestream.ContentBlock{{Type: "text", Text: "hi"}},
@@ -127,7 +128,7 @@ func TestAggregator_NoResultEvent(t *testing.T) {
 
 func TestAggregator_RateLimitRecorded(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a,
+	feed(t, a,
 		&claudestream.RateLimitEvent{
 			Type: "rate_limit_event",
 			RateLimitInfo: claudestream.RateLimitInfo{
@@ -151,7 +152,7 @@ func TestAggregator_RateLimitRecorded(t *testing.T) {
 
 func TestAggregator_RateLimitAllowedAlsoRecorded(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a,
+	feed(t, a,
 		&claudestream.RateLimitEvent{
 			Type:          "rate_limit_event",
 			RateLimitInfo: claudestream.RateLimitInfo{Status: "allowed"},
@@ -182,7 +183,7 @@ func TestAggregator_EmptyAggregate(t *testing.T) {
 // UserEvent are no-ops: no state change, no panic (TP-A1).
 func TestAggregator_ObserveIgnoresSystemAndUser(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a,
+	feed(t, a,
 		&claudestream.SystemEvent{Type: "system", Subtype: "init", SessionID: "s1"},
 		&claudestream.UserEvent{Type: "user"},
 	)
@@ -201,7 +202,7 @@ func TestAggregator_ObserveIgnoresSystemAndUser(t *testing.T) {
 // (TP-A2, D13).
 func TestAggregator_MultiAssistantThenResult(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a,
+	feed(t, a,
 		&claudestream.AssistantEvent{
 			Type:    "assistant",
 			Message: claudestream.AssistantMsg{Usage: claudestream.Usage{InputTokens: 10, OutputTokens: 5}},
@@ -247,7 +248,7 @@ func TestAggregator_MultiAssistantThenResult(t *testing.T) {
 // subtype and stop_reason in the error message (TP-A3, D15).
 func TestAggregator_ErrIncludesSubtypeAndStopReason(t *testing.T) {
 	a := &claudestream.Aggregator{}
-	feed(a, &claudestream.ResultEvent{
+	feed(t, a, &claudestream.ResultEvent{
 		Type:       "result",
 		IsError:    true,
 		Result:     "failed",
@@ -273,7 +274,7 @@ func TestAggregator_ErrIncludesSubtypeAndStopReason(t *testing.T) {
 func TestAggregator_ErrTruncationBoundary(t *testing.T) {
 	a := &claudestream.Aggregator{}
 	exactly200 := strings.Repeat("a", 200)
-	feed(a, &claudestream.ResultEvent{
+	feed(t, a, &claudestream.ResultEvent{
 		Type:      "result",
 		IsError:   true,
 		Result:    exactly200,

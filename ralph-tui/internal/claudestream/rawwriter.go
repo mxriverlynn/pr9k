@@ -19,6 +19,7 @@ import (
 type RawWriter struct {
 	f      *os.File
 	bw     *bufio.Writer
+	path   string
 	closed bool
 }
 
@@ -29,16 +30,16 @@ func NewRawWriter(path string) (*RawWriter, error) {
 	if err != nil {
 		return nil, fmt.Errorf("claudestream: open raw writer %s: %w", path, err)
 	}
-	return &RawWriter{f: f, bw: bufio.NewWriter(f)}, nil
+	return &RawWriter{f: f, bw: bufio.NewWriter(f), path: path}, nil
 }
 
 // WriteLine appends the verbatim bytes followed by a newline.
 func (w *RawWriter) WriteLine(b []byte) error {
 	if _, err := w.bw.Write(b); err != nil {
-		return fmt.Errorf("claudestream: raw writer write: %w", err)
+		return fmt.Errorf("claudestream: raw writer write %s: %w", w.path, err)
 	}
 	if err := w.bw.WriteByte('\n'); err != nil {
-		return fmt.Errorf("claudestream: raw writer newline: %w", err)
+		return fmt.Errorf("claudestream: raw writer newline %s: %w", w.path, err)
 	}
 	return nil
 }
@@ -52,10 +53,10 @@ func (w *RawWriter) Close() error {
 	w.closed = true
 	if err := w.bw.Flush(); err != nil {
 		_ = w.f.Close()
-		return fmt.Errorf("claudestream: raw writer flush: %w", err)
+		return fmt.Errorf("claudestream: raw writer flush %s: %w", w.path, err)
 	}
 	if err := w.f.Close(); err != nil {
-		return fmt.Errorf("claudestream: raw writer close: %w", err)
+		return fmt.Errorf("claudestream: raw writer close %s: %w", w.path, err)
 	}
 	return nil
 }

@@ -118,6 +118,8 @@ type RateLimitEvent struct {
 func (e *RateLimitEvent) eventType() string { return e.Type }
 
 // RateLimitInfo holds the payload inside a RateLimitEvent.
+// JSON field names are camelCase (matching the upstream claude CLI output),
+// unlike all other event types in this package which use snake_case.
 type RateLimitInfo struct {
 	Status                string `json:"status"`
 	ResetsAt              int64  `json:"resetsAt"`
