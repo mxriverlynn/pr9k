@@ -3889,8 +3889,8 @@ func TestRun_RunSummary_EmittedForClaudeSteps(t *testing.T) {
 	Run(exec, header, kh, cfg)
 
 	// Find the run summary line in logLines (it must start with "total claude spend").
-	var runSummaryIdx int = -1
-	var completionIdx int = -1
+	runSummaryIdx := -1
+	completionIdx := -1
 	for i, line := range exec.logLines {
 		if strings.HasPrefix(line, "total claude spend") {
 			runSummaryIdx = i

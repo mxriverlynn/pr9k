@@ -352,7 +352,7 @@ func parseFixture(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("open fixture %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	p := &claudestream.Parser{}
 	sc := bufio.NewScanner(f)

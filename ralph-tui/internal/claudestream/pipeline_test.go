@@ -237,10 +237,12 @@ func TestPipeline_CloseNilRawWriter(t *testing.T) {
 func TestPipeline_AccessorIdentity(t *testing.T) {
 	p := claudestream.NewPipeline(nil)
 
-	if p.Aggregator() != p.Aggregator() {
+	agg1, agg2 := p.Aggregator(), p.Aggregator()
+	if agg1 != agg2 {
 		t.Error("Aggregator() should return the same instance on every call")
 	}
-	if p.Renderer() != p.Renderer() {
+	rend1, rend2 := p.Renderer(), p.Renderer()
+	if rend1 != rend2 {
 		t.Error("Renderer() should return the same instance on every call")
 	}
 }
@@ -392,7 +394,7 @@ func readLines(t *testing.T, path string) []string {
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	sc := bufio.NewScanner(f)
