@@ -362,6 +362,58 @@ func TestSetContextSecondParameterIsUnused(t *testing.T) {
 	}
 }
 
+// TP-RS1: RunStamp() value matches the expected format pattern.
+func TestRunStampFormat(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	runStampRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+	if !runStampRe.MatchString(l.RunStamp()) {
+		t.Errorf("RunStamp() %q does not match expected pattern", l.RunStamp())
+	}
+}
+
+// TP-RS2: RunStamp() returns the same value on repeated calls (immutability contract).
+func TestRunStampStable(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+
+	first := l.RunStamp()
+	second := l.RunStamp()
+	if first != second {
+		t.Errorf("RunStamp() not stable: first=%q, second=%q", first, second)
+	}
+}
+
+// TP-RS3: RunStamp() is readable after Close (used by main.go during shutdown).
+func TestRunStampReadableAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	stamp := l.RunStamp()
+	if stamp == "" {
+		t.Fatal("RunStamp() returned empty string after Close")
+	}
+	runStampRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+	if !runStampRe.MatchString(stamp) {
+		t.Errorf("RunStamp() after Close %q does not match expected pattern", stamp)
+	}
+}
+
 // readLogLines reads all non-empty lines from the single log file in dir/logs/.
 func readLogLines(t *testing.T, dir string) []string {
 	t.Helper()
