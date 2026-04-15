@@ -69,6 +69,8 @@ Constructs the complete `docker run ...` argv. The returned slice begins with `"
 - **`CLAUDE_CONFIG_DIR`** — always set to `ContainerProfilePath`; callers must not include it in `envAllowlist`.
 - **Env passthrough** — each name in `envAllowlist` is deduplicated (first-seen order), then emitted as `-e NAME` only if `os.LookupEnv(name)` returns `ok=true`. Unset host vars are silently skipped. Names are passed as bare `-e NAME` (not `-e NAME=value`) so the secret never appears in the docker CLI invocation.
 - **`--permission-mode bypassPermissions`** — required for the unattended loop.
+- **`--output-format stream-json`** — instructs claude to emit NDJSON on stdout so the `claudestream` pipeline can parse typed events.
+- **`--verbose`** — includes all event types in the stream (assistant turns, tool calls, result); without this flag many event types are suppressed.
 
 ## Cidfile lifecycle
 

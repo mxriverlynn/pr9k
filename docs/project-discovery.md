@@ -58,7 +58,7 @@
 - Vulnerability check: `make vulncheck` (requires govulncheck)
 - CI (all checks): `make ci`
 - Test file pattern: `*_test.go` (co-located with source)
-- Test directories: `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`, `internal/sandbox/`, `internal/preflight/`, `cmd/ralph-tui/`
+- Test directories: `internal/claudestream/`, `internal/cli/`, `internal/ui/`, `internal/steps/`, `internal/logger/`, `internal/workflow/`, `internal/vars/`, `internal/validator/`, `internal/sandbox/`, `internal/preflight/`, `cmd/ralph-tui/`
 
 ### Configuration
 
