@@ -1,6 +1,6 @@
 # Streaming JSON Output from Claude — Design Plan
 
-**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review)
+**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review + smoke validation 2026-04-15)
 **Author:** River + Claude
 **Date:** 2026-04-14 (updated 2026-04-15)
 
@@ -52,6 +52,21 @@ May also be emitted later with `subtype: "api_retry"` (documented in `headless`)
   "error_status": 429, "error": "rate_limit", "uuid": "...", "session_id": "..." }
 ```
 
+### `rate_limit_event`
+
+Emitted once per claude invocation (observed 3/3 in smoke tests), between `system` init and the first `assistant` turn. Shape:
+```json
+{ "type": "rate_limit_event",
+  "rate_limit_info": { "status": "allowed",
+                       "resetsAt": 1776272400,
+                       "rateLimitType": "five_hour",
+                       "overageStatus": "rejected",
+                       "overageDisabledReason": "out_of_credits",
+                       "isUsingOverage": false },
+  "uuid": "...", "session_id": "..." }
+```
+See D28 for rendering behavior.
+
 ### `assistant`
 
 One per assistant turn. Contains an array of content blocks (text, thinking, tool_use):
@@ -63,6 +78,8 @@ One per assistant turn. Contains an array of content blocks (text, thinking, too
   ], "usage": { "input_tokens": 1234, "output_tokens": 56,
                  "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0 } } }
 ```
+
+On some failure paths (e.g., auth failure) the event also carries a top-level `error` field (e.g., `"error": "authentication_failed"`) and a synthetic `model: "<synthetic>"`. Not rendered; ignored under D8 — the authoritative failure signal is the subsequent `result` event's `is_error` (D15).
 
 ### `user`
 
@@ -151,6 +168,7 @@ Emitted last. The authoritative final answer:
 | D18 | Rollout strategy | Hard switch in one PR; no fallback; patch version bump |
 | D19 | Multi-block formatting | Inline with natural newline splits; blank line between assistant turns |
 | D27 | `[stderr] ` prefix | Applied only to claude-step stderr; non-claude steps unaffected |
+| D28 | `rate_limit_event` rendering | Parsed as known type; silent on `status == "allowed"`, visible warning otherwise |
 
 ### D11. TUI shows assistant text + one-line tool-use indicators (Option C)
 - **Why:** Preserves "feels alive" UX. Tool-result content is excluded to avoid flooding the 500-line viewport.
@@ -207,7 +225,8 @@ Emitted last. The authoritative final answer:
 
 ### D15. `result.is_error == true` is treated as step failure
 - **Behavior:** When a claude step's `result` message has `is_error: true`, the `RunSandboxedStep` call returns a non-nil error (synthesized by the `Aggregator`) even if the docker subprocess exited 0. This triggers the existing error-mode interactive recovery (`c`/`r`/`q`) per `docs/features/keyboard-input.md`.
-- **Error message:** Includes `subtype` and `stop_reason` from the result message (e.g., `claude step ended with is_error=true: subtype=error_max_turns, stop_reason=max_turns`).
+- **Authoritative signal:** `is_error` alone. The `subtype` field is **not** a reliable error category — smoke testing confirms that on auth failure, `subtype` is literally `"success"` while `is_error` is `true` (see `fixtures/smoke-auth-failure.ndjson`). `subtype` describes how the turn *concluded*, not whether the workflow *succeeded*.
+- **Error message:** Includes a truncated form of `result.result` (which carries the human-readable failure text — e.g., `"Failed to authenticate. API Error: 401 ..."`) plus `session_id` for log correlation. Example format: `claude step ended with is_error=true: <first-200-chars-of-result.result> (session=<id>)`. `subtype` and `stop_reason` are included as trailing context but not parsed as categories.
 - **Edge case — no `result` message ever arrives** (claude crashed before emitting one): treated as failure too. The `Aggregator` returns an error if it never observed a `result` event and the subprocess exited 0.
 - **Edge case — user-initiated terminate (`s`-skip):** If `Runner.Terminate()` was called, `runStepWithErrorHandling` checks `WasTerminated()` before consulting the error and treats the step as done-skip (see `internal/ui/orchestrate.go:64`). The `Aggregator.Err()` check must **not** short-circuit that: the wrapper should still return the aggregator error so that the caller can distinguish, but `WasTerminated()` takes precedence in `runStepWithErrorHandling`. This matches existing behavior for subprocess `err != nil && WasTerminated()`.
 - **Edge case — retry after is_error:** On retry, a fresh `Aggregator` and `RawWriter` are constructed for the new `RunSandboxedStep` invocation. The prior attempt's `StepStats` **are** folded into `RunStats` per D21 — failed attempts consumed real tokens and the cumulative total must reflect that so the summary reconciles against the Anthropic invoice.
@@ -283,12 +302,22 @@ Emitted last. The authoritative final answer:
 - **Relation to D9:** D9 preserves the file-logging **wrapper** format (`[timestamp] [iter] [step] line`). D27 introduces a content-level prefix inside the `line` portion, which is not what D9 protects. No contradiction.
 - **Reversible:** One string literal in the stderr forwarder.
 
+### D28. `rate_limit_event` is a known event type; rendered only when not "allowed"
+- **Why it matters:** Smoke testing (2026-04-15, 3/3 replications — see `fixtures/smoke-success.ndjson`) confirmed claude emits a `rate_limit_event` once per invocation, between `system` init and the first `assistant` turn. Under the plan's original taxonomy (system/assistant/user/result), this would fall through to `MalformedLineError` and D7 would log `[malformed-json] ...` on **every** claude step — persistent log noise for a known, stable event.
+- **Parser:** Treat as a fifth known event type. Add a `RateLimitEvent` struct to `event.go` with the observed fields (`rate_limit_info.{status,resetsAt,rateLimitType,overageStatus,overageDisabledReason,isUsingOverage}`). Unknown sibling fields tolerated per D8.
+- **Renderer:**
+  - `status == "allowed"`: emit nothing. The event is informational and the log body shouldn't carry a per-step line that reads the same 99% of the time.
+  - `status != "allowed"` (e.g., `"warning"`, `"rejected"`, or any future non-allowed value): emit a single warning line `⚠ rate limit <rateLimitType>: <status> (resets <local-time>)` — same rendering path and visual weight as D11's `system.api_retry` warning.
+- **Aggregator:** Store the last observed `RateLimitInfo` snapshot in `StepStats` for potential future use (e.g., a run-summary augmentation noting "N steps ran with status != allowed"). Not surfaced in the current summary line (D13) to keep scope tight.
+- **Why Option B over silent/always-render:** (a) Silent hides a real-world "about to be throttled" signal — exactly what the TUI is for. (b) Always-render pollutes every step with one line the reader skips, burning D22 ring-buffer budget. (c) Option B mirrors `api_retry` (D11), so users get one mental model for warning chrome.
+- **Reversible:** Pure-function Renderer rule; flipping to silent or always-render is a one-line change.
+
 ## Implementation sketch
 
 ### New code
 
 1. **`ralph-tui/internal/claudestream/`** (new package, all logic for stream-json handling)
-   - `event.go` — Typed event structs: `SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`. Each is a Go struct with `json:"..."` tags ignoring unknown fields. A `ContentBlock` discriminated union with `text`, `tool_use`, `thinking`, `tool_result` shapes.
+   - `event.go` — Typed event structs: `SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`, `RateLimitEvent` (D28). Each is a Go struct with `json:"..."` tags ignoring unknown fields. A `ContentBlock` discriminated union with `text`, `tool_use`, `thinking`, `tool_result` shapes.
    - `parser.go` — `Parser.Parse(line []byte) (Event, error)`. Returns one of the typed events. Malformed lines surface a `MalformedLineError` carrying the raw bytes; callers (the wiring in step 3) log and continue per D7.
    - `render.go` — `Renderer.Render(ev Event) []string`. Pure function: given an event, returns zero or more display lines per D11/D12/D19. Holds the per-tool summary table from D12. Handles the inter-turn blank line by tracking whether it's seen a prior `assistant` event.
    - `aggregate.go` — `Aggregator` accumulates state across a single step: final `result.result` text, total usage struct, total cost, num_turns, duration_ms, observed `is_error`, observed `subtype`, observed `session_id`. Exposes `Result() string` (for D6 captureAs), `Stats() StepStats` (for D13), `Err() error` (for D15: returns non-nil if `is_error` true or no `result` ever observed), and a sentinel for D15's "result never arrived" case.
@@ -368,9 +397,9 @@ Emitted last. The authoritative final answer:
 
 ### Test plan
 
-- **`parser_test.go`** — Golden inputs covering: `system` init, `system` api_retry, `assistant` with each content-block type, `user` tool_result, `result` success, `result` is_error. Plus malformed-line cases (truncated JSON, unknown `type`, empty line) verifying `MalformedLineError`.
-- **`render_test.go`** — Pure-function tests: each event type produces the expected display lines per D11/D12/D19. Parameterized table for the per-tool summary fallback (D12). Snapshot test for a multi-turn assistant message verifying the inter-turn blank line.
-- **`aggregate_test.go`** — Sequence-driven tests: feed an event stream, assert `Result()`, `Stats()`, `Err()`. Specific cases: `is_error: true` → `Err()` returns; no `result` event → `Err()` returns the missing-result sentinel; success path → `Err()` returns nil and `Result()` returns the `.result` field.
+- **`parser_test.go`** — Golden inputs covering: `system` init, `system` api_retry, `rate_limit_event` (D28), `assistant` with each content-block type (plus the assistant-level `error` field from an auth-failure fixture), `user` tool_result, `result` success, `result` is_error. Plus malformed-line cases (truncated JSON, unknown `type`, empty line) verifying `MalformedLineError`. Fixtures: `docs/plans/streaming-json-output/fixtures/smoke-{success,auth-failure}.ndjson` are committed real-claude outputs and should be parsed without error.
+- **`render_test.go`** — Pure-function tests: each event type produces the expected display lines per D11/D12/D19/D28. Parameterized table for the per-tool summary fallback (D12). Snapshot test for a multi-turn assistant message verifying the inter-turn blank line. Explicit cases for D28: `rate_limit_event` with `status == "allowed"` renders zero lines; with `status != "allowed"` renders exactly one `⚠ rate limit ...` warning line.
+- **`aggregate_test.go`** — Sequence-driven tests: feed an event stream, assert `Result()`, `Stats()`, `Err()`. Specific cases: `is_error: true` → `Err()` returns and the error message includes a truncated `result.result` and `session_id` per D15; no `result` event → `Err()` returns the missing-result sentinel; success path → `Err()` returns nil and `Result()` returns the `.result` field; `rate_limit_event` with `status != "allowed"` is recorded in `StepStats.LastRateLimitInfo`.
 - **`rawwriter_test.go`** — Verifies file is written verbatim (including malformed lines), file is opened with `O_TRUNC` on each open (retry overwrite), and is properly closed on the SIGTERM/cancellation path and on the `cmd.Start()` failure path (before any line is received).
 - **`slug_test.go`** — Kebab-case conversion for representative step names (`Feature work`, `Fix review items`, `Close issue`, names with punctuation). Path-shape test for the `initialize-/iterNN-/finalize-` prefix assembler.
 - **End-to-end** in `internal/workflow/`: a fake-claude harness (script that writes a canned NDJSON sequence to stdout and exits) drives `RunSandboxedStep` and asserts:
@@ -404,7 +433,7 @@ Emitted last. The authoritative final answer:
 
 ## Open questions (not blocking implementation; re-review during PR)
 
-- **O-1. Does `--permission-mode bypassPermissions` coexist cleanly with `--output-format stream-json --verbose`?** Evidence: both flags are documented in claude CLI's `cli-reference` as independent flags. No documented interaction. Plan assumes independence. If `bypassPermissions` suppresses some `system` init field (e.g., tool list), the parser already ignores unknown-typed lines (D7/D8). **Resolution (closed pre-implementation):** during development, run a manual smoke test inside the sandbox container (`docker run ... claude --permission-mode bypassPermissions --model <m> -p "say hello" --output-format stream-json --verbose`). Capture the NDJSON output and commit it as a golden fixture consumed by `parser_test.go`. This validates the flag interaction and replaces hand-written parser fixtures with real claude output, so future schema drift is caught by the same fixture when it is refreshed.
+- **O-1. (Closed — validated 2026-04-15.)** Smoke-tested the full flag combo (`docker run ... claude --permission-mode bypassPermissions --model sonnet -p "..." --output-format stream-json --verbose`) against the real sandbox image and a live subscription profile. Three consecutive happy-path runs and one auth-failure run, fixtures committed at `docs/plans/streaming-json-output/fixtures/smoke-{success,auth-failure}.ndjson`. Outcome: flag combo is accepted (exit 0 on success, exit 1 with `result.is_error: true` on failure), NDJSON event stream matches the documented taxonomy, and **one new event type** (`rate_limit_event`) was discovered — now handled via D28. Several undocumented extra fields on existing event types (`modelUsage`, `permission_denials`, `terminal_reason`, `parent_tool_use_id`, assistant-level `error`, nested `usage.*` fields) are absorbed at zero cost by D8's unknown-field tolerance. D15 messaging corrected: `subtype` is not a reliable error category (on auth failure it is literally `"success"` while `is_error: true`); `result.result` carries the human-readable failure text and is now included in the synthesized error message.
 - **O-2. (Closed.)** Resolved by the D21 rewrite: every `RunSandboxedStep` return folds its `StepStats` into `RunStats` so the cumulative total matches real Anthropic spend. The finalize summary line labels the total with invocation and retry counts.
 - **O-3. (Closed.)** Non-issue. `LoadSteps` is called exactly once at startup (`ralph-tui/cmd/ralph-tui/main.go:46`); the resulting step slice is the authoritative source of names, slugs, and indices for the run's entire duration. Mid-run edits to `ralph-steps.json` are not observed. Cross-run collisions are prevented by D24's millisecond `RunStamp`. Within-run collisions are prevented by the `<phase-prefix><NN>-<slug>.jsonl` shape — `NN` is the position within the phase, so even duplicate step names produce distinct filenames.
 - **O-4. Per-step tolerance for `error_max_turns`.** D15 treats all `is_error: true` as failure. In practice, `error_max_turns` may carry a usable partial answer in `result.result` that some workflows would prefer to accept. **Deferred indefinitely.** Trigger to revisit: recurring `error_max_turns` on any claude step in the default or a user workflow (today no step even passes `--max-turns`, and claude's default ceiling is high). Implementation cost, when the time comes, is two changes — not one: (a) a `tolerateMaxTurns: true` per-step schema field in `ralph-steps.json`, and (b) aggregator logic so that when tolerated, `is_error` does **not** raise `Aggregator.Err()` and `result.result` is still bound via `captureAs`. The `c` continue-past-failure path (D21) does **not** cover this today because D15 returns before the capture is bound, so a downstream step after `c` would see an empty `{{CAPTURE}}`, not the partial answer.
@@ -478,6 +507,19 @@ Re-read against the current state of the codebase (`workflow.go`, `run.go`, `orc
 | F7 | D20's `[stderr] ` prefix is a user-visible content change applied only to claude-step stderr. The plan did not have a top-level decision documenting this asymmetry, which made D9 ("file-logging format unchanged") confusable with "no content changes anywhere." | Re-read of D9 + D20 | Accepted | **New D27 added**: explicitly scopes the `[stderr] ` prefix to claude steps, distinguishes content-prefix from wrapper-format, and confirms no contradiction with D9 |
 | F8 | `ResolvedStep` living in the `ui` package while `CaptureMode` is a workflow-layer concept may introduce a `ui → workflow` import cycle during implementation. | Re-read of `internal/ui/orchestrate.go:17-26` | Acknowledged — resolved by fallback in Step 5 | **Step 5 text includes fallback:** if the cycle materializes, define `CaptureMode` in the `ui` package and have `workflow` alias it. No new decision needed; this is an implementation-time choice |
 | F9 | Plan's "Non-claude steps and claude-less sandbox callers like `sandbox create` smoke test never construct the pipeline" was correct but the mechanism was implicit. Making it explicit — "`CaptureMode == CaptureResult` is the single gate" — reduces ambiguity for the implementer. | Re-read of Step 4 | Accepted | **Step 4 rewritten**: the single gate is named explicitly and the `sandbox create` smoke test is called out as passing through the nil-pipeline branch |
+
+### Iteration 6 — smoke validation (2026-04-15)
+
+Ran the O-1 smoke test against the real sandbox image + live subscription profile to validate the flag combo before implementation begins. Fixtures committed at `docs/plans/streaming-json-output/fixtures/`.
+
+| ID | Finding | Disposition | Plan change |
+|---|---|---|---|
+| S1 | Flag combo accepted by CLI; NDJSON emitted; exit codes match is_error semantics (exit 0 on success, exit 1 on auth failure) | Confirmed as-planned | O-1 closed |
+| S2 | Fifth event type `rate_limit_event` emitted on every invocation (3/3 replications); would trigger `MalformedLineError` per step under the original taxonomy | New — requires plan change | **New D28 added**: parsed as known type; silent on `status == "allowed"`, visible warning otherwise. Mirrors api_retry (D11). Parser/Renderer/Aggregator test-plan entries added |
+| S3 | Many undocumented extra fields on known types: `modelUsage`, `permission_denials`, `terminal_reason`, `fast_mode_state`, `parent_tool_use_id`, assistant-level `error`, nested `usage.server_tool_use/service_tier/cache_creation/inference_geo/iterations/speed` | Absorbed by D8 | Schema reference annotated; no behavior change |
+| S4 | D15's example error message wrongly implied `subtype` carries the error category. On auth failure, `subtype == "success"` despite `is_error == true`; `result.result` is the real human-readable text | Correction | **D15 rewritten**: authoritative signal is `is_error` alone; error message includes truncated `result.result` and `session_id` |
+| S5 | Assistant event on failure carries top-level `error: "authentication_failed"` and `model: "<synthetic>"` | Absorbed by D8 | Schema reference annotated with the failure-shape note |
+| S6 | Stdin handling — claude waits 3s and emits a stderr warning when stdin is not redirected; ralph-tui already passes `bytes.NewReader(nil)` at `workflow.go:195`, so the stall doesn't hit the runtime | Verified safe | No change |
 
 ## Out of scope
 
