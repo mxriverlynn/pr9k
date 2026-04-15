@@ -136,8 +136,12 @@ func main() {
 		}
 	}
 
+	// Wire the D23 heartbeat reader into the StatusHeader so HeartbeatTickMsg
+	// can query silence duration from the active claude pipeline.
+	header.SetHeartbeatReader(runner)
+
 	versionLabel := "ralph-tui v" + version.Version
-	model := ui.NewModel(header, keyHandler, versionLabel).WithHeartbeat(runner)
+	model := ui.NewModel(header, keyHandler, versionLabel)
 
 	program := tea.NewProgram(model,
 		tea.WithMouseCellMotion(),
@@ -146,6 +150,17 @@ func main() {
 	)
 
 	proxy := ui.NewHeaderProxy(program.Send)
+
+	// D23 heartbeat ticker: sends HeartbeatTickMsg once per second so the TUI
+	// can render the "  ⋯ thinking (Ns)" suffix during silent claude turns.
+	// The goroutine terminates with the process — no explicit shutdown needed.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for range t.C {
+			program.Send(ui.HeartbeatTickMsg{})
+		}
+	}()
 
 	// logWidth sizes the full-width phase banner underline to fill the log
 	// panel. The panel sits inside a rounded border, so we subtract 2

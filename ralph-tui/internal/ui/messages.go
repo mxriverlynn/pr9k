@@ -23,8 +23,9 @@ type HeartbeatReader interface {
 	HeartbeatSilence() (time.Duration, bool)
 }
 
-// HeartbeatTickMsg is emitted by the 1-second ticker started in Model.Init
-// to drive the D23 heartbeat indicator update in Model.Update.
+// HeartbeatTickMsg is dispatched once per second by the explicit ticker
+// goroutine in main.go to drive the D23 heartbeat indicator update in
+// Model.Update → StatusHeader.HandleHeartbeatTick.
 type HeartbeatTickMsg time.Time
 
 // headerStepStateMsg updates the checkbox state for step idx.

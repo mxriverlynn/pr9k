@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 )
 
 // --- NewStatusHeader row-count computation ---
@@ -413,5 +414,88 @@ func TestSetStepState_UnknownStateFallsToDefault(t *testing.T) {
 	h.SetStepState(0, StepState(99))
 	if h.Rows[0][0] != "[ ] Alpha" {
 		t.Errorf("Rows[0][0] = %q, want %q", h.Rows[0][0], "[ ] Alpha")
+	}
+}
+
+// --- D23: StatusHeader heartbeat indicator ---
+
+// stubHeaderHeartbeat is a test double for heartbeatReader used in header tests.
+type stubHeaderHeartbeat struct {
+	silentFor time.Duration
+	active    bool
+	calls     int
+}
+
+func (s *stubHeaderHeartbeat) HeartbeatSilence() (time.Duration, bool) {
+	s.calls++
+	return s.silentFor, s.active
+}
+
+// TestStatusHeader_HandleHeartbeatTick_NilReader verifies that HandleHeartbeatTick
+// with no reader installed is a no-op that clears any stale suffix.
+func TestStatusHeader_HandleHeartbeatTick_NilReader(t *testing.T) {
+	h := NewStatusHeader(4)
+	h.heartbeatSuffix = "  ⋯ thinking (20s)" // stale value
+	h.HandleHeartbeatTick()
+	if h.heartbeatSuffix != "" {
+		t.Errorf("expected empty suffix with nil reader, got %q", h.heartbeatSuffix)
+	}
+}
+
+// TestStatusHeader_HandleHeartbeatTick_ShowsSuffix verifies that when the
+// reader reports active=true and silentFor >= 15s, the suffix is set.
+func TestStatusHeader_HandleHeartbeatTick_ShowsSuffix(t *testing.T) {
+	h := NewStatusHeader(4)
+	stub := &stubHeaderHeartbeat{silentFor: 20 * time.Second, active: true}
+	h.SetHeartbeatReader(stub)
+
+	h.HandleHeartbeatTick()
+
+	want := "  ⋯ thinking (20s)"
+	if h.heartbeatSuffix != want {
+		t.Errorf("heartbeatSuffix = %q, want %q", h.heartbeatSuffix, want)
+	}
+}
+
+// TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold verifies that
+// when silentFor < 15s, no suffix is set even when active.
+func TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold(t *testing.T) {
+	h := NewStatusHeader(4)
+	stub := &stubHeaderHeartbeat{silentFor: 5 * time.Second, active: true}
+	h.SetHeartbeatReader(stub)
+
+	h.HandleHeartbeatTick()
+
+	if h.heartbeatSuffix != "" {
+		t.Errorf("expected empty suffix below threshold, got %q", h.heartbeatSuffix)
+	}
+}
+
+// TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive verifies that
+// when active=false, the suffix is cleared regardless of silentFor.
+func TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive(t *testing.T) {
+	h := NewStatusHeader(4)
+	stub := &stubHeaderHeartbeat{silentFor: 30 * time.Second, active: false}
+	h.SetHeartbeatReader(stub)
+	h.heartbeatSuffix = "  ⋯ thinking (30s)" // pre-existing
+
+	h.HandleHeartbeatTick()
+
+	if h.heartbeatSuffix != "" {
+		t.Errorf("expected suffix cleared when inactive, got %q", h.heartbeatSuffix)
+	}
+}
+
+// TestStatusHeader_HandleHeartbeatTick_CallsReader verifies that
+// HandleHeartbeatTick calls HeartbeatSilence() exactly once.
+func TestStatusHeader_HandleHeartbeatTick_CallsReader(t *testing.T) {
+	h := NewStatusHeader(4)
+	stub := &stubHeaderHeartbeat{active: false}
+	h.SetHeartbeatReader(stub)
+
+	h.HandleHeartbeatTick()
+
+	if stub.calls != 1 {
+		t.Errorf("expected HeartbeatSilence called once, got %d", stub.calls)
 	}
 }

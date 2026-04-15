@@ -910,24 +910,6 @@ func (s *stubHeartbeat) HeartbeatSilence() (time.Duration, bool) {
 	return s.silentFor, s.active
 }
 
-// TestModel_Init_NoCmd_WithoutHeartbeat verifies Init() returns nil when no
-// HeartbeatReader is set (existing tests must not accidentally start a ticker).
-func TestModel_Init_NoCmd_WithoutHeartbeat(t *testing.T) {
-	m := newTestModel(t)
-	if m.Init() != nil {
-		t.Error("expected Init() to return nil when no heartbeat reader is set")
-	}
-}
-
-// TestModel_Init_ReturnsCmd_WithHeartbeat verifies Init() returns a non-nil
-// command when a HeartbeatReader is installed via WithHeartbeat.
-func TestModel_Init_ReturnsCmd_WithHeartbeat(t *testing.T) {
-	m := newTestModel(t).WithHeartbeat(&stubHeartbeat{})
-	if m.Init() == nil {
-		t.Error("expected Init() to return a cmd when heartbeat reader is set")
-	}
-}
-
 // TestModel_HeartbeatTick_ShowsSuffix_WhenSilentFor15s verifies that when the
 // heartbeat reader reports active=true and silentFor >= 15s, the heartbeat
 // suffix is appended to the title string.
@@ -998,18 +980,6 @@ func TestModel_HeartbeatTick_ClearsSuffix_WhenTransitionsToInactive(t *testing.T
 	m = next.(Model)
 	if strings.Contains(m.titleString(), "⋯") {
 		t.Errorf("expected suffix cleared after inactive tick, got %q", m.titleString())
-	}
-}
-
-// TestModel_HeartbeatTick_ReturnsTickCmd verifies that processing a
-// HeartbeatTickMsg returns a non-nil command (to reschedule the ticker).
-func TestModel_HeartbeatTick_ReturnsTickCmd(t *testing.T) {
-	stub := &stubHeartbeat{active: false}
-	m := newTestModel(t).WithHeartbeat(stub)
-
-	_, cmd := m.Update(HeartbeatTickMsg(time.Now()))
-	if cmd == nil {
-		t.Error("expected non-nil cmd (tick rescheduling) from HeartbeatTickMsg")
 	}
 }
 
