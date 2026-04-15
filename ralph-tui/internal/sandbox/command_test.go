@@ -55,15 +55,13 @@ func TestBuildRunArgs_GoldenArgv(t *testing.T) {
 	assertContainsConsecutive(t, args, "-e", "CLAUDE_CONFIG_DIR="+ContainerProfilePath)
 	assertContainsFlag(t, args, ImageTag)
 
-	// Prompt is the last element.
-	if args[len(args)-1] != prompt {
-		t.Errorf("expected prompt %q as last arg, got %q", prompt, args[len(args)-1])
-	}
-
 	// claude flags are present.
 	assertContainsConsecutive(t, args, "--model", testModel)
 	assertContainsFlag(t, args, "--permission-mode")
 	assertContainsConsecutive(t, args, "--permission-mode", "bypassPermissions")
+	assertContainsConsecutive(t, args, "-p", prompt)
+	assertContainsConsecutive(t, args, "--output-format", "stream-json")
+	assertContainsFlag(t, args, "--verbose")
 }
 
 func TestBuildRunArgs_AllBuiltinEnvVarsSet(t *testing.T) {
@@ -157,9 +155,7 @@ func TestBuildRunArgs_PromptWithMetacharacters(t *testing.T) {
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
 		nil, testModel, prompt)
 
-	if args[len(args)-1] != prompt {
-		t.Errorf("expected prompt to be last arg verbatim, got %q", args[len(args)-1])
-	}
+	assertContainsConsecutive(t, args, "-p", prompt)
 }
 
 func TestBuildRunArgs_WorkdirPresent(t *testing.T) {

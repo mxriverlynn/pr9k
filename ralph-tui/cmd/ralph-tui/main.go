@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -71,6 +72,14 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 
 	log, err := logger.NewLogger(projectDir)
 	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
+		return nil, false
+	}
+
+	// Create the per-run artifact directory eagerly so per-step file opens
+	// cannot race on directory creation (D14, Step 6).
+	artifactDir := filepath.Join(projectDir, "logs", log.RunStamp())
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
 		return nil, false
 	}
@@ -154,6 +163,7 @@ func main() {
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,
 		LogWidth:        logWidth,
+		RunStamp:        log.RunStamp(),
 	}
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are

@@ -56,6 +56,8 @@ func BuildRunArgs(
 		"--permission-mode", "bypassPermissions",
 		"--model", model,
 		"-p", prompt,
+		"--output-format", "stream-json",
+		"--verbose",
 	)
 
 	return args

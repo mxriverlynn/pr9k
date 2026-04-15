@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -17,8 +18,32 @@ import (
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
+	LastStats() claudestream.StepStats
 	ProjectDir() string
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+}
+
+// RunStats accumulates StepStats across all claude step invocations in a run
+// (D21). It lives in Run's stack frame and is never accessed from another
+// goroutine (D25 — no mutex required).
+type runStats struct {
+	invocations int
+	retries     int
+	total       claudestream.StepStats
+}
+
+func (rs *runStats) add(s claudestream.StepStats, isRetry bool) {
+	rs.invocations++
+	if isRetry {
+		rs.retries++
+	}
+	rs.total.InputTokens += s.InputTokens
+	rs.total.OutputTokens += s.OutputTokens
+	rs.total.CacheCreationTokens += s.CacheCreationTokens
+	rs.total.CacheReadTokens += s.CacheReadTokens
+	rs.total.NumTurns += s.NumTurns
+	rs.total.TotalCostUSD += s.TotalCostUSD
+	rs.total.DurationMS += s.DurationMS
 }
 
 // stepDispatcher wraps StepExecutor and implements ui.StepRunner so that
@@ -27,16 +52,33 @@ type StepExecutor interface {
 // RunSandboxedStep instead. Non-claude steps pass through to RunStep unchanged.
 //
 // A new stepDispatcher is created for each step so that current always reflects
-// the step that is about to be executed.
+// the step that is about to be executed. stats holds a pointer to Run's local
+// runStats so every invocation (including retry-loop intermediates) is folded in
+// immediately after RunSandboxedStep returns (D21).
 type stepDispatcher struct {
 	exec    StepExecutor
 	current ui.ResolvedStep
+	stats   *runStats
+	// prevFailed tracks whether the last RunSandboxedStep call ended in error
+	// so we know whether the next call is a retry (for runStats.retries).
+	prevFailed bool
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
 	if d.current.IsClaude {
-		return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+		err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
+			CidfilePath:  d.current.CidfilePath,
+			ArtifactPath: d.current.ArtifactPath,
+			CaptureMode:  d.current.CaptureMode,
+		})
+		// Fold stats regardless of outcome — D21: the spend was real.
+		if d.stats != nil {
+			d.stats.add(d.exec.LastStats(), d.prevFailed)
+		}
+		d.prevFailed = err != nil
+		return err
 	}
+	d.prevFailed = false
 	return d.exec.RunStep(name, command)
 }
 
@@ -69,6 +111,11 @@ type RunConfig struct {
 	// ui.DefaultTerminalWidth. Callers should pass the log panel's visible
 	// width so banners fill the panel without wrapping.
 	LogWidth int
+	// RunStamp is the per-run identifier used to name the artifact directory
+	// (e.g. "ralph-2026-04-14-173022.123"). Populated from Logger.RunStamp() in
+	// main.go. When empty, JSONL artifact paths are not populated for claude
+	// steps (persistence is skipped).
+	RunStamp string
 }
 
 // noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
@@ -104,6 +151,10 @@ type RunResult struct {
 // — initialize, iteration loop, finalize — via VarTable-based substitution.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
+
+	// rs accumulates StepStats across all claude step invocations in the run
+	// (D21, D25). Owned exclusively by this goroutine — no mutex required.
+	rs := &runStats{}
 
 	logWidth := cfg.LogWidth
 	if logWidth <= 0 {
@@ -142,6 +193,17 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		executor.WriteToLog(ui.CaptureLog(varName, value))
 	}
 
+	// artifactPath builds the per-step .jsonl artifact path for claude steps
+	// (D14). Returns "" when cfg.RunStamp is empty (persistence disabled) or
+	// when the step is not a claude step.
+	artifactPath := func(resolved *ui.ResolvedStep, phasePrefix string, stepIdx int) string {
+		if !resolved.IsClaude || cfg.RunStamp == "" {
+			return ""
+		}
+		filename := fmt.Sprintf("%s%02d-%s.jsonl", phasePrefix, stepIdx, claudestream.Slug(resolved.Name))
+		return filepath.Join(executor.ProjectDir(), "logs", cfg.RunStamp, filename)
+	}
+
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)
@@ -155,9 +217,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
 			continue
 		}
+		if resolved.IsClaude {
+			resolved.ArtifactPath = artifactPath(&resolved, "initialize-", j+1)
+			resolved.CaptureMode = ui.CaptureResult
+		}
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
 		if action == ui.ActionQuit {
 			return RunResult{}
 		}
@@ -197,9 +263,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				breakOuter = true
 				break
 			}
+			if resolved.IsClaude {
+				resolved.ArtifactPath = artifactPath(&resolved, fmt.Sprintf("iter%02d-", i), j+1)
+				resolved.CaptureMode = ui.CaptureResult
+			}
 			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
-			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
 			if action == ui.ActionQuit {
 				return RunResult{IterationsRun: iterationsRun}
 			}
@@ -244,9 +314,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
 		}
+		if resolved.IsClaude {
+			resolved.ArtifactPath = artifactPath(&resolved, "finalize-", j+1)
+			resolved.CaptureMode = ui.CaptureResult
+		}
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
 		}

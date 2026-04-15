@@ -59,12 +59,11 @@ The optional top-level `env` array lists host environment variable names that ra
 
 Duplicates within the `env` array and overlap with built-in variable names are harmless and produce no errors. Env validation runs before the scope walk; errors here do not block phase validation.
 
-### Sandbox Rules A, B, C
+### Sandbox Rules B, C
 
-Three additional rules protect sandbox isolation. All three fire regardless of which phase the step is in.
+Two additional rules protect sandbox isolation. Both fire regardless of which phase the step is in.
 
-**Rule A — captureAs on a claude step is rejected.**
-After sandboxing, the `claude` binary is wrapped in a `docker run` command. The captured stdout is docker's own output (container lifecycle messages), not claude's response. Any `captureAs` on a `isClaude: true` step would silently inject corrupted data into downstream `{{VAR}}` substitutions.
+*(Rule A — captureAs on a claude step rejected — was removed in issue #91. Under stream-json output, captureAs on a claude step binds to `result.result` from the Aggregator, not docker stdout. See D6 in `docs/plans/streaming-json-output/design.md`.)*
 
 **Rule B — prompt files must not reference `{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}`.**
 These tokens expand to host filesystem paths. Inside the sandbox, those paths do not exist. A prompt that embeds them would pass a broken path to claude, causing silent substitution failures or confusing instructions. The check uses token-aware parsing (via `vars.ExtractReferences`) so escaped sequences like `{{{{WORKFLOW_DIR}}}}` (which render as the literal text `{{WORKFLOW_DIR}}`) are not flagged. The error message names only the token(s) actually found.

@@ -73,7 +73,7 @@ Key files:
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
 | `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
 | `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
-| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 500-entry ring buffer, auto-scroll, logContentStyle |
+| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 2000-entry ring buffer (`logRingBufferCap`), auto-scroll, logContentStyle |
 | `ralph-tui/internal/ui/log_panel_test.go` | Tests for logModel ring buffer, auto-scroll, Home/End key handling |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 

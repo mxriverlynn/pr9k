@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
@@ -81,6 +82,10 @@ func (f *fakeExecutor) WriteToLog(line string) {
 
 func (f *fakeExecutor) LastCapture() string {
 	return f.lastCapture
+}
+
+func (f *fakeExecutor) LastStats() claudestream.StepStats {
+	return claudestream.StepStats{}
 }
 
 func (f *fakeExecutor) ProjectDir() string {

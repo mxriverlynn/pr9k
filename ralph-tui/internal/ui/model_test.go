@@ -41,27 +41,28 @@ func TestLogLines_AppendInOrder(t *testing.T) {
 	}
 }
 
-func TestLogLines_TrimsToLast500(t *testing.T) {
+func TestLogLines_TrimsToLastCap(t *testing.T) {
 	m := newTestModel(t)
 
-	// Send 600 lines — ring buffer should retain only the last 500.
-	lines := make([]string, 600)
-	for i := range 600 {
+	// Send logRingBufferCap+100 lines — ring buffer should retain only the last logRingBufferCap.
+	total := logRingBufferCap + 100
+	lines := make([]string, total)
+	for i := range total {
 		lines[i] = strings.Repeat("y", i+1)
 	}
 	next, _ := m.Update(LogLinesMsg{Lines: lines})
 	m = next.(Model)
 
-	if len(m.log.lines) != 500 {
-		t.Fatalf("expected 500 lines after trim, got %d", len(m.log.lines))
+	if len(m.log.lines) != logRingBufferCap {
+		t.Fatalf("expected %d lines after trim, got %d", logRingBufferCap, len(m.log.lines))
 	}
 	// First retained line should be the 101st original line (index 100).
 	if m.log.lines[0] != lines[100] {
 		t.Errorf("first retained line: want %q, got %q", lines[100], m.log.lines[0])
 	}
-	// Last retained line should be the last original line (index 599).
-	if m.log.lines[499] != lines[599] {
-		t.Errorf("last retained line: want %q, got %q", lines[599], m.log.lines[499])
+	// Last retained line should be the last original line.
+	if m.log.lines[logRingBufferCap-1] != lines[total-1] {
+		t.Errorf("last retained line: want %q, got %q", lines[total-1], m.log.lines[logRingBufferCap-1])
 	}
 }
 

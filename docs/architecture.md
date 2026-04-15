@@ -257,7 +257,7 @@ cmd/ralph-tui/main.go
     ├── internal/vars          (runtime variable state)
     ├── internal/version       (compile-time Version constant)
     └── internal/workflow      (subprocess execution, run loop)
-            ├── internal/claudestream  (stream-json pipeline — planned wiring)
+            ├── internal/claudestream  (stream-json pipeline)
             ├── internal/logger
             ├── internal/steps
             └── internal/ui

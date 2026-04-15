@@ -9,16 +9,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// logRingBufferCap is the maximum number of lines retained in the ring buffer
+// (D22). Under stream-json, a single claude step can emit hundreds of lines;
+// 2000 keeps an iteration's worth of chrome visible without significant memory
+// cost.
+const logRingBufferCap = 2000
+
 // logContentStyle is applied to every streamed log line so the main content
 // area renders in bright white, making subprocess output pop against the
 // light-gray chrome (border, hrules, iteration line, shortcut footer).
 var logContentStyle = lipgloss.NewStyle().Foreground(White)
 
-// logModel wraps a bubbles/viewport.Model and a 500-entry ring buffer for
+// logModel wraps a bubbles/viewport.Model and a 2000-entry ring buffer for
 // streaming log lines. All mutations happen on the Bubble Tea Update goroutine.
 type logModel struct {
 	viewport viewport.Model
-	lines    []string // ring buffer, cap 500
+	lines    []string // ring buffer, cap logRingBufferCap
 }
 
 // newLogModel constructs a logModel with a custom KeyMap that removes f/b/u/d
@@ -69,8 +75,8 @@ func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case LogLinesMsg:
 		m.lines = append(m.lines, msg.Lines...)
-		if len(m.lines) > 500 {
-			m.lines = m.lines[len(m.lines)-500:]
+		if len(m.lines) > logRingBufferCap {
+			m.lines = m.lines[len(m.lines)-logRingBufferCap:]
 		}
 		wasAtBottom := m.viewport.AtBottom()
 		m.viewport.SetContent(logContentStyle.Render(strings.Join(m.lines, "\n")))
