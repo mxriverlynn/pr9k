@@ -40,6 +40,8 @@ type fakeExecutor struct {
 	// racing on logLines. The callback runs synchronously on the writer
 	// goroutine, so happens-before the receiver of any channel it sends to.
 	onLog func(line string)
+	// writeRunSummaryCalls counts how many times WriteRunSummary has been called.
+	writeRunSummaryCalls int
 }
 
 type runStepCall struct {
@@ -87,6 +89,7 @@ func (f *fakeExecutor) WriteToLog(line string) {
 }
 
 func (f *fakeExecutor) WriteRunSummary(line string) {
+	f.writeRunSummaryCalls++
 	f.logLines = append(f.logLines, line)
 	if f.onLog != nil {
 		f.onLog(line)
@@ -3904,6 +3907,9 @@ func TestRun_RunSummary_EmittedForClaudeSteps(t *testing.T) {
 	}
 	if runSummaryIdx >= completionIdx {
 		t.Errorf("run summary (idx %d) must appear before completion summary (idx %d)", runSummaryIdx, completionIdx)
+	}
+	if exec.writeRunSummaryCalls != 1 {
+		t.Errorf("WriteRunSummary called %d times, want 1", exec.writeRunSummaryCalls)
 	}
 
 	line := exec.logLines[runSummaryIdx]
