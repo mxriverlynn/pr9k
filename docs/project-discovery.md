@@ -28,7 +28,7 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- Current version: `0.3.0` (single source of truth: `ralph-tui/internal/version/version.go`)
+- Current version: `0.3.1` (single source of truth: `ralph-tui/internal/version/version.go`)
 - External dependencies: `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
