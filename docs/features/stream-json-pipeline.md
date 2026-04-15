@@ -277,7 +277,9 @@ After the finalize phase, `Run` calls `Renderer.FinalizeRun(rs.invocations,
 rs.retries, rs.total)` and writes each returned line via
 `executor.WriteRunSummary` (D13 2c). `WriteRunSummary` sends the line to both
 the TUI (via `sendLine`) and the file logger so the cumulative total is
-persisted to disk. No summary is emitted when `rs.invocations == 0`.
+persisted to disk; if the logger write fails, a `[log] run summary write
+failed: …` error line is sent to the TUI so disk failures are visible to the
+operator. No summary is emitted when `rs.invocations == 0`.
 
 ### logger/logger.go (D24)
 

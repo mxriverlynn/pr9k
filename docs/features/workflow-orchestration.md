@@ -15,7 +15,7 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - `Run` writes full-width `PhaseBanner` headings (`Initializing`, `Iterations`, `Finalizing`) on entering each phase, and a `Captured VAR = "value"` line after any step with `captureAs` set
 - All steps — initialize, iteration, and finalize — are resolved per-phase via the `VarTable` using `{{VAR}}` substitution; there are no hardcoded script calls in `Run()`
 - The orchestration communicates with the keyboard handler via a `StepAction` channel for quit, continue, and retry decisions
-- After the finalize phase, `Run` writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
+- After the finalize phase, `Run` emits the run-level cumulative claude spend summary via `WriteRunSummary` (D13 2c), then writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
 - `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
@@ -116,7 +116,7 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep.
+// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep + WriteRunSummary.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
@@ -124,6 +124,11 @@ type StepExecutor interface {
     LastStats() claudestream.StepStats    // StepStats from the most recent RunSandboxedStep pipeline call
     ProjectDir() string                   // target repository directory used as cmd.Dir for every subprocess
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+    // WriteRunSummary writes line to both the TUI (via sendLine) and the file
+    // logger. Used by Run() for the run-level cumulative summary (D13 2c) so
+    // the total spend line is persisted to disk, unlike WriteToLog which is
+    // TUI-only.
+    WriteRunSummary(line string)
 }
 
 // RunHeader updates the TUI status header during workflow execution.
@@ -218,7 +223,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     }
     for j, s := range cfg.FinalizeSteps { ... }
 
-    // Phase 4: Completion — write summary to log body and return
+    // Phase 4: Completion — run-level summary, then completion line, then return
+    for _, line := range claudestream.Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total) {
+        executor.WriteRunSummary(line)
+    }
     emitBlank()
     executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
@@ -258,6 +266,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Runs through `Orchestrate()` with a `trackingOffsetIterHeader` adapter (same adapter as the iteration phase, reused since both phases use `SetStepState`)
 
 **Phase 4 — Completion:** after finalize completes normally:
+- Calls `Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total)` and writes each returned line via `executor.WriteRunSummary` (D13 2c) — the run-level cumulative summary (e.g. `total claude spend across 7 step invocations: …`) is written to both the TUI and the file logger. Skipped when `rs.invocations == 0` (no claude steps ran)
 - Calls `emitBlank` then writes `ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps))` — `"Ralph completed after N iteration(s) and M finalizing tasks."` — as the **last non-blank line of the log body**. The header's `IterationLine` retains the final `"Finalizing N/M: <step name>"` value from the last finalize step; there is no header-level completion line
 - Returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
 
@@ -392,7 +401,7 @@ func (rs *runStats) add(s claudestream.StepStats, isRetry bool) {
 }
 ```
 
-Surfacing `rs` through `RunResult` or the completion summary is pending (D13 2c).
+After the finalize phase completes, `Run` calls `claudestream.Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total)` and writes each returned line via `executor.WriteRunSummary` (D13 2c). `FinalizeRun` returns nil when `rs.invocations == 0` (no claude steps ran), so no summary line appears for non-claude-only runs.
 
 ### stepDispatcher
 
@@ -542,6 +551,9 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps
   - `TestRun_ClaudeStep_CaptureModeIsResult` — verifies `CaptureMode=CaptureResult` is set in `SandboxOptions` for claude steps
   - `TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine` — verifies non-claude steps never reach `RunSandboxedStep`; `CaptureLastLine` (zero value) is preserved by default
+  - `TestRun_RunSummary_EmittedForClaudeSteps` — verifies the run-level cumulative summary line appears before `CompletionSummary`, contains expected token/cost fragments, and that `writeRunSummaryCalls == 1`
+  - `TestRun_RunSummary_NotEmittedForNonClaudeSteps` — verifies no summary line is written when no claude steps ran (FinalizeRun returns nil for zero invocations)
+  - `TestRun_RunSummary_MultipleClaudeStepsAccumulate` — verifies stats from two claude step invocations are accumulated (total cost and invocation count both reflected in the summary line)
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
