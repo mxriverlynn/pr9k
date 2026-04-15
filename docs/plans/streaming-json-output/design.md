@@ -1,6 +1,6 @@
 # Streaming JSON Output from Claude — Design Plan
 
-**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review + smoke validation 2026-04-15)
+**Status:** Reviewed (iterations 1–3 + agent validation + iteration 5 re-review + smoke validation + iteration 7 correctness pass 2026-04-15)
 **Author:** River + Claude
 **Date:** 2026-04-14 (updated 2026-04-15)
 
@@ -266,6 +266,7 @@ Emitted last. The authoritative final answer:
 
 ### D21. All `RunSandboxedStep` returns fold into `RunStats`; `c`/`r` differ only in JSONL retention
 - **Token accounting (applies to every claude step return, regardless of outcome or user recovery choice):** When `RunSandboxedStep` returns, its `StepStats` is unconditionally added to `RunStats`. Successful, continued-past-failure, and discarded-on-retry attempts all count. Rationale: the cumulative total must match real Anthropic spend so a user can reconcile the run against their invoice. Computing "successful-workflow-only" spend would be a synthetic number with no external referent.
+- **Fold site (clarified iteration 7):** The fold happens inside `stepDispatcher.RunStep` — the only call site that observes every `RunSandboxedStep` invocation, including the intermediate attempts inside `runStepWithErrorHandling`'s retry loop (`internal/ui/orchestrate.go:60-86`). Folding in the phase loops of `workflow.Run` would miss those intermediate attempts because `ui.Orchestrate` only returns after the retry loop has already collapsed them. See Step 5 in the implementation sketch for the exact wiring.
 - **Behavior on `c` (continue):** The failed step's JSONL file is preserved as-is (it contains whatever events arrived before the failure). Tokens fold in per the rule above.
 - **Behavior on `r` (retry):** The JSONL file is truncated (D14) because the new attempt is the definitive record for that step slot. Tokens from the prior (discarded) attempt still fold into `RunStats` per the rule above — the JSONL is discarded but the spend was real.
 - **Summary-line semantics:** The finalize summary line is labeled `total claude spend across <N> step invocations (including <R> retries)` so the number is self-describing. `N` is the total count of `RunSandboxedStep` returns; `R` is the subset that were followed by a user `r` retry.
@@ -283,7 +284,7 @@ Emitted last. The authoritative final answer:
 - **Reversible:** Isolated to one rendering path in the status header.
 
 ### D24. RunStamp gains subsecond precision to prevent same-second collisions
-- **Change:** `Logger.RunStamp()` and the log filename use `ralph-2006-01-02-150405.000` (milliseconds). Existing `ralph-YYYY-MM-DD-HHMMSS.log` pattern becomes `ralph-YYYY-MM-DD-HHMMSS-mmm.log`.
+- **Change:** `Logger.RunStamp()` and the log filename use the Go time format `ralph-2006-01-02-150405.000` (milliseconds). The existing `ralph-YYYY-MM-DD-HHMMSS.log` pattern becomes `ralph-YYYY-MM-DD-HHMMSS.mmm.log` — **dot** separator between seconds and milliseconds, matching what Go's `.000` format verb produces (e.g., `ralph-2026-04-14-173022.123.log`). Do not invent a dash-separated variant; the Go format literal is the canonical shape.
 - **Why:** Two runs started in the same wall-clock second (common in CI with `-n 1` restarts, or when a user types `./bin/ralph-tui` twice quickly after a failed run) would otherwise produce the same RunStamp. `MkdirAll` is a no-op on the second run, and `O_TRUNC` on retry would overwrite the first run's JSONL artifacts.
 - **Migration:** This changes an observed user-facing filename. Callers / docs that reference the old format (see `docs/features/file-logging.md:11`) must be updated. The `--version` output and any compatibility contracts are untouched per the versioning ADR.
 - **Alternative considered:** Retry `MkdirAll` with an `-N` suffix on collision. Rejected — more complex and the subsecond stamp is already standard.
@@ -294,6 +295,7 @@ Emitted last. The authoritative final answer:
 
 ### D26. Crash-mid-step resilience
 - **Behavior:** After each parsed event, `RawWriter` calls `f.Sync()` is **not** done (cost too high). Instead, after observing the `result` event, `RawWriter` writes a trailing sentinel line: `{"type":"ralph_end","ok":true,"schema":"v1"}`. Files without a trailing `ralph_end` line indicate a crashed or terminated run; downstream analytics can reject them.
+- **Sentinel semantics vs. `is_error` (clarified iteration 7):** The sentinel is written whenever a `result` event is observed, regardless of `is_error`. Its meaning is "claude finished emitting a result-shaped event," not "the step succeeded." Sentinel absence means the stream was truncated (crash, SIGKILL, terminator path before `result` arrived). `is_error` semantics are carried by the `result` event itself — downstream tools read `is_error` inside the preceding `result` line and the sentinel only to detect truncation.
 - **Why:** Balances write throughput (no per-line fsync) against being able to detect truncated artifacts. A host-level crash (OOM, power loss, SIGKILL) bypasses `defer`, so no amount of `defer`-based cleanup is a guarantee; a sentinel line is the cheapest file-level integrity signal.
 
 ### D27. `[stderr] ` line prefix applies to claude steps only
@@ -379,13 +381,38 @@ Emitted last. The authoritative final answer:
      }
      ```
      The same pattern applies in the initialize loop (`initialize-<NN>-<slug>.jsonl`) and finalize loop (`finalize-<NN>-<slug>.jsonl`). `buildStep`'s signature is unchanged.
-   - **`RunStats` accumulator.** Introduce `RunStats` (sum of `claudestream.StepStats`). After each claude step returns (successfully **or** failed — per D21), the orchestrator reads `executor.LastStats()` (a new method that returns the `StepStats` from the most recent `RunSandboxedStep`, mirroring `LastCapture()`) and adds it into `RunStats`. At the end of the finalize phase, a single cumulative summary line is emitted via `executor.WriteToLog` (D13 2c). Because `WriteToLog` bypasses the file logger (see `docs/features/subprocess-execution.md`), the orchestrator **also** writes the cumulative summary through `log.Log("Run summary", ...)` so the cumulative total is persisted to disk. (Requires a new accessor on `StepExecutor` for `*logger.Logger`, or equivalent; the cleanest implementation adds a thin `Runner.LogSummary(line string)` method that writes to both sinks.)
+   - **`RunStats` accumulator.** Introduce `RunStats` (sum of `claudestream.StepStats`) as a local in `Run` so `Run` owns its lifetime (fresh per invocation, no cross-run leakage). Per D21, *every* `RunSandboxedStep` return — including attempts the user later discarded via `r` retry — must fold into `RunStats` so the cumulative total matches real Anthropic spend.
+     - **Fold site is `stepDispatcher.RunStep`, not the phase loops in `Run`** (clarified iteration 7). The phase loops only regain control after `ui.Orchestrate` returns, which is *after* the retry loop in `runStepWithErrorHandling` has discarded intermediate attempts; by that point `executor.LastStats()` would reflect only the final attempt, and retried-then-discarded attempts' tokens would silently drop. The dispatcher, by contrast, sees every call to `RunSandboxedStep` that the retry loop makes. Concretely:
+       ```go
+       type stepDispatcher struct {
+           exec     StepExecutor
+           current  ui.ResolvedStep
+           runStats *RunStats // pointer into Run's local RunStats
+       }
+
+       func (d *stepDispatcher) RunStep(name string, command []string) error {
+           if d.current.IsClaude {
+               err := d.exec.RunSandboxedStep(name, command, workflow.SandboxOptions{
+                   CidfilePath:  d.current.CidfilePath,
+                   ArtifactPath: d.current.ArtifactPath,
+                   CaptureMode:  d.current.CaptureMode,
+               })
+               // Fold regardless of err — D21: the spend was real.
+               d.runStats.Add(d.exec.LastStats())
+               return err
+           }
+           return d.exec.RunStep(name, command)
+       }
+       ```
+       `Run` creates one `RunStats` at the top of the function and passes a pointer when constructing each `&stepDispatcher{...}`. `LastStats()` is still a new method on `StepExecutor` mirroring `LastCapture()`, but its role is "the stats from the RunSandboxedStep call that just returned," read exactly once by the dispatcher before the next invocation overwrites it.
+     - **Concurrency (D25 re-affirmed):** the dispatcher and `Run` both execute on the workflow goroutine; `RunStats` is never touched from any other goroutine. No mutex.
+     - **Summary emission.** At the end of the finalize phase, a single cumulative summary line is emitted via `executor.WriteToLog` (D13 2c). Because `WriteToLog` bypasses the file logger (see `docs/features/subprocess-execution.md`), the orchestrator **also** writes the cumulative summary through `log.Log("Run summary", ...)` so the cumulative total is persisted to disk. (Requires a new accessor on `StepExecutor` for `*logger.Logger`, or equivalent; the cleanest implementation adds a thin `Runner.LogSummary(line string)` method that writes to both sinks.)
 
 6. **`ralph-tui/cmd/ralph-tui/main.go`** — Two changes (both inside `startup()` so the error path funnels through the existing stderr-print-and-return branch):
    - Add `RunStamp` to `workflow.RunConfig` and populate it from `svc.log.RunStamp()`.
    - Create the per-run artifact directory (`projectDir/logs/<runstamp>/`) eagerly after `NewLogger` succeeds so later per-step file opens cannot race on directory creation. `os.MkdirAll` with mode 0o700 — same mode as the existing `logs/` directory. If `MkdirAll` returns an error, `startup` prints it via the same `fmt.Fprintf(stderr, "error: %v\n", err)` branch used today for `NewLogger` failures (`main.go:72-76`) and returns `nil, false` so `main` exits 1 without starting the TUI.
-7. **`ralph-tui/internal/logger/logger.go`** — Add `Logger.RunStamp() string` returning the basename captured in `NewLogger` (the `ralph-YYYY-MM-DD-HHMMSS-mmm` portion per D24). Backed by a new unexported `runStamp` field set in `NewLogger` alongside the file creation. No behavior change to existing log-line formatting. Update the log filename `time.Format` template at `logger.go:31` from `"ralph-2006-01-02-150405.log"` to `"ralph-2006-01-02-150405.000.log"` per D24.
-8. **`ralph-tui/internal/logger/logger_test.go:139`** — Update the filename regex `^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$` to match D24's millisecond format (`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$`, or the exact shape Go's `time.Format("2006-01-02-150405.000")` produces — verify by running the test). This is a direct consequence of D24 and would otherwise fail the existing test.
+7. **`ralph-tui/internal/logger/logger.go`** — Add `Logger.RunStamp() string` returning the basename captured in `NewLogger` (the `ralph-YYYY-MM-DD-HHMMSS.mmm` portion per D24, with a dot before the millisecond component). Backed by a new unexported `runStamp` field set in `NewLogger` alongside the file creation. No behavior change to existing log-line formatting. Update the log filename `time.Format` template at `logger.go:31` from `"ralph-2006-01-02-150405.log"` to `"ralph-2006-01-02-150405.000.log"` per D24.
+8. **`ralph-tui/internal/logger/logger_test.go:139`** — Update the filename regex `^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.log$` to `^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}\.log$` — the exact shape Go's `time.Format("ralph-2006-01-02-150405.000.log")` produces (dot separator before the 3-digit millisecond component). This is a direct consequence of D24 and would otherwise fail the existing test.
 
 ### Existing behavior unchanged (per scope decisions)
 
@@ -520,6 +547,17 @@ Ran the O-1 smoke test against the real sandbox image + live subscription profil
 | S4 | D15's example error message wrongly implied `subtype` carries the error category. On auth failure, `subtype == "success"` despite `is_error == true`; `result.result` is the real human-readable text | Correction | **D15 rewritten**: authoritative signal is `is_error` alone; error message includes truncated `result.result` and `session_id` |
 | S5 | Assistant event on failure carries top-level `error: "authentication_failed"` and `model: "<synthetic>"` | Absorbed by D8 | Schema reference annotated with the failure-shape note |
 | S6 | Stdin handling — claude waits 3s and emits a stderr warning when stdin is not redirected; ralph-tui already passes `bytes.NewReader(nil)` at `workflow.go:195`, so the stall doesn't hit the runtime | Verified safe | No change |
+
+### Iteration 7 — correctness/consistency pass (2026-04-15)
+
+Re-read the stabilised plan end-to-end looking specifically for contradictions between decisions and for ambiguous language an implementer would have to guess around. Three fixes landed; a fourth (forward-compat for unknown event types) was surfaced and left as a conscious deferral.
+
+| ID | Finding | Source | Disposition | Plan change |
+|---|---|---|---|---|
+| G1 | D21 requires every `RunSandboxedStep` return to fold into `RunStats`, but Step 5's "orchestrator reads `executor.LastStats()` after each claude step returns" executes in `workflow.Run`, which only sees the *final* attempt — the retry loop in `runStepWithErrorHandling` (`internal/ui/orchestrate.go:60-86`) collapses intermediate attempts before `ui.Orchestrate` returns. Retried-then-discarded tokens would silently drop, contradicting D21's "the spend was real" rationale. | Re-read of D21 against `orchestrate.go:60-86` and `run.go:151-253` | Accepted — real contradiction, not a drafting nit | **Step 5 RunStats section rewritten**: fold happens inside `stepDispatcher.RunStep` (the one site that sees every invocation including retry-loop intermediates). `RunStats` is a `Run`-local; the dispatcher holds a pointer. D21 also annotated with the fold-site rule so the two sections no longer drift |
+| G2 | D24 specified the Go format `"ralph-2006-01-02-150405.000"` (which produces `.123`, dot-separated) but the English copy said `ralph-YYYY-MM-DD-HHMMSS-mmm.log` (dash). Step 8's regex advice was "`\.\d{3}\.log$` or whatever Go produces — verify by running the test" — the "or" read as unresolved. | Re-read of D24 + Step 8 | Accepted | **D24 rewritten** to commit to the dot separator matching Go's `.000` verb; **Step 7 and Step 8 rewritten** to cite the single canonical shape without hedging |
+| G3 | D26 said the `ralph_end` sentinel is written "after observing the `result` event" but didn't say whether an `is_error: true` result gets one. Downstream analytics need to distinguish "stream truncated" from "stream finished but step failed." | Re-read of D26 + D15 + smoke-auth-failure fixture | Accepted | **D26 extended** with a "Sentinel semantics vs. `is_error`" paragraph: sentinel means "claude finished emitting," not "step succeeded"; `is_error` is carried by the `result` event itself |
+| G4 | D28 handled `rate_limit_event` specifically but any future new top-level `type` value would reproduce the same `[malformed-json]` log noise. D7 closes the type taxonomy; D8 only tolerates unknown *fields within* known types. | Re-read of D7/D8/D28 interaction | Surfaced, **deferred — do not revisit unless the trigger fires** | **No plan change.** Trigger to revisit: a new claude schema addition produces persistent `[malformed-json]` noise in a user's log. The fix is well-understood (split malformed into "invalid JSON / missing `type`" vs. "valid JSON, unknown `type`" in the parser; route the latter to RawWriter silently, no Renderer output, no Aggregator effect). Implementing it now would be speculative per ADR-2 |
 
 ## Out of scope
 
