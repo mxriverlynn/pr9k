@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-13
+- **Last Updated:** 2026-04-15
 - **Authors:**
   - River Bailey
 
@@ -528,10 +528,25 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_InitializePhase_PassesEnvThroughBuildStep` (TP-008) — verifies `RunConfig.Env` is threaded through the initialize phase into `buildStep`, producing `-e` flags for the custom env var in the sandboxed step command
   - `TestRun_FinalizePhase_ClaudeStep_DispatchesToRunSandboxedStep` (TP-012) — verifies claude steps in the finalize phase route to `RunSandboxedStep`, confirming `stepDispatcher` wiring is consistent across initialize, iteration, and finalize phases
   - `TestRun_FinalizeCaptureAsIgnored` (WARN-004) — documents that the finalize phase intentionally does not call `vt.Bind()` after `Orchestrate`; a `captureAs` binding in a finalize step does not propagate to subsequent finalize steps (asymmetry with initialize/iteration is by design)
+  - `TestRunStats_ZeroValue` — verifies all `runStats` fields start at zero for a zero-value struct
+  - `TestRunStats_Add_AccumulatesAllFields` — verifies `runStats.add` correctly sums all seven numeric `StepStats` fields (InputTokens, OutputTokens, CacheCreationTokens, CacheReadTokens, NumTurns, TotalCostUSD, DurationMS) across two invocations, and increments `invocations` for each call
+  - `TestRunStats_Add_RetryIncrement` — verifies `retries` increments only when `isRetry=true` and `invocations` always increments regardless
+  - `TestStepDispatcher_ClaudeStep_FoldsStatsIntoRunStats` — verifies `LastStats()` is called once after `RunSandboxedStep` succeeds and all returned fields are folded into `runStats`
+  - `TestStepDispatcher_ClaudeStep_FoldsStatsOnError` — verifies stats are folded into `runStats` even when `RunSandboxedStep` returns an error (D21: "the spend was real")
+  - `TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError` — exercises the first-error → second-success retry path: asserts `invocations=2`, `retries=1`, and `prevFailed` cleared after success
+  - `TestStepDispatcher_NonClaudeStep_ResetsRetryTracking` — verifies a non-claude step between two claude steps clears `prevFailed`, preventing spurious retry counts on the second claude step
+  - `TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode` — verifies `ResolvedStep.ArtifactPath` and `ResolvedStep.CaptureMode` flow through `stepDispatcher.RunStep` into `SandboxOptions` passed to `RunSandboxedStep`
+  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
+  - `TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath` — verifies `ArtifactPath` is empty (persistence disabled) when `RunConfig.RunStamp == ""`
+  - `TestRun_InitializePhase_ArtifactPathPrefix` — verifies the `"initialize-"` phase prefix appears in the artifact path for initialize-phase claude steps
+  - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps
+  - `TestRun_ClaudeStep_CaptureModeIsResult` — verifies `CaptureMode=CaptureResult` is set in `SandboxOptions` for claude steps
+  - `TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine` — verifies non-claude steps never reach `RunSandboxedStep`; `CaptureLastLine` (zero value) is preserved by default
 - `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
   - `TestOrchestrate_Retry_StateTransitionSequence` — verifies the `Active→Failed→Done` state transition sequence on retry (note: `StepActive` is not re-set on retry — this is documented in the test)
+  - `TestCaptureMode_ZeroValueIsCaptureLastLine` — documents the iota contract: `CaptureMode(0) == CaptureLastLine` and `CaptureLastLine != CaptureResult`; protects against silent breakage if iota ordering changes
 
 ## Additional Information
 
