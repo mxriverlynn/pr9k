@@ -54,7 +54,9 @@ func (rs *runStats) add(s claudestream.StepStats, isRetry bool) {
 // A new stepDispatcher is created for each step so that current always reflects
 // the step that is about to be executed. stats holds a pointer to Run's local
 // runStats so every invocation (including retry-loop intermediates) is folded in
-// immediately after RunSandboxedStep returns (D21).
+// immediately after RunSandboxedStep returns (D21). Per-step construction also
+// intentionally resets prevFailed between steps — retries only count
+// re-executions of the same step, not cross-step continue sequences (M3).
 type stepDispatcher struct {
 	exec    StepExecutor
 	current ui.ResolvedStep
@@ -154,6 +156,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// rs accumulates StepStats across all claude step invocations in the run
 	// (D21, D25). Owned exclusively by this goroutine — no mutex required.
+	// Surfacing rs through RunResult or the completion summary is pending (M2).
 	rs := &runStats{}
 
 	logWidth := cfg.LogWidth

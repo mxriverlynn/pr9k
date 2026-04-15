@@ -235,6 +235,11 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	pipeline := claudestream.NewPipeline(rw)
 	defer func() {
 		_ = pipeline.Close()
+		// Log any RawWriter write error — persistence is best-effort (see above),
+		// but operators need visibility into JSONL artifact failures (M1).
+		if wErr := pipeline.WriteErr(); wErr != nil {
+			_ = r.log.Log(stepName, fmt.Sprintf("[artifact] write error: %v", wErr))
+		}
 	}()
 
 	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
