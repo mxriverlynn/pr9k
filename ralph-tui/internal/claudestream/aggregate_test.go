@@ -177,3 +177,114 @@ func TestAggregator_EmptyAggregate(t *testing.T) {
 		t.Errorf("Result() should be empty, got %q", a.Result())
 	}
 }
+
+// TestAggregator_ObserveIgnoresSystemAndUser verifies that SystemEvent and
+// UserEvent are no-ops: no state change, no panic (TP-A1).
+func TestAggregator_ObserveIgnoresSystemAndUser(t *testing.T) {
+	a := &claudestream.Aggregator{}
+	feed(a,
+		&claudestream.SystemEvent{Type: "system", Subtype: "init", SessionID: "s1"},
+		&claudestream.UserEvent{Type: "user"},
+	)
+	stats := a.Stats()
+	if stats.InputTokens != 0 || stats.OutputTokens != 0 {
+		t.Errorf("unexpected token accumulation from system/user events: %+v", stats)
+	}
+	if stats.SessionID != "" {
+		t.Errorf("SessionID should be empty, got %q", stats.SessionID)
+	}
+}
+
+// TestAggregator_MultiAssistantThenResult verifies that when multiple assistant
+// events accumulate a running tally and then a result event arrives, Stats()
+// reflects the result event's token counts (not the sum of assistant events)
+// (TP-A2, D13).
+func TestAggregator_MultiAssistantThenResult(t *testing.T) {
+	a := &claudestream.Aggregator{}
+	feed(a,
+		&claudestream.AssistantEvent{
+			Type:    "assistant",
+			Message: claudestream.AssistantMsg{Usage: claudestream.Usage{InputTokens: 10, OutputTokens: 5}},
+		},
+		&claudestream.AssistantEvent{
+			Type:    "assistant",
+			Message: claudestream.AssistantMsg{Usage: claudestream.Usage{InputTokens: 20, OutputTokens: 15}},
+		},
+		&claudestream.AssistantEvent{
+			Type:    "assistant",
+			Message: claudestream.AssistantMsg{Usage: claudestream.Usage{InputTokens: 30, OutputTokens: 25}},
+		},
+		&claudestream.ResultEvent{
+			Type:         "result",
+			IsError:      false,
+			Result:       "done",
+			NumTurns:     3,
+			TotalCostUSD: 0.05,
+			Usage: claudestream.Usage{
+				InputTokens:  7,
+				OutputTokens: 12,
+			},
+		},
+	)
+	if err := a.Err(); err != nil {
+		t.Fatalf("Err() should be nil: %v", err)
+	}
+	stats := a.Stats()
+	// Result event overrides the running tally; should NOT be sum (60/45) of
+	// the three assistant events.
+	if stats.InputTokens != 7 {
+		t.Errorf("InputTokens: got %d, want 7 (from result event, not 60)", stats.InputTokens)
+	}
+	if stats.OutputTokens != 12 {
+		t.Errorf("OutputTokens: got %d, want 12 (from result event, not 45)", stats.OutputTokens)
+	}
+	if stats.NumTurns != 3 {
+		t.Errorf("NumTurns: got %d, want 3", stats.NumTurns)
+	}
+}
+
+// TestAggregator_ErrIncludesSubtypeAndStopReason verifies that Err() includes
+// subtype and stop_reason in the error message (TP-A3, D15).
+func TestAggregator_ErrIncludesSubtypeAndStopReason(t *testing.T) {
+	a := &claudestream.Aggregator{}
+	feed(a, &claudestream.ResultEvent{
+		Type:       "result",
+		IsError:    true,
+		Result:     "failed",
+		SessionID:  "ses-xyz",
+		Subtype:    "error",
+		StopReason: "max_tokens",
+	})
+	err := a.Err()
+	if err == nil {
+		t.Fatal("Err() should be non-nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "subtype=error") {
+		t.Errorf("error message should contain subtype, got %q", msg)
+	}
+	if !strings.Contains(msg, "stop=max_tokens") {
+		t.Errorf("error message should contain stop_reason, got %q", msg)
+	}
+}
+
+// TestAggregator_ErrTruncationBoundary verifies the 200-rune truncation guard:
+// a result string of exactly 200 runes must NOT be truncated in Err() (TP-A4).
+func TestAggregator_ErrTruncationBoundary(t *testing.T) {
+	a := &claudestream.Aggregator{}
+	exactly200 := strings.Repeat("a", 200)
+	feed(a, &claudestream.ResultEvent{
+		Type:      "result",
+		IsError:   true,
+		Result:    exactly200,
+		SessionID: "ses1",
+	})
+	err := a.Err()
+	if err == nil {
+		t.Fatal("Err() should be non-nil")
+	}
+	// The full 200-rune string must appear verbatim (≤200 means no truncation).
+	if !strings.Contains(err.Error(), exactly200) {
+		t.Errorf("200-rune result should not be truncated in error message")
+	}
+}

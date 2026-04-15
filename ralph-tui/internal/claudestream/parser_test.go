@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
@@ -295,6 +296,54 @@ func TestParser_SmokeSuccess(t *testing.T) {
 // line-by-line and asserts every line parses without error.
 func TestParser_SmokeAuthFailure(t *testing.T) {
 	parseFixture(t, filepath.Join(fixturesDir(t), "smoke-auth-failure.ndjson"))
+}
+
+// TestParser_SecondUnmarshalFailure verifies that a line which passes typeProbe
+// but fails the typed unmarshal returns a *MalformedLineError (TP-P3).
+func TestParser_SecondUnmarshalFailure(t *testing.T) {
+	p := &claudestream.Parser{}
+	// duration_ms is typed as int64 in ResultEvent; "not_a_number" cannot unmarshal.
+	line := []byte(`{"type":"result","duration_ms":"not_a_number"}`)
+	_, err := p.Parse(line)
+	if err == nil {
+		t.Fatal("expected error for result with invalid duration_ms field")
+	}
+	mle, ok := err.(*claudestream.MalformedLineError)
+	if !ok {
+		t.Fatalf("expected *MalformedLineError, got %T", err)
+	}
+	if !strings.Contains(mle.Msg, "unmarshal result") {
+		t.Errorf("Msg should mention unmarshal result, got %q", mle.Msg)
+	}
+}
+
+// TestParser_MalformedRawBytesPreserved verifies that mle.Raw carries the
+// original input bytes for all error paths — including invalid-JSON and
+// unknown-type (TP-P1). Empty-line and missing-type are covered elsewhere.
+func TestParser_MalformedRawBytesPreserved(t *testing.T) {
+	tests := []struct {
+		name string
+		line []byte
+	}{
+		{"invalid JSON", []byte(`{not valid json`)},
+		{"unknown type", []byte(`{"type":"foobar","data":1}`)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &claudestream.Parser{}
+			_, err := p.Parse(tc.line)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			mle, ok := err.(*claudestream.MalformedLineError)
+			if !ok {
+				t.Fatalf("expected *MalformedLineError, got %T", err)
+			}
+			if string(mle.Raw) != string(tc.line) {
+				t.Errorf("Raw: got %q, want %q", mle.Raw, tc.line)
+			}
+		})
+	}
 }
 
 func parseFixture(t *testing.T, path string) {

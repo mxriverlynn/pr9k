@@ -241,6 +241,126 @@ func TestRenderer_ToolSummaryTruncation(t *testing.T) {
 	}
 }
 
+// TestRenderer_SystemUnknownSubtype verifies the default branch of renderSystem
+// returns nil for an unrecognised subtype (TP-R1, D8).
+func TestRenderer_SystemUnknownSubtype(t *testing.T) {
+	r := &claudestream.Renderer{}
+	ev := &claudestream.SystemEvent{Type: "system", Subtype: "future_thing"}
+	lines := r.Render(ev)
+	if lines != nil {
+		t.Errorf("expected nil for unknown system subtype, got %v", lines)
+	}
+}
+
+// TestRenderer_AssistantEmptyContent verifies an assistant event with an empty
+// content slice produces no lines and does not panic (TP-R2).
+func TestRenderer_AssistantEmptyContent(t *testing.T) {
+	r := &claudestream.Renderer{}
+	ev := &claudestream.AssistantEvent{
+		Type:    "assistant",
+		Message: claudestream.AssistantMsg{Content: []claudestream.ContentBlock{}},
+	}
+	lines := r.Render(ev)
+	if len(lines) != 0 {
+		t.Errorf("expected no lines for empty content, got %v", lines)
+	}
+}
+
+// TestRenderer_ToolSummaryMissingField verifies that a Bash tool_use without
+// the "command" field falls back to compact JSON of the full input (TP-R3).
+func TestRenderer_ToolSummaryMissingField(t *testing.T) {
+	r := &claudestream.Renderer{}
+	ev := &claudestream.AssistantEvent{
+		Type: "assistant",
+		Message: claudestream.AssistantMsg{
+			Content: []claudestream.ContentBlock{
+				{Type: "tool_use", Name: "Bash", Input: json.RawMessage(`{"other":"value"}`)},
+			},
+		},
+	}
+	lines := r.Render(ev)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	// Falls back to compact JSON containing the actual key.
+	if !strings.Contains(lines[0], `"other"`) {
+		t.Errorf("expected compact JSON fallback containing 'other', got %q", lines[0])
+	}
+}
+
+// TestRenderer_ToolSummaryEmptyInput verifies that a tool_use with input `{}`
+// does not panic and produces a tool indicator line (TP-R4).
+func TestRenderer_ToolSummaryEmptyInput(t *testing.T) {
+	r := &claudestream.Renderer{}
+	ev := &claudestream.AssistantEvent{
+		Type: "assistant",
+		Message: claudestream.AssistantMsg{
+			Content: []claudestream.ContentBlock{
+				{Type: "tool_use", Name: "Bash", Input: json.RawMessage(`{}`)},
+			},
+		},
+	}
+	lines := r.Render(ev)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	if !strings.HasPrefix(lines[0], "→ Bash ") {
+		t.Errorf("expected tool indicator prefix, got %q", lines[0])
+	}
+}
+
+// TestRenderer_ToolSummaryNonStringField verifies that a Bash tool_use with a
+// non-string "command" value falls back gracefully via strings.Trim (TP-R5).
+func TestRenderer_ToolSummaryNonStringField(t *testing.T) {
+	r := &claudestream.Renderer{}
+	ev := &claudestream.AssistantEvent{
+		Type: "assistant",
+		Message: claudestream.AssistantMsg{
+			Content: []claudestream.ContentBlock{
+				{Type: "tool_use", Name: "Bash", Input: json.RawMessage(`{"command":42}`)},
+			},
+		},
+	}
+	lines := r.Render(ev)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	// json.Unmarshal of the numeric 42 into string fails; falls back to
+	// strings.Trim(string(val), `"`), which produces "42".
+	if !strings.Contains(lines[0], "42") {
+		t.Errorf("expected fallback to contain numeric value 42, got %q", lines[0])
+	}
+}
+
+// TestRenderer_AssistantMultiBlock verifies an assistant event with text +
+// tool_use + thinking blocks in one message: text and tool indicator are
+// rendered, thinking is silently dropped (TP-R6, D19).
+func TestRenderer_AssistantMultiBlock(t *testing.T) {
+	input, _ := json.Marshal(map[string]string{"command": "ls"})
+	r := &claudestream.Renderer{}
+	ev := &claudestream.AssistantEvent{
+		Type: "assistant",
+		Message: claudestream.AssistantMsg{
+			Content: []claudestream.ContentBlock{
+				{Type: "text", Text: "Analyzing the files."},
+				{Type: "tool_use", Name: "Bash", Input: input},
+				{Type: "thinking", Text: "internal reasoning"},
+			},
+		},
+	}
+	lines := r.Render(ev)
+	// Expect text line + tool indicator; thinking is skipped.
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines (text + tool indicator), got %d: %v", len(lines), lines)
+	}
+	if lines[0] != "Analyzing the files." {
+		t.Errorf("lines[0]: got %q, want text content", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "→ Bash ") {
+		t.Errorf("lines[1]: expected tool indicator prefix, got %q", lines[1])
+	}
+}
+
 func TestRenderer_Finalize(t *testing.T) {
 	r := &claudestream.Renderer{}
 	stats := claudestream.StepStats{
@@ -262,5 +382,18 @@ func TestRenderer_Finalize(t *testing.T) {
 		if !strings.Contains(line, fragment) {
 			t.Errorf("Finalize line %q missing fragment %q", line, fragment)
 		}
+	}
+}
+
+// TestRenderer_FinalizeZeroStats verifies that Finalize with a zero-valued
+// StepStats does not panic and produces a valid format string (TP-R7).
+func TestRenderer_FinalizeZeroStats(t *testing.T) {
+	r := &claudestream.Renderer{}
+	lines := r.Finalize(claudestream.StepStats{})
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line, got %d: %v", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "0 turns") {
+		t.Errorf("expected '0 turns' in zero stats line, got %q", lines[0])
 	}
 }

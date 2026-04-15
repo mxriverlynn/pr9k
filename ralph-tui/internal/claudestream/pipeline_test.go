@@ -182,6 +182,197 @@ func TestPipeline_LargeLine(t *testing.T) {
 	}
 }
 
+// TestPipeline_CloseIdempotent verifies that calling Close() twice on a
+// Pipeline with a real RawWriter returns nil on both calls (TP-PL2, coding std).
+func TestPipeline_CloseIdempotent(t *testing.T) {
+	dir := t.TempDir()
+	artifactPath := filepath.Join(dir, "step.jsonl")
+
+	rw, err := claudestream.NewRawWriter(artifactPath)
+	if err != nil {
+		t.Fatalf("NewRawWriter: %v", err)
+	}
+	p := claudestream.NewPipeline(rw)
+
+	if err := p.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("second Close should return nil: %v", err)
+	}
+}
+
+// TestPipeline_LastEventAtAdvancesOnMalformed verifies that a malformed line
+// updates LastEventAt (any activity counts, D23) (TP-PL3).
+func TestPipeline_LastEventAtAdvancesOnMalformed(t *testing.T) {
+	p := claudestream.NewPipeline(nil)
+
+	if !p.LastEventAt().IsZero() {
+		t.Error("LastEventAt should be zero before any observe")
+	}
+
+	p.Observe([]byte(`not json at all`))
+
+	if p.LastEventAt().IsZero() {
+		t.Error("LastEventAt should be non-zero after a malformed line")
+	}
+}
+
+// TestPipeline_CloseNilRawWriter verifies that Close() returns nil on both the
+// first and second call when the Pipeline was constructed with nil RawWriter
+// (TP-PL1/PL6, coding std).
+func TestPipeline_CloseNilRawWriter(t *testing.T) {
+	p := claudestream.NewPipeline(nil)
+
+	if err := p.Close(); err != nil {
+		t.Fatalf("first Close with nil RawWriter: %v", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("second Close with nil RawWriter: %v", err)
+	}
+}
+
+// TestPipeline_AccessorIdentity verifies that Aggregator() and Renderer()
+// return the same internal instances on every call (TP-PL5).
+func TestPipeline_AccessorIdentity(t *testing.T) {
+	p := claudestream.NewPipeline(nil)
+
+	if p.Aggregator() != p.Aggregator() {
+		t.Error("Aggregator() should return the same instance on every call")
+	}
+	if p.Renderer() != p.Renderer() {
+		t.Error("Renderer() should return the same instance on every call")
+	}
+}
+
+// TestPipeline_SmokeSuccess_DisplayLines feeds the smoke-success fixture
+// through a Pipeline and spot-checks the display lines returned by Observe,
+// validating end-to-end Renderer wiring (TP-I1, D5, D11).
+func TestPipeline_SmokeSuccess_DisplayLines(t *testing.T) {
+	p := claudestream.NewPipeline(nil)
+	fixtPath := filepath.Join(fixturesDir(t), "smoke-success.ndjson")
+
+	allLines := readLines(t, fixtPath)
+	var nonEmpty []string
+	for _, l := range allLines {
+		if l != "" {
+			nonEmpty = append(nonEmpty, l)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		t.Fatal("fixture has no lines")
+	}
+
+	type obs struct {
+		display []string
+		isNil   bool
+	}
+	results := make([]obs, 0, len(nonEmpty))
+	for _, l := range nonEmpty {
+		d := p.Observe([]byte(l))
+		results = append(results, obs{display: d, isNil: d == nil})
+	}
+
+	// The last line is the result event — it must produce nil display.
+	last := results[len(results)-1]
+	if !last.isNil {
+		t.Errorf("result event should return nil display, got %v", last.display)
+	}
+
+	// First non-nil return should contain the init banner.
+	var firstNonNil []string
+	for _, o := range results {
+		if !o.isNil {
+			firstNonNil = o.display
+			break
+		}
+	}
+	if firstNonNil == nil {
+		t.Fatal("expected at least one non-nil return from Observe")
+	}
+	if len(firstNonNil) == 0 || !strings.Contains(firstNonNil[0], "[claude session") {
+		t.Errorf("first non-nil return should contain init banner, got %v", firstNonNil)
+	}
+
+	// At least one display line must contain assistant text.
+	var allDisplay []string
+	for _, o := range results {
+		allDisplay = append(allDisplay, o.display...)
+	}
+	foundText := false
+	for _, dl := range allDisplay {
+		if dl == "Hello there, friend." {
+			foundText = true
+			break
+		}
+	}
+	if !foundText {
+		t.Errorf("expected assistant text in display lines, got %v", allDisplay)
+	}
+	if len(allDisplay) == 0 {
+		t.Error("expected non-zero total display lines")
+	}
+}
+
+// TestPipeline_ArtifactContainsVerbatimLines verifies that every input line
+// fed through Pipeline appears verbatim in the artifact file (TP-I2, D14).
+func TestPipeline_ArtifactContainsVerbatimLines(t *testing.T) {
+	dir := t.TempDir()
+	artifactPath := filepath.Join(dir, "step.jsonl")
+
+	rw, err := claudestream.NewRawWriter(artifactPath)
+	if err != nil {
+		t.Fatalf("NewRawWriter: %v", err)
+	}
+	p := claudestream.NewPipeline(rw)
+
+	knownLines := []string{
+		`{"type":"system","subtype":"init","session_id":"s1","model":"m"}`,
+		`{"type":"assistant","message":{"id":"m1","model":"m","content":[{"type":"text","text":"hi"}],"usage":{}},"session_id":"s1","uuid":"u1"}`,
+		`{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"result":"hi","session_id":"s1","total_cost_usd":0,"usage":{},"uuid":"u2"}`,
+	}
+	for _, line := range knownLines {
+		p.Observe([]byte(line))
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	got, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	content := string(got)
+	for _, line := range knownLines {
+		if !strings.Contains(content, line) {
+			t.Errorf("artifact missing verbatim line: %q", line)
+		}
+	}
+}
+
+// TestPipeline_SmokeAuthFailure_ErrorMessage verifies that the error returned
+// by Aggregator().Err() for the auth-failure fixture contains "is_error=true"
+// and the fixture's session ID (TP-I3, D15).
+func TestPipeline_SmokeAuthFailure_ErrorMessage(t *testing.T) {
+	p := claudestream.NewPipeline(nil)
+	fixtPath := filepath.Join(fixturesDir(t), "smoke-auth-failure.ndjson")
+	feedFixture(t, p, fixtPath)
+
+	err := p.Aggregator().Err()
+	if err == nil {
+		t.Fatal("expected non-nil error for auth-failure fixture")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "is_error=true") {
+		t.Errorf("error message should contain 'is_error=true': %q", msg)
+	}
+	// Session ID from the smoke-auth-failure.ndjson fixture.
+	const wantSession = "004fdbf6-7f5f-4fdb-aa5a-e43c0a50c42d"
+	if !strings.Contains(msg, wantSession) {
+		t.Errorf("error message should contain session ID %q: %q", wantSession, msg)
+	}
+}
+
 // feedFixture feeds all non-empty lines of a fixture file to the pipeline.
 func feedFixture(t *testing.T, p *claudestream.Pipeline, path string) {
 	t.Helper()

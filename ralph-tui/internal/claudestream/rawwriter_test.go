@@ -3,6 +3,7 @@ package claudestream_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
@@ -116,5 +117,40 @@ func TestRawWriter_OpenCloseNoWrite(t *testing.T) {
 	}
 	if fi.Size() != 0 {
 		t.Errorf("expected zero-byte file, got %d bytes", fi.Size())
+	}
+}
+
+// TestRawWriter_InvalidPath verifies that NewRawWriter returns a wrapped error
+// containing the path when the directory does not exist (TP-W1).
+func TestRawWriter_InvalidPath(t *testing.T) {
+	_, err := claudestream.NewRawWriter("/nonexistent/dir/file.jsonl")
+	if err == nil {
+		t.Fatal("expected error for path in nonexistent directory")
+	}
+	if !strings.Contains(err.Error(), "/nonexistent/dir/file.jsonl") {
+		t.Errorf("error should contain the path, got: %v", err)
+	}
+}
+
+// TestRawWriter_FilePermissions verifies that NewRawWriter creates files with
+// 0o600 mode bits (TP-W3, D14).
+func TestRawWriter_FilePermissions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "perms.jsonl")
+
+	w, err := claudestream.NewRawWriter(path)
+	if err != nil {
+		t.Fatalf("NewRawWriter: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Errorf("expected permissions 0o600, got %04o", got)
 	}
 }
