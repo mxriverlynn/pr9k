@@ -486,6 +486,30 @@ func TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive(t *testing.T) {
 	}
 }
 
+// TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables verifies that
+// SetHeartbeatReader(nil) after a non-nil reader was installed clears the
+// suffix on the next HandleHeartbeatTick call. This tests the documented
+// API contract: "Pass nil to disable the indicator."
+func TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables(t *testing.T) {
+	h := NewStatusHeader(4)
+	stub := &stubHeaderHeartbeat{silentFor: 20 * time.Second, active: true}
+	h.SetHeartbeatReader(stub)
+
+	// First tick: suffix should be set.
+	h.HandleHeartbeatTick()
+	if h.heartbeatSuffix == "" {
+		t.Fatal("expected suffix after first tick with active reader")
+	}
+
+	// Disable by passing nil — explicit-disable path.
+	h.SetHeartbeatReader(nil)
+	h.HandleHeartbeatTick()
+
+	if h.heartbeatSuffix != "" {
+		t.Errorf("expected suffix cleared after SetHeartbeatReader(nil), got %q", h.heartbeatSuffix)
+	}
+}
+
 // TestStatusHeader_HandleHeartbeatTick_CallsReader verifies that
 // HandleHeartbeatTick calls HeartbeatSilence() exactly once.
 func TestStatusHeader_HandleHeartbeatTick_CallsReader(t *testing.T) {

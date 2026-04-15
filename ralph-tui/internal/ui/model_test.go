@@ -1031,6 +1031,19 @@ func TestTitleString_SuffixSuppressed_WhenNoIterationLine(t *testing.T) {
 	}
 }
 
+// TP-HB-R3: HeartbeatTickMsg handler returns no cmd — verifies that the
+// ticker goroutine in main.go is the sole owner of the heartbeat schedule.
+func TestModel_HeartbeatTick_ReturnsNilCmd(t *testing.T) {
+	stub := &stubHeartbeat{active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+
+	_, cmd := m.Update(HeartbeatTickMsg(time.Now()))
+
+	if cmd != nil {
+		t.Errorf("expected nil cmd from HeartbeatTickMsg handler (ticker is owned by main.go), got non-nil: %T", cmd)
+	}
+}
+
 // TP-HB4: fractional seconds are truncated (not rounded) — 15.9s must display
 // as "15s", not "16s".
 func TestModel_HeartbeatTick_FractionalSeconds_Truncated(t *testing.T) {
