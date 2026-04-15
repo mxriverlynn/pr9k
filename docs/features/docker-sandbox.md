@@ -67,7 +67,9 @@ docker run                                              \
   docker/sandbox-templates:claude-code                  \
   claude --permission-mode bypassPermissions            \
          --model <MODEL>                                \
-         -p <PROMPT>
+         -p <PROMPT>                                    \
+         --output-format stream-json                    \
+         --verbose
 ```
 
 ### Flag rationale
@@ -81,6 +83,8 @@ docker run                                              \
 - `-v <PROFILE_DIR>:/home/agent/.claude` — bind-mount the Claude profile (read-write so OAuth token refresh works).
 - `-w /home/agent/workspace` — explicit working directory; matches the bind-mount so relative paths inside the container correspond to real host paths.
 - `-e CLAUDE_CONFIG_DIR=/home/agent/.claude` — set inside the container regardless of whether the host had `CLAUDE_CONFIG_DIR`; points to the mount point.
+- `--output-format stream-json` — instructs claude to emit newline-delimited JSON (NDJSON) on stdout. Required for the `claudestream` pipeline to parse typed events.
+- `--verbose` — includes all event types in the NDJSON stream (assistant turns, tool calls, result). Without this flag, many event types are suppressed and the pipeline cannot render step progress or extract the result.
 - No `-t` (TTY) — deliberately omitted; a TTY corrupts line-buffered stdout that the capture layer depends on.
 - No `--network` — left as default bridge; network isolation is a non-goal in v1.
 

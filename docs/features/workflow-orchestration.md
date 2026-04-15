@@ -77,6 +77,14 @@ Key files:
 ## Core Types
 
 ```go
+// CaptureMode selects how a step's output is bound to LastCapture after it succeeds.
+type CaptureMode int
+
+const (
+    CaptureLastLine CaptureMode = iota  // default: last non-empty stdout line (non-claude steps)
+    CaptureResult                        // Aggregator.Result() from the claudestream pipeline (claude steps)
+)
+
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
     WorkflowDir     string
@@ -93,6 +101,11 @@ type RunConfig struct {
     // main.go computes ui.TerminalWidth() - 2 (for rounded border glyphs)
     // and passes it here.
     LogWidth        int
+    // RunStamp is the per-run identifier used to name the artifact directory
+    // (e.g. "ralph-2026-04-14-173022.123"). Populated from Logger.RunStamp() in
+    // main.go. When empty, JSONL artifact paths are not populated for claude
+    // steps (persistence is skipped).
+    RunStamp        string
 }
 
 // RunResult holds the outcome of a completed Run call.
@@ -103,12 +116,13 @@ type RunResult struct {
     IterationsRun int
 }
 
-// StepExecutor wraps StepRunner + LastCapture + ProjectDir + RunSandboxedStep.
+// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
-    LastCapture() string  // last non-empty stdout line from the most recent RunStep
-    ProjectDir() string   // target repository directory used as cmd.Dir for every subprocess
+    LastCapture() string                  // last non-empty stdout line (or Aggregator.Result() for claude steps)
+    LastStats() claudestream.StepStats    // StepStats from the most recent RunSandboxedStep pipeline call
+    ProjectDir() string                   // target repository directory used as cmd.Dir for every subprocess
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 }
 
@@ -131,6 +145,12 @@ type ResolvedStep struct {
     Command     []string
     IsClaude    bool   // true for claude steps; routes to RunSandboxedStep
     CidfilePath string // docker cidfile path; passed to SandboxOptions.CidfilePath
+    // ArtifactPath is the per-step .jsonl file path for claude steps (D14).
+    // Empty for non-claude steps; the runner skips JSONL persistence when empty.
+    ArtifactPath string
+    // CaptureMode selects how LastCapture is populated after the step succeeds.
+    // Zero value (CaptureLastLine) preserves current non-claude behaviour.
+    CaptureMode CaptureMode
 }
 ```
 
@@ -276,6 +296,23 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 }
 ```
 
+After `buildStep` returns, `Run` populates `ArtifactPath` and `CaptureMode` for every `IsClaude == true` step before passing it to `Orchestrate`:
+
+```go
+if resolved.IsClaude {
+    resolved.ArtifactPath = artifactPath(&resolved, phasePrefix, stepIdx)
+    resolved.CaptureMode  = ui.CaptureResult
+}
+```
+
+`artifactPath` is a local helper closure in `Run` that computes the per-step `.jsonl` path:
+
+```
+<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+```
+
+Phase prefixes: `"initialize-"`, `"iter<NN>-"` (1-indexed iteration), `"finalize-"`. Returns `""` when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
+
 The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
 
 ### The Orchestrate State Machine
@@ -336,22 +373,56 @@ func runStepWithErrorHandling(...) StepAction {
 }
 ```
 
+### runStats
+
+`runStats` accumulates `claudestream.StepStats` across all claude step invocations in a run (D21). It lives exclusively on `Run`'s stack frame — no mutex required:
+
+```go
+type runStats struct {
+    invocations int
+    retries     int
+    total       claudestream.StepStats
+}
+
+func (rs *runStats) add(s claudestream.StepStats, isRetry bool) {
+    rs.invocations++
+    if isRetry { rs.retries++ }
+    rs.total.InputTokens += s.InputTokens
+    // ... all numeric StepStats fields accumulated ...
+}
+```
+
+Surfacing `rs` through `RunResult` or the completion summary is pending (D13 2c).
+
 ### stepDispatcher
 
-`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions{CidfilePath: d.current.CidfilePath}`. Non-claude steps pass through to the executor's `RunStep` unchanged.
+`stepDispatcher` is an adapter that wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep` uniformly across all phases. For a step marked `IsClaude=true`, `RunStep` transparently delegates to the wrapped executor's `RunSandboxedStep` with `SandboxOptions` populated from the current step's `CidfilePath`, `ArtifactPath`, and `CaptureMode`. Non-claude steps pass through to the executor's `RunStep` unchanged.
 
-A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed:
+A new `stepDispatcher` is created for each step so that `current` always reflects the step about to be executed, and `prevFailed` is intentionally reset between steps (retries only count re-executions of the same step):
 
 ```go
 type stepDispatcher struct {
-    exec    StepExecutor
-    current ui.ResolvedStep
+    exec       StepExecutor
+    current    ui.ResolvedStep
+    stats      *runStats
+    prevFailed bool  // true if the previous RunSandboxedStep returned an error
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
     if d.current.IsClaude {
-        return d.exec.RunSandboxedStep(name, command, SandboxOptions{CidfilePath: d.current.CidfilePath})
+        err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
+            CidfilePath:  d.current.CidfilePath,
+            ArtifactPath: d.current.ArtifactPath,
+            CaptureMode:  d.current.CaptureMode,
+        })
+        // Fold stats regardless of outcome — D21: the spend was real.
+        if d.stats != nil {
+            d.stats.add(d.exec.LastStats(), d.prevFailed)
+        }
+        d.prevFailed = err != nil
+        return err
     }
+    d.prevFailed = false
     return d.exec.RunStep(name, command)
 }
 ```
@@ -360,13 +431,13 @@ Each phase in `Run()` creates a fresh dispatcher per step and passes it as the `
 
 ```go
 // initialize phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, noopHeader{}, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
 
 // iteration phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, th, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
 
 // finalize phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
 ```
 
 ### Header Adapters

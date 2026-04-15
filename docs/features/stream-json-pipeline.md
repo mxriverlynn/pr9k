@@ -198,14 +198,82 @@ After the `ResultEvent` is written, the Pipeline appends:
 Downstream tooling can check for this line to detect whether an artifact was
 written completely (i.e., the process did not crash mid-step).
 
-## Wiring (planned)
+## Wiring
 
-The claudestream package is complete and tested, but not yet wired into the
-workflow layer. The planned integration points are:
+The claudestream package is wired into the workflow layer at the following
+integration points (completed in issues #89–#91):
 
-- `internal/sandbox/command.go` — append `--output-format stream-json --verbose` to claude invocations
-- `internal/workflow/` — route `IsClaude == true` stdout through `Pipeline.Observe`; use `Pipeline.Aggregator().Result()` for `captureAs`; call `Pipeline.Close()` and check `Pipeline.WriteErr()` after each step
-- `internal/logger/` — millisecond-precision `RunStamp` for artifact directory naming
-- Artifact directory: `logs/<run-timestamp>/<phase-prefix>-<slug>.jsonl`
+### sandbox/command.go (D1)
 
-See `docs/plans/streaming-json-output/design.md` for the full integration design.
+`BuildRunArgs` appends `--output-format stream-json --verbose` to every claude
+CLI invocation. This ensures all claude subprocess output is NDJSON.
+
+### workflow/workflow.go (D6, D14, D15)
+
+`RunSandboxedStep` constructs a `Pipeline` for every step where
+`opts.CaptureMode == ui.CaptureResult`:
+
+1. Opens a `RawWriter` at `opts.ArtifactPath` (if non-empty) for per-step JSONL
+   persistence. Open failure is logged as `[artifact] open failed: …` but does
+   not abort the step (persistence is best-effort).
+2. Constructs `claudestream.NewPipeline(rw)` — `rw` may be `nil`.
+3. Passes the pipeline to `runCommand`. The claude-aware stdout path (activated
+   when pipeline is non-nil) uses `bufio.Reader.ReadString('\n')` with no 256 KB
+   line cap, feeding each raw line to `pipeline.Observe`. Stderr uses a 256 KB
+   scanner with `[stderr] ` prefix.
+4. After the subprocess exits, folds `pipeline.Aggregator().Stats()` into
+   `lastStats` so callers can retrieve them via `LastStats()`.
+5. Checks `pipeline.Aggregator().Err()` (D15) before the subprocess exit code —
+   if the aggregator reports `is_error == true` or no result event was seen, the
+   step fails with the aggregator's error.
+6. On success, emits `pipeline.Renderer().Finalize(stats)` summary line through
+   `sendLine` and the file logger (D13 2a).
+7. Binds `pipeline.Aggregator().Result()` into `lastCapture` (D6) for `captureAs`
+   downstream.
+8. Defers `pipeline.Close()` and logs any `pipeline.WriteErr()` as
+   `[artifact] write error: …` (M1).
+
+Non-pipeline invocations (`CaptureMode != CaptureResult`) take the existing
+256 KB dual-scanner path unchanged.
+
+### workflow/run.go (D14, D21)
+
+`artifactPath` computes the per-step `.jsonl` path as:
+
+```
+<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+```
+
+Phase prefixes: `initialize-`, `iter<NN>-` (1-indexed), `finalize-`. Returns `""`
+when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
+
+For every `IsClaude == true` step, `Run` sets:
+- `resolved.ArtifactPath = artifactPath(…)`
+- `resolved.CaptureMode = ui.CaptureResult`
+
+These flow through `stepDispatcher` into `SandboxOptions` for each
+`RunSandboxedStep` call.
+
+`runStats` accumulates `StepStats` across all claude step invocations in a run
+(D21). `stepDispatcher.RunStep` calls `executor.LastStats()` after every
+`RunSandboxedStep` return (including retries and error paths) and folds the
+stats via `rs.add(stats, isRetry)`. `prevFailed` on the dispatcher tracks
+whether the prior call ended in error so retry invocations are counted
+separately.
+
+### logger/logger.go (D24)
+
+`Logger.RunStamp()` returns the log basename minus `.log` (e.g.
+`"ralph-2026-04-14-173022.123"`). `main.go` passes `log.RunStamp()` as
+`workflow.RunConfig.RunStamp`. Millisecond precision prevents two rapid
+successive runs from sharing an artifact directory.
+
+### cmd/ralph-tui/main.go
+
+`startup()` creates the per-run artifact directory
+(`<projectDir>/logs/<runStamp>/`) via `os.MkdirAll(0o700)` immediately after
+`NewLogger` succeeds. Directory creation failure logs to stderr and aborts
+startup, consistent with the existing logger-failure path.
+
+See `docs/plans/streaming-json-output/design.md` for the original integration
+design doc.
