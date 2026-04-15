@@ -902,9 +902,11 @@ func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) {
 type stubHeartbeat struct {
 	silentFor time.Duration
 	active    bool
+	calls     int
 }
 
 func (s *stubHeartbeat) HeartbeatSilence() (time.Duration, bool) {
+	s.calls++
 	return s.silentFor, s.active
 }
 
@@ -1008,6 +1010,71 @@ func TestModel_HeartbeatTick_ReturnsTickCmd(t *testing.T) {
 	_, cmd := m.Update(HeartbeatTickMsg(time.Now()))
 	if cmd == nil {
 		t.Error("expected non-nil cmd (tick rescheduling) from HeartbeatTickMsg")
+	}
+}
+
+// TP-HB1: stubHeartbeat call count — verifies the dispatch path reaches
+// HeartbeatSilence() during Update(HeartbeatTickMsg).
+func TestModel_HeartbeatTick_CallsHeartbeatSilence(t *testing.T) {
+	stub := &stubHeartbeat{active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+
+	_, _ = m.Update(HeartbeatTickMsg(time.Now()))
+
+	if stub.calls != 1 {
+		t.Errorf("expected HeartbeatSilence called once, got %d", stub.calls)
+	}
+}
+
+// TP-HB2: exact 15s boundary — silentFor == heartbeatSilenceThreshold must
+// produce the suffix (condition is >=, not >).
+func TestModel_HeartbeatTick_ExactThreshold_ShowsSuffix(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 15 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1 — Issue #1"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (15s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() at exact 15s threshold: want %q in %q", want, title)
+	}
+}
+
+// TP-HB3: suffix suppressed when iterLine is empty — titleString() must return
+// AppTitle only, even when heartbeatSuffix is non-empty.
+func TestTitleString_SuffixSuppressed_WhenNoIterationLine(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 20 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = ""
+
+	// Tick sets heartbeatSuffix on the model.
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	// iterLine is empty → titleString must return bare AppTitle with no suffix.
+	got := m.titleString()
+	if got != AppTitle {
+		t.Errorf("titleString() with empty iter line: want %q, got %q", AppTitle, got)
+	}
+}
+
+// TP-HB4: fractional seconds are truncated (not rounded) — 15.9s must display
+// as "15s", not "16s".
+func TestModel_HeartbeatTick_FractionalSeconds_Truncated(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 15*time.Second + 900*time.Millisecond, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (15s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() with 15.9s: want %q in %q (truncation not rounding)", want, title)
 	}
 }
 
