@@ -125,8 +125,7 @@ func TestResolveProfileDir_BothEnvVarsEmpty_FallsBackToCwdClaud(t *testing.T) {
 	}
 }
 
-// T5: ResolveProfileDir with whitespace-only CLAUDE_CONFIG_DIR falls back to
-// $HOME/.claude. strings.TrimSpace("   ") == "", so the fallback path is taken.
+// T5: ResolveProfileDir with whitespace-only CLAUDE_CONFIG_DIR falls back to $HOME/.claude.
 func TestResolveProfileDir_WhitespaceOnlyCLAUDE_CONFIG_DIR_FallsBackToHome(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "   ")
 	t.Setenv("HOME", "/test/home")
