@@ -137,7 +137,7 @@ func main() {
 	}
 
 	versionLabel := "ralph-tui v" + version.Version
-	model := ui.NewModel(header, keyHandler, versionLabel)
+	model := ui.NewModel(header, keyHandler, versionLabel).WithHeartbeat(runner)
 
 	program := tea.NewProgram(model,
 		tea.WithMouseCellMotion(),

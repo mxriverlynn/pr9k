@@ -1,12 +1,31 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // LogLinesMsg carries a batch of log lines from the drain goroutine into the
 // Bubble Tea Update loop. Using batches rather than single-line messages
 // reduces SetContent calls by ~100x under burst, keeping the O(N) viewport
 // work amortized.
 type LogLinesMsg struct{ Lines []string }
+
+// HeartbeatReader is implemented by types that report the silence duration of
+// the active claude step pipeline. It is passed to the Model via
+// WithHeartbeat so the TUI can render the D23 heartbeat indicator without
+// importing the workflow package directly.
+type HeartbeatReader interface {
+	// HeartbeatSilence returns the duration since the last observed event from
+	// the active claude pipeline, and whether a claude step is currently running.
+	// Returns (0, false) when no pipeline is active.
+	HeartbeatSilence() (time.Duration, bool)
+}
+
+// HeartbeatTickMsg is emitted by the 1-second ticker started in Model.Init
+// to drive the D23 heartbeat indicator update in Model.Update.
+type HeartbeatTickMsg time.Time
 
 // headerStepStateMsg updates the checkbox state for step idx.
 type headerStepStateMsg struct {

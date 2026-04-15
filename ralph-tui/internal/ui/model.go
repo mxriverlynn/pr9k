@@ -1,11 +1,25 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// heartbeatSilenceThreshold is the minimum silence duration before the
+// heartbeat indicator is shown in the iteration line (D23).
+const heartbeatSilenceThreshold = 15 * time.Second
+
+// heartbeatTick returns a tea.Cmd that fires HeartbeatTickMsg after 1 second.
+// Called from Init() and re-scheduled from Update() to keep the ticker alive.
+func heartbeatTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return HeartbeatTickMsg(t)
+	})
+}
 
 // headerModel wraps StatusHeader and applies header messages from the
 // orchestration goroutine (sent via headerProxy → program.Send).
@@ -47,12 +61,14 @@ func (m headerModel) iterLine() string {
 // keyboard dispatch — plus the terminal dimensions and a version label for the
 // shortcut footer.
 type Model struct {
-	header       headerModel
-	log          logModel
-	keys         keysModel
-	width        int
-	height       int
-	versionLabel string
+	header          headerModel
+	log             logModel
+	keys            keysModel
+	width           int
+	height          int
+	versionLabel    string
+	heartbeat       HeartbeatReader // nil when heartbeat is disabled
+	heartbeatSuffix string          // current " ⋯ thinking (Ns)" suffix; empty when inactive
 }
 
 // NewModel constructs the root Model. initialHeader must be pre-populated
@@ -67,9 +83,25 @@ func NewModel(initialHeader *StatusHeader, keyHandler *KeyHandler, versionLabel 
 	}
 }
 
-// Init satisfies tea.Model. No startup commands needed; the workflow goroutine
-// runs independently of the program event loop.
+// WithHeartbeat returns a copy of the Model with the given HeartbeatReader
+// installed. Call this after NewModel in main.go to enable the D23 heartbeat
+// indicator. Passing nil disables the indicator (same as the zero value).
+//
+// Tests that do not need heartbeat behaviour should use NewModel directly
+// (which leaves heartbeat nil), so Init() still returns nil and no ticker is
+// started.
+func (m Model) WithHeartbeat(h HeartbeatReader) Model {
+	m.heartbeat = h
+	return m
+}
+
+// Init satisfies tea.Model. When a HeartbeatReader is set, Init starts the
+// 1-second heartbeat ticker (D23). Otherwise returns nil so tests that do not
+// inject a heartbeat reader remain unaffected.
 func (m Model) Init() tea.Cmd {
+	if m.heartbeat != nil {
+		return heartbeatTick()
+	}
 	return nil
 }
 
@@ -131,6 +163,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var lcmd tea.Cmd
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
+
+	case HeartbeatTickMsg:
+		// Update the heartbeat suffix (D23) and reschedule for the next second.
+		if m.heartbeat != nil {
+			silentFor, active := m.heartbeat.HeartbeatSilence()
+			if active && silentFor >= heartbeatSilenceThreshold {
+				m.heartbeatSuffix = fmt.Sprintf("  ⋯ thinking (%ds)", int(silentFor.Seconds()))
+			} else {
+				m.heartbeatSuffix = ""
+			}
+		}
+		cmds = append(cmds, heartbeatTick())
 
 	case tea.QuitMsg:
 		return m, tea.Quit
@@ -261,12 +305,15 @@ func (m Model) View() string {
 }
 
 // titleString builds the OS window title and in-TUI border title from the
-// current header iteration line.
+// current header iteration line. When the heartbeat suffix is active (D23),
+// it is appended after the iteration detail — e.g.
+// "Power-Ralph.9000 — Iteration 2/5 — Issue #42  ⋯ thinking (17s)".
 func (m Model) titleString() string {
-	if m.header.iterLine() == "" {
+	iter := m.header.iterLine()
+	if iter == "" {
 		return AppTitle
 	}
-	return AppTitle + " — " + m.header.iterLine()
+	return AppTitle + " — " + iter + m.heartbeatSuffix
 }
 
 // colorShortcutLine applies the footer shortcut bar's two-tone palette: the

@@ -52,6 +52,12 @@ type Runner struct {
 	// lastStats holds the StepStats from the most recent RunSandboxedStep call
 	// that used the claudestream pipeline. Reset on each RunSandboxedStep entry.
 	lastStats claudestream.StepStats
+
+	// activePipeline is the claudestream.Pipeline for the currently running
+	// claude step. Protected by processMu. Nil when no claude step is in flight.
+	// Read by HeartbeatSilence() to compute the silence duration for D23.
+	activePipeline          *claudestream.Pipeline
+	activePipelineStartedAt time.Time
 }
 
 // SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
@@ -240,6 +246,19 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 		if wErr := pipeline.WriteErr(); wErr != nil {
 			_ = r.log.Log(stepName, fmt.Sprintf("[artifact] write error: %v", wErr))
 		}
+	}()
+
+	// Register the active pipeline for heartbeat monitoring (D23). The clear
+	// defer is registered last so it executes first (LIFO), before pipeline.Close().
+	now := time.Now()
+	r.processMu.Lock()
+	r.activePipeline = pipeline
+	r.activePipelineStartedAt = now
+	r.processMu.Unlock()
+	defer func() {
+		r.processMu.Lock()
+		r.activePipeline = nil
+		r.processMu.Unlock()
 	}()
 
 	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
@@ -499,6 +518,33 @@ func (r *Runner) LastStats() claudestream.StepStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.lastStats
+}
+
+// HeartbeatSilence returns the duration since the last observed event from
+// the active claude pipeline, and whether a claude step is currently running.
+// Returns (0, false) when no pipeline is active.
+//
+// When a step just started but no event has arrived yet (pipeline.LastEventAt()
+// is zero), the duration is measured from the moment the pipeline was created
+// so the heartbeat begins counting immediately rather than showing stale zero.
+//
+// Implements ui.HeartbeatReader. Safe for concurrent use: reads are taken
+// under processMu, then released before computing time.Since.
+func (r *Runner) HeartbeatSilence() (time.Duration, bool) {
+	r.processMu.Lock()
+	pipeline := r.activePipeline
+	startedAt := r.activePipelineStartedAt
+	r.processMu.Unlock()
+
+	if pipeline == nil {
+		return 0, false
+	}
+	t := pipeline.LastEventAt()
+	if t.IsZero() {
+		// No events observed yet — count silence from pipeline creation.
+		return time.Since(startedAt), true
+	}
+	return time.Since(t), true
 }
 
 // lastNonEmptyLine walks lines in reverse, strips trailing \r and whitespace,

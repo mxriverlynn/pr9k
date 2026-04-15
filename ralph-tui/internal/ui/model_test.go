@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -892,6 +893,121 @@ func TestView_CheckboxGrid_SingleStep_NoCrashAndCellAtOffset0(t *testing.T) {
 	}
 	if got := string(runes[:len([]rune(prefix))]); got != prefix {
 		t.Errorf("expected cell at offset 0 to start with %q, got %q", prefix, got)
+	}
+}
+
+// --- D23: HeartbeatReader + HeartbeatTickMsg ---
+
+// stubHeartbeat is a test double for HeartbeatReader.
+type stubHeartbeat struct {
+	silentFor time.Duration
+	active    bool
+}
+
+func (s *stubHeartbeat) HeartbeatSilence() (time.Duration, bool) {
+	return s.silentFor, s.active
+}
+
+// TestModel_Init_NoCmd_WithoutHeartbeat verifies Init() returns nil when no
+// HeartbeatReader is set (existing tests must not accidentally start a ticker).
+func TestModel_Init_NoCmd_WithoutHeartbeat(t *testing.T) {
+	m := newTestModel(t)
+	if m.Init() != nil {
+		t.Error("expected Init() to return nil when no heartbeat reader is set")
+	}
+}
+
+// TestModel_Init_ReturnsCmd_WithHeartbeat verifies Init() returns a non-nil
+// command when a HeartbeatReader is installed via WithHeartbeat.
+func TestModel_Init_ReturnsCmd_WithHeartbeat(t *testing.T) {
+	m := newTestModel(t).WithHeartbeat(&stubHeartbeat{})
+	if m.Init() == nil {
+		t.Error("expected Init() to return a cmd when heartbeat reader is set")
+	}
+}
+
+// TestModel_HeartbeatTick_ShowsSuffix_WhenSilentFor15s verifies that when the
+// heartbeat reader reports active=true and silentFor >= 15s, the heartbeat
+// suffix is appended to the title string.
+func TestModel_HeartbeatTick_ShowsSuffix_WhenSilentFor15s(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 17 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 2/5 — Issue #42"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	want := "  ⋯ thinking (17s)"
+	if !strings.Contains(title, want) {
+		t.Errorf("titleString() does not contain heartbeat suffix %q: got %q", want, title)
+	}
+}
+
+// TestModel_HeartbeatTick_NoSuffix_WhenInactive verifies that when the
+// heartbeat reader reports active=false, no heartbeat suffix appears.
+func TestModel_HeartbeatTick_NoSuffix_WhenInactive(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 30 * time.Second, active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 2/5"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	if strings.Contains(title, "⋯") {
+		t.Errorf("titleString() should not contain heartbeat suffix when inactive, got %q", title)
+	}
+}
+
+// TestModel_HeartbeatTick_NoSuffix_WhenBelowThreshold verifies that when the
+// heartbeat reader reports active=true but silentFor < 15s, no suffix is shown.
+func TestModel_HeartbeatTick_NoSuffix_WhenBelowThreshold(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 14 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/3"
+
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+
+	title := m.titleString()
+	if strings.Contains(title, "⋯") {
+		t.Errorf("titleString() should not contain heartbeat suffix below 15s threshold, got %q", title)
+	}
+}
+
+// TestModel_HeartbeatTick_ClearsSuffix_WhenTransitionsToInactive verifies that
+// the heartbeat suffix is cleared when a subsequent tick reports inactive.
+func TestModel_HeartbeatTick_ClearsSuffix_WhenTransitionsToInactive(t *testing.T) {
+	stub := &stubHeartbeat{silentFor: 20 * time.Second, active: true}
+	m := newTestModel(t).WithHeartbeat(stub)
+	m.header.header.IterationLine = "Iteration 1/1"
+
+	// First tick: suffix should appear.
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+	if !strings.Contains(m.titleString(), "⋯") {
+		t.Fatal("expected suffix after first tick")
+	}
+
+	// Second tick: step ended, now inactive.
+	stub.active = false
+	next, _ = m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+	if strings.Contains(m.titleString(), "⋯") {
+		t.Errorf("expected suffix cleared after inactive tick, got %q", m.titleString())
+	}
+}
+
+// TestModel_HeartbeatTick_ReturnsTickCmd verifies that processing a
+// HeartbeatTickMsg returns a non-nil command (to reschedule the ticker).
+func TestModel_HeartbeatTick_ReturnsTickCmd(t *testing.T) {
+	stub := &stubHeartbeat{active: false}
+	m := newTestModel(t).WithHeartbeat(stub)
+
+	_, cmd := m.Update(HeartbeatTickMsg(time.Now()))
+	if cmd == nil {
+		t.Error("expected non-nil cmd (tick rescheduling) from HeartbeatTickMsg")
 	}
 }
 
