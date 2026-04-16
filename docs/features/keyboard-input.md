@@ -15,7 +15,7 @@ A seven-mode state machine that routes keypresses and communicates user decision
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
 - In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`), calls `ForceQuit`, and returns `tea.QuitMsg` to exit the TUI; `n` or `<Escape>` cancel and restore the previous mode
 - In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation; `v` enters `ModeSelect`
-- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; `y` copy is planned for a later ticket
+- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; `y` or `Enter` copies the selected text to the clipboard (with OSC 52 fallback) and exits ModeSelect
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
 
@@ -103,7 +103,8 @@ Key files:
   │  Shows reverse-video cursor cell in log     │
   │  Esc → clears selection, returns prevMode   │
   │  q → ModeQuitConfirm                        │
-  │  Cursor movement implemented; y copy planned │
+  │  y/Enter → copy to clipboard, exit Select   │
+  │  Cursor movement and clipboard copy impl.   │
   └─────────────────────────────────────────────┘
 ```
 
@@ -113,6 +114,7 @@ Key files:
 |------|---------|
 | `ralph-tui/internal/ui/ui.go` | KeyHandler struct, mode state, ForceQuit, ShortcutLine |
 | `ralph-tui/internal/ui/keys.go` | keysModel Bubble Tea sub-model; Update dispatches tea.KeyMsg to mode handlers |
+| `ralph-tui/internal/ui/clipboard.go` | `copyToClipboard` (clipboard write + OSC 52 fallback), `copySelectedText` (async tea.Cmd wrapper with feedback log line) |
 | `ralph-tui/internal/ui/ui_test.go` | Tests for KeyHandler modes, transitions, and ForceQuit |
 | `ralph-tui/internal/ui/keys_test.go` | Tests for keysModel.Update routing (normal, error, quit-confirm, quitting) |
 
@@ -259,6 +261,7 @@ Entered by pressing `v` from `ModeNormal` or `ModeDone`. The footer shows `Selec
 - `K` / `Shift+↑` — extend selection by one visual row upward (alias for `MoveSelectionCursor(0, -1)`).
 - `PgDn` — move cursor down by `viewport.Height - 1` visual rows (page step).
 - `PgUp` — move cursor up by `viewport.Height - 1` visual rows (page step).
+- `y` / `Enter` — copies the selected text to the clipboard and exits ModeSelect (restores prevMode). If the selection is empty, this is a silent no-op that still exits ModeSelect. The clipboard write runs asynchronously inside a `tea.Cmd` so it does not block the Bubble Tea Update goroutine. On success, a `[copied N chars]` feedback line is appended to the log. On failure (no clipboard daemon), the OSC 52 escape sequence is written to stderr so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can deliver the payload over SSH. If stderr is not a terminal, `[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]` is appended to the log.
 - All other keys are no-ops.
 
 **Virtual column preservation:** vertical movement remembers `virtualCol` — the column the cursor was at before moving to a shorter line. When the cursor moves back to a longer line, it restores to `virtualCol` (clamped to the new row's width). Horizontal movement updates `virtualCol`.
@@ -342,6 +345,8 @@ This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the vie
 - `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all seven modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all seven modes
 - `ralph-tui/internal/ui/select_mode_test.go` — 16 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, `Esc` clears immediately (not next update), prevObservedMode double-guard idempotency, `LogLinesMsg` in select does not clear selection, external `SetMode` clears selection on next Update, unknown key no-op, `home`/`end` not forwarded; `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error, `v` from Done restores Done on Esc
 - `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, arrow keys move cursor, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, cursor clamps to line end on narrow rows, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, q clears selection before entering QuitConfirm, Esc from QuitConfirm restores idle mode, SelectedText updated after cursor moves
+- `ralph-tui/internal/ui/clipboard_copy_test.go` — 9 tests for the clipboard copy action: y/Enter copies and exits ModeSelect, OSC 52 fallback when clipboard daemon unavailable, `[copied N chars]` feedback on success, `[copy failed: ...]` on failure, empty selection is a silent no-op, clipboard payload uses raw coordinates (no wrap-induced newlines), `github.com/atotto/clipboard` is a direct dep, copyFn and stderrWriter test seam isolation, resetClipboardFns restores defaults
+- `ralph-tui/internal/ui/clipboard_additional_test.go` — 21 additional tests across 7 categories: `copyToClipboard` unit tests (empty string, multi-byte UTF-8 OSC 52 encoding, no stderr leak on success, large payload), `copySelectedText` helper isolated (empty returns nil cmd, success produces LogLinesMsg, failure produces error LogLinesMsg), model.go routing (multi-line selection payload, double-y second is no-op, Enter from Done restores Done, single-char feedback), `handleSelect` separation of concerns (y does not call copyFn directly, Enter restores prevMode, shortcut footer updates on exit), test seam safety (resetClipboardFns, stderrWriter restore, no-parallel audit), LogLinesMsg integration (copied/failed lines appear in viewport, byte-vs-rune count documented), go mod tidy produces no diff
 
 ## Additional Information
 

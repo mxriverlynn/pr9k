@@ -84,6 +84,9 @@ Key files:
 | `ralph-tui/internal/ui/select_mode_test.go` | 16 integration tests for `ModeSelect` entry/exit, shortcut bar, routing guard, and external mode-change clearing |
 | `ralph-tui/internal/ui/log_panel_ring_eviction_test.go` | 6 tests for ring-buffer eviction rawIdx adjustment, underflow clearing, auto-scroll suppression, and visual-coord recompute |
 | `ralph-tui/internal/ui/log_panel_eviction_recompute_test.go` | 20 edge-case tests for `recomputeSelectionVisualCoords`, `findVisualPos`, eviction adjustment, auto-scroll suppression, SetSize interaction, and model.go integration |
+| `ralph-tui/internal/ui/clipboard.go` | `copyToClipboard` (clipboard write + OSC 52 fallback to stderr), `copySelectedText` (async `tea.Cmd` wrapper that appends a feedback `LogLinesMsg`) |
+| `ralph-tui/internal/ui/clipboard_copy_test.go` | 9 tests for the clipboard copy flow: y/Enter exits ModeSelect, OSC 52 fallback, `[copied N chars]` / `[copy failed: ...]` feedback, empty-selection no-op, raw coordinate payload, test-seam isolation |
+| `ralph-tui/internal/ui/clipboard_additional_test.go` | 21 additional tests across 7 categories: `copyToClipboard` unit, `copySelectedText` helper, model.go routing, `handleSelect` separation of concerns, test-seam safety, LogLinesMsg integration, go mod tidy audit |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -335,7 +338,7 @@ type logModel struct {
 
 **`renderContent()`** — joins all visual-line text fields with `"\n"` and wraps the result in `logContentStyle` (white foreground). This is the single string passed to `viewport.SetContent`.
 
-**Tab normalization** — on `LogLinesMsg` ingest, each raw line is passed through `strings.ReplaceAll(line, "\t", "    ")` before being appended to `lines[]`. This converts tabs to four spaces so `visualColToRawOffset` (planned for the selection layer) remains a simple byte walk.
+**Tab normalization** — on `LogLinesMsg` ingest, each raw line is passed through `strings.ReplaceAll(line, "\t", "    ")` before being appended to `lines[]`. This converts tabs to four spaces so `visualColToRawOffset` (in `selection.go`) remains a simple byte walk.
 
 **Resize position preservation** — when `SetSize` is called with a changed width:
 1. Before rewrapping, the `visualLine` at `viewport.YOffset` is snapshotted to capture `(rawIdx, rawOffset)`.
@@ -348,7 +351,7 @@ Height-only changes skip the rewrap step entirely — only `viewport.Width` and 
 
 ### ModeSelect: Keyboard Text Selection
 
-Pressing `v` from `ModeNormal` or `ModeDone` enters `ModeSelect`. The cursor appears as a single reverse-video cell at column 0 of the last visible visual row. `Esc` clears the selection and returns to the prior mode.
+Pressing `v` from `ModeNormal` or `ModeDone` enters `ModeSelect`. The cursor appears as a single reverse-video cell at column 0 of the last visible visual row. `Esc` clears the selection and returns to the prior mode. `y` or `Enter` copies the selected text to the clipboard and exits `ModeSelect`.
 
 **Entry conditions:**
 - `v` is accepted only in `ModeNormal` and `ModeDone`. It is blocked in `ModeError` (the orchestration goroutine is blocked on `KeyHandler.Actions`), `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`.
@@ -387,6 +390,26 @@ When the mode is `ModeSelect` and a key has not caused a mode transition (Esc an
 **`autoscrollToCursor()`** is called at the end of every movement method, before `viewport.SetContent(m.renderContent())`. It adjusts `viewport.YOffset` so `sel.cursor.visualRow` is within `[YOffset, YOffset+Height)`. Moving above the viewport scrolls up; moving below scrolls down.
 
 **Bounds guard on ring-buffer eviction:** before indexing `m.lines[vl.rawIdx]`, `MoveSelectionCursor` and `JumpSelectionCursorToLineEnd` check `vl.rawIdx >= 0 && vl.rawIdx < len(m.lines)` and return `(m, nil)` if the index is stale. This prevents panics when the ring buffer wraps and an old `rawIdx` no longer points to a valid entry.
+
+#### Clipboard Copy in ModeSelect
+
+Pressing `y` or `Enter` from `ModeSelect` copies the selected text to the clipboard and exits ModeSelect (restoring prevMode). The copy flow spans two files:
+
+**`keys.go`** — `handleSelect` intercepts `y`/`Enter` and transitions the mode to `prevMode` (same path as `Esc`, but without clearing the selection yet). The actual payload extraction and copy command are delegated to `model.go`, which has access to both `keysModel` and `logModel`.
+
+**`model.go`** — In the "immediate selection clear" block, a `y`/`Enter` case extracts `m.log.SelectedText()` before calling `m.log.ClearSelection()`, then enqueues `copySelectedText(text)` as a `tea.Cmd`.
+
+**`clipboard.go`** — `copySelectedText(text string) tea.Cmd` returns a closure that:
+1. Calls `copyToClipboard(text)` asynchronously (inside the `tea.Cmd` so it does not block the Bubble Tea Update goroutine).
+2. On success, emits `LogLinesMsg{Lines: []string{"[copied N chars]"}}` (byte count, not rune count — cosmetic).
+3. On failure with a TTY stderr, writes an OSC 52 escape sequence (`\x1b]52;c;<base64>\x07`) to stderr and emits nothing (best-effort, no acknowledgement protocol).
+4. On failure without a TTY stderr, emits `LogLinesMsg{Lines: []string{"[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]"}}`.
+
+If `text` is empty, `copySelectedText` returns `nil` (no copy attempt, no feedback, silent no-op).
+
+Three package-level vars provide test seams: `copyFn` (default: `clipboard.WriteAll`), `isTTYFn` (default: `term.IsTerminal(stderr)`), and `stderrWriter` (default: `os.Stderr`). None are mutex-protected — tests must not call `t.Parallel()` while mutating them.
+
+**go.mod** — `github.com/atotto/clipboard v0.1.4` and `golang.org/x/term v0.42.0` were promoted to direct dependencies.
 
 ### Ring-Buffer Eviction and Selection Recompute
 
@@ -607,6 +630,8 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor stays fixed, arrow keys move cursor, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by one row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to keep cursor visible, cursor clamps to line end on narrow rows, q from ModeSelect enters QuitConfirm with pre-Select `prevMode` preserved, q clears selection before entering QuitConfirm, SelectedText updated after cursor moves
 - `ralph-tui/internal/ui/log_panel_ring_eviction_test.go` — 6 tests: rawIdx decremented after eviction (SelectedText unchanged), anchor underflow clears selection, cursor underflow clears whole selection, auto-scroll suppressed during visible selection, auto-scroll re-arms after selection cleared, stale visualRow corrected by post-eviction recompute
 - `ralph-tui/internal/ui/log_panel_eviction_recompute_test.go` — 20 edge-case tests across 7 categories: `recomputeSelectionVisualCoords` (no-op on zero-value, invalid rawIdx returns zero, preserves active/committed flags), `findVisualPos` (empty visualLines, last matching segment for wrapped line, col recomputed from rawOffset, col skip when rawOffset past end), eviction adjustment (inactive no-op, boundary rawIdx==0 survives, successive evictions cumulative), auto-scroll suppression (active selection suppresses, empty committed does not, not-at-bottom blocks independently), eviction + recompute interaction (stale visualRow corrected, underflow clears before recompute), SetSize interaction (does not recompute; subsequent LogLinesMsg corrects), model.go integration (LogLinesMsg preserves selection in ModeSelect, external SetMode clears selection on next Update)
+- `ralph-tui/internal/ui/clipboard_copy_test.go` — 9 tests for the clipboard copy action: y/Enter copies and exits ModeSelect, OSC 52 fallback when clipboard daemon unavailable, `[copied N chars]` feedback on success, `[copy failed: ...]` on failure, empty selection is a silent no-op, clipboard payload uses raw coordinates (no wrap-induced newlines), `github.com/atotto/clipboard` is a direct dep, copyFn/stderrWriter test-seam isolation, resetClipboardFns restores defaults
+- `ralph-tui/internal/ui/clipboard_additional_test.go` — 21 additional tests across 7 categories: `copyToClipboard` unit tests (empty string, multi-byte UTF-8 OSC 52 encoding, no stderr leak on success, large payload >64 KB), `copySelectedText` helper isolated (empty returns nil cmd, success produces `[copied N chars]` LogLinesMsg, failure produces error LogLinesMsg), model.go routing (multi-line selection payload correct, double-y second is no-op, Enter from Done restores Done, single-char selection feedback), `handleSelect` separation of concerns (y does not call copyFn directly, Enter restores prevMode not hardcoded Normal, shortcut footer updates on mode exit), test seam safety (resetClipboardFns, stderrWriter restore, no-parallel audit), LogLinesMsg integration (copied and copy-failed lines appear in viewport, byte-vs-rune count documented and verified), go mod tidy audit (no diff)
 
 ## Additional Information
 

@@ -205,10 +205,13 @@ Move the cursor with vim-style keys:
 | `J` / `Shift+↓` | Extend selection down one row |
 | `K` / `Shift+↑` | Extend selection up one row |
 | `PgDn` / `PgUp` | Move down / up one page |
+| `y` / `Enter` | Copy selected text to clipboard and exit Select mode |
 
 The cursor behaves like vim's visual mode: vertical movement remembers the intended column (`virtualCol`) and restores it when returning to a longer line. The viewport auto-scrolls to keep the cursor visible.
 
-Press `Esc` to clear the selection and return to Normal or Done mode. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
+Press `y` or `Enter` to copy the selected text to the clipboard and return to Normal or Done mode. A `[copied N chars]` confirmation line appears in the log on success. In headless or SSH environments where no clipboard daemon is available, an OSC 52 escape sequence is sent to the terminal so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can still deliver the payload.
+
+Press `Esc` to clear the selection and return to Normal or Done mode without copying. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
 
 Note: `v` is blocked in Error, QuitConfirm, NextConfirm, and Quitting modes — only Normal and Done accept it. If the log panel is empty, `v` is a no-op.
 
