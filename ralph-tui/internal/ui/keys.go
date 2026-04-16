@@ -141,15 +141,23 @@ func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	return m, nil
 }
 
-// handleSelect handles key events in ModeSelect. In this ticket only Esc is
-// wired; cursor movement and copy land in later tickets.
+// handleSelect handles key events in ModeSelect. Esc returns to the prior
+// mode; q enters ModeQuitConfirm (same pattern as handleNormal/handleDone).
+// Cursor movement and copy land in later tickets.
 func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	switch key.String() {
 	case "esc":
-		// Return to the pre-select mode. Selection clearing is handled by
-		// model.go's prevObservedMode guard on the next Update pass.
+		// Return to the pre-select mode. Selection clearing is handled
+		// immediately by model.go's post-dispatch guard in the same Update
+		// call. The prevObservedMode guard covers the external SetMode path.
 		m.handler.mu.Lock()
 		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	case "q":
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeQuitConfirm
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 	}

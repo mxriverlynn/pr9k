@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 // logRingBufferCap is the maximum number of lines retained in the ring buffer
@@ -177,7 +178,7 @@ func (m logModel) renderContent() string {
 			texts[i] = before + reverseStyle.Render(sel) + after
 		} else if i == start.visualRow {
 			// Highlight from start.col to end of row.
-			before, sel, _ := splitAtCols(vl.text, start.col, len(vl.text))
+			before, sel, _ := splitAtCols(vl.text, start.col, lipgloss.Width(vl.text))
 			texts[i] = before + reverseStyle.Render(sel)
 		} else if i == end.visualRow {
 			// Highlight from start of row to end.col.
@@ -199,7 +200,7 @@ func splitAtCol(s string, col int) (before, cursor, after string) {
 	if byteOff >= len(s) {
 		return s, " ", ""
 	}
-	// Advance one rune (grapheme cluster).
+	// Advance one rune.
 	for _, r := range s[byteOff:] {
 		size := len(string(r))
 		return s[:byteOff], s[byteOff : byteOff+size], s[byteOff+size:]
@@ -235,7 +236,7 @@ func colToByteOffset(s string, col int) int {
 		if cellCount >= col {
 			break
 		}
-		w := lipgloss.Width(string(r))
+		w := runewidth.RuneWidth(r)
 		cellCount += w
 		byteOff += len(string(r))
 	}
