@@ -15,7 +15,7 @@ A seven-mode state machine that routes keypresses and communicates user decision
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
 - In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`), calls `ForceQuit`, and returns `tea.QuitMsg` to exit the TUI; `n` or `<Escape>` cancel and restore the previous mode
 - In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation; `v` enters `ModeSelect`
-- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; `y` or `Enter` copies the selected text to the clipboard (with OSC 52 fallback) and exits ModeSelect
+- In Select mode (entered when `v` is pressed from Normal or Done, or via a left mouse click on the log viewport), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; left-drag extends; release commits and shows `SelectCommittedShortcuts`; `y` or `Enter` copies the selected text to the clipboard (with OSC 52 fallback) and exits ModeSelect
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
 
@@ -159,7 +159,8 @@ type KeyHandler struct {
 | `QuitConfirmPrompt` | `"Quit " + AppTitle + "? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
 | `NextConfirmPrompt` | `"Skip current step? (y/n, esc to cancel)"` | Shortcut bar in next-confirm mode |
 | `DoneShortcuts` | `"↑/k up  ↓/j down  v select  q quit"` | Shortcut bar in done mode (post-workflow) |
-| `SelectShortcuts` | `"hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"` | Shortcut bar in select mode |
+| `SelectShortcuts` | `"hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"` | Shortcut bar in select mode (while selection is in progress) |
+| `SelectCommittedShortcuts` | `"y copy  esc cancel  drag for new selection"` | Shortcut bar shown immediately after a mouse drag release; cleared on next key or mouse event |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
 
 ## Implementation Details
@@ -239,9 +240,11 @@ When the workflow finishes all iterations and finalize steps successfully, `Run`
 
 ### Select Mode
 
-Entered by pressing `v` from `ModeNormal` or `ModeDone`. The footer shows `SelectShortcuts`. The cursor renders as a single reverse-video cell at column 0 of the last visible visual row in the log panel.
+Entered by pressing `v` from `ModeNormal` or `ModeDone`, or by left-clicking/dragging in the log viewport from any non-modal mode. The footer shows `SelectShortcuts` while a selection is in progress; after a drag release the footer switches to `SelectCommittedShortcuts` (`"y copy  esc cancel  drag for new selection"`) until the next key or mouse event.
 
-**Entry conditions:** `v` is blocked in `ModeError` (orchestration goroutine is blocked on `KeyHandler.Actions`), `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`. `v` with an empty log buffer (`len(m.log.lines) == 0`) is also a no-op — mode stays unchanged.
+**Entry conditions (keyboard `v`):** `v` is blocked in `ModeError` (orchestration goroutine is blocked on `KeyHandler.Actions`), `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`. `v` with an empty log buffer (`len(m.log.lines) == 0`) is also a no-op — mode stays unchanged.
+
+**Entry conditions (mouse press):** a left-click on log viewport content from `ModeNormal` or `ModeDone` transitions to `ModeSelect`. If the click lands in empty viewport padding below the content (resolveVisualPos returns false), the mode stays unchanged — no zero-value selection is created. Left-press in `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting` is a no-op.
 
 **Entry sequence (in `Model.Update`):**
 1. `keysModel.Update` sets `mode = ModeSelect` and saves `prevMode`.
@@ -264,9 +267,16 @@ Entered by pressing `v` from `ModeNormal` or `ModeDone`. The footer shows `Selec
 - `y` / `Enter` — copies the selected text to the clipboard and exits ModeSelect (restores prevMode). If the selection is empty, this is a silent no-op that still exits ModeSelect. The clipboard write runs asynchronously inside a `tea.Cmd` so it does not block the Bubble Tea Update goroutine. On success, a `[copied N chars]` feedback line is appended to the log. On failure (no clipboard daemon), the OSC 52 escape sequence is written to stderr so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can deliver the payload over SSH. If stderr is not a terminal, `[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]` is appended to the log.
 - All other keys are no-ops.
 
+**Mouse gestures in `ModeSelect`:**
+- **Left-drag** — extends the cursor endpoint as the pointer moves. Fires on every `MouseActionMotion` event while `sel.active=true`. Auto-scrolls one line per motion event when the pointer is above or below the visible window.
+- **Left-release** — commits the active drag: `active=false`, `committed=true`. The footer immediately shows `SelectCommittedShortcuts`. The next key or mouse event clears the flag and restores `SelectShortcuts`.
+- **Shift-click** — when a committed selection exists, moves only the cursor to the clicked cell; the anchor stays fixed.
+- **Bare click** — re-anchors the selection at the click cell (clears previous selection and sets `active=true`).
+- **Wheel** — always forwards to the viewport for scrolling, regardless of mode. Does not affect selection state.
+
 **Virtual column preservation:** vertical movement remembers `virtualCol` — the column the cursor was at before moving to a shorter line. When the cursor moves back to a longer line, it restores to `virtualCol` (clamped to the new row's width). Horizontal movement updates `virtualCol`.
 
-**Auto-scroll:** after every cursor movement, `autoscrollToCursor()` adjusts `viewport.YOffset` so the cursor row is always visible. Moving above the top scrolls the viewport up; moving below the bottom scrolls down.
+**Auto-scroll (keyboard):** after every cursor movement, `autoscrollToCursor()` adjusts `viewport.YOffset` so the cursor row is always visible. Moving above the top scrolls the viewport up; moving below the bottom scrolls down.
 
 **Key routing guard:** When `modeBeforeKey == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport while in select mode.
 
@@ -347,6 +357,8 @@ This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the vie
 - `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, arrow keys move cursor, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, cursor clamps to line end on narrow rows, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, q clears selection before entering QuitConfirm, Esc from QuitConfirm restores idle mode, SelectedText updated after cursor moves
 - `ralph-tui/internal/ui/clipboard_copy_test.go` — 9 tests for the clipboard copy action: y/Enter copies and exits ModeSelect, OSC 52 fallback when clipboard daemon unavailable, `[copied N chars]` feedback on success, `[copy failed: ...]` on failure, empty selection is a silent no-op, clipboard payload uses raw coordinates (no wrap-induced newlines), `github.com/atotto/clipboard` is a direct dep, copyFn and stderrWriter test seam isolation, resetClipboardFns restores defaults
 - `ralph-tui/internal/ui/clipboard_additional_test.go` — 21 additional tests across 7 categories: `copyToClipboard` unit tests (empty string, multi-byte UTF-8 OSC 52 encoding, no stderr leak on success, large payload), `copySelectedText` helper isolated (empty returns nil cmd, success produces LogLinesMsg, failure produces error LogLinesMsg), model.go routing (multi-line selection payload, double-y second is no-op, Enter from Done restores Done, single-char feedback), `handleSelect` separation of concerns (y does not call copyFn directly, Enter restores prevMode, shortcut footer updates on exit), test seam safety (resetClipboardFns, stderrWriter restore, no-parallel audit), LogLinesMsg integration (copied/failed lines appear in viewport, byte-vs-rune count documented), go mod tidy produces no diff
+- `ralph-tui/internal/ui/mouse_selection_test.go` — 16 integration tests covering all mouse selection acceptance criteria: left-drag selects with live reverse-video feedback, release commits and shows `SelectCommittedShortcuts`, dragging past top/bottom edge auto-scrolls one line per motion, bare click re-anchors, shift-click extends committed cursor, left-press in Error/QuitConfirm/NextConfirm/Quitting is a no-op, wheel scrolls in every mode, mid-drag resize force-commits without losing raw coords, `y` copies committed selection
+- `ralph-tui/internal/ui/mouse_selection_extra_test.go` — 24 additional tests across 7 categories: `resolveVisualPos` edge cases (negative row, row past end, col clamped to row width, negative col clamped), `HandleMouse` unit tests (empty visualLines, motion/release guards, shift-press without committed selection, negative row clamping), model.go routing (press above/below viewport, stray motion/release), `selectJustReleased` lifecycle (cleared by wheel, by second press, not set by keyboard `v`), auto-scroll clamping (multi-event accumulation, top/bottom boundary stops), shift-click edge cases (same cell no-op, before anchor, during active drag ignored), `SelectCommittedShortcuts` constant and `updateShortcutLineLocked` path
 
 ## Additional Information
 

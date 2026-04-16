@@ -87,6 +87,8 @@ Key files:
 | `ralph-tui/internal/ui/clipboard.go` | `copyToClipboard` (clipboard write + OSC 52 fallback to stderr), `copySelectedText` (async `tea.Cmd` wrapper that appends a feedback `LogLinesMsg`) |
 | `ralph-tui/internal/ui/clipboard_copy_test.go` | 9 tests for the clipboard copy flow: y/Enter exits ModeSelect, OSC 52 fallback, `[copied N chars]` / `[copy failed: ...]` feedback, empty-selection no-op, raw coordinate payload, test-seam isolation |
 | `ralph-tui/internal/ui/clipboard_additional_test.go` | 21 additional tests across 7 categories: `copyToClipboard` unit, `copySelectedText` helper, model.go routing, `handleSelect` separation of concerns, test-seam safety, LogLinesMsg integration, go mod tidy audit |
+| `ralph-tui/internal/ui/mouse_selection_test.go` | 16 integration tests for the mouse selection flow: left-drag selects, release commits, auto-scroll at edges, shift-click extends, bare click re-anchors, wheel scroll unaffected, `SelectCommittedShortcuts` on release, mid-drag resize force-commits |
+| `ralph-tui/internal/ui/mouse_selection_extra_test.go` | 24 additional tests across 7 categories: `resolveVisualPos` edge cases, `HandleMouse` unit tests, model.go mouse routing, `selectJustReleased` lifecycle, auto-scroll clamping, shift-click edge cases, `SelectCommittedShortcuts` shortcut path |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -411,6 +413,38 @@ Three package-level vars provide test seams: `copyFn` (default: `clipboard.Write
 
 **go.mod** — `github.com/atotto/clipboard v0.1.4` and `golang.org/x/term v0.42.0` were promoted to direct dependencies.
 
+### Mouse Selection
+
+Left-clicking and dragging in the log viewport selects text without requiring the user to press `v` first. The feature is implemented across `log_panel.go` (`resolveVisualPos`, `HandleMouse`), `model.go` (mouse routing), and `ui.go` (`selectJustReleased`, `clearJustReleasedLocked`, `SelectCommittedShortcuts`).
+
+**`resolveVisualPos(p pos) (pos, bool)`** — fills in `rawIdx`, `rawOffset`, and (clamped) `col` on a `pos` whose only valid fields are `visualRow` and `col`. Returns `(p, false)` when `p.visualRow` is out of range or the backing raw line is invalid. `p.col` is clamped to `[0, rowWidth]` so that clicks past the end of a short row anchor at the last column rather than overflowing into the next raw line.
+
+**`HandleMouse(p pos, action tea.MouseAction, shift bool) (logModel, tea.Cmd)`** — applies a single translated mouse event to the selection state. All three action variants are handled:
+
+| Action | Behavior |
+|--------|----------|
+| `MouseActionPress` (bare) | Clears any existing selection; anchors a new one at `p` with `active=true`. If `resolveVisualPos` returns `false` (click below content), selection stays unchanged and the method returns immediately without setting `active`. |
+| `MouseActionPress` (shift) | If a committed selection exists, moves only the cursor to `p` (shift-click extend); anchor stays fixed. |
+| `MouseActionMotion` | No-op when `!sel.active`. When active: auto-scrolls one line per event when the pointer is above or below the visible window (`YOffset-1` or `YOffset+Height`), then clamps `visualRow` to `[0, len(visualLines)-1]` before resolving raw coords and updating `sel.cursor`. |
+| `MouseActionRelease` | No-op when `!sel.active`. Commits: sets `active=false`, `committed=true`. |
+
+**Mode transitions on mouse press (model.go):**
+- `ModeNormal` or `ModeDone` → `ModeSelect`: triggered when a left-press lands on content and `m.log.sel.active == true` after `HandleMouse`. The `prevMode` is saved and `updateShortcutLineLocked` updates the footer.
+- `ModeSelect` left-press: re-anchors the selection cursor (handled inside `HandleMouse`); mode stays `ModeSelect`.
+- `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeQuitting`: left-press is ignored.
+
+**Mouse wheel:** wheel events (`WheelUp`/`WheelDown`/`WheelLeft`/`WheelRight`) are always forwarded to the viewport via `m.log.Update(msg)` regardless of mode, so scrolling works in every mode including `ModeSelect`.
+
+**Non-left-button guard:** the `else if msg.Button == tea.MouseButtonLeft || msg.Button == tea.MouseButtonNone` guard prevents right-click and middle-click events from accidentally triggering selection. `MouseButtonNone` covers terminal emulators that report motion events without a button field.
+
+**`SelectCommittedShortcuts`** (`"y copy  esc cancel  drag for new selection"`) replaces `SelectShortcuts` in the footer immediately after a drag release. The `selectJustReleased bool` field on `KeyHandler` (protected by `mu`) is set to `true` inside `updateShortcutLineLocked` when `mode == ModeSelect && selectJustReleased`. The flag is cleared on the next key or mouse event via `clearJustReleasedLocked()`.
+
+**Mid-drag resize:** when `SetSize` is called while a drag is in progress (`sel.active == true`), the selection is force-committed (`active=false; committed=true`) before rewrap. This preserves the raw coordinates already captured by preceding Motion events and avoids corrupting the selection state during viewport dimension changes.
+
+**Auto-scroll detail:** during a drag, `Motion` events pass an unclamped `visualRow` computed as `viewport.YOffset + (msg.Y - logTopRow)` to `HandleMouse`. Negative rows (pointer above viewport) trigger `SetYOffset(-1)`; rows past `YOffset+Height-1` trigger `SetYOffset(+1)`. The row is then clamped before `resolveVisualPos` so the cursor endpoint remains inside the actual content bounds.
+
+**Coordinate translation:** `logTopRow` (first row of viewport content) is computed as `len(m.header.header.Rows) + 2` (1 top border + gridRows checkbox rows + 1 hrule). `logLeftCol` is always 1 (inside the left border character). `mouseToViewport` (in `selection.go`) maps the raw `tea.MouseMsg` coordinates to viewport-space `(visualRow, col)` and returns `ok=false` when the click lands on chrome outside the viewport height.
+
 ### Ring-Buffer Eviction and Selection Recompute
 
 When new log lines push the ring buffer past `logRingBufferCap` (2000), old lines are evicted from the front. Two interleaved concerns must be handled on every `LogLinesMsg`:
@@ -632,6 +666,8 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/log_panel_eviction_recompute_test.go` — 20 edge-case tests across 7 categories: `recomputeSelectionVisualCoords` (no-op on zero-value, invalid rawIdx returns zero, preserves active/committed flags), `findVisualPos` (empty visualLines, last matching segment for wrapped line, col recomputed from rawOffset, col skip when rawOffset past end), eviction adjustment (inactive no-op, boundary rawIdx==0 survives, successive evictions cumulative), auto-scroll suppression (active selection suppresses, empty committed does not, not-at-bottom blocks independently), eviction + recompute interaction (stale visualRow corrected, underflow clears before recompute), SetSize interaction (does not recompute; subsequent LogLinesMsg corrects), model.go integration (LogLinesMsg preserves selection in ModeSelect, external SetMode clears selection on next Update)
 - `ralph-tui/internal/ui/clipboard_copy_test.go` — 9 tests for the clipboard copy action: y/Enter copies and exits ModeSelect, OSC 52 fallback when clipboard daemon unavailable, `[copied N chars]` feedback on success, `[copy failed: ...]` on failure, empty selection is a silent no-op, clipboard payload uses raw coordinates (no wrap-induced newlines), `github.com/atotto/clipboard` is a direct dep, copyFn/stderrWriter test-seam isolation, resetClipboardFns restores defaults
 - `ralph-tui/internal/ui/clipboard_additional_test.go` — 21 additional tests across 7 categories: `copyToClipboard` unit tests (empty string, multi-byte UTF-8 OSC 52 encoding, no stderr leak on success, large payload >64 KB), `copySelectedText` helper isolated (empty returns nil cmd, success produces `[copied N chars]` LogLinesMsg, failure produces error LogLinesMsg), model.go routing (multi-line selection payload correct, double-y second is no-op, Enter from Done restores Done, single-char selection feedback), `handleSelect` separation of concerns (y does not call copyFn directly, Enter restores prevMode not hardcoded Normal, shortcut footer updates on mode exit), test seam safety (resetClipboardFns, stderrWriter restore, no-parallel audit), LogLinesMsg integration (copied and copy-failed lines appear in viewport, byte-vs-rune count documented and verified), go mod tidy audit (no diff)
+- `ralph-tui/internal/ui/mouse_selection_test.go` — 16 integration tests covering all mouse selection acceptance criteria: left-drag selects text with live reverse-video feedback, release commits and shows `SelectCommittedShortcuts`, dragging past top/bottom edge auto-scrolls one line per motion, bare click re-anchors selection, shift-click extends committed selection's cursor, left-press in Error/QuitConfirm/NextConfirm/Quitting is a no-op, wheel scrolls in every mode, mid-drag resize force-commits without losing raw coords, `y` copies committed selection and exits ModeSelect
+- `ralph-tui/internal/ui/mouse_selection_extra_test.go` — 24 additional tests across 7 categories: `resolveVisualPos` (negative row false, row past end false, col clamped to row width, col clamped to 0 for negative), `HandleMouse` unit tests (empty visualLines no-op, motion guard `!active`, release guard `!active`, shift-press on no committed selection clears-and-re-anchors, negative row clamped to 0), model.go mouse routing (press above viewport `ok=false` no-op, press below content no-op, stray motion no-op when not active, stray release no-op), `selectJustReleased` lifecycle (cleared by wheel event, cleared by second press, NOT set by keyboard `v`), auto-scroll clamping (multi-event scrolls accumulate, stops at top boundary, stops at bottom boundary), shift-click edge cases (same cell as cursor is no-op, click before anchor moves cursor left, click during active drag ignored), `SelectCommittedShortcuts` constant and `updateShortcutLineLocked` path
 
 ## Additional Information
 

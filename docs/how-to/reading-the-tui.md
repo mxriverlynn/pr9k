@@ -157,16 +157,22 @@ The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while 
 
 ### Selecting log text to copy
 
-`tea.WithMouseCellMotion()` enables application mouse capture, which tells mainstream terminals (iTerm2, Ghostty, Kitty, xterm) to forward mouse drags to the application rather than performing local text selection. As a result, a plain drag no longer selects text in the log panel.
+ralph-tui handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
 
-To select and copy text from the log panel, hold the modifier key that overrides the application's mouse capture:
+**In-app mouse selection (recommended):**
+- **Left-click and drag** in the log viewport to select text. As you drag, the selected region is highlighted in reverse-video. Dragging past the top or bottom edge auto-scrolls one line per event.
+- **Release** to commit the selection. The footer switches to `y copy  esc cancel  drag for new selection`.
+- **Shift-click** to extend the committed selection's cursor without moving the anchor.
+- Press **`y`** or **`Enter`** to copy. Press **`Esc`** to cancel.
+
+**Terminal text selection (fallback):** if you need to copy text using the terminal's built-in selection mechanism (for example, to capture content outside the log viewport), hold the modifier key that overrides application mouse mode before dragging:
 
 | Platform | Override key | Gesture |
 |----------|-------------|---------|
 | macOS | `Option` | Hold Option, then drag to select |
 | Linux / Windows | `Shift` | Hold Shift, then drag to select |
 
-The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode.
+The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode. In-app selection via left-drag is generally preferred because it correctly tracks word-wrapped visual lines and copies raw text without wrap-induced newlines.
 
 ## Region 3 — the shortcut footer
 
@@ -183,16 +189,17 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 | `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
 | `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for quit confirmation |
 | `↑/k up  ↓/j down  v select  q quit` | Done — the workflow finished; review output, select text, or press `q` → `y` to exit |
-| `hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit` | Select — `v` was pressed; reverse-video cursor visible in log panel |
+| `hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit` | Select — keyboard cursor visible; move to extend selection, `y` to copy |
+| `y copy  esc cancel  drag for new selection` | Select (committed) — shown after a mouse drag release; any key restores the Select footer |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
 When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
 
 ### Using Select mode
 
-Press `v` from Normal or Done mode to enter `ModeSelect`. A reverse-video cursor cell appears at column 0 of the last visible log row. The footer changes to show the select-mode shortcuts.
+Enter `ModeSelect` by pressing `v` from Normal or Done mode (keyboard cursor appears at column 0 of the last visible log row), or by left-clicking the log viewport (mouse cursor anchors at the click cell). The footer changes to show the select-mode shortcuts.
 
-Move the cursor with vim-style keys:
+Move the keyboard cursor with vim-style keys:
 
 | Keys | Action |
 |------|--------|
@@ -213,7 +220,7 @@ Press `y` or `Enter` to copy the selected text to the clipboard and return to No
 
 Press `Esc` to clear the selection and return to Normal or Done mode without copying. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
 
-Note: `v` is blocked in Error, QuitConfirm, NextConfirm, and Quitting modes — only Normal and Done accept it. If the log panel is empty, `v` is a no-op.
+Note: `v` (keyboard entry) is blocked in Error, QuitConfirm, NextConfirm, and Quitting modes — only Normal and Done accept it. If the log panel is empty, `v` is a no-op. Mouse left-click is similarly ignored in Error, QuitConfirm, NextConfirm, and Quitting modes.
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
 
