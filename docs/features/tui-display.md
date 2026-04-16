@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-15
+- **Last Updated:** 2026-04-16
 - **Authors:**
   - River Bailey
 
@@ -76,8 +76,9 @@ Key files:
 | `ralph-tui/internal/ui/header_test.go` | Tests for iteration/finalization state transitions |
 | `ralph-tui/internal/ui/log.go` | Log-body helpers: step/phase banners, capture log, completion summary |
 | `ralph-tui/internal/ui/log_test.go` | Tests for log-body helper output |
-| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 2000-entry ring buffer (`logRingBufferCap`), auto-scroll, logContentStyle |
+| `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 2000-entry ring buffer (`logRingBufferCap`), word-wrap via `rewrap()`, auto-scroll, logContentStyle |
 | `ralph-tui/internal/ui/log_panel_test.go` | Tests for logModel ring buffer, auto-scroll, Home/End key handling |
+| `ralph-tui/internal/ui/log_panel_wrap_test.go` | 30 unit tests covering word-wrap, rawOffset accuracy, ring-buffer eviction, SetSize edge cases, auto-scroll behavior, ANSI preservation, and integration via tea.WindowSizeMsg |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -299,6 +300,46 @@ func cellStyle(state StepState) (marker string, nameColor, markerColor lipgloss.
     }
 }
 ```
+
+### Word-wrap
+
+The log panel wraps long lines at word boundaries to the current viewport width, so no content is hidden off the right edge.
+
+**Core types and helpers** (all in `log_panel.go`):
+
+```go
+// visualLine is one word-wrapped segment of a raw log line.
+// rawIdx and rawOffset provide stable back-references into lines[]
+// for scroll-position preservation across resizes and future copy/select work.
+type visualLine struct {
+    text      string // wrapped segment (plain text; logContentStyle applied at render time)
+    raw       string // same as text for plain-text ring buffers; reserved for copy
+    rawIdx    int    // index into m.lines
+    rawOffset int    // byte offset within lines[rawIdx] where this segment starts
+}
+
+// logModel holds both the raw ring buffer and the derived visual-line slice.
+type logModel struct {
+    viewport    viewport.Model
+    lines       []string     // ring buffer (cap 2000); one entry per original logical line
+    visualLines []visualLine // rebuilt on every rewrap; one entry per wrapped visual row
+}
+```
+
+**`rewrap(width int)`** — rebuilds `visualLines` by calling `ansi.Wrap(line, width, " -")` once per raw line. `ansi.Wrap` handles word-wrap with a hard-break fallback for over-long tokens. Results are split on `\n` to extract individual segments; `rawOffset` is advanced by `len(seg)` then by any trailing space that `ansi.Wrap` consumed as a word-break separator. When `width < 1` (before the first `tea.WindowSizeMsg`), `ansi.Wrap` returns the input unchanged — each raw line produces exactly one visual segment.
+
+**`renderContent()`** — joins all visual-line text fields with `"\n"` and wraps the result in `logContentStyle` (white foreground). This is the single string passed to `viewport.SetContent`.
+
+**Tab normalization** — on `LogLinesMsg` ingest, each raw line is passed through `strings.ReplaceAll(line, "\t", "    ")` before being appended to `lines[]`. This converts tabs to four spaces so `visualColToRawOffset` (planned for the selection layer) remains a simple byte walk.
+
+**Resize position preservation** — when `SetSize` is called with a changed width:
+1. Before rewrapping, the `visualLine` at `viewport.YOffset` is snapshotted to capture `(rawIdx, rawOffset)`.
+2. `rewrap(width)` and `renderContent()` rebuild the visual-line slice for the new width.
+3. After rewrap, `visualLines` is scanned for the largest index `i` such that `visualLines[i].rawIdx == snap.rawIdx && visualLines[i].rawOffset <= snap.rawOffset`, and `viewport.SetYOffset(i)` restores that position. Using `rawOffset` (not just `rawIdx`) prevents the viewport from jumping backward to the first segment of a multi-segment raw line when the terminal narrows.
+
+Height-only changes skip the rewrap step entirely — only `viewport.Width` and `viewport.Height` are updated.
+
+**Known limitation (TODO #103):** `rawOffset` is advanced by `len(seg)` — the byte length of the *wrapped output* segment. If a raw line contains ANSI escape sequences, `ansi.Wrap` may insert reset/re-open codes at wrap boundaries, making the segment byte length diverge from the raw-line bytes consumed. Scroll-position restoration and future copy/select will silently produce wrong offsets in that case. Currently low severity (claudestream emits unstyled text). Tracked as issue #103.
 
 ### Log-Body Helpers
 

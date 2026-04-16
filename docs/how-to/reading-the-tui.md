@@ -145,6 +145,12 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.
 
+### Word-wrap
+
+Lines longer than the viewport width wrap at word boundaries — no content is hidden off the right edge. A token with no spaces (a long URL or a stream-json blob) hard-wraps at the width boundary. Wrapped segments start at column 0 with no hanging indent.
+
+When you resize the terminal, content re-wraps to the new width and the viewport scrolls so the same logical line stays at the top of the visible area, even if it occupied multiple wrapped rows before the resize.
+
 ### Scrolling
 
 The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — ralph-tui enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
