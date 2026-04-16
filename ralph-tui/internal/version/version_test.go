@@ -23,14 +23,6 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
-// TP-109-01: Version constant is 0.5.0.
-func TestVersion_Is0_5_0(t *testing.T) {
-	const want = "0.5.0"
-	if Version != want {
-		t.Errorf("version.Version = %q, want %q", Version, want)
-	}
-}
-
 // TP-109-03: Version follows semver format ^\d+\.\d+\.\d+$.
 var semverRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 

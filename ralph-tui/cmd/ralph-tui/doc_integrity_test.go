@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
 // repoRoot returns the workspace root directory, resolved from this test file's
@@ -231,4 +233,26 @@ func TestDocIntegrity_KeyboardInput_SelectCommittedShortcutsValue(t *testing.T) 
 	assertContains(t, content, "SelectCommittedShortcuts", "keyboard-input.md constants table")
 	assertContains(t, content, "y copy  esc cancel  drag for new selection",
 		"keyboard-input.md SelectCommittedShortcuts value")
+}
+
+// TP-109-24: versioning.md prose states the current release matches version.Version.
+// Guards against the M2 class of bug: bumping the constant but forgetting to update
+// the versioning standard's prose.
+func TestDocIntegrity_VersioningMd_CurrentReleaseMatchesVersion(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/coding-standards/versioning.md")
+
+	want := "The current release is `" + version.Version + "`"
+	assertContains(t, content, want, "versioning.md current release prose")
+}
+
+// TP-109-25: reading-the-tui.md ASCII diagram shows the current version label.
+// Guards against the S2 class of bug: bumping the version but forgetting the
+// illustrative diagram in the how-to guide.
+func TestDocIntegrity_ReadingTheTUI_AsciiDiagramVersionCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/reading-the-tui.md")
+
+	want := "ralph-tui v" + version.Version
+	assertContains(t, content, want, "reading-the-tui.md ASCII diagram version label")
 }

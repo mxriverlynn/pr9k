@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.4.1 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.5.0 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 

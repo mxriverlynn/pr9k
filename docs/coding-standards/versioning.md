@@ -31,19 +31,19 @@ When you are about to make a change, ask: "does this break one of the four items
 
 ## `0.y.z` — initial development
 
-The current release is `0.4.1`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
+The current release is `0.5.0`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
-- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.4.1` → `0.5.0`), not the major.
-- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.4.1` → `0.4.2`).
+- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.5.0` → `0.6.0`), not the major.
+- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.5.0` → `0.5.1`).
 - The first `1.0.0` release is the commitment that the four "public API" items above are stable and will be governed by the full semver rules going forward. Do not bump to `1.0.0` casually — it should be a deliberate decision with a corresponding entry in the repo's plans or ADRs.
 
 ## How to bump the version
 
-A version bump is its own commit, not a drive-by edit in a feature PR.
+A version bump is its own commit, not a drive-by edit in a feature PR. **Exception:** when a version bump accompanies a documentation-only change (no Go source changes other than `version.go`), the version bump and the doc changes may be combined into a single commit, provided the commit message clearly identifies the bump (e.g. `docs: ... version bump to <semver>`).
 
 1. Update `const Version` in `ralph-tui/internal/version/version.go`.
 2. Run `make ci` — this rebuilds the binary and runs the existing version tests in `ralph-tui/internal/cli/args_test.go`, which read from `version.Version` and will pass automatically.
-3. Commit with a message of the form `Bump version to <semver>`. This commit should contain only the version constant change (and any generated artifacts that track it, if we add them later).
+3. Commit with a message of the form `Bump version to <semver>`. This commit should contain only the version constant change (and any generated artifacts that track it, if we add them later). For docs-only exceptions (see above), include the doc changes in the same commit.
 4. Tag the commit `v<semver>` (e.g. `v0.2.0`) on `main`. The tag name **MUST** have a `v` prefix; the constant value **MUST NOT**. `git tag v0.2.0` matches constant `"0.2.0"`.
 
 Do not bump the version "just because" a PR feels significant. A release is a deliberate act. Between releases, `main` carries the version of the last release, not an in-progress next-release number.
