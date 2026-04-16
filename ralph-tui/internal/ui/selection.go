@@ -59,6 +59,11 @@ func (s selection) normalized() (start, end pos) {
 // selected range. Uses a half-open convention on col: the start column is
 // included but the end column is excluded, consistent with extractText's
 // rawOffset slicing.
+//
+// Callers must ensure visualRow/col are up-to-date with the current
+// visualLines before calling; contains operates on derived render-time
+// coordinates that are recomputed on every rewrap and may be stale
+// between a rewrap and the next visual-coordinate refresh.
 func (s selection) contains(row, col int) bool {
 	start, end := s.normalized()
 	if start.visualRow == end.visualRow {
@@ -80,22 +85,44 @@ func (s selection) contains(row, col int) bool {
 // It uses raw coordinates (not visual) so that wrap-induced visual segments
 // never inject artificial newlines into the result. The output preserves the
 // original newline structure of the ring buffer.
+//
+// Returns "" if any index or offset is out of range (e.g. after ring-buffer
+// eviction or a stale rawIdx). Guards against: rawIdx out of bounds, rawOffset
+// past the end of the corresponding line, or end offset less than start offset
+// on the same line.
 func extractText(lines []string, start, end pos) string {
+	if start.rawIdx < 0 || start.rawIdx >= len(lines) ||
+		end.rawIdx < 0 || end.rawIdx >= len(lines) {
+		return ""
+	}
 	if start.rawIdx == end.rawIdx {
-		return lines[start.rawIdx][start.rawOffset:end.rawOffset]
+		line := lines[start.rawIdx]
+		so, eo := start.rawOffset, end.rawOffset
+		if so < 0 || so > len(line) || eo < 0 || eo > len(line) || so > eo {
+			return ""
+		}
+		return line[so:eo]
+	}
+	startLine := lines[start.rawIdx]
+	if start.rawOffset < 0 || start.rawOffset > len(startLine) {
+		return ""
+	}
+	endLine := lines[end.rawIdx]
+	if end.rawOffset < 0 || end.rawOffset > len(endLine) {
+		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(lines[start.rawIdx][start.rawOffset:])
+	sb.WriteString(startLine[start.rawOffset:])
 	for i := start.rawIdx + 1; i < end.rawIdx; i++ {
 		sb.WriteByte('\n')
 		sb.WriteString(lines[i])
 	}
 	sb.WriteByte('\n')
-	sb.WriteString(lines[end.rawIdx][:end.rawOffset])
+	sb.WriteString(endLine[:end.rawOffset])
 	return sb.String()
 }
 
-// MouseToViewport translates a tea.MouseMsg into viewport-content coordinates.
+// mouseToViewport translates a tea.MouseMsg into viewport-content coordinates.
 // topRow and leftCol are the screen-space top-left corner of the viewport
 // content area (0-indexed). The returned pos has visualRow set to
 // vp.YOffset + (msg.Y - topRow) and col set to msg.X - leftCol.
@@ -103,7 +130,7 @@ func extractText(lines []string, start, end pos) string {
 // (i.e. the click landed on chrome rather than the viewport content area).
 // Callers in an active drag may still consume the event for auto-scroll even
 // when ok is false; this helper only reports geometry.
-func MouseToViewport(msg tea.MouseMsg, topRow, leftCol int, vp viewport.Model) (pos, bool) {
+func mouseToViewport(msg tea.MouseMsg, topRow, leftCol int, vp viewport.Model) (pos, bool) {
 	if msg.Y < topRow || msg.Y > topRow+vp.Height-1 {
 		return pos{}, false
 	}
@@ -124,6 +151,9 @@ func MouseToViewport(msg tea.MouseMsg, topRow, leftCol int, vp viewport.Model) (
 //
 // If col exceeds the total display cells available from segmentStart to the
 // end of rawLine, the end offset of rawLine is returned.
+//
+// If col falls within a multi-cell grapheme (e.g., col 1 of a 2-cell-wide CJK
+// character), the byte offset of that grapheme's start is returned.
 func visualColToRawOffset(rawLine string, segmentStart int, col int) int {
 	seg := rawLine[segmentStart:]
 	cellCount := 0

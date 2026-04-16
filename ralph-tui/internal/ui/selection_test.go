@@ -107,7 +107,7 @@ func TestMouseToViewport_OutsideArea(t *testing.T) {
 
 	t.Run("above_topRow", func(t *testing.T) {
 		msg := tea.MouseMsg{X: 10, Y: topRow - 1}
-		_, ok := MouseToViewport(msg, topRow, leftCol, vp)
+		_, ok := mouseToViewport(msg, topRow, leftCol, vp)
 		if ok {
 			t.Error("expected ok=false for click above topRow")
 		}
@@ -115,7 +115,7 @@ func TestMouseToViewport_OutsideArea(t *testing.T) {
 
 	t.Run("below_viewport_bottom", func(t *testing.T) {
 		msg := tea.MouseMsg{X: 10, Y: topRow + vp.Height}
-		_, ok := MouseToViewport(msg, topRow, leftCol, vp)
+		_, ok := mouseToViewport(msg, topRow, leftCol, vp)
 		if ok {
 			t.Error("expected ok=false for click below viewport bottom")
 		}
@@ -134,7 +134,7 @@ func TestMouseToViewport_InsideArea(t *testing.T) {
 
 	// Click at screen row 7 (2 rows below topRow) and screen col 15.
 	msg := tea.MouseMsg{X: 15, Y: 7}
-	p, ok := MouseToViewport(msg, topRow, leftCol, vp)
+	p, ok := mouseToViewport(msg, topRow, leftCol, vp)
 	if !ok {
 		t.Fatal("expected ok=true for click inside viewport")
 	}
@@ -365,7 +365,7 @@ func TestMouseToViewport_ExactBottomBoundary(t *testing.T) {
 	topRow := 5
 	leftCol := 1
 	msg := tea.MouseMsg{X: 10, Y: topRow + vp.Height - 1}
-	_, ok := MouseToViewport(msg, topRow, leftCol, vp)
+	_, ok := mouseToViewport(msg, topRow, leftCol, vp)
 	if !ok {
 		t.Error("expected ok=true for click at exact bottom boundary")
 	}
@@ -379,7 +379,7 @@ func TestMouseToViewport_ExactTopBoundary(t *testing.T) {
 	topRow := 5
 	leftCol := 1
 	msg := tea.MouseMsg{X: 10, Y: topRow}
-	p, ok := MouseToViewport(msg, topRow, leftCol, vp)
+	p, ok := mouseToViewport(msg, topRow, leftCol, vp)
 	if !ok {
 		t.Error("expected ok=true for click at exact top boundary")
 	}
@@ -396,7 +396,7 @@ func TestMouseToViewport_NegativeCol(t *testing.T) {
 	topRow := 5
 	leftCol := 10
 	msg := tea.MouseMsg{X: 3, Y: topRow + 2} // X < leftCol
-	p, ok := MouseToViewport(msg, topRow, leftCol, vp)
+	p, ok := mouseToViewport(msg, topRow, leftCol, vp)
 	if !ok {
 		t.Error("expected ok=true even when col would be negative (row is valid)")
 	}
@@ -634,6 +634,35 @@ func TestSelection_Visible_CommittedReversed(t *testing.T) {
 	}
 	if !s.visible() {
 		t.Error("committed selection with reversed anchor/cursor should be visible (non-empty)")
+	}
+}
+
+// TestExtractText_BoundsGuards verifies that extractText returns "" for any
+// out-of-range rawIdx or rawOffset rather than panicking. This guards against
+// stale coordinates after ring-buffer eviction or a rewrap.
+func TestExtractText_BoundsGuards(t *testing.T) {
+	lines := []string{"hello", "world"}
+
+	cases := []struct {
+		name  string
+		start pos
+		end   pos
+	}{
+		{"rawIdx_negative", pos{rawIdx: -1, rawOffset: 0}, pos{rawIdx: 0, rawOffset: 3}},
+		{"rawIdx_out_of_range", pos{rawIdx: 0, rawOffset: 0}, pos{rawIdx: 5, rawOffset: 0}},
+		{"rawOffset_negative_single_line", pos{rawIdx: 0, rawOffset: -1}, pos{rawIdx: 0, rawOffset: 3}},
+		{"rawOffset_past_end_single_line", pos{rawIdx: 0, rawOffset: 0}, pos{rawIdx: 0, rawOffset: 100}},
+		{"rawOffset_start_past_end_single_line", pos{rawIdx: 0, rawOffset: 4}, pos{rawIdx: 0, rawOffset: 2}},
+		{"rawOffset_past_end_start_multiline", pos{rawIdx: 0, rawOffset: 100}, pos{rawIdx: 1, rawOffset: 3}},
+		{"rawOffset_past_end_end_multiline", pos{rawIdx: 0, rawOffset: 0}, pos{rawIdx: 1, rawOffset: 100}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractText(lines, tc.start, tc.end)
+			if got != "" {
+				t.Errorf("expected \"\", got %q", got)
+			}
+		})
 	}
 }
 
