@@ -42,10 +42,18 @@ func BuildPrompt(workflowDir string, step Step, vt *vars.VarTable, phase vars.Ph
 
 ## Use named constants for template placeholder strings
 
-Template placeholder strings shared between config JSON and Go code (e.g., `{{ISSUE_ID}}`) should be named constants. As the number of placeholders grows, scattered string literals become a maintenance hazard.
+Template placeholder strings shared between config JSON and Go code (e.g., `{{ISSUE_ID}}`) should be named constants or centralized in a registry. As the number of placeholders grows, scattered string literals become a maintenance hazard. In this codebase, the `reservedNames` map in `internal/vars/vars.go` serves as the single registry of built-in variable names:
 
 ```go
-const issueIDPlaceholder = "{{ISSUE_ID}}"
+var reservedNames = map[string]bool{
+    "WORKFLOW_DIR": true,
+    "PROJECT_DIR":  true,
+    "MAX_ITER":     true,
+    "ITER":         true,
+    "STEP_NUM":     true,
+    "STEP_COUNT":   true,
+    "STEP_NAME":    true,
+}
 ```
 
 ## Adapter types for interface narrowing

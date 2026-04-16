@@ -304,6 +304,9 @@ func colorShortcutLine(s string) string {
 		}
 		return white.Render(s)
 	}
+	if s == NextConfirmPrompt {
+		return white.Render(s)
+	}
 	if s == QuittingLine {
 		return white.Render(s)
 	}

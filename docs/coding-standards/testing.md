@@ -205,20 +205,12 @@ If step 3 is deferred (because the production caller doesn't exist yet), documen
 When you add a new blocking channel receive (`<-ch`) to code already covered by tests, every test that exercises that code path must send one additional signal to unblock it. Failure to do so causes the test to hang.
 
 ```go
-// Before: Run() has no blocking receive — newTestKeyHandler injects no signals
-func newTestKeyHandler() *ui.KeyHandler { ... }
-
-// After: Run() added <-keyHandler.Actions as its completion handoff —
-// inject ActionQuit asynchronously so it unblocks without racing the
-// non-blocking pre-step drains that Orchestrate performs.
+// newTestKeyHandler creates a KeyHandler with a buffered channel and a no-op
+// cancel function. The channel capacity (10) absorbs any actions injected by
+// the orchestration loop (non-blocking drains) without deadlocking.
 func newTestKeyHandler() *ui.KeyHandler {
     actions := make(chan ui.StepAction, 10)
-    kh := ui.NewKeyHandler(func() {}, actions)
-    go func() {
-        time.Sleep(10 * time.Millisecond)
-        actions <- ui.ActionQuit
-    }()
-    return kh
+    return ui.NewKeyHandler(func() {}, actions)
 }
 ```
 

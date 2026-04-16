@@ -18,7 +18,9 @@ const (
 	ModeNormal Mode = iota
 	ModeError
 	ModeQuitConfirm
-	ModeQuitting // entered after the user confirms a quit; footer shows "Quitting..."
+	ModeNextConfirm // entered after the user presses n; shows "Skip current step?" prompt
+	ModeDone        // entered after the workflow completes; shows "q quit" footer
+	ModeQuitting    // entered after the user confirms a quit; footer shows "Quitting..."
 )
 
 // AppTitle is the canonical display name of the application. Use this
@@ -31,6 +33,8 @@ const (
 	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
 	ErrorShortcuts    = "c continue  r retry  q quit"
 	QuitConfirmPrompt = "Quit " + AppTitle + "? (y/n, esc to cancel)"
+	NextConfirmPrompt = "Skip current step? (y/n, esc to cancel)"
+	DoneShortcuts     = "q quit"
 	QuittingLine      = "Quitting..."
 )
 
@@ -131,6 +135,10 @@ func (h *KeyHandler) updateShortcutLineLocked() {
 		h.shortcutLine = ErrorShortcuts
 	case ModeQuitConfirm:
 		h.shortcutLine = QuitConfirmPrompt
+	case ModeNextConfirm:
+		h.shortcutLine = NextConfirmPrompt
+	case ModeDone:
+		h.shortcutLine = DoneShortcuts
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
 	default:

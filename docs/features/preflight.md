@@ -38,8 +38,10 @@ Stats `path`:
 func CheckCredentials(profileDir string) (warning string, _ error)
 ```
 
-Checks `<profileDir>/.credentials.json`:
-- Missing file → empty warning, nil error (fresh profile is valid)
+When `ANTHROPIC_API_KEY` is set on the host, the credentials file check is skipped entirely — the sandbox authenticates via the `BuiltinEnvAllowlist` passthrough and the file is not required. Returns `("", nil)` immediately.
+
+Otherwise, checks `<profileDir>/.credentials.json`:
+- Missing file → non-empty warning with guidance to run `ralph-tui sandbox login` or set `ANTHROPIC_API_KEY`, nil error
 - Zero-byte file → non-empty warning containing "will likely fail authentication"
 - Non-empty file → empty warning, nil error
 - Any stat error other than `os.ErrNotExist` → propagated as an error (not a warning)

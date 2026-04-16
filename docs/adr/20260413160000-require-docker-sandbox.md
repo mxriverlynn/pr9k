@@ -53,7 +53,7 @@ aligns the runtime with the upstream trust model.
    - Pros: the safety guarantee is binary and unconditional; no code path
      where the invariant is accidentally bypassed.
    - Cons: users who do not have Docker installed must install it before
-     ralph-tui works at all; adds a startup preflight check; `create-sandbox`
+     ralph-tui works at all; adds a startup preflight check; `sandbox create`
      subcommand is required to pull and verify the image before first use.
 
 2. **Make Docker optional; fall back to direct invocation.**
@@ -82,7 +82,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 - The startup preflight (see `docs/features/preflight.md`) checks for Docker
   reachability and the sandbox image before the TUI starts, so users get a
   clear actionable error rather than a mid-run failure.
-- The `ralph-tui create-sandbox` subcommand (see `docs/features/create-sandbox.md`)
+- The `ralph-tui sandbox create` subcommand (see `docs/features/sandbox-subcommand.md`)
   provides a guided setup path that pulls the image and runs a smoke test,
   minimizing the friction of the new dependency.
 - The target audience (developers running an AI-driven coding loop against a
@@ -101,7 +101,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 
 **Negative:**
 
-- Users without Docker must install it before ralph-tui works. `create-sandbox`
+- Users without Docker must install it before ralph-tui works. `sandbox create`
   provides a guided path, but the install itself is outside ralph-tui's control.
 - A stopped or crashed Docker daemon after startup causes the next claude step
   to fail visibly — recoverable, but disruptive to an unattended run.
@@ -114,7 +114,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
   threat class.
 - The image reference is tag-only (`docker/sandbox-templates:claude-code`, not
   pinned by digest). Users get upstream updates by re-running
-  `ralph-tui create-sandbox --force`. This trades reproducibility for upgrade
+  `ralph-tui sandbox create --force`. This trades reproducibility for upgrade
   ergonomics — the same trust model as `npm i -g @anthropic-ai/claude-code`.
 
 ## Notes
@@ -127,17 +127,17 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 | `ralph-tui/internal/sandbox/terminator.go` | `NewTerminator` — `docker kill` via cidfile for clean termination |
 | `ralph-tui/internal/preflight/docker.go` | `CheckDocker` — startup check that Docker CLI and daemon are reachable |
 | `ralph-tui/internal/preflight/run.go` | `Run` — orchestrates all preflight checks and returns structured results |
-| `ralph-tui/cmd/ralph-tui/create_sandbox.go` | `create-sandbox` subcommand — guided image pull and smoke test |
+| `ralph-tui/cmd/ralph-tui/sandbox_create.go` | `sandbox create` subcommand — guided image pull and smoke test |
 
 ### Related Docs
 
 - [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — architecture,
   mount layout, env allowlist, cidfile termination, and residual risks
 - [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — user-facing
-  guide: install Docker, run `create-sandbox`, authenticate profile
+  guide: install Docker, run `sandbox create`, authenticate profile
 - [Preflight Feature Doc](../features/preflight.md) — startup validation
   including Docker reachability and sandbox image presence
-- [Create Sandbox Feature Doc](../features/create-sandbox.md) — `create-sandbox`
+- [Sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — `sandbox create`
   subcommand implementation
 - [Sandbox Design Plan](../plans/docker-sandbox/design.md) — full design
   rationale, threat model (§3), and architectural decisions (§4)

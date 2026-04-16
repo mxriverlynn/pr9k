@@ -1,4 +1,4 @@
-.PHONY: build test lint format vet vulncheck mod-tidy ci
+.PHONY: build test lint format format-check vet vulncheck mod-tidy ci
 
 build:
 	rm -rf bin
@@ -16,6 +16,9 @@ lint:
 	cd ralph-tui && golangci-lint run
 
 format:
+	cd ralph-tui && gofmt -w .
+
+format-check:
 	@cd ralph-tui && unformatted=$$(gofmt -l .); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files not formatted:"; \
@@ -39,4 +42,4 @@ mod-tidy:
 		exit 1; \
 	fi
 
-ci: test lint format vet vulncheck mod-tidy build
+ci: test lint format-check vet vulncheck mod-tidy build

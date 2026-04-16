@@ -124,7 +124,7 @@ func TestLogLines_ScrolledUp_DoesNotAutoScroll(t *testing.T) {
 
 // --- Normal-mode 'n' key routing ---
 
-func TestNormalMode_N_ReturnsCancelCmd(t *testing.T) {
+func TestNormalMode_N_ThenY_CallsCancel(t *testing.T) {
 	cancelCalled := false
 	actions := make(chan StepAction, 10)
 	kh := NewKeyHandler(func() { cancelCalled = true }, actions)
@@ -132,16 +132,24 @@ func TestNormalMode_N_ReturnsCancelCmd(t *testing.T) {
 	header.SetPhaseSteps([]string{"s"})
 	m := NewModel(header, kh, "v0")
 
-	// Press 'n' in normal mode.
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-
-	if cmd == nil {
-		t.Fatal("expected non-nil cmd for n in normal mode")
+	// Press 'n' — enters ModeNextConfirm, nil cmd.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = next.(Model)
+	if cmd != nil {
+		t.Error("expected nil cmd for n entering NextConfirm")
 	}
-	// Execute the command — it should call cancel.
+	if kh.Mode() != ModeNextConfirm {
+		t.Fatalf("expected ModeNextConfirm after n, got %v", kh.Mode())
+	}
+
+	// Press 'y' — confirms skip, returns cmd that calls cancel.
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for y in next-confirm mode")
+	}
 	_ = cmd()
 	if !cancelCalled {
-		t.Error("expected cancel to be called after cmd execution")
+		t.Error("expected cancel to be called after y cmd execution")
 	}
 }
 
@@ -499,6 +507,22 @@ func TestColorShortcutLine_QuitConfirmPrompt_ContainsAppTitle(t *testing.T) {
 	}
 	if !strings.Contains(plain, AppTitle) {
 		t.Errorf("plain text missing AppTitle %q: %q", AppTitle, plain)
+	}
+}
+
+func TestColorShortcutLine_NextConfirmPrompt_PreservesText(t *testing.T) {
+	result := colorShortcutLine(NextConfirmPrompt)
+	plain := stripANSI(result)
+	if plain != NextConfirmPrompt {
+		t.Errorf("plain text mismatch: want %q, got %q", NextConfirmPrompt, plain)
+	}
+}
+
+func TestColorShortcutLine_DoneShortcuts_PreservesText(t *testing.T) {
+	result := colorShortcutLine(DoneShortcuts)
+	plain := stripANSI(result)
+	if plain != DoneShortcuts {
+		t.Errorf("plain text mismatch: want %q, got %q", DoneShortcuts, plain)
 	}
 }
 

@@ -106,7 +106,16 @@ type Runner struct {
     // that used the claudestream pipeline. Reset on each RunSandboxedStep entry.
     // Protected by mu; read by LastStats.
     lastStats claudestream.StepStats
+
+    // activePipeline and activePipelineStartedAt support the heartbeat indicator.
+    // Set when a claude step starts; cleared in a LIFO defer before pipeline.Close().
+    // Protected by processMu; read by HeartbeatSilence.
+    activePipeline          *claudestream.Pipeline
+    activePipelineStartedAt time.Time
 }
+
+// Compile-time assertion that *Runner satisfies ui.HeartbeatReader.
+var _ ui.HeartbeatReader = (*Runner)(nil)
 
 // SandboxOptions carries the sandbox-specific parameters for RunSandboxedStep.
 type SandboxOptions struct {

@@ -54,8 +54,8 @@ docker run                                              \
   --init                                                \
   --cidfile <TMP>/ralph-<UNIQUE>.cid                    \
   -u <UID>:<GID>                                        \
-  -v <PROJECT_DIR>:/home/agent/workspace                \
-  -v <PROFILE_DIR>:/home/agent/.claude                  \
+  --mount type=bind,source=<PROJECT_DIR>,target=/home/agent/workspace  \
+  --mount type=bind,source=<PROFILE_DIR>,target=/home/agent/.claude   \
   -w /home/agent/workspace                              \
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude              \
   [-e ANTHROPIC_API_KEY]                                \
@@ -79,8 +79,8 @@ docker run                                              \
 - `--init` — install tini as PID 1 so SIGTERM is forwarded to claude and zombie processes are reaped.
 - `--cidfile <tmp>/ralph-<unique>.cid` — capture the container ID so `Terminate()` can call `docker kill <cid>` rather than signaling the host docker CLI process (which would orphan the container). The cidfile path is unique per step under `os.TempDir()`.
 - `-u <UID>:<GID>` — run as the invoking host user. Files written to the bind-mounted repo are owned by the host user, so subsequent shell steps (`git`, `gh`) work without permission errors.
-- `-v <PROJECT_DIR>:/home/agent/workspace` — bind-mount the target repo. `<PROJECT_DIR>` is the `--project-dir` value (default: `os.Getwd()` + `filepath.EvalSymlinks`). The workflow bundle (`<WORKFLOW_DIR>`) is NOT mounted.
-- `-v <PROFILE_DIR>:/home/agent/.claude` — bind-mount the Claude profile (read-write so OAuth token refresh works).
+- `--mount type=bind,source=<PROJECT_DIR>,target=/home/agent/workspace` — bind-mount the target repo. `<PROJECT_DIR>` is the `--project-dir` value (default: `os.Getwd()` + `filepath.EvalSymlinks`). The `--mount` syntax is used instead of `-v` to avoid argument injection via colons in path names. The workflow bundle (`<WORKFLOW_DIR>`) is NOT mounted.
+- `--mount type=bind,source=<PROFILE_DIR>,target=/home/agent/.claude` — bind-mount the Claude profile (read-write so OAuth token refresh works).
 - `-w /home/agent/workspace` — explicit working directory; matches the bind-mount so relative paths inside the container correspond to real host paths.
 - `-e CLAUDE_CONFIG_DIR=/home/agent/.claude` — set inside the container regardless of whether the host had `CLAUDE_CONFIG_DIR`; points to the mount point.
 - `--output-format stream-json` — instructs claude to emit newline-delimited JSON (NDJSON) on stdout. Required for the `claudestream` pipeline to parse typed events.
@@ -143,6 +143,13 @@ type SandboxOptions struct {
     // CidfilePath is the --cidfile path to clean up after the step exits.
     // May be empty. Cleanup is ENOENT-tolerant.
     CidfilePath string
+    // ArtifactPath is the path for the per-step .jsonl file (D14). When
+    // non-empty and CaptureMode == CaptureResult, a RawWriter is opened here.
+    ArtifactPath string
+    // CaptureMode selects the capture semantics for the step. CaptureResult
+    // activates the claudestream pipeline. Zero value (CaptureLastLine)
+    // preserves current non-pipeline behaviour.
+    CaptureMode ui.CaptureMode
 }
 ```
 
@@ -171,7 +178,7 @@ Runner.Terminate()
         └── docker kill --signal=KILL <container-id>
 ```
 
-The terminator is constructed by `sandbox.NewTerminator(cmd, cidfilePath)`. It polls the cidfile for up to 500ms at 50ms intervals (the file is written by the Docker daemon shortly after the container starts). If the cidfile never appears, it falls back to signaling the host `docker run` CLI process directly.
+The terminator is constructed by `sandbox.NewTerminator(cmd, cidfilePath)`. It polls the cidfile for up to 2 seconds at 50ms intervals (the file is written by the Docker daemon shortly after the container starts). If the cidfile never appears, it falls back to signaling the host `docker run` CLI process directly.
 
 `currentTerminator` is cleared before `procDone` is closed, preventing stale signal dispatch if `Terminate()` races with natural step completion.
 
@@ -206,6 +213,7 @@ The following residual risks are accepted:
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
 - [Config Validation](config-validation.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)
 - [Step Definitions & Prompt Building](step-definitions.md) — `StepFile.Env` field and `BuildRunArgs` call site in `buildStep`
+- [Passing Environment Variables](../how-to/passing-environment-variables.md) — User-facing guide for declaring env vars in `ralph-steps.json`
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — Why `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are banned in prompt files
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker a runtime requirement
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Why `PROJECT_DIR` means the target repo (not the workflow bundle)

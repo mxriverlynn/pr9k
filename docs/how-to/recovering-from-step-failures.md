@@ -96,7 +96,7 @@ If you leave the workflow paused and walk away, nothing bad happens — no timeo
 
 ### The step terminated itself
 
-If you pressed `n` **during** the step to skip it, the subprocess gets a SIGTERM (then SIGKILL after 3 seconds). The non-zero exit is treated as a **successful termination** (`WasTerminated() == true`) and the step is marked `[✓]` — no error mode, no pause, just advance. This is the mechanism behind "skip this step".
+If you pressed `n` **during** the step to skip it, a confirmation prompt appears (`Skip current step? y/n, esc to cancel`). Pressing `y` confirms the skip: the subprocess gets a SIGTERM (then SIGKILL after 3 seconds). The non-zero exit is treated as a **successful termination** (`WasTerminated() == true`) and the step is marked `[✓]` — no error mode, no pause, just advance. Pressing `n` or `Esc` cancels the skip and returns to normal mode. This is the mechanism behind "skip this step".
 
 ### `buildStep` failed before the subprocess could start
 
