@@ -120,9 +120,9 @@ func (l *Logger) Log(stepName string, line string) error {
 }
 ```
 
-### RunStamp
+### RunStamp and Per-Run Artifact Directory
 
-`RunStamp()` returns the run identifier — the log filename without the `.log` suffix (e.g. `"ralph-2026-04-14-173022.123"`). It is set once at construction and never changes. `main.go` reads this after `NewLogger` and passes it into `RunConfig.RunStamp` so that `claudestream.Pipeline` can construct the per-run artifact directory (`projectDir/logs/<runstamp>/`):
+`RunStamp()` returns the run identifier — the log filename without the `.log` suffix (e.g. `"ralph-2026-04-14-173022.123"`). It is set once at construction and never changes. `main.go` reads this after `NewLogger` and eagerly creates the per-run artifact directory `logs/<runstamp>/` via `os.MkdirAll` before any workflow steps run. The `RunStamp` is then passed into `RunConfig.RunStamp` so that `claudestream.Pipeline` can write per-step `.jsonl` files into the artifact directory:
 
 ```go
 func (l *Logger) RunStamp() string {

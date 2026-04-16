@@ -58,7 +58,7 @@ To check which version you are running without launching the workflow:
 
 ```bash
 /path/to/pr9k/bin/ralph-tui --version
-# ralph-tui version 0.2.1
+# ralph-tui version 0.4.1
 ```
 
 `-v` is accepted as a short alias. See [Versioning](../coding-standards/versioning.md) for the repo's semver rules.
@@ -107,13 +107,16 @@ For a detailed walk-through of the TUI layout and what each region means, see [R
 
 | Mode | Keys | Effect |
 |------|------|--------|
-| Normal | `n` | Terminate the current subprocess (skip the step) |
+| Normal | `n` | Enter skip-confirm (`Skip current step? y/n, esc to cancel`) |
 | Normal | `q` | Enter quit-confirm |
+| NextConfirm | `y` | Confirm skip — terminate the current subprocess |
+| NextConfirm | `n` or `Esc` | Cancel skip, return to normal mode |
 | Error (step failed) | `c` | Accept the failure, advance to next step |
 | Error (step failed) | `r` | Re-run the failed step |
 | Error (step failed) | `q` | Enter quit-confirm |
 | QuitConfirm | `y` | Confirm quit (footer flips to `Quitting...`) |
 | QuitConfirm | `n` or `Esc` | Cancel quit, return to previous mode |
+| Done (workflow complete) | `q` | Enter quit-confirm to exit |
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) and [Quitting Gracefully](quitting-gracefully.md) for the full interaction model.
 
@@ -123,6 +126,7 @@ See [Recovering from Step Failures](recovering-from-step-failures.md) and [Quitt
 - **Adapting the workflow for your project:** [Building Custom Workflows](building-custom-workflows.md)
 - **Learning the variable substitution engine:** [Variable Output & Injection](variable-output-and-injection.md)
 - **Capturing a step's output for later steps:** [Capturing Step Output](capturing-step-output.md)
+- **Forwarding host env vars to the sandbox:** [Passing Environment Variables](passing-environment-variables.md)
 - **Stopping the iteration loop dynamically:** [Breaking Out of the Loop](breaking-out-of-the-loop.md)
 - **Reading the run's log file:** [Debugging a Run](debugging-a-run.md)
 - **Understanding the architecture:** [Architecture Overview](../architecture.md)

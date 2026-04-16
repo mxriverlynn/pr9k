@@ -80,7 +80,7 @@ We specifically reject tview because its lack of first-class window-title suppor
 
 **Neutral:**
 
-- The four-mode keyboard state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`) carries over unchanged as data; only its dispatch plumbing changes
+- The keyboard state machine carries over as data; only its dispatch plumbing changes. (At migration time, this was four modes: `ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`. Post-migration, `ModeNextConfirm` and `ModeDone` were added — see `docs/features/keyboard-input.md` for the current six-mode design.)
 - The 500-line log cap and auto-scroll-on-tail behavior remain, but are enforced in our Model rather than a widget flag
 - File logging in `internal/workflow/workflow.go` is independent of the TUI library and is not affected by this change
 
@@ -92,7 +92,7 @@ We specifically reject tview because its lack of first-class window-title suppor
 |------|---------|
 | `ralph-tui/cmd/ralph-tui/main.go` | Program entry point — constructs `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())`, wires the drain goroutine and signal handler, and calls `program.Run()`. |
 | `ralph-tui/internal/ui/header.go` | `StatusHeader` struct with per-cell Lip Gloss color arrays. Mutations are applied only via `headerModel.apply()` on the Bubble Tea Update goroutine. |
-| `ralph-tui/internal/ui/ui.go` | Four-mode keyboard state machine `KeyHandler`. The `Mode` enum and transition rules are unchanged; dispatch is handled by `keysModel.Update(msg tea.KeyMsg)` in `keys.go`. |
+| `ralph-tui/internal/ui/ui.go` | Keyboard state machine `KeyHandler`. The `Mode` enum started with four modes at migration time; `ModeNextConfirm` and `ModeDone` were added later (now six modes). Dispatch is handled by `keysModel.Update(msg tea.KeyMsg)` in `keys.go`. |
 | `ralph-tui/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. Interface unchanged. |
 | `ralph-tui/internal/workflow/workflow.go` | Subprocess runner using a `sendLine` callback (installed via `SetSender`) to forward lines non-blockingly into a buffered channel; a drain goroutine in `main.go` coalesces them into `LogLinesMsg` values sent via `program.Send`. No `io.Pipe` or `LogReader`. |
 | `ralph-tui/go.mod` | `github.com/kungfusheep/glyph` removed; `bubbletea`, `lipgloss`, `bubbles` added. |

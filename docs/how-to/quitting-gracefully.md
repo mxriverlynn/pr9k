@@ -8,7 +8,7 @@ Ralph-tui always shuts down through the same path — whether you press `q`, hit
 |-------------|----------------|--------------|
 | `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...` (white), calls `ForceQuit` |
 | `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Signal handler goroutine in `main.go` | Calls `ForceQuit`, waits up to 2s, then `program.Kill()` |
-| Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; calls `program.Quit()` |
+| Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; enters `ModeDone` (`q quit` footer) |
 
 The two interactive paths go through `KeyHandler.ForceQuit()` to unify subprocess termination and `ActionQuit` injection — you get the same shutdown semantics whether you press `y` or hit Ctrl+C. The normal-completion path doesn't need `ForceQuit` because there's nothing to cancel.
 
@@ -65,11 +65,11 @@ The OS signal handler in `main.go` listens for SIGINT and SIGTERM on a buffered 
 
 Because the signal handler calls `ForceQuit`, **the signal path and the `q`→`y` path produce identical behavior from the workflow's perspective.** The only difference is the exit code: SIGINT/SIGTERM exits 1, a normal `q`→`y` shutdown exits 0.
 
-The signal handler also runs whether or not the TUI is currently in Normal, Error, QuitConfirm, or Quitting mode — signals bypass the mode dispatcher entirely.
+The signal handler also runs whether or not the TUI is currently in Normal, Error, QuitConfirm, NextConfirm, Done, or Quitting mode — signals bypass the mode dispatcher entirely.
 
 ## The normal-completion path
 
-When `Run` finishes all iterations and finalize steps, it writes the completion summary to the log body and returns on its own — no keypress required. The workflow goroutine in `main.go` then calls `signal.Stop`, flushes the log, closes the drain channel, and calls `program.Quit()`. This causes `program.Run()` to return cleanly in main, which then selects the exit code and calls `os.Exit(0)`.
+When `Run` finishes all iterations and finalize steps, it writes the completion summary to the log body and returns. The workflow goroutine in `main.go` then flushes the log, closes the drain channel, and calls `keyHandler.SetMode(ui.ModeDone)`. The TUI stays alive with a `q quit` footer so you can review the final output. Press `q` then `y` to exit — this sends `tea.QuitMsg`, which causes `program.Run()` to return. After `program.Run()` returns, `main` calls `signal.Stop`, waits for the workflow goroutine to finish cleanup, selects the exit code, and calls `os.Exit(0)`.
 
 ## Exit codes
 
@@ -99,7 +99,7 @@ The window is usually a fraction of a second — just long enough for the subpro
 
 Some interactions look like they might quit but don't:
 
-- **`n` in Normal mode** — `n` means "skip the current step", not "quit". It sends SIGTERM to the subprocess and advances to the next step. See [Recovering from Step Failures](recovering-from-step-failures.md) for how skips interact with the workflow.
+- **`n` in Normal mode** — `n` means "skip the current step", not "quit". It enters a `ModeNextConfirm` prompt (`Skip current step? y/n, esc to cancel`). Pressing `y` confirms the skip and sends SIGTERM to the subprocess; pressing `n` or `Esc` cancels. See [Recovering from Step Failures](recovering-from-step-failures.md) for how skips interact with the workflow.
 - **`Esc` in Normal or Error mode** — Escape only cancels a quit confirmation. Outside of `ModeQuitConfirm`, it's ignored.
 
 ## Related documentation

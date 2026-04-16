@@ -67,7 +67,7 @@ const (
     ActionContinue
     ActionQuit
 )
-actions := make(chan StepAction, 1)
+actions := make(chan StepAction, 10)
 ```
 
 ## Non-blocking send for signal-safe channel writes
@@ -166,26 +166,6 @@ case <-time.After(4 * time.Second):
 ```
 
 The 4-second timeout exceeds the 3-second `terminateGracePeriod` in `runner.Terminate()` plus buffer for `log.Close()` and `close(lineCh)` — this prevents `os.Exit` from firing while SIGTERM→SIGKILL is still in progress during a mid-workflow quit.
-
-## Unexported field + mutex-protected getter for shortcut bar text
-
-The shortcut bar string is written by mode transitions (on the Update goroutine) and read by `View()` (also on the Update goroutine via `ShortcutLine()`). Keep it unexported and expose it only through a mutex-protected getter so that signal handlers and test goroutines can also read it safely without races:
-
-```go
-type KeyHandler struct {
-    mu           sync.Mutex
-    shortcutLine string
-}
-
-// ShortcutLine is safe to call from any goroutine.
-func (h *KeyHandler) ShortcutLine() string {
-    h.mu.Lock()
-    defer h.mu.Unlock()
-    return h.shortcutLine
-}
-```
-
-In the Bubble Tea architecture, `View()` calls `ShortcutLine()` directly via the mutex-protected getter. All mode mutations happen on the Update goroutine, which serializes writes naturally; the mutex guards reads from other goroutines (signal handlers, test code).
 
 ## Prime the channel before entering a blocking receive
 

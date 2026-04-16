@@ -60,7 +60,7 @@ Key files:
   │  │ [log panel — bubbles/viewport]            │ ││  ← scrollable log viewport (white text)
   │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
   │  │ ↑/k up  ↓/j down  n next  q quit          │ ││  ← shortcut footer (ShortcutLine)
-  │  │                     ralph-tui v0.2.1      │ ││  ← version label (right-aligned, white)
+  │  │                     ralph-tui v0.4.1      │ ││  ← version label (right-aligned, white)
   │  │╰─────────────────────────────────────────╯  ││  ← bottom border
   │  └──────────────────────────────────────────────┘│
   └──────────────────────────────────────────────────┘
@@ -242,7 +242,7 @@ go func() {
     ticker := time.NewTicker(time.Second)
     defer ticker.Stop()
     for range ticker.C {
-        program.Send(ui.HeartbeatTickMsg(time.Now()))
+        program.Send(ui.HeartbeatTickMsg{})
     }
 }()
 

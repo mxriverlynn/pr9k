@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.2.1 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.4.1 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -141,7 +141,7 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 | `Captured VAR = "value"` | Logged after any step with `captureAs`, showing the bound value |
 | `N turns · in/out tokens (cache: C/R) · $cost · duration` | Per-step summary emitted after each `isClaude: true` step completes; shows token spend, cost, and wall-clock duration for that single invocation |
 | `total claude spend across N step invocation[s]...` | Run-level cumulative summary: total token spend, cost, duration, and retry count across all claude steps; omitted when no claude steps ran |
-| `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine calls `program.Quit()` and exits |
+| `Ralph completed after N iteration(s) and M finalizing tasks.` | The final line of the run, written before the workflow goroutine enters `ModeDone` |
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.
 
@@ -174,10 +174,12 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 |-------------|------|
 | `↑/k up  ↓/j down  n next step  q quit` | Normal — a step is running; you can scroll or skip |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
-| `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for confirmation |
+| `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
+| `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for quit confirmation |
+| `q quit` | Done — the workflow finished; review output, then press `q` → `y` to exit |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
-When the workflow finishes normally, the completion summary is written to the log body and the process exits on its own — no final keypress required.
+When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone` with a `q quit` footer. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output.
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
 
@@ -185,7 +187,7 @@ See [Recovering from Step Failures](recovering-from-step-failures.md) for the Er
 
 - [Getting Started](getting-started.md) — Install and first-run walk-through
 - [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Four-mode state machine that drives the footer
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Six-mode state machine that drives the footer
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
 - [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT

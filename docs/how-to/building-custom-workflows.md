@@ -143,6 +143,7 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 - [Getting Started](getting-started.md) — Install, first run, and orientation
 - [Variable Output & Injection](variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved into prompts and commands
 - [Capturing Step Output](capturing-step-output.md) — How to use `captureAs` to bind step stdout to a variable
+- [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars into the Docker sandbox via the `env` field
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
 - [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures

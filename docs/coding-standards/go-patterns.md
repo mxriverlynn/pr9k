@@ -42,13 +42,16 @@ See [testing.md](testing.md) — `runtime.Caller(0)` is the correct way to resol
 When a function transforms a slice (e.g., replacing template variables), allocate a new slice rather than mutating the input. Callers often reuse the original slice across multiple iterations.
 
 ```go
-func ResolveCommand(projectDir string, command []string, issueID string) []string {
+func ResolveCommand(workflowDir string, command []string, vt *vars.VarTable, phase vars.Phase) []string {
     if len(command) == 0 {
         return command
     }
     result := make([]string, len(command))
-    copy(result, command)
-    // ... transform result ...
+    for i, arg := range command {
+        substituted, _ := vars.Substitute(arg, vt, phase)
+        result[i] = substituted
+    }
+    // ... resolve script paths ...
     return result
 }
 ```
@@ -67,18 +70,30 @@ scanner.Buffer(buf, 256*1024)
 
 When the same conditional formatting decision (e.g., bounded vs. unbounded, singular vs. plural) appears in multiple log or UI call sites, extract it as a named unexported function rather than repeating the condition inline. This makes the formatting logic independently testable and keeps the condition in one place.
 
-In this codebase the `substitute` helper in `header.go` handles this for iteration/phase lines via template strings (`iterationHeaderBoundedFormat`, `iterationHeaderUnboundedFormat`, etc.), so the conditional logic lives in `RenderIterationLine` and the formatting in the templates.
+In this codebase the `substitute` helper in `header.go` handles this for initialize and finalize lines via template strings, so the conditional logic lives in the render method and the formatting in the templates. `RenderIterationLine` uses `strings.Builder` with `fmt.Fprintf` directly because its format varies more dynamically (optional issue suffix):
 
 ```go
-// Phase-specific render methods each select the right template and call substitute:
+// RenderInitializeLine and RenderFinalizeLine use substitute with template constants:
+func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
+    h.IterationLine = substitute(initializeHeaderFormat, map[string]string{
+        "STEP_NUM":   strconv.Itoa(stepNum),
+        "STEP_COUNT": strconv.Itoa(stepCount),
+        "STEP_NAME":  stepName,
+    })
+}
+
+// RenderIterationLine uses strings.Builder for its dynamic format:
 func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
-    vals := map[string]string{"ITER": strconv.Itoa(iter), "ISSUE_ID": issueID}
+    var b strings.Builder
     if maxIter > 0 {
-        vals["MAX_ITER"] = strconv.Itoa(maxIter)
-        h.IterationLine = substitute(iterationHeaderBoundedFormat, vals)
+        fmt.Fprintf(&b, "Iteration %d/%d", iter, maxIter)
     } else {
-        h.IterationLine = substitute(iterationHeaderUnboundedFormat, vals)
+        fmt.Fprintf(&b, "Iteration %d", iter)
     }
+    if issueID != "" {
+        fmt.Fprintf(&b, " — Issue #%s", issueID)
+    }
+    h.IterationLine = b.String()
 }
 ```
 

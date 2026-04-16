@@ -257,4 +257,5 @@ This happens when the `-u` flag is not taking effect (e.g., an older Docker imag
 - [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create` and `sandbox login` subcommands
 - [Preflight Feature Doc](../features/preflight.md) — Startup checks that enforce sandbox readiness
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision rationale for making Docker a runtime requirement
+- [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars (API tokens, proxy settings) into the sandbox
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions when a step fails inside the sandbox
