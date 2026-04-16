@@ -29,7 +29,7 @@ func enterSelectMode(t *testing.T, m Model) Model {
 // widths that expose virtual-column edge cases.
 func newSelectModelWithLines(t *testing.T, n int) Model {
 	t.Helper()
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, n)
 	m.log.viewport.GotoTop()
 	return enterSelectMode(t, m)
@@ -324,7 +324,7 @@ func TestMoveCursor_VirtualColumn_PreservedAcrossShortLine(t *testing.T) {
 	//   row 0: 40 chars wide  (line 0: "a"*40)
 	//   row 1: 5 chars wide   (line 1: "b"*5) — shorter
 	//   row 2: 40 chars wide  (line 2: "c"*40)
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	lines := []string{
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // 38 'a's (>30)
 		"bbbbb",                                  // 5 chars
@@ -381,7 +381,7 @@ func TestMoveCursor_VirtualColumn_PreservedAcrossShortLine(t *testing.T) {
 // --- TP-105-11: moving onto a shorter line clamps col; virtualCol remembered ---
 
 func TestMoveCursor_ClampsToLineEnd(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	lines := []string{
 		"aaaaaaaaaaaaaaaaaaaaaa", // 22 chars
 		"bb",                     // 2 chars
@@ -449,7 +449,7 @@ func TestMoveCursor_ViewportFollowsCursor(t *testing.T) {
 func TestKeys_Q_FromSelect_PreservesIdleModeAsPrevMode(t *testing.T) {
 	for _, idleMode := range []Mode{ModeNormal, ModeDone} {
 		t.Run(idleMode.String(), func(t *testing.T) {
-			m := newSelectTestModel(t, idleMode)
+			m, _ := newSelectTestModel(t, idleMode)
 			populateLog(t, &m, 5)
 
 			// Enter ModeSelect from the idle mode.
@@ -479,7 +479,7 @@ func TestKeys_Q_FromSelect_PreservesIdleModeAsPrevMode(t *testing.T) {
 // --- TP-105-14: q from ModeSelect clears selection ---
 
 func TestKeys_Q_FromSelect_ClearsSelection(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 	m = enterSelectMode(t, m)
 	if !m.log.sel.active {
@@ -501,7 +501,7 @@ func TestKeys_Q_FromSelect_ClearsSelection(t *testing.T) {
 // --- TP-105-15: SelectedText reflects cursor position after movement ---
 
 func TestExtractText_CursorMoved_UpdatesText(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	// Use a single line so selection text is predictable.
 	next, _ := m.Update(LogLinesMsg{Lines: []string{"hello world"}})
 	m = next.(Model)

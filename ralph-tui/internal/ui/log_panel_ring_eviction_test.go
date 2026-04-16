@@ -17,6 +17,11 @@ func makeLines(n int) []string {
 // setCommittedSelection sets a committed selection on m covering rawIdx
 // anchor..cursor (same rawOffset=0). Uses a direct field assignment since there
 // is no public constructor for committed selections.
+//
+// Note: this helper does not accept *testing.T and therefore cannot call
+// t.Helper(). If validation (e.g. bounds checks) is added in the future,
+// thread *testing.T through the signature so error lines point at the
+// call site rather than at this helper.
 func setCommittedSelection(m *logModel, anchorRawIdx, cursorRawIdx int) {
 	p := func(rawIdx int) pos {
 		return pos{rawIdx: rawIdx, rawOffset: 0}

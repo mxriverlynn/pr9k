@@ -9,9 +9,10 @@ import (
 )
 
 // newSelectTestModel returns a Model sized at 80×24 with the viewport
-// sized to 76×10. It starts in the given mode. Pre-populating lines is
-// done separately by the caller.
-func newSelectTestModel(t *testing.T, mode Mode) Model {
+// sized to 76×10, and the underlying *KeyHandler. It starts in the given
+// mode. Pre-populating lines is done separately by the caller. Callers
+// that don't need the KeyHandler can discard it with _.
+func newSelectTestModel(t *testing.T, mode Mode) (Model, *KeyHandler) {
 	t.Helper()
 	header := NewStatusHeader(1)
 	header.SetPhaseSteps([]string{"step-one"})
@@ -22,7 +23,7 @@ func newSelectTestModel(t *testing.T, mode Mode) Model {
 	m.height = 24
 	m.log.SetSize(76, 10)
 	kh.SetMode(mode)
-	return m
+	return m, kh
 }
 
 // populateLog adds n distinct lines to m's log model, re-rendering content.
@@ -39,7 +40,7 @@ func populateLog(t *testing.T, m *Model, n int) {
 // --- TP-104-01: v enters ModeSelect from Normal ---
 
 func TestKeys_V_EntersSelectMode_FromNormal(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	next, _ := m.Update(keyMsg("v"))
@@ -61,7 +62,7 @@ func TestKeys_V_EntersSelectMode_FromNormal(t *testing.T) {
 func TestKeys_V_EntersSelectMode_FromNormal_FromDone(t *testing.T) {
 	for _, startMode := range []Mode{ModeNormal, ModeDone} {
 		t.Run(startMode.String(), func(t *testing.T) {
-			m := newSelectTestModel(t, startMode)
+			m, _ := newSelectTestModel(t, startMode)
 			populateLog(t, &m, 5)
 
 			next, _ := m.Update(keyMsg("v"))
@@ -80,7 +81,7 @@ func TestKeys_V_IgnoredIn_Error_QuitConfirm_NextConfirm_Quitting(t *testing.T) {
 	modes := []Mode{ModeError, ModeQuitConfirm, ModeNextConfirm, ModeQuitting}
 	for _, startMode := range modes {
 		t.Run(startMode.String(), func(t *testing.T) {
-			m := newSelectTestModel(t, startMode)
+			m, _ := newSelectTestModel(t, startMode)
 			populateLog(t, &m, 5)
 
 			next, _ := m.Update(keyMsg("v"))
@@ -96,7 +97,7 @@ func TestKeys_V_IgnoredIn_Error_QuitConfirm_NextConfirm_Quitting(t *testing.T) {
 // --- TP-104-04: v with empty log buffer is a no-op ---
 
 func TestKeys_V_EmptyViewport_NoOp(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	// No lines added — log is empty.
 
 	next, _ := m.Update(keyMsg("v"))
@@ -110,7 +111,7 @@ func TestKeys_V_EmptyViewport_NoOp(t *testing.T) {
 // --- TP-104-05: v places cursor at last visible visual row, column 0 ---
 
 func TestKeys_V_StartsAtLastVisibleLine(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	// Populate 20 lines — more than the 10-row viewport.
 	populateLog(t, &m, 20)
 
@@ -154,7 +155,7 @@ func TestKeys_V_StartsAtLastVisibleLine(t *testing.T) {
 func TestKeys_Esc_ReturnsToPrevMode_FromSelect(t *testing.T) {
 	for _, startMode := range []Mode{ModeNormal, ModeDone} {
 		t.Run(startMode.String(), func(t *testing.T) {
-			m := newSelectTestModel(t, startMode)
+			m, _ := newSelectTestModel(t, startMode)
 			populateLog(t, &m, 5)
 
 			// Enter ModeSelect.
@@ -183,7 +184,7 @@ func TestKeys_Esc_ReturnsToPrevMode_FromSelect(t *testing.T) {
 // --- TP-104-07: external SetMode transition clears selection ---
 
 func TestSetMode_ExternalTransition_ClearsSelection(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	// Enter ModeSelect via v.
@@ -212,7 +213,7 @@ func TestSetMode_ExternalTransition_ClearsSelection(t *testing.T) {
 // --- TP-104-08: j in ModeSelect moves the cursor; viewport follows via autoscroll only ---
 
 func TestKeys_InSelectMode_DoesNotDoubleDispatchToViewport(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	// Populate enough lines that j can move the cursor past the viewport edge.
 	populateLog(t, &m, 30)
 	// Scroll to top so the cursor starts at the last visible row (row 9).
@@ -252,7 +253,7 @@ func TestKeys_InSelectMode_DoesNotDoubleDispatchToViewport(t *testing.T) {
 // --- TP-104-09: ModeSelect shortcut line ---
 
 func TestShortcuts_SelectMode_RendersSelectShortcuts(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	next, _ := m.Update(keyMsg("v"))
@@ -281,7 +282,7 @@ func TestShortcuts_NormalAndDone_IncludeVSelect(t *testing.T) {
 // --- TP-104-11: v from Done restores Done on Esc ---
 
 func TestModel_VFromDone_RestoresDoneOnEsc(t *testing.T) {
-	m := newSelectTestModel(t, ModeDone)
+	m, _ := newSelectTestModel(t, ModeDone)
 	populateLog(t, &m, 5)
 
 	// Enter ModeSelect from Done.
@@ -305,7 +306,7 @@ func TestModel_VFromDone_RestoresDoneOnEsc(t *testing.T) {
 // --- TP-104-12: Esc clears selection in the same Update call ---
 
 func TestModel_EscClearsImmediately_NotNextUpdate(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	next, _ := m.Update(keyMsg("v"))
@@ -333,7 +334,7 @@ func TestModel_EscClearsImmediately_NotNextUpdate(t *testing.T) {
 // --- TP-104-13: prevObservedMode double-guard is idempotent ---
 
 func TestModel_PrevObservedMode_DoubleGuard_Idempotent(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	next, _ := m.Update(keyMsg("v"))
@@ -362,7 +363,7 @@ func TestModel_PrevObservedMode_DoubleGuard_Idempotent(t *testing.T) {
 // --- TP-104-14: LogLinesMsg in ModeSelect does not clear selection ---
 
 func TestModel_LogLinesMsg_InSelect_DoesNotClearSelection(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	// Enter ModeSelect.
@@ -390,7 +391,7 @@ func TestModel_LogLinesMsg_InSelect_DoesNotClearSelection(t *testing.T) {
 // --- TP-104-15: Unknown key in ModeSelect is a no-op ---
 
 func TestHandleSelect_UnknownKey_NoOp(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	next, _ := m.Update(keyMsg("v"))
@@ -414,7 +415,7 @@ func TestHandleSelect_UnknownKey_NoOp(t *testing.T) {
 // --- TP-104-16: Home/End in ModeSelect do not scroll the viewport ---
 
 func TestHandleSelect_HomeEnd_NotForwarded(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 30)
 	// After populateLog, auto-scroll puts us at the bottom.
 	// Record that offset and verify Home does not change it.

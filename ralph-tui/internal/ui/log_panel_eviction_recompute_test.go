@@ -236,6 +236,9 @@ func TestEviction_MultipleSuccessiveEvictions(t *testing.T) {
 
 	// First batch: push 10 → total 2005 → evict 5.
 	m, _ = m.Update(LogLinesMsg{Lines: makeLines(10)})
+	if len(m.lines) != logRingBufferCap {
+		t.Fatalf("after first push: want len(lines)=%d (eviction occurred), got %d", logRingBufferCap, len(m.lines))
+	}
 	wantAnchor1 := anchorRaw - 5 // 1988
 	wantCursor1 := cursorRaw - 5 // 1989
 	if m.sel.anchor.rawIdx != wantAnchor1 {
@@ -247,6 +250,9 @@ func TestEviction_MultipleSuccessiveEvictions(t *testing.T) {
 
 	// Second batch: push 10 more → total 2010 → evict 10.
 	m, _ = m.Update(LogLinesMsg{Lines: makeLines(10)})
+	if len(m.lines) != logRingBufferCap {
+		t.Fatalf("after second push: want len(lines)=%d (eviction occurred), got %d", logRingBufferCap, len(m.lines))
+	}
 	wantAnchor2 := wantAnchor1 - 10 // 1978
 	wantCursor2 := wantCursor1 - 10 // 1979
 	if m.sel.anchor.rawIdx != wantAnchor2 {
@@ -334,7 +340,7 @@ func TestAutoScroll_NotTriggeredWhenNotAtBottom(t *testing.T) {
 	// Scroll to top so wasAtBottom will be false.
 	m.viewport.GotoTop()
 	if m.viewport.AtBottom() {
-		t.Skip("viewport is at bottom even after GotoTop — content fits in viewport; test not applicable")
+		t.Fatal("precondition: viewport must not be at bottom after GotoTop — 20 lines at height=5 should overflow")
 	}
 
 	yBefore := m.viewport.YOffset
@@ -422,6 +428,12 @@ func TestEvictionClearsBeforeRecompute(t *testing.T) {
 // TestSetSize_DoesNotRecomputeSelectionVisualCoords verifies C6-01: SetSize
 // calls rewrap but does NOT call recomputeSelectionVisualCoords. A selection
 // with a deliberately stale visualRow remains stale after the resize.
+//
+// NOTE: This test documents a known limitation (P1 in the test plan), not a
+// desired feature. SetSize intentionally skips recompute for performance, so
+// visual coords are stale until the next LogLinesMsg. This is an intentional
+// behavior verification test, not a regression guard. The deferred work to
+// recompute on resize is tracked in deferred.txt under the P1 item.
 func TestSetSize_DoesNotRecomputeSelectionVisualCoords(t *testing.T) {
 	m := newLogModel(80, 20)
 	m, _ = m.Update(LogLinesMsg{Lines: []string{"hello", "world"}})
@@ -477,7 +489,7 @@ func TestSetSize_SubsequentLogLinesMsg_CorrectsStaleVisualCoords(t *testing.T) {
 // sending a LogLinesMsg while in ModeSelect preserves the active selection —
 // raw coordinates are unchanged and the selection is not cleared.
 func TestModel_LogLinesMsg_DuringModeSelect_PreservesSelection(t *testing.T) {
-	m := newSelectTestModel(t, ModeNormal)
+	m, _ := newSelectTestModel(t, ModeNormal)
 	populateLog(t, &m, 5)
 
 	// Enter ModeSelect via 'v'.
@@ -513,14 +525,7 @@ func TestModel_LogLinesMsg_DuringModeSelect_PreservesSelection(t *testing.T) {
 // prevObservedMode guard at model.go:98 on the next Update, clearing the
 // selection overlay.
 func TestModel_ExternalSetMode_ClearsSelectionOnNextUpdate(t *testing.T) {
-	header := NewStatusHeader(1)
-	header.SetPhaseSteps([]string{"step-one"})
-	actions := make(chan StepAction, 10)
-	kh := NewKeyHandler(func() {}, actions)
-	m := NewModel(header, kh, "v0")
-	m.width = 80
-	m.height = 24
-	m.log.SetSize(76, 10)
+	m, kh := newSelectTestModel(t, ModeNormal)
 
 	// Populate the log so ModeSelect can be entered.
 	next, _ := m.Update(LogLinesMsg{Lines: makeLines(5)})
