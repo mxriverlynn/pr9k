@@ -248,7 +248,22 @@ Entered by pressing `v` from `ModeNormal` or `ModeDone`. The footer shows `Selec
 
 **In `ModeSelect`:**
 - `Esc` — clears the selection and returns to `prevMode`. The selection is cleared immediately (no single-frame stale overlay) within the same `Update` call that processes the Esc key.
-- All other keys are no-ops in this ticket (#104); cursor movement and copy land in #105+.
+- `q` — clears the selection, saves `prevMode`, and enters `ModeQuitConfirm` (same pattern as Normal/Done `q`).
+- `h` / `←` — move cursor left one display column; clamped to column 0.
+- `l` / `→` — move cursor right one display column; clamped to last column of the current visual row.
+- `j` / `↓` — move cursor down one visual row; virtual column (vim-style) is preserved and clamped to the new row's width.
+- `k` / `↑` — move cursor up one visual row; same virtual-column behavior.
+- `0` / `Home` — jump cursor to column 0 of the current visual row.
+- `$` / `End` — jump cursor to the last display column of the current visual row.
+- `J` / `Shift+↓` — extend selection by one visual row downward (alias for `MoveSelectionCursor(0, +1)`).
+- `K` / `Shift+↑` — extend selection by one visual row upward (alias for `MoveSelectionCursor(0, -1)`).
+- `PgDn` — move cursor down by `viewport.Height - 1` visual rows (page step).
+- `PgUp` — move cursor up by `viewport.Height - 1` visual rows (page step).
+- All other keys are no-ops.
+
+**Virtual column preservation:** vertical movement remembers `virtualCol` — the column the cursor was at before moving to a shorter line. When the cursor moves back to a longer line, it restores to `virtualCol` (clamped to the new row's width). Horizontal movement updates `virtualCol`.
+
+**Auto-scroll:** after every cursor movement, `autoscrollToCursor()` adjusts `viewport.YOffset` so the cursor row is always visible. Moving above the top scrolls the viewport up; moving below the bottom scrolls down.
 
 **Key routing guard:** When `modeBeforeKey == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport while in select mode.
 
@@ -320,12 +335,13 @@ case tea.KeyMsg:
 
 This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the viewport consumes them while the key handler ignores them. In Error and QuitConfirm modes, the key handler consumes the action keys but scroll keys still pass through to the viewport.
 
-**`ModeSelect` routing guard:** when the mode is `ModeSelect` at the time a key arrives, the `m.log.Update(msg)` forward is skipped entirely. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport: in ModeSelect, `handleSelect` has sole authority over key dispatch and drives viewport positioning explicitly (via movement logic landing in #105). The pre-dispatch mode is used (not the post-dispatch mode) so that an Esc key that *exits* ModeSelect also doesn't double-dispatch.
+**`ModeSelect` routing guard:** when the mode is `ModeSelect` at the time a key arrives, the `m.log.Update(msg)` forward is skipped entirely. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport: in ModeSelect, `handleSelectKey` has sole authority over key dispatch and drives viewport positioning explicitly via `autoscrollToCursor`. The pre-dispatch mode is used (not the post-dispatch mode) so that an Esc key that *exits* ModeSelect also doesn't double-dispatch.
 
 ## Testing
 
 - `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all seven modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all seven modes
-- `ralph-tui/internal/ui/select_mode_test.go` — 10 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, external `SetMode` clears selection on next Update, `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error
+- `ralph-tui/internal/ui/select_mode_test.go` — 16 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, `Esc` clears immediately (not next update), prevObservedMode double-guard idempotency, `LogLinesMsg` in select does not clear selection, external `SetMode` clears selection on next Update, unknown key no-op, `home`/`end` not forwarded; `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error, `v` from Done restores Done on Esc
+- `ralph-tui/internal/ui/keys_select_movement_test.go` — 15 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, Esc from QuitConfirm restores idle mode
 
 ## Additional Information
 

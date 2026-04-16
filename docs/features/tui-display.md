@@ -363,10 +363,28 @@ Pressing `v` from `ModeNormal` or `ModeDone` enters `ModeSelect`. The cursor app
 `renderContent()` applies `lipgloss.NewStyle().Reverse(true)` to cells within the selection range. An empty selection (anchor == cursor) renders a single reverse-video cursor cell at the cursor position so the user has an immediate visual indicator before any movement key is pressed. Rendering is only active when `sel.active || sel.committed`.
 
 **Key routing guard (regression prevention):**
-When `m.keys.Mode() == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents movement keys (h/j/k/l) from double-dispatching to the viewport scroll handler when the selection cursor movement (#105) drives viewport positioning explicitly.
+When `m.keys.Mode() == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents movement keys (h/j/k/l) from double-dispatching to the viewport scroll handler when `handleSelectKey` drives viewport positioning explicitly via `autoscrollToCursor`.
 
 **External mode-change guard:**
 `Model` tracks `prevObservedMode Mode`. At the start of each `Update` call, if `prevObservedMode == ModeSelect` and the current mode is not `ModeSelect`, `m.log.ClearSelection()` is called. This covers `orchestrate.go` calling `h.SetMode(ModeError)` while a selection is visible — the stale overlay is cleared on the next Bubble Tea update cycle. `prevObservedMode` is updated at the end of `Update` (after all dispatch) so it reflects the mode visible to the previous rendered frame.
+
+#### Cursor Movement in ModeSelect
+
+When the mode is `ModeSelect` and a key has not caused a mode transition (Esc and q are intercepted by `keys.go` before reaching this layer), `Model.Update` calls `m.log.handleSelectKey(msg)`, which dispatches to one of the movement methods below. All methods share a guard invariant — they return `(m, nil)` immediately if `!sel.active && !sel.committed` — so no movement can occur on a zero-value (uninitialised) selection.
+
+| Method | Trigger keys | Behavior |
+|--------|-------------|----------|
+| `MoveSelectionCursor(dx, dy)` | h/l/←/→ (dx), j/k/↓/↑ (dy) | Moves cursor by one display column or visual row. Horizontal moves clamp to `[0, lastColOfRow]` and update `virtualCol`. Vertical moves restore `virtualCol` clamped to the new row's width (vim-style). `rawIdx` and `rawOffset` are recomputed after every move via `visualColToRawOffset`. |
+| `JumpSelectionCursorToLineStart()` | `0`, `Home` | Sets cursor to column 0 of the current visual row. Sets `rawOffset = visualLines[row].rawOffset` (segment start). Resets `virtualCol = 0`. |
+| `JumpSelectionCursorToLineEnd()` | `$`, `End` | Sets cursor to `lipgloss.Width(vl.text)` of the current visual row. Recomputes `rawOffset` via `visualColToRawOffset`. Updates `virtualCol`. |
+| `ExtendSelectionByLine(dy)` | `J`/`Shift+↓` (+1), `K`/`Shift+↑` (-1) | Thin wrapper over `MoveSelectionCursor(0, dy)`. Moves by one whole visual row; virtual column is preserved. |
+| `PageSelectionCursor(dy)` | `PgDn` (+1), `PgUp` (-1) | Calls `MoveSelectionCursor(0, dy*(viewport.Height-1))`. Page step is at least 1 when viewport height is 1. |
+
+**`virtualCol`** is a separate `int` field on `logModel` (not inside `pos`) that stores the intended column across vertical moves. It is set whenever the cursor moves horizontally or jumps to a line boundary, and is restored (clamped) on each vertical step so that a cursor on a short line snaps back to the original column when it returns to a longer line.
+
+**`autoscrollToCursor()`** is called at the end of every movement method, before `viewport.SetContent(m.renderContent())`. It adjusts `viewport.YOffset` so `sel.cursor.visualRow` is within `[YOffset, YOffset+Height)`. Moving above the viewport scrolls up; moving below scrolls down.
+
+**Bounds guard on ring-buffer eviction:** before indexing `m.lines[vl.rawIdx]`, `MoveSelectionCursor` and `JumpSelectionCursorToLineEnd` check `vl.rawIdx >= 0 && vl.rawIdx < len(m.lines)` and return `(m, nil)` if the index is stale. This prevents panics when the ring buffer wraps and an old `rawIdx` no longer points to a valid entry.
 
 ### Selection Primitives
 
@@ -557,6 +575,8 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/header_test.go` — D23 heartbeat unit tests on `StatusHeader` directly: `TestStatusHeader_HandleHeartbeatTick_NilReader` (clears suffix, no-op), `TestStatusHeader_HandleHeartbeatTick_ShowsSuffix` (≥15s silence → suffix set), `TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold` (<15s → no suffix), `TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive` (inactive → suffix cleared), `TestStatusHeader_HandleHeartbeatTick_CallsReader` (reader call count incremented), `TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables` (nil after non-nil → suffix cleared on next tick)
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 - `ralph-tui/internal/ui/selection_test.go` — 39 tests across 8 categories: `normalized()` edge cases (same-position, rawIdx ordering priority), `extractText` edge cases (three-or-more lines, full raw line, empty middle line, boundary offsets), `extractText` bounds guards (negative rawIdx, out-of-range rawIdx/rawOffset, reversed same-line offsets — 7 guard paths), `mouseToViewport` edge cases (exact top/bottom boundary, negative col no-panic), `visualColToRawOffset` edge cases (col=0 returns segmentStart, empty rawLine, segmentStart at end, multi-byte grapheme "é"), `contains()` edge cases (empty selection, reversed anchor/cursor, single-row col=0 included), `visible()` edge cases (active+committed simultaneously, committed reversed anchor/cursor), input immutability (lines slice not mutated after `extractText`), zero-value struct safety (`pos{}` and `selection{}` don't panic in any function)
+- `ralph-tui/internal/ui/log_panel_selection_test.go` — 17 tests across 4 categories: `renderContent` overlay correctness (empty selection cursor cell, single-row range, multi-row range, no-selection fast-path, committed selection), split helper unit tests (`splitAtCol` start/past-end/empty, `splitAtCols` empty-range/full-row, `colToByteOffset` multi-byte), `initSelectionAtLastVisibleRow` edge cases (empty visual lines, fewer lines than viewport, rawIdx/rawOffset values), `SetSelection`/`ClearSelection`/`SelectedText` accessor correctness
+- `ralph-tui/internal/ui/keys_select_movement_test.go` — 15 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor stays fixed, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by one row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to keep cursor visible, q from ModeSelect enters QuitConfirm with pre-Select `prevMode` preserved, Esc from QuitConfirm restores pre-Select idle mode
 
 ## Additional Information
 

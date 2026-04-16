@@ -188,6 +188,30 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 
 When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
 
+### Using Select mode
+
+Press `v` from Normal or Done mode to enter `ModeSelect`. A reverse-video cursor cell appears at column 0 of the last visible log row. The footer changes to show the select-mode shortcuts.
+
+Move the cursor with vim-style keys:
+
+| Keys | Action |
+|------|--------|
+| `h` / `←` | Move left one column |
+| `l` / `→` | Move right one column |
+| `j` / `↓` | Move down one row |
+| `k` / `↑` | Move up one row |
+| `0` / `Home` | Jump to start of current line |
+| `$` / `End` | Jump to end of current line |
+| `J` / `Shift+↓` | Extend selection down one row |
+| `K` / `Shift+↑` | Extend selection up one row |
+| `PgDn` / `PgUp` | Move down / up one page |
+
+The cursor behaves like vim's visual mode: vertical movement remembers the intended column (`virtualCol`) and restores it when returning to a longer line. The viewport auto-scrolls to keep the cursor visible.
+
+Press `Esc` to clear the selection and return to Normal or Done mode. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
+
+Note: `v` is blocked in Error, QuitConfirm, NextConfirm, and Quitting modes — only Normal and Done accept it. If the log panel is empty, `v` is a no-op.
+
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
 
 ## Related documentation

@@ -124,6 +124,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
                   ┌─────────────┐
                   │ ModeNormal  │
                   │             │
+                  │ v ──────────┼──▶ ModeSelect
                   │ n ──────────┼──────────────────────┐
                   │ q ──────────┼──────┐               │
                   └──────┬──────┘      │               │
@@ -162,9 +163,13 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
 
   ModeSelect (entered by v from ModeNormal or ModeDone):
     → reverse-video cursor cell at column 0 of last visible log row
+    → h/l/←/→  move cursor left/right one column
+    → j/k/↓/↑  move cursor down/up one row (virtual col preserved)
+    → 0/Home   jump to line start; $/End jump to line end
+    → J/K/⇧↓/⇧↑  extend selection by one whole visual row
+    → PgDn/PgUp  move cursor by viewport.Height-1 rows
     → Esc clears selection and returns to prevMode
     → q enters ModeQuitConfirm
-    → cursor movement and copy land in #105+
 
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
