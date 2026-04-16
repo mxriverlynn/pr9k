@@ -65,7 +65,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming and sendLine callback (SetSender), graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
-- [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress, word-wrap log panel with scroll-position preservation, and selection data types (`pos`, `selection`) with pure helpers for future copy/select wiring
+- [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress, word-wrap log panel with scroll-position preservation, and text selection (`pos`, `selection`, `ModeSelect`, clipboard copy with OSC 52 fallback, mouse drag selection)
 - [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Seven-mode keyboard state machine (Normal/Error/QuitConfirm/NextConfirm/Done/Select/Quitting) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
 - [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
@@ -84,6 +84,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](docs/adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate the TUI from Glyph to Bubble Tea + Lip Gloss + bubbles/viewport for dynamic window title, mouse-wheel scrolling, and long-term ecosystem stability. Apply when modifying any TUI rendering, keyboard dispatch, or subprocess-streaming code.
 - [`docs/adr/20260413160000-require-docker-sandbox.md`](docs/adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker an unconditional runtime requirement for claude steps. Apply when evaluating changes to the sandbox or any proposal to make Docker optional.
 - [`docs/adr/20260413162428-workflow-project-dir-split.md`](docs/adr/20260413162428-workflow-project-dir-split.md) — Decision to split the single `--project-dir` flag into `--workflow-dir` (workflow bundle) and `--project-dir` (target repo). Apply when modifying CLI flags, `{{VAR}}` tokens, or any code that distinguishes the workflow bundle from the target repository.
+- [`docs/adr/20260416-clipboard-and-selection.md`](docs/adr/20260416-clipboard-and-selection.md) — Decision to use `atotto/clipboard` for cross-platform clipboard writes, require `xclip`/`xsel` on Linux, implement a custom in-TUI selection layer (required by alt-screen + mouse-cell-motion), and ship OSC 52 stderr fallback alongside the primary path. Apply when modifying clipboard code, the selection layer, or evaluating proposals to change mouse mode.
 
 ## Coding Standards
 
@@ -110,6 +111,7 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 - [`docs/how-to/recovering-from-step-failures.md`](docs/how-to/recovering-from-step-failures.md) — Error mode keyboard controls (`c` continue, `r` retry, `q` quit) and when to use each
 - [`docs/how-to/quitting-gracefully.md`](docs/how-to/quitting-gracefully.md) — The `q`/`y` confirmation flow, Escape cancel, SIGINT/SIGTERM, `Quitting...` feedback, and exit codes
 - [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file, navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
+- [`docs/how-to/copying-log-text.md`](docs/how-to/copying-log-text.md) — Mouse drag, keyboard single-line, and keyboard multi-line copy walkthroughs; OSC 52 SSH fallback; Linux `xclip`/`xsel` requirement; terminal native-selection override keys
 
 ## Project Discovery
 
