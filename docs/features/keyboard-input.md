@@ -1,6 +1,6 @@
 # Keyboard Input & Error Recovery
 
-A four-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
+A six-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
 - **Last Updated:** 2026-04-11
 - **Authors:**
@@ -8,14 +8,15 @@ A four-mode state machine that routes keypresses and communicates user decisions
 
 ## Overview
 
-- `KeyHandler` operates in four modes: Normal, Error, QuitConfirm, and Quitting — each with its own keypress bindings and shortcut bar text
+- `KeyHandler` operates in six modes: Normal, Error, QuitConfirm, NextConfirm, Done, and Quitting — each with its own keypress bindings and shortcut bar text
 - User decisions are sent to the orchestration goroutine via a buffered `Actions` channel carrying `StepAction` values (Retry, Continue, Quit)
-- In Normal mode, `n` terminates the current subprocess (skip step) and `q` enters quit confirmation
+- In Normal mode, `n` enters the skip confirmation prompt (NextConfirm) and `q` enters quit confirmation
+- In NextConfirm mode (entered when the user presses `n` during a running step), `y` terminates the current subprocess (skip step), `n` or `<Escape>` cancel and restore the previous mode
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
-- In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel and restore the previous mode
+- In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`), calls `ForceQuit`, and returns `tea.QuitMsg` to exit the TUI; `n` or `<Escape>` cancel and restore the previous mode
+- In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
-- When the workflow finishes normally, `Run` returns on its own (no "press any key to exit" state); the workflow goroutine in `main.go` restores the terminal and exits the process directly
 
 Key files:
 - `ralph-tui/internal/ui/ui.go` — KeyHandler struct, mode state, ForceQuit, ShortcutLine
@@ -39,41 +40,41 @@ Key files:
       ┌────────────┐           ┌────────────┐
       │ ModeNormal │           │ ModeError  │
       │            │           │            │
-      │ n → cancel │           │ c → cont.  │
-      │   (skip)   │           │ r → retry  │
-      │ q ───┐     │           │ q ───┐     │
-      └──────┼─────┘           └──────┼─────┘
-             │                        │
-             └──────────┬─────────────┘
-                        ▼
-            ┌───────────────────────┐
-            │   ModeQuitConfirm     │
-            │                       │
-            │  y → ModeQuitting +   │
-            │      ForceQuit        │
-            │  n, <Escape> → prev   │
-            └───────────┬───────────┘
-                        │
-                        │ y
-                        ▼
-                 ┌──────────────┐
-                 │ ModeQuitting │
-                 │              │
-                 │ footer shows │
-                 │ "Quitting..."│
-                 │ (terminal)   │
-                 └──────┬───────┘
-                        │
-                        │ ForceQuit →
-                        ▼
-                 ┌──────────────┐
-                 │   Actions    │  buffered channel (cap 10)
-                 │   channel    │
-                 └──────┬───────┘
-                        │
-                        ▼
-                 Orchestrate()
-                 (workflow goroutine)
+      │ n ───┐     │           │ c → cont.  │
+      │ q ───┼─┐   │           │ r → retry  │
+      └──────┼─┼───┘           │ q ───┐     │
+             │ │               └──────┼─────┘
+             │ └──────────┬───────────┘
+             │            ▼
+             │  ┌───────────────────────┐
+             │  │   ModeQuitConfirm     │
+             │  │                       │
+             │  │  y → ModeQuitting +   │
+             │  │      ForceQuit +      │
+             │  │      tea.QuitMsg      │
+             │  │  n, <Escape> → prev   │
+             │  └───────────┬───────────┘
+             │              │
+             ▼              │ y
+    ┌──────────────────┐    ▼
+    │ ModeNextConfirm  │  ┌──────────────┐
+    │                  │  │ ModeQuitting │
+    │ "Skip current    │  │              │
+    │  step? (y/n,     │  │ footer shows │
+    │  esc to cancel)" │  │ "Quitting..."│
+    │                  │  │ (terminal)   │
+    │ y → cancel step  │  └──────┬───────┘
+    │ n, esc → prev    │         │
+    └──────────────────┘         │ ForceQuit →
+                                 ▼
+                          ┌──────────────┐
+                          │   Actions    │  buffered channel (cap 10)
+                          │   channel    │
+                          └──────┬───────┘
+                                 │
+                                 ▼
+                          Orchestrate()
+                          (workflow goroutine)
 
   OS Signal (SIGINT/SIGTERM):
     → signal handler goroutine
@@ -82,10 +83,18 @@ Key files:
     (unified with the QuitConfirm 'y' path)
 
   Normal completion:
-    → Run returns on its own after writing the
-      completion summary to the log body
-    → workflow goroutine restores the terminal
-      and os.Exit(0)s directly
+    → workflow goroutine enters ModeDone
+    → TUI stays alive; user reviews output
+    → q → QuitConfirm → y → tea.QuitMsg exits TUI
+
+                 ┌──────────────┐
+                 │   ModeDone   │
+                 │              │
+                 │ footer shows │
+                 │ "q quit"    │
+                 │              │
+                 │ q → QuitConfirm │
+                 └──────────────┘
 ```
 
 ## Key Files
@@ -112,6 +121,8 @@ const (
     ModeNormal      Mode = iota
     ModeError
     ModeQuitConfirm
+    ModeNextConfirm // entered after n; shows "Skip current step?" prompt
+    ModeDone        // entered after workflow completes; shows "q quit" footer
     ModeQuitting    // confirmed quit; footer shows "Quitting..." during shutdown
 )
 
@@ -133,6 +144,8 @@ type KeyHandler struct {
 | `NormalShortcuts` | `"↑/k up  ↓/j down  n next step  q quit"` | Shortcut bar in normal mode |
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
 | `QuitConfirmPrompt` | `"Quit " + AppTitle + "? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
+| `NextConfirmPrompt` | `"Skip current step? (y/n, esc to cancel)"` | Shortcut bar in next-confirm mode |
+| `DoneShortcuts` | `"q quit"` | Shortcut bar in done mode (post-workflow) |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
 
 ## Implementation Details
@@ -151,6 +164,8 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
     case ModeNormal:      return m.handleNormal(key)
     case ModeError:       return m.handleError(key)
     case ModeQuitConfirm: return m.handleQuitConfirm(key)
+    case ModeNextConfirm: return m.handleNextConfirm(key)
+    case ModeDone:        return m.handleDone(key)
     case ModeQuitting:
         // All keys silently ignored so a user mashing keys during shutdown
         // can't inject a second ActionQuit or retrigger the cancel hook.
@@ -166,8 +181,17 @@ The Bubble Tea program delivers all keypresses as `tea.KeyMsg` to `Model.Update`
 
 ### Normal Mode
 
-- `n` — calls the `cancel` function to terminate the current subprocess (step skip)
+- `n` — if a cancel function is available (subprocess running), saves the current mode as `prevMode` and switches to `ModeNextConfirm`; if no cancel function (no subprocess), no-op
 - `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm` (direct field write under `handler.mu`)
+- All other keys are ignored
+
+### NextConfirm Mode
+
+Entered when the user presses `n` during a running step. The footer shows `NextConfirmPrompt` (`"Skip current step? (y/n, esc to cancel)"`):
+
+- `y` — re-acquires the cancel function, restores `prevMode`, and offloads `cancel()` via `tea.Cmd` (same goroutine-offload pattern as the old direct-cancel path). Re-acquiring cancel is safe because the subprocess is still running while in `ModeNextConfirm`
+- `n` — restores `prevMode` (cancels the skip without terminating the subprocess)
+- `<Escape>` — same as `n`
 - All other keys are ignored
 
 ### Error Mode
@@ -180,20 +204,25 @@ Entered by `Orchestrate` when a step fails (via `h.SetMode(ModeError)`):
 
 ### Quit Confirm Mode
 
-- `y` — flips the mode to `ModeQuitting` (so the footer immediately shows `Quitting...` as visible feedback) and calls `ForceQuit()`, which terminates the active subprocess and injects `ActionQuit` into the Actions channel
+- `y` — calls `ForceQuit()` (which sets `ModeQuitting` and terminates the subprocess) and returns `tea.QuitMsg{}` so the TUI exits. Returning `tea.QuitMsg` is needed because in `ModeDone` there is no workflow goroutine to call `program.Quit()` — the QuitMsg causes `program.Run()` to return directly
 - `n` — restores `prevMode` (returns to whichever mode initiated the quit)
 - `<Escape>` — same as `n`: restores `prevMode` and cancels the quit without firing `ForceQuit` or sending any action
 - All other keys are ignored
 
-The flip to `ModeQuitting` happens **before** `ForceQuit` is called so the footer paints `Quitting...` on the very next render cycle, before the orchestration goroutine starts unwinding. This is the only mode that exists purely for user feedback — no keypresses are processed from `ModeQuitting` because the state machine will either terminate the process (signal path) or the workflow goroutine will close the executor and return from `Run` (normal path).
+`ForceQuit` sets `ModeQuitting` internally so the footer paints `Quitting...` on the very next render cycle, before the orchestration goroutine starts unwinding.
 
 ### Quitting Mode
 
 Entered by the QuitConfirm `y` path or by `ForceQuit()` directly (which is called by the OS signal handler from any mode, including Normal and Error). The footer shows `QuittingLine` (`"Quitting..."`). No keypress handler is registered for this mode; any keypresses received while `mode == ModeQuitting` fall through `Handle`'s switch and are ignored. The mode persists until the workflow goroutine unwinds and tears the TUI down.
 
-### Normal Completion (no mode transition)
+### Done Mode
 
-When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns on its own. There is no dedicated "done" mode — the workflow goroutine in `main.go` calls `program.Quit()` after `workflow.Run` returns, which causes `program.Run()` to return cleanly in `main`.
+When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns. The workflow goroutine in `main.go` flushes logs, closes channels, and calls `keyHandler.SetMode(ModeDone)`. The TUI stays alive so the user can scroll through the output. The footer shows `DoneShortcuts` (`"q quit"`):
+
+- `q` — saves `ModeDone` as `prevMode` and enters `ModeQuitConfirm`
+- All other keys are ignored
+
+From `ModeQuitConfirm`, `y` triggers `ForceQuit` + `tea.QuitMsg` which causes `program.Run()` to return. `<Escape>` or `n` restores `ModeDone`.
 
 ### ForceQuit
 
@@ -258,7 +287,7 @@ This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the vie
 
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from both Normal and Error), `y` flipping to `ModeQuitting` with `QuittingLine` footer, `SetMode(ModeQuitting)` updating the shortcut bar, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`), ShortcutLine thread safety
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all six modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all six modes
 
 ## Additional Information
 

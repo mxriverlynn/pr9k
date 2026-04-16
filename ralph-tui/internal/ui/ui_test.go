@@ -145,6 +145,60 @@ func TestForceQuit_SetsModeQuitting_FromNormal(t *testing.T) {
 	}
 }
 
+// TestSetMode_NextConfirm_UpdatesShortcutLine verifies SetMode(ModeNextConfirm).
+func TestSetMode_NextConfirm_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeNextConfirm)
+
+	if h.ShortcutLine() != NextConfirmPrompt {
+		t.Errorf("expected NextConfirmPrompt, got %q", h.ShortcutLine())
+	}
+}
+
+// TestSetMode_Done_UpdatesShortcutLine verifies SetMode(ModeDone).
+func TestSetMode_Done_UpdatesShortcutLine(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+
+	h.SetMode(ModeDone)
+
+	if h.ShortcutLine() != DoneShortcuts {
+		t.Errorf("expected DoneShortcuts, got %q", h.ShortcutLine())
+	}
+}
+
+// TestForceQuit_SetsModeQuitting_FromNextConfirm covers SIGINT during the skip
+// confirmation prompt.
+func TestForceQuit_SetsModeQuitting_FromNextConfirm(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetMode(ModeNextConfirm)
+
+	h.ForceQuit()
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine after ForceQuit, got %q", h.ShortcutLine())
+	}
+}
+
+// TestForceQuit_SetsModeQuitting_FromDone covers SIGINT during the post-workflow
+// done screen.
+func TestForceQuit_SetsModeQuitting_FromDone(t *testing.T) {
+	h, _, _ := newTestHandler(t)
+	h.SetMode(ModeDone)
+
+	h.ForceQuit()
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine after ForceQuit, got %q", h.ShortcutLine())
+	}
+}
+
 // TestForceQuit_SetsModeQuitting_FromError verifies that ForceQuit flips mode to
 // ModeQuitting and updates the footer even when called from ModeError (the signal path).
 func TestForceQuit_SetsModeQuitting_FromError(t *testing.T) {
@@ -219,8 +273,8 @@ func TestShortcutLine_ConcurrentRead_NoRace(t *testing.T) {
 		}
 	}()
 
-	// Workflow goroutine: cycle through all four modes for ≥500 iterations.
-	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeQuitting}
+	// Workflow goroutine: cycle through all six modes for ≥500 iterations.
+	modes := []Mode{ModeNormal, ModeError, ModeQuitConfirm, ModeNextConfirm, ModeDone, ModeQuitting}
 	for i := range 500 {
 		h.SetMode(modes[i%len(modes)])
 	}
@@ -265,8 +319,9 @@ func TestForceQuit_ConcurrentAccess_NoRace(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		modes := []Mode{ModeQuitConfirm, ModeNextConfirm, ModeDone}
 		for i := 0; i < 500; i++ {
-			h.SetMode(ModeQuitConfirm)
+			h.SetMode(modes[i%len(modes)])
 		}
 	}()
 

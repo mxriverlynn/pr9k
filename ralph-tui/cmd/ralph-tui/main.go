@@ -230,31 +230,38 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	signaled := make(chan struct{})
 	go func() {
+		<-sigChan
+		close(signaled)
+		keyHandler.ForceQuit()
 		select {
-		case <-sigChan:
-			close(signaled)
-			keyHandler.ForceQuit()
-			// Give the workflow goroutine up to 2 seconds to exit cleanly.
-			select {
-			case <-workflowDone:
-			case <-time.After(2 * time.Second):
-				program.Kill()
-			}
 		case <-workflowDone:
+		case <-time.After(2 * time.Second):
 		}
+		program.Kill()
 	}()
 
 	// Workflow goroutine: run the full workflow, then tear down cleanly.
 	go func() {
 		defer close(workflowDone)
 		_ = workflow.Run(runner, proxy, keyHandler, runCfg)
-		signal.Stop(sigChan)
 		_ = log.Close()
 		close(lineCh)
-		program.Quit()
+		keyHandler.SetMode(ui.ModeDone)
 	}()
 
 	_, runErr := program.Run()
+	signal.Stop(sigChan)
+
+	// Wait for the workflow goroutine to finish cleanup (log flush, channel
+	// close). Needed because handleQuitConfirm's tea.QuitMsg can cause
+	// program.Run() to return before the workflow goroutine finishes — the
+	// mid-workflow quit path sends tea.QuitMsg immediately after ForceQuit,
+	// racing with the goroutine's log.Close() and close(lineCh).
+	select {
+	case <-workflowDone:
+	case <-time.After(4 * time.Second):
+	}
+
 	// program.Kill() (signal-path forced shutdown after 2s grace) causes Run
 	// to return tea.ErrProgramKilled. That is a normal forced-exit path, not
 	// a crash — don't print a scary error for it.

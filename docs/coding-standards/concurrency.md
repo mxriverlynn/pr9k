@@ -123,49 +123,49 @@ for _, step := range steps {
 
 ## Signal path and completion path must converge cleanly
 
-When a Bubble Tea TUI app has two paths that cause the program to stop — a signal path (SIGINT/SIGTERM) and a normal completion path — both must trigger clean shutdown via `program.Quit()` or `program.Kill()`. Missing one path leaves the program running or leaves the terminal in a bad state.
+When a Bubble Tea TUI app has two paths that cause the program to stop — a signal path (SIGINT/SIGTERM) and a normal completion path — both must trigger clean shutdown via the TUI's quit mechanisms. Missing one path leaves the program running or leaves the terminal in a bad state.
 
 ```go
-// Signal path — triggered by SIGINT/SIGTERM
+// Signal path — triggered by SIGINT/SIGTERM; remains active during ModeDone
 go func() {
+    <-sigChan
+    close(signaled)
+    keyHandler.ForceQuit()
     select {
-    case <-sigChan:
-        keyHandler.ForceQuit()
-        select {
-        case <-workflowDone:
-        case <-time.After(2 * time.Second):
-            program.Kill() // force if workflow doesn't unwind
-        }
     case <-workflowDone:
+    case <-time.After(2 * time.Second):
     }
+    program.Kill() // always kill — safe even if workflow already finished
 }()
 
-// Normal completion path — workflow goroutine calls program.Quit() itself
+// Normal completion path — workflow goroutine enters ModeDone; user quits via q→y
 go func() {
     defer close(workflowDone)
     _ = workflow.Run(...)
-    program.Quit() // signals Bubble Tea to stop its event loop
+    _ = log.Close()
+    close(lineCh)
+    keyHandler.SetMode(ui.ModeDone) // TUI stays alive for user review
 }()
 ```
 
-The workflow goroutine calls `program.Quit()` on normal completion. The signal path calls `ForceQuit()` (which unwinds orchestration) and waits for the workflow goroutine with a 2-second grace period before `program.Kill()`.
+The workflow goroutine enters `ModeDone` on normal completion — the TUI stays alive so the user can review output and quit via `q` → `y` (which sends `tea.QuitMsg`). The signal handler goroutine blocks unconditionally on `<-sigChan` (no `case <-workflowDone` escape hatch) so it remains active during `ModeDone` — a SIGINT during the done screen still triggers `ForceQuit` + `program.Kill()`, restoring the terminal cleanly.
 
 ## Wait for background goroutines after program.Run() returns
 
-After `program.Run()` returns (Bubble Tea's blocking event loop), use a `select` with a timeout to wait for the workflow goroutine to finish cleanup. The program may stop before the workflow goroutine flushes logs or closes channels.
+After `program.Run()` returns (Bubble Tea's blocking event loop), deregister signal notifications and use a `select` with a timeout to wait for the workflow goroutine to finish cleanup. The program may stop before the workflow goroutine flushes logs or closes channels — particularly in the mid-workflow quit path, where `handleQuitConfirm`'s `tea.QuitMsg` causes `program.Run()` to return immediately after `ForceQuit`, racing the goroutine's `log.Close()` and `close(lineCh)`.
 
 ```go
 _, runErr := program.Run()
-// ...
+signal.Stop(sigChan) // deregister after TUI exits cleanly
 
-// program.Run() may return before the workflow goroutine closes workflowDone.
+// Wait for the workflow goroutine to finish cleanup (log flush, channel close).
 select {
 case <-workflowDone:
-case <-time.After(2 * time.Second):
+case <-time.After(4 * time.Second):
 }
 ```
 
-Choose a timeout long enough for cleanup (flushing logs, deregistering signals) but short enough that a hung goroutine does not stall the process indefinitely.
+The 4-second timeout exceeds the 3-second `terminateGracePeriod` in `runner.Terminate()` plus buffer for `log.Close()` and `close(lineCh)` — this prevents `os.Exit` from firing while SIGTERM→SIGKILL is still in progress during a mid-workflow quit.
 
 ## Unexported field + mutex-protected getter for shortcut bar text
 

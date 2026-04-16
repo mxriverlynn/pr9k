@@ -197,6 +197,156 @@ func TestHandleError_UnrecognizedKey_NoOp(t *testing.T) {
 	}
 }
 
+// --- handleNextConfirm ---
+
+func TestHandleNormal_N_EntersNextConfirm(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	_, cmd := m.Update(keyMsg("n"))
+	if cmd != nil {
+		t.Error("expected nil cmd for n entering NextConfirm")
+	}
+	if h.Mode() != ModeNextConfirm {
+		t.Errorf("expected ModeNextConfirm, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != NextConfirmPrompt {
+		t.Errorf("expected NextConfirmPrompt, got %q", h.ShortcutLine())
+	}
+}
+
+func TestHandleNormal_N_SavesPrevModeAsNormal(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("n"))
+
+	h.mu.Lock()
+	prev := h.prevMode
+	h.mu.Unlock()
+
+	if prev != ModeNormal {
+		t.Errorf("expected prevMode ModeNormal, got %v", prev)
+	}
+}
+
+func TestHandleNextConfirm_Y_RestoresModeAndReturnsCmd(t *testing.T) {
+	cancelCalled := false
+	actions := make(chan StepAction, 10)
+	h := NewKeyHandler(func() { cancelCalled = true }, actions)
+	m := newKeysModel(h)
+
+	// Press n to enter ModeNextConfirm.
+	m.Update(keyMsg("n"))
+	if h.Mode() != ModeNextConfirm {
+		t.Fatalf("precondition: expected ModeNextConfirm, got %v", h.Mode())
+	}
+
+	// Press y to confirm skip.
+	_, cmd := m.Update(keyMsg("y"))
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected mode restored to ModeNormal, got %v", h.Mode())
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for y in next-confirm mode")
+	}
+	_ = cmd()
+	if !cancelCalled {
+		t.Error("expected cancel to be called after y cmd execution")
+	}
+}
+
+func TestHandleNextConfirm_N_RevertsMode(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("n")) // enter ModeNextConfirm
+	_, cmd := m.Update(keyMsg("n"))
+	if cmd != nil {
+		t.Error("expected nil cmd for n in next-confirm mode")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected mode reverted to ModeNormal, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after n, got %q", h.ShortcutLine())
+	}
+}
+
+func TestHandleNextConfirm_Esc_RevertsMode(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("n")) // enter ModeNextConfirm
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	_, cmd := m.Update(escMsg)
+	if cmd != nil {
+		t.Error("expected nil cmd for esc in next-confirm mode")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected mode reverted to ModeNormal, got %v", h.Mode())
+	}
+}
+
+func TestHandleNextConfirm_UnrecognizedKey_NoOp(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("n")) // enter ModeNextConfirm
+	_, cmd := m.Update(keyMsg("x"))
+	if cmd != nil {
+		t.Error("expected nil cmd for unrecognized key in next-confirm mode")
+	}
+	if h.Mode() != ModeNextConfirm {
+		t.Errorf("mode changed unexpectedly: got %v", h.Mode())
+	}
+}
+
+// --- handleDone ---
+
+func TestHandleDone_Q_EntersQuitConfirm(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeDone)
+	m := newKeysModel(h)
+
+	_, cmd := m.Update(keyMsg("q"))
+	if cmd != nil {
+		t.Error("expected nil cmd for q in done mode")
+	}
+	if h.Mode() != ModeQuitConfirm {
+		t.Errorf("expected ModeQuitConfirm, got %v", h.Mode())
+	}
+}
+
+func TestHandleDone_Q_SavesPrevModeAsDone(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeDone)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("q"))
+
+	h.mu.Lock()
+	prev := h.prevMode
+	h.mu.Unlock()
+
+	if prev != ModeDone {
+		t.Errorf("expected prevMode ModeDone, got %v", prev)
+	}
+}
+
+func TestHandleDone_OtherKeys_NoOp(t *testing.T) {
+	for _, key := range []string{"n", "c", "r", "x"} {
+		h, _ := newKeysTestHandler(t, ModeDone)
+		m := newKeysModel(h)
+
+		_, cmd := m.Update(keyMsg(key))
+		if cmd != nil {
+			t.Errorf("expected nil cmd for %q in done mode", key)
+		}
+		if h.Mode() != ModeDone {
+			t.Errorf("mode changed unexpectedly on %q: got %v", key, h.Mode())
+		}
+	}
+}
+
 // --- TP-002: handleQuitConfirm ---
 
 func TestHandleQuitConfirm_Y_ReturnsNonNilCmd(t *testing.T) {
@@ -207,10 +357,31 @@ func TestHandleQuitConfirm_Y_ReturnsNonNilCmd(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("expected non-nil cmd for y in quit-confirm mode")
 	}
-	// Executing the cmd calls ForceQuit, which sets ModeQuitting.
-	_ = cmd()
+	// Executing the cmd calls ForceQuit (sets ModeQuitting) and returns tea.QuitMsg.
+	result := cmd()
 	if h.Mode() != ModeQuitting {
 		t.Errorf("expected ModeQuitting after executing y cmd, got %v", h.Mode())
+	}
+	if _, ok := result.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg from y cmd, got %T", result)
+	}
+}
+
+func TestHandleQuitConfirm_Esc_FromDone_RevertsToDone(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeDone)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("q")) // enter QuitConfirm from Done
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	_, cmd := m.Update(escMsg)
+	if cmd != nil {
+		t.Error("expected nil cmd for esc in quit-confirm mode")
+	}
+	if h.Mode() != ModeDone {
+		t.Errorf("expected mode reverted to ModeDone, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != DoneShortcuts {
+		t.Errorf("expected DoneShortcuts after esc, got %q", h.ShortcutLine())
 	}
 }
 

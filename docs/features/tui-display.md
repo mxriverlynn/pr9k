@@ -282,7 +282,7 @@ There is **no** `lipgloss.Border` wrapper around the inner block. The previous a
 
 `colorShortcutLine()` applies the footer's per-key color scheme. For the key-mapping lines (`NormalShortcuts`, `ErrorShortcuts`), the string is split on `"  "` (double-space) into groups; within each group the first whitespace-separated token is the mapped key (rendered `White`) and the rest is its description (rendered `LightGray`). The `"  "` separators between groups remain `LightGray`.
 
-For status-message lines the whole string renders in `White`, with one exception: when the line is `QuitConfirmPrompt`, `colorShortcutLine` splits the string on the `AppTitle` substring and renders that substring in `Green` to match the top-border title's brand color, with the surrounding prompt text in `White`.
+For status-message lines (`QuitConfirmPrompt`, `NextConfirmPrompt`, `QuittingLine`) the whole string renders in `White`, with one exception: when the line is `QuitConfirmPrompt`, `colorShortcutLine` splits the string on the `AppTitle` substring and renders that substring in `Green` to match the top-border title's brand color, with the surrounding prompt text in `White`. `DoneShortcuts` (`"q quit"`) uses the default two-tone rendering (key white, description gray) since it follows the standard key-mapping format.
 
 ### Checkbox Label Formatting
 
