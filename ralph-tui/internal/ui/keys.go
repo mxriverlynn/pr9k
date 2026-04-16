@@ -1,6 +1,10 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	"fmt"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // keysModel is the Bubble Tea sub-model responsible for keyboard dispatch.
 // It holds a reference to the KeyHandler (which owns mode state and the
@@ -142,9 +146,10 @@ func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
 }
 
 // handleSelect handles key events in ModeSelect. Esc returns to the prior
-// mode; q enters ModeQuitConfirm. Cursor movement keys (hjkl/arrows, 0/$,
-// shift+↑↓, J/K, PgUp/PgDn) are handled by logModel.handleSelectKey via
-// model.go after this handler returns; copy (y/Enter) lands in #107.
+// mode; q enters ModeQuitConfirm; y/Enter transitions back to the prior mode
+// so model.go can perform the copy (it has access to logModel.SelectedText()).
+// Cursor movement keys (hjkl/arrows, 0/$, shift+↑↓, J/K, PgUp/PgDn) are
+// handled by logModel.handleSelectKey via model.go after this handler returns.
 func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	switch key.String() {
 	case "esc":
@@ -164,8 +169,39 @@ func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mode = ModeQuitConfirm
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
+	case "y", "enter":
+		// Return to the pre-select mode. The actual copy (clipboard write,
+		// feedback log line) is performed by model.go's routing after key
+		// dispatch, which has access to logModel.SelectedText(). Selection
+		// clearing also happens there via the post-dispatch guard.
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
 	}
 	return m, nil
+}
+
+// copySelectedText performs the clipboard copy for a committed selection and
+// returns a tea.Cmd that appends the appropriate feedback log line. Called by
+// model.go after y/Enter exits ModeSelect. text is the raw selected text
+// (already extracted by model.go before ClearSelection is called).
+//
+// If text is empty, no copy is attempted and nil is returned (silent no-op).
+func copySelectedText(text string) tea.Cmd {
+	if text == "" {
+		return nil
+	}
+	err := CopyToClipboard(text)
+	var line string
+	if err == nil {
+		line = fmt.Sprintf("[copied %d chars]", len(text))
+	} else {
+		line = "[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]"
+	}
+	return func() tea.Msg {
+		return LogLinesMsg{Lines: []string{line}}
+	}
 }
 
 func (m keysModel) handleQuitConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {

@@ -135,10 +135,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Immediate selection clear: if a key transitioned the mode away from
-		// ModeSelect (e.g., Esc), clear the selection overlay now so there is
-		// no single-frame stale highlight. The prevObservedMode guard at the
-		// top of Update covers the external SetMode path (orchestration goroutine).
+		// ModeSelect (e.g., Esc, y, Enter), clear the selection overlay now so
+		// there is no single-frame stale highlight. For y/Enter, extract the
+		// selected text before clearing and enqueue the clipboard copy + feedback
+		// log line. The prevObservedMode guard at the top of Update covers the
+		// external SetMode path (orchestration goroutine).
 		if modeBeforeKey == ModeSelect && m.keys.handler.Mode() != ModeSelect {
+			switch msg.String() {
+			case "y", "enter":
+				// Extract text before ClearSelection removes the selection state.
+				text := m.log.SelectedText()
+				cmds = append(cmds, copySelectedText(text))
+			}
 			m.log = m.log.ClearSelection()
 		}
 
