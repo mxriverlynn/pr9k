@@ -39,6 +39,7 @@ type logModel struct {
 	viewport    viewport.Model
 	lines       []string     // ring buffer, cap logRingBufferCap; one entry per original logical line
 	visualLines []visualLine // rebuilt on every rewrap; one entry per wrapped visual row
+	sel         selection    // current text selection; zero value = no selection
 }
 
 // newLogModel constructs a logModel with a custom KeyMap that removes f/b/u/d
@@ -130,14 +131,115 @@ func (m *logModel) rewrap(width int) {
 }
 
 // renderContent joins all visual-line text into a single string and wraps it
-// in logContentStyle. The selection overlay (reverse-video highlighting) is
-// not applied yet — that lands in a later ticket.
+// in logContentStyle. When a selection is active or committed, cells within
+// the selected range are rendered with reverse-video highlighting. An empty
+// selection (anchor == cursor at the same position) still renders the single
+// cursor cell with reverse video so the user has an immediate visual indicator
+// of select mode.
 func (m logModel) renderContent() string {
+	showSel := m.sel.active || m.sel.committed
+	if !showSel {
+		texts := make([]string, len(m.visualLines))
+		for i, vl := range m.visualLines {
+			texts[i] = vl.text
+		}
+		return logContentStyle.Render(strings.Join(texts, "\n"))
+	}
+
+	reverseStyle := lipgloss.NewStyle().Reverse(true)
+	start, end := m.sel.normalized()
+	isEmpty := start.visualRow == end.visualRow && start.col == end.col
+
 	texts := make([]string, len(m.visualLines))
 	for i, vl := range m.visualLines {
-		texts[i] = vl.text
+		if isEmpty {
+			// Empty selection: show a single cursor cell in reverse-video at
+			// the cursor's visual row and column.
+			if i != start.visualRow {
+				texts[i] = vl.text
+				continue
+			}
+			before, cursor, after := splitAtCol(vl.text, start.col)
+			texts[i] = before + reverseStyle.Render(cursor) + after
+			continue
+		}
+
+		// Non-empty range: highlight the selected cells on this row.
+		// Rows fully inside the range are fully highlighted.
+		// Start/end rows are partially highlighted.
+		if i < start.visualRow || i > end.visualRow {
+			texts[i] = vl.text
+			continue
+		}
+		if i == start.visualRow && i == end.visualRow {
+			// Selection confined to a single row.
+			before, sel, after := splitAtCols(vl.text, start.col, end.col)
+			texts[i] = before + reverseStyle.Render(sel) + after
+		} else if i == start.visualRow {
+			// Highlight from start.col to end of row.
+			before, sel, _ := splitAtCols(vl.text, start.col, len(vl.text))
+			texts[i] = before + reverseStyle.Render(sel)
+		} else if i == end.visualRow {
+			// Highlight from start of row to end.col.
+			_, sel, after := splitAtCols(vl.text, 0, end.col)
+			texts[i] = reverseStyle.Render(sel) + after
+		} else {
+			// Middle row: fully highlighted.
+			texts[i] = reverseStyle.Render(vl.text)
+		}
 	}
 	return logContentStyle.Render(strings.Join(texts, "\n"))
+}
+
+// splitAtCol splits s at the given display-column index, returning the text
+// before the column, the first grapheme cluster at that column (or a space if
+// the row is empty or the column is past the end), and the text after.
+func splitAtCol(s string, col int) (before, cursor, after string) {
+	byteOff := colToByteOffset(s, col)
+	if byteOff >= len(s) {
+		return s, " ", ""
+	}
+	// Advance one rune (grapheme cluster).
+	for _, r := range s[byteOff:] {
+		size := len(string(r))
+		return s[:byteOff], s[byteOff : byteOff+size], s[byteOff+size:]
+	}
+	return s, " ", ""
+}
+
+// splitAtCols splits s at two display-column boundaries, returning the
+// three segments: before startCol, between startCol and endCol (the selection),
+// and after endCol.
+func splitAtCols(s string, startCol, endCol int) (before, sel, after string) {
+	startByte := colToByteOffset(s, startCol)
+	endByte := colToByteOffset(s, endCol)
+	if startByte > len(s) {
+		startByte = len(s)
+	}
+	if endByte > len(s) {
+		endByte = len(s)
+	}
+	if startByte > endByte {
+		startByte = endByte
+	}
+	return s[:startByte], s[startByte:endByte], s[endByte:]
+}
+
+// colToByteOffset converts a display-column index to a byte offset in s.
+// It walks forward through s counting display cells (via lipgloss.Width per
+// rune). Returns len(s) when col exceeds the string's total cell width.
+func colToByteOffset(s string, col int) int {
+	cellCount := 0
+	byteOff := 0
+	for _, r := range s {
+		if cellCount >= col {
+			break
+		}
+		w := lipgloss.Width(string(r))
+		cellCount += w
+		byteOff += len(string(r))
+	}
+	return byteOff
 }
 
 // Update handles incoming Bubble Tea messages. LogLinesMsg appends lines to the
@@ -223,4 +325,58 @@ func (m *logModel) SetSize(width, height int) {
 		}
 	}
 	m.viewport.SetYOffset(newYOffset)
+}
+
+// SelectedText returns the currently selected text reconstructed from raw
+// ring-buffer lines. Returns "" when there is no selection or the selection
+// has become invalid after ring-buffer eviction.
+func (m logModel) SelectedText() string {
+	if !m.sel.active && !m.sel.committed {
+		return ""
+	}
+	start, end := m.sel.normalized()
+	return extractText(m.lines, start, end)
+}
+
+// SetSelection replaces the current selection and re-renders the viewport
+// content with the new selection overlay.
+func (m logModel) SetSelection(sel selection) logModel {
+	m.sel = sel
+	m.viewport.SetContent(m.renderContent())
+	return m
+}
+
+// ClearSelection removes the current selection and re-renders the viewport
+// content without a selection overlay.
+func (m logModel) ClearSelection() logModel {
+	m.sel = selection{}
+	m.viewport.SetContent(m.renderContent())
+	return m
+}
+
+// initSelectionAtLastVisibleRow returns a new selection whose anchor and
+// cursor are both at column 0 of the last visible visual row
+// (YOffset + viewport.Height - 1, clamped to len(visualLines) - 1).
+// The selection is marked active so visible() returns true and the cursor
+// cell renders immediately.
+// Returns an empty (zero-value) selection when there are no visual lines.
+func (m logModel) initSelectionAtLastVisibleRow() selection {
+	if len(m.visualLines) == 0 {
+		return selection{}
+	}
+	lastRow := m.viewport.YOffset + m.viewport.Height - 1
+	if lastRow >= len(m.visualLines) {
+		lastRow = len(m.visualLines) - 1
+	}
+	if lastRow < 0 {
+		lastRow = 0
+	}
+	vl := m.visualLines[lastRow]
+	p := pos{
+		rawIdx:    vl.rawIdx,
+		rawOffset: vl.rawOffset,
+		visualRow: lastRow,
+		col:       0,
+	}
+	return selection{anchor: p, cursor: p, active: true}
 }

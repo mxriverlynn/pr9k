@@ -81,6 +81,7 @@ Key files:
 | `ralph-tui/internal/ui/log_panel_wrap_test.go` | 30 unit tests covering word-wrap, rawOffset accuracy, ring-buffer eviction, SetSize edge cases, auto-scroll behavior, ANSI preservation, and integration via tea.WindowSizeMsg |
 | `ralph-tui/internal/ui/selection.go` | `pos` and `selection` data types; `visible()`, `normalized()`, `contains()`, `extractText()`, `mouseToViewport()`, `visualColToRawOffset()` pure helpers |
 | `ralph-tui/internal/ui/selection_test.go` | 39 unit tests for all selection data types and helpers, including bounds-guard, edge cases, input immutability, and zero-value safety |
+| `ralph-tui/internal/ui/select_mode_test.go` | 10 integration tests for `ModeSelect` entry/exit, shortcut bar, routing guard, and external mode-change clearing |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -343,9 +344,33 @@ Height-only changes skip the rewrap step entirely — only `viewport.Width` and 
 
 **Known limitation (TODO #103):** `rawOffset` is advanced by `len(seg)` — the byte length of the *wrapped output* segment. If a raw line contains ANSI escape sequences, `ansi.Wrap` may insert reset/re-open codes at wrap boundaries, making the segment byte length diverge from the raw-line bytes consumed. Scroll-position restoration and future copy/select will silently produce wrong offsets in that case. Currently low severity (claudestream emits unstyled text). Tracked as issue #103.
 
+### ModeSelect: Keyboard Text Selection
+
+Pressing `v` from `ModeNormal` or `ModeDone` enters `ModeSelect`. The cursor appears as a single reverse-video cell at column 0 of the last visible visual row. `Esc` clears the selection and returns to the prior mode.
+
+**Entry conditions:**
+- `v` is accepted only in `ModeNormal` and `ModeDone`. It is blocked in `ModeError` (the orchestration goroutine is blocked on `KeyHandler.Actions`), `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`.
+- `v` with an empty log buffer is a no-op (no transition to `ModeSelect`).
+
+**Selection state on `logModel`:**
+- `logModel.sel selection` holds the current selection (zero value = no selection).
+- `SetSelection(sel selection) logModel` replaces the selection and re-renders viewport content.
+- `ClearSelection() logModel` removes the selection and re-renders.
+- `SelectedText() string` reconstructs the selected text from raw ring-buffer lines (returns `""` for an empty or invalid selection).
+- `initSelectionAtLastVisibleRow() selection` returns an empty selection (anchor == cursor) at column 0 of the last visible visual row (`YOffset + Height - 1`, clamped). Used when `v` is pressed.
+
+**Reverse-video rendering:**
+`renderContent()` applies `lipgloss.NewStyle().Reverse(true)` to cells within the selection range. An empty selection (anchor == cursor) renders a single reverse-video cursor cell at the cursor position so the user has an immediate visual indicator before any movement key is pressed. Rendering is only active when `sel.active || sel.committed`.
+
+**Key routing guard (regression prevention):**
+When `m.keys.Mode() == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents movement keys (h/j/k/l) from double-dispatching to the viewport scroll handler when the selection cursor movement (#105) drives viewport positioning explicitly.
+
+**External mode-change guard:**
+`Model` tracks `prevObservedMode Mode`. At the start of each `Update` call, if `prevObservedMode == ModeSelect` and the current mode is not `ModeSelect`, `m.log.ClearSelection()` is called. This covers `orchestrate.go` calling `h.SetMode(ModeError)` while a selection is visible — the stale overlay is cleared on the next Bubble Tea update cycle. `prevObservedMode` is updated at the end of `Update` (after all dispatch) so it reflects the mode visible to the previous rendered frame.
+
 ### Selection Primitives
 
-`ralph-tui/internal/ui/selection.go` defines the coordinate and selection data types used for text selection in the log panel, along with pure helper functions. No TUI behavior is wired yet — these types are pre-placed so the copy/select ticket can build on stable primitives.
+`ralph-tui/internal/ui/selection.go` defines the coordinate and selection data types used for text selection in the log panel, along with pure helper functions.
 
 **Core types:**
 

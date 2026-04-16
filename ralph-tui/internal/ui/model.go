@@ -47,12 +47,13 @@ func (m headerModel) iterLine() string {
 // keyboard dispatch — plus the terminal dimensions and a version label for the
 // shortcut footer.
 type Model struct {
-	header       headerModel
-	log          logModel
-	keys         keysModel
-	width        int
-	height       int
-	versionLabel string
+	header           headerModel
+	log              logModel
+	keys             keysModel
+	width            int
+	height           int
+	versionLabel     string
+	prevObservedMode Mode // used to detect external SetMode transitions out of ModeSelect
 }
 
 // NewModel constructs the root Model. initialHeader must be pre-populated
@@ -85,14 +86,63 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Mode-change guard: if the mode transitioned away from ModeSelect since the
+	// last Update (covers external SetMode calls from the orchestration goroutine),
+	// clear any lingering selection overlay so a stale reverse-video highlight
+	// never lingers.
+	//
+	// prevObservedMode is updated at the end of Update (after all dispatch) so
+	// it reflects the mode as it was when control last returned to the caller —
+	// i.e., the mode seen by the previous rendered frame.
+	currentMode := m.keys.handler.Mode()
+	if m.prevObservedMode == ModeSelect && currentMode != ModeSelect {
+		m.log = m.log.ClearSelection()
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Capture mode before key dispatch so the routing guard uses the mode
+		// that was active when this key arrived, not the post-dispatch mode.
+		modeBeforeKey := m.keys.handler.Mode()
+
 		var kcmd tea.Cmd
 		m.keys, kcmd = m.keys.Update(msg)
 		cmds = append(cmds, kcmd)
-		var lcmd tea.Cmd
-		m.log, lcmd = m.log.Update(msg) // viewport scroll
-		cmds = append(cmds, lcmd)
+
+		// Post-dispatch: handle v entering ModeSelect. keys.go sets the mode
+		// unconditionally; we revert if the log buffer is empty, or initialize
+		// the selection cursor otherwise.
+		if m.keys.handler.Mode() == ModeSelect && modeBeforeKey != ModeSelect {
+			if len(m.log.lines) == 0 {
+				// Revert: can't select in an empty viewport.
+				m.keys.handler.mu.Lock()
+				m.keys.handler.mode = m.keys.handler.prevMode
+				m.keys.handler.updateShortcutLineLocked()
+				m.keys.handler.mu.Unlock()
+			} else {
+				m.log = m.log.SetSelection(m.log.initSelectionAtLastVisibleRow())
+			}
+		}
+
+		// Immediate selection clear: if a key transitioned the mode away from
+		// ModeSelect (e.g., Esc), clear the selection overlay now so there is
+		// no single-frame stale highlight. The prevObservedMode guard at the
+		// top of Update covers the external SetMode path (orchestration goroutine).
+		if modeBeforeKey == ModeSelect && m.keys.handler.Mode() != ModeSelect {
+			m.log = m.log.ClearSelection()
+		}
+
+		// Key routing guard: in ModeSelect, skip the log.Update forward for
+		// tea.KeyMsg. handleSelect has sole authority over key dispatch in this
+		// mode; viewport scrolling during selection is driven explicitly by the
+		// movement logic (#105), not by double-dispatched key events.
+		// Use the pre-dispatch mode so that a key that exits ModeSelect (e.g.,
+		// Esc) also doesn't double-dispatch to the viewport.
+		if modeBeforeKey != ModeSelect {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.Update(msg) // viewport scroll
+			cmds = append(cmds, lcmd)
+		}
 
 	case LogLinesMsg:
 		var lcmd tea.Cmd
@@ -148,6 +198,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.QuitMsg:
 		return m, tea.Quit
 	}
+
+	// Update prevObservedMode after all dispatch so it reflects the mode that
+	// will be in effect when control returns to the caller. The guard at the
+	// top of the next Update call uses this to detect external SetMode
+	// transitions that happened between two consecutive Bubble Tea updates.
+	m.prevObservedMode = m.keys.handler.Mode()
 
 	return m, tea.Batch(cmds...)
 }

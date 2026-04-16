@@ -20,6 +20,7 @@ const (
 	ModeQuitConfirm
 	ModeNextConfirm // entered after the user presses n; shows "Skip current step?" prompt
 	ModeDone        // entered after the workflow completes; shows "q quit" footer
+	ModeSelect      // entered when user presses 'v'; shows selection cursor overlay
 	ModeQuitting    // entered after the user confirms a quit; footer shows "Quitting..."
 )
 
@@ -30,11 +31,12 @@ const (
 const AppTitle = "Power-Ralph.9000"
 
 const (
-	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
+	NormalShortcuts   = "↑/k up  ↓/j down  v select  n next step  q quit"
 	ErrorShortcuts    = "c continue  r retry  q quit"
 	QuitConfirmPrompt = "Quit " + AppTitle + "? (y/n, esc to cancel)"
 	NextConfirmPrompt = "Skip current step? (y/n, esc to cancel)"
-	DoneShortcuts     = "q quit"
+	DoneShortcuts     = "↑/k up  ↓/j down  v select  q quit"
+	SelectShortcuts   = "hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"
 	QuittingLine      = "Quitting..."
 )
 
@@ -139,6 +141,8 @@ func (h *KeyHandler) updateShortcutLineLocked() {
 		h.shortcutLine = NextConfirmPrompt
 	case ModeDone:
 		h.shortcutLine = DoneShortcuts
+	case ModeSelect:
+		h.shortcutLine = SelectShortcuts
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
 	default:

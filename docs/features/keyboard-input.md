@@ -1,20 +1,21 @@
 # Keyboard Input & Error Recovery
 
-A six-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
+A seven-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
-- **Last Updated:** 2026-04-11
+- **Last Updated:** 2026-04-16
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `KeyHandler` operates in six modes: Normal, Error, QuitConfirm, NextConfirm, Done, and Quitting — each with its own keypress bindings and shortcut bar text
+- `KeyHandler` operates in seven modes: Normal, Error, QuitConfirm, NextConfirm, Done, Select, and Quitting — each with its own keypress bindings and shortcut bar text
 - User decisions are sent to the orchestration goroutine via a buffered `Actions` channel carrying `StepAction` values (Retry, Continue, Quit)
 - In Normal mode, `n` enters the skip confirmation prompt (NextConfirm) and `q` enters quit confirmation
 - In NextConfirm mode (entered when the user presses `n` during a running step), `y` terminates the current subprocess (skip step), `n` or `<Escape>` cancel and restore the previous mode
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
 - In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`), calls `ForceQuit`, and returns `tea.QuitMsg` to exit the TUI; `n` or `<Escape>` cancel and restore the previous mode
-- In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation
+- In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation; `v` enters `ModeSelect`
+- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; cursor movement and copy land in later tickets (#105+)
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
 
@@ -122,7 +123,8 @@ const (
     ModeError
     ModeQuitConfirm
     ModeNextConfirm // entered after n; shows "Skip current step?" prompt
-    ModeDone        // entered after workflow completes; shows "q quit" footer
+    ModeDone        // entered after workflow completes; shows "v select  q quit" footer
+    ModeSelect      // entered by v from Normal/Done; shows selection cursor overlay
     ModeQuitting    // confirmed quit; footer shows "Quitting..." during shutdown
 )
 
@@ -141,11 +143,12 @@ type KeyHandler struct {
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `AppTitle` | `"Power-Ralph.9000"` | Canonical display name; single source of truth for the user-facing app name in titles and prompts |
-| `NormalShortcuts` | `"↑/k up  ↓/j down  n next step  q quit"` | Shortcut bar in normal mode |
+| `NormalShortcuts` | `"↑/k up  ↓/j down  v select  n next step  q quit"` | Shortcut bar in normal mode |
 | `ErrorShortcuts` | `"c continue  r retry  q quit"` | Shortcut bar in error mode |
 | `QuitConfirmPrompt` | `"Quit " + AppTitle + "? (y/n, esc to cancel)"` | Shortcut bar in quit confirm mode |
 | `NextConfirmPrompt` | `"Skip current step? (y/n, esc to cancel)"` | Shortcut bar in next-confirm mode |
-| `DoneShortcuts` | `"q quit"` | Shortcut bar in done mode (post-workflow) |
+| `DoneShortcuts` | `"↑/k up  ↓/j down  v select  q quit"` | Shortcut bar in done mode (post-workflow) |
+| `SelectShortcuts` | `"hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"` | Shortcut bar in select mode |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
 
 ## Implementation Details
@@ -217,10 +220,30 @@ Entered by the QuitConfirm `y` path or by `ForceQuit()` directly (which is calle
 
 ### Done Mode
 
-When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns. The workflow goroutine in `main.go` flushes logs, closes channels, and calls `keyHandler.SetMode(ModeDone)`. The TUI stays alive so the user can scroll through the output. The footer shows `DoneShortcuts` (`"q quit"`):
+When the workflow finishes all iterations and finalize steps successfully, `Run` writes the completion summary line to the log body and returns. The workflow goroutine in `main.go` flushes logs, closes channels, and calls `keyHandler.SetMode(ModeDone)`. The TUI stays alive so the user can scroll through the output. The footer shows `DoneShortcuts` (`"↑/k up  ↓/j down  v select  q quit"`):
 
+- `v` — enters `ModeSelect` (same behavior as in Normal mode; see Select Mode below)
 - `q` — saves `ModeDone` as `prevMode` and enters `ModeQuitConfirm`
 - All other keys are ignored
+
+### Select Mode
+
+Entered by pressing `v` from `ModeNormal` or `ModeDone`. The footer shows `SelectShortcuts`. The cursor renders as a single reverse-video cell at column 0 of the last visible visual row in the log panel.
+
+**Entry conditions:** `v` is blocked in `ModeError` (orchestration goroutine is blocked on `KeyHandler.Actions`), `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`. `v` with an empty log buffer (`len(m.log.lines) == 0`) is also a no-op — mode stays unchanged.
+
+**Entry sequence (in `Model.Update`):**
+1. `keysModel.Update` sets `mode = ModeSelect` and saves `prevMode`.
+2. `model.go` post-dispatch: if mode just became `ModeSelect` and log is non-empty, calls `m.log.SetSelection(m.log.initSelectionAtLastVisibleRow())`.
+3. If log is empty, the mode is reverted to `prevMode`.
+
+**In `ModeSelect`:**
+- `Esc` — clears the selection and returns to `prevMode`. The selection is cleared immediately (no single-frame stale overlay) within the same `Update` call that processes the Esc key.
+- All other keys are no-ops in this ticket (#104); cursor movement and copy land in #105+.
+
+**Key routing guard:** When `modeBeforeKey == ModeSelect`, `Model.Update` skips the `m.log.Update(msg)` forward for `tea.KeyMsg`. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport while in select mode.
+
+**External mode-change guard:** `Model.prevObservedMode` tracks the mode at the end of the previous `Update`. If `prevObservedMode == ModeSelect` and the current mode is not (detected at the start of each `Update`), `m.log.ClearSelection()` is called — this covers the orchestration goroutine calling `h.SetMode(ModeError)` externally while a selection is visible.
 
 From `ModeQuitConfirm`, `y` triggers `ForceQuit` + `tea.QuitMsg` which causes `program.Run()` to return. `<Escape>` or `n` restores `ModeDone`.
 
@@ -275,19 +298,25 @@ The shortcut line is updated internally by `updateShortcutLineLocked()` whenever
 
 ### Dual-Routing of tea.KeyMsg
 
-When a `tea.KeyMsg` arrives, `Model.Update` routes it to **both** the key handler and the viewport:
+When a `tea.KeyMsg` arrives, `Model.Update` routes it to the key handler and, unless in `ModeSelect`, also to the viewport:
 
 ```go
 case tea.KeyMsg:
-    m.keys, kcmd = m.keys.Update(msg)   // mode dispatch (n, q, c, r, y, Escape)
-    m.log, lcmd = m.log.Update(msg)     // viewport scroll (↑/k, ↓/j)
+    modeBeforeKey := m.keys.handler.Mode()
+    m.keys, kcmd = m.keys.Update(msg)   // mode dispatch (n, q, c, r, y, Escape, v)
+    if modeBeforeKey != ModeSelect {
+        m.log, lcmd = m.log.Update(msg) // viewport scroll (↑/k, ↓/j)
+    }
 ```
 
 This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the viewport consumes them while the key handler ignores them. In Error and QuitConfirm modes, the key handler consumes the action keys but scroll keys still pass through to the viewport.
 
+**`ModeSelect` routing guard:** when the mode is `ModeSelect` at the time a key arrives, the `m.log.Update(msg)` forward is skipped entirely. This prevents `j`/`k` and other scroll-bound keys from double-dispatching to the viewport: in ModeSelect, `handleSelect` has sole authority over key dispatch and drives viewport positioning explicitly (via movement logic landing in #105). The pre-dispatch mode is used (not the post-dispatch mode) so that an Esc key that *exits* ModeSelect also doesn't double-dispatch.
+
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all six modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all six modes
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all seven modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all seven modes
+- `ralph-tui/internal/ui/select_mode_test.go` — 10 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, external `SetMode` clears selection on next Update, `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error
 
 ## Additional Information
 

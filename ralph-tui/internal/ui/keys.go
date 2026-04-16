@@ -33,6 +33,8 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
 		return m.handleNextConfirm(key)
 	case ModeDone:
 		return m.handleDone(key)
+	case ModeSelect:
+		return m.handleSelect(key)
 	case ModeQuitting:
 		// All keys silently ignored so a user mashing keys during shutdown
 		// can't inject a second ActionQuit or retrigger the cancel hook.
@@ -58,6 +60,16 @@ func (m keysModel) handleNormal(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mu.Lock()
 		m.handler.prevMode = m.handler.mode
 		m.handler.mode = ModeQuitConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+		return m, nil
+	case "v":
+		// v enters ModeSelect. The guard for len(lines) == 0 and the
+		// selection initialisation (initSelectionAtLastVisibleRow) are
+		// handled in model.go's root Update, which has access to logModel.
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeSelect
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 		return m, nil
@@ -118,7 +130,30 @@ func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mode = ModeQuitConfirm
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
+	case "v":
+		// v enters ModeSelect. See handleNormal for the same pattern.
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeSelect
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
 	}
+	return m, nil
+}
+
+// handleSelect handles key events in ModeSelect. In this ticket only Esc is
+// wired; cursor movement and copy land in later tickets.
+func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		// Return to the pre-select mode. Selection clearing is handled by
+		// model.go's prevObservedMode guard on the next Update pass.
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	}
+	// All other keys are no-ops in this ticket; movement and copy land in #105.
 	return m, nil
 }
 
