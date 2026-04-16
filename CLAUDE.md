@@ -65,7 +65,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming and sendLine callback (SetSender), graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
-- [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress and step separator formatting
+- [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress, word-wrap log panel with scroll-position preservation, and selection data types (`pos`, `selection`) with pure helpers for future copy/select wiring
 - [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Six-mode keyboard state machine (Normal/Error/QuitConfirm/NextConfirm/Done/Quitting) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
 - [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming

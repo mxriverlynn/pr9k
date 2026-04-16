@@ -79,6 +79,8 @@ Key files:
 | `ralph-tui/internal/ui/log_panel.go` | logModel: viewport wrapper, 2000-entry ring buffer (`logRingBufferCap`), word-wrap via `rewrap()`, auto-scroll, logContentStyle |
 | `ralph-tui/internal/ui/log_panel_test.go` | Tests for logModel ring buffer, auto-scroll, Home/End key handling |
 | `ralph-tui/internal/ui/log_panel_wrap_test.go` | 30 unit tests covering word-wrap, rawOffset accuracy, ring-buffer eviction, SetSize edge cases, auto-scroll behavior, ANSI preservation, and integration via tea.WindowSizeMsg |
+| `ralph-tui/internal/ui/selection.go` | `pos` and `selection` data types; `visible()`, `normalized()`, `contains()`, `extractText()`, `mouseToViewport()`, `visualColToRawOffset()` pure helpers |
+| `ralph-tui/internal/ui/selection_test.go` | 39 unit tests for all selection data types and helpers, including bounds-guard, edge cases, input immutability, and zero-value safety |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -341,6 +343,52 @@ Height-only changes skip the rewrap step entirely — only `viewport.Width` and 
 
 **Known limitation (TODO #103):** `rawOffset` is advanced by `len(seg)` — the byte length of the *wrapped output* segment. If a raw line contains ANSI escape sequences, `ansi.Wrap` may insert reset/re-open codes at wrap boundaries, making the segment byte length diverge from the raw-line bytes consumed. Scroll-position restoration and future copy/select will silently produce wrong offsets in that case. Currently low severity (claudestream emits unstyled text). Tracked as issue #103.
 
+### Selection Primitives
+
+`ralph-tui/internal/ui/selection.go` defines the coordinate and selection data types used for text selection in the log panel, along with pure helper functions. No TUI behavior is wired yet — these types are pre-placed so the copy/select ticket can build on stable primitives.
+
+**Core types:**
+
+```go
+// pos is a cursor position in the log panel.
+// rawIdx and rawOffset are the authoritative coordinates — stable across
+// rewrap and ring-buffer eviction decrements.
+// visualRow and col are derived render-time coordinates; recomputed from
+// visualLines on every rewrap. col is virtual (vim-style): movement preserves
+// the intended column across shorter lines.
+type pos struct {
+    rawIdx    int
+    rawOffset int
+    visualRow int
+    col       int
+}
+
+// selection holds the anchor and cursor positions for a text selection.
+// active is true while a mouse drag is in progress (mid-drag).
+// committed is true once the drag has been released (or a keyboard selection
+// has been finalised) and the range is ready to copy.
+type selection struct {
+    anchor    pos
+    cursor    pos
+    active    bool
+    committed bool
+}
+```
+
+**Pure helpers:**
+
+- **`visible() bool`** — returns `true` when the selection should be displayed: active (mid-drag) or committed with a non-empty range (`anchor != cursor` by raw coordinates). Used to gate auto-scroll-to-bottom suppression.
+
+- **`normalized() (start, end pos)`** — returns anchor and cursor ordered in reading order by `(rawIdx, rawOffset)`, so `start` is always earlier in the document than `end`. Visual coordinates are copied as-is and may be stale.
+
+- **`contains(row, col int) bool`** — reports whether the given visual `(row, col)` falls within the selected range using a half-open col convention (start included, end excluded). Callers must ensure visual coordinates are up-to-date with the current `visualLines` before calling; `contains` operates on derived render-time coordinates that may be stale between a rewrap and the next visual-coordinate refresh.
+
+- **`extractText(lines []string, start, end pos) string`** — reconstructs the selected text from raw ring-buffer lines using raw coordinates, so wrap-induced visual segments never inject artificial newlines into the result. Returns `""` if any index or offset is out of range (stale `rawIdx` after ring-buffer eviction, `rawOffset` past end of line, or reversed offsets on the same line). Guards prevent panics on any invalid input.
+
+- **`mouseToViewport(msg tea.MouseMsg, topRow, leftCol int, vp viewport.Model) (pos, bool)`** — translates a `tea.MouseMsg` into viewport-content coordinates. Returns a `pos` with `visualRow = vp.YOffset + (msg.Y - topRow)` and `col = msg.X - leftCol`. `ok` is `false` when `msg.Y` is above `topRow` or below `topRow + vp.Height - 1` (click landed on chrome). Unexported — all callers are package-internal.
+
+- **`visualColToRawOffset(rawLine string, segmentStart int, col int) int`** — converts a display-column index within a visual segment to a byte offset within `rawLine`. Walks forward from `segmentStart` counting display cells via Unicode grapheme-cluster boundaries (`github.com/rivo/uniseg`). If `col` falls within a multi-cell grapheme (e.g., a 2-cell-wide CJK character), returns the byte offset of that grapheme's start. Returns end of `rawLine` when `col` exceeds available cells.
+
 ### Log-Body Helpers
 
 `ralph-tui/internal/ui/log.go` owns every helper that writes structured chrome into the log body. Every helper returns a plain string (or a tuple of strings) — the workflow loop calls `executor.WriteToLog()` with the result.
@@ -483,6 +531,7 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds
 - `ralph-tui/internal/ui/header_test.go` — D23 heartbeat unit tests on `StatusHeader` directly: `TestStatusHeader_HandleHeartbeatTick_NilReader` (clears suffix, no-op), `TestStatusHeader_HandleHeartbeatTick_ShowsSuffix` (≥15s silence → suffix set), `TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold` (<15s → no suffix), `TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive` (inactive → suffix cleared), `TestStatusHeader_HandleHeartbeatTick_CallsReader` (reader call count incremented), `TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables` (nil after non-nil → suffix cleared on next tick)
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
+- `ralph-tui/internal/ui/selection_test.go` — 39 tests across 8 categories: `normalized()` edge cases (same-position, rawIdx ordering priority), `extractText` edge cases (three-or-more lines, full raw line, empty middle line, boundary offsets), `extractText` bounds guards (negative rawIdx, out-of-range rawIdx/rawOffset, reversed same-line offsets — 7 guard paths), `mouseToViewport` edge cases (exact top/bottom boundary, negative col no-panic), `visualColToRawOffset` edge cases (col=0 returns segmentStart, empty rawLine, segmentStart at end, multi-byte grapheme "é"), `contains()` edge cases (empty selection, reversed anchor/cursor, single-row col=0 included), `visible()` edge cases (active+committed simultaneously, committed reversed anchor/cursor), input immutability (lines slice not mutated after `extractText`), zero-value struct safety (`pos{}` and `selection{}` don't panic in any function)
 
 ## Additional Information
 
