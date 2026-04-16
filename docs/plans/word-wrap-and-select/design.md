@@ -9,6 +9,16 @@ The ralph-tui log panel has two ergonomic gaps:
 
 Goal: the user can highlight any region of the log panel with **mouse drag** or **keyboard** and copy it to the system clipboard. Long lines wrap at word boundaries to the viewport width so nothing is hidden off-screen.
 
+## User flows (the three common paths)
+
+The plan below covers many edge cases — but the rubric for "simple to use" is: do the three common paths take a minimum number of steps, and are they discoverable from the shortcut bar?
+
+1. **Mouse: grab a chunk I see on screen.** Click-drag across it → release → press `y`. (3 steps. Shortcut bar after release shows `y copy  esc cancel`.)
+2. **Keyboard: grab the most recent log line.** Press `v` → cursor lands at the start of the **last visible line** (not viewport top) → press `$` (or `End`) to extend to line end → press `y`. (4 keystrokes for the most common case. See "Keyboard cursor initial position" below.)
+3. **Keyboard: grab several lines.** Press `v` → extend with `hjkl`/arrows or `shift+↑`/`shift+↓` for whole-line steps → `y`.
+
+The shortcut bar is the source of truth for what's possible in each mode. Anything a user can do must appear there, using no more than the two-line footer budget.
+
 ## Approach
 
 Two independent but related changes, both landing in `ralph-tui/internal/ui/`.
@@ -32,21 +42,26 @@ Two independent but related changes, both landing in `ralph-tui/internal/ui/`.
 
 ### Selection — mouse
 
-- From `ModeNormal` or `ModeDone`, **left-button press** on the viewport area starts a selection (anchor = cell under cursor) and transitions to `ModeSelect` (saving `prevMode`). Presses in `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting` are ignored (same rationale as `v`).
-- If a committed selection from a previous drag is already visible, the **next left-press does not reset the anchor**; it is ignored until the user either (a) starts motion (drag) — which begins a new selection — or (b) presses `Esc`/`y`. This prevents a stray focus-click from destroying a committed selection before it can be copied. Entering drag from a fresh press (no prior committed selection) keeps the familiar press-to-anchor behavior.
+- From `ModeNormal` or `ModeDone`, **left-button press** on the viewport area starts a new selection (anchor = cell under cursor, cursor = same cell) and transitions to `ModeSelect` (saving `prevMode`). Presses in `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting` are ignored (same rationale as `v`).
 - **Drag** (button-left motion) extends the selection's cursor endpoint. Dragging **above** the viewport top or **below** the viewport bottom auto-scrolls the viewport by one line per motion event in that direction, so selections can extend past the visible window.
-- **Release**: selection becomes "final" (non-active, still visible). Shortcut bar shows `y copy  esc cancel`.
+- **Release**: selection becomes "final" (non-active, still visible). Shortcut bar shows `y copy  esc cancel  v again for new selection`.
 - Mouse **wheel** continues to scroll regardless of mode (wheel events are still forwarded to the viewport, which already ignores non-wheel `MouseMsg` events).
-- A **click without drag** (press+release at same cell with no intervening motion) **when no committed selection is visible** clears any in-flight selection state and returns to `prevMode`. When a committed selection is visible, the click is ignored (see the press-protection rule above) so the user can copy before a stray click eats the selection.
+- **Press+release at the same cell with no intervening motion (bare click)**: always clears the current selection and starts a new empty one anchored at the click cell. This preserves the universal "click = place cursor, click+drag = select" convention and avoids the complexity of distinguishing "protected committed selection" from "in-flight drag." The user's copy affordance is `y` immediately after release; a stray focus-click *will* clear an uncopied selection, but that matches what any GUI text editor or terminal does. Keyboard `Esc` is the non-destructive cancel.
+- **Shift+click**: extends an existing committed selection to the click cell (cursor moves to click, anchor stays). `tea.MouseEvent.Shift` makes this trivial. Standard convention across editors/terminals; covers the "I missed a few chars, let me extend" case without forcing a full redrag.
 - Auto-scroll-to-bottom is **suppressed while a selection is `visible()`** (active drag in progress, or a committed non-empty range is displayed). Clearing the selection re-arms auto-scroll.
 
 ### Selection — keyboard
 
-- `v` enters `ModeSelect` from `ModeNormal` and `ModeDone`. Excluded from `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`: in Error mode the orchestration goroutine is blocked waiting on `KeyHandler.Actions` (`keys.go:76-78`), and entering Select would leave that goroutine parked until the user remembers to exit Select. The three prompt/terminal modes have confirmations in flight. Mouse-left-press follows the same rule — left-press while in `ModeError` does nothing; the user must press `c`/`r`/`q` first. Initial anchor and cursor = top-left cell of the currently visible viewport window (`YOffset, 0`). The cursor cell renders with reverse video so the user has an immediate visual indicator of select mode even before moving the cursor.
+- `v` enters `ModeSelect` from `ModeNormal` and `ModeDone`. Excluded from `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, and `ModeQuitting`: in Error mode the orchestration goroutine is blocked waiting on `KeyHandler.Actions` (`keys.go:76-78`), and entering Select would leave that goroutine parked until the user remembers to exit Select. The three prompt/terminal modes have confirmations in flight. Mouse-left-press follows the same rule — left-press while in `ModeError` does nothing; the user must press `c`/`r`/`q` first.
+- **Keyboard cursor initial position**: anchor and cursor = column 0 of the **last visible visual row** in the viewport (`YOffset + visibleHeight - 1`, clamped to `len(visualLines) - 1`). Rationale: in 90%+ of the "I want to copy a line I just saw" case, the line of interest is near the bottom of the viewport (auto-scroll keeps the latest output visible). Starting at the top forces the user to `j` down to it. Starting at the bottom means the very next keystroke is usually `$`/`End` or `shift+↑` to extend — the minimum. The cursor cell renders with reverse video so the user has an immediate visual indicator of select mode even before moving.
+- **Mouse click while already in `ModeSelect` (entered via `v`)**: a bare left-press re-anchors both the anchor and cursor to the click cell; a subsequent drag extends, release commits. This unifies the two entry paths so a user who starts with `v` can still use the mouse to jump the cursor without exiting and re-entering select mode.
 - In `ModeSelect`:
-  - `h`/`←`, `j`/`↓`, `k`/`↑`, `l`/`→` move the cursor, extending selection from the fixed anchor. Viewport auto-scrolls to keep the cursor visible.
-  - The cursor column is **virtual** (vim-style): when moving to a shorter line, the cursor renders clamped at that line's last column, but the virtual column is remembered so moving further down to a longer line restores it.
-  - `y` or `Enter` → copy selected text to clipboard, clear selection, return to `prevMode`.
+  - `h`/`←`, `j`/`↓`, `k`/`↑`, `l`/`→` move the cursor one cell, extending selection from the fixed anchor. Viewport auto-scrolls to keep the cursor visible.
+  - `0`/`Home` → jump cursor to column 0 of the current visual row. `$`/`End` → jump cursor to the last column of the current visual row. These are the two most common cases for the "grab this log line" flow and make a single-line selection a 2-keystroke operation from `v` (e.g., `v` then `$` then `y`).
+  - `shift+↑`/`shift+↓` (or `K`/`J`) → extend selection by a whole visual row while keeping the cursor's virtual column. Makes multi-line selection a direct shortcut rather than `j $` / `k 0`.
+  - `PgUp`/`PgDn` → move cursor by `viewport.Height - 1` rows; the viewport follows the cursor. (In `ModeSelect`, the page keys must not scroll the viewport without moving the cursor, or the cursor drifts off-screen.)
+  - The cursor column is **virtual** (vim-style): when moving to a shorter line, the cursor renders clamped at that line's last column, but the virtual column is remembered so moving further to a longer line restores it.
+  - `y` or `Enter` → copy selected text to clipboard; on success, emit a synthetic `LogLinesMsg{Lines: []string{"[copied N chars]"}}` (via `tea.Cmd`, same mechanism as the error path) so the user sees confirmation in the log panel; clear selection, return to `prevMode`. When the selection is empty (anchor == cursor), skip the copy and the log line — a silent no-op.
   - `Esc` → clear selection, return to `prevMode`.
   - `q` → clear selection, transition to `ModeQuitConfirm`. `prevMode` for QuitConfirm is set to the mode we entered `ModeSelect` from (i.e., `ModeNormal` or `ModeDone`), **not** `ModeSelect`, so Escape from QuitConfirm restores the real idle mode rather than a degenerate empty-selection state.
 
@@ -104,6 +119,7 @@ The selection state thus holds `rawIdx`/`rawOffset` **plus** a derived `visualRo
 - Rework `tea.MouseMsg` handler:
   - Wheel events → forward to `m.log.Update(msg)` (existing behavior).
   - Left press / motion / release → translate with `MouseToViewport`; if inside the viewport, delegate to `logModel.HandleMouse(pos pos, action tea.MouseAction) (logModel, tea.Cmd)` which returns the updated `logModel` (selection lives on the `logModel` value — every mutation returns a new logModel, which the parent `Model.Update` re-assigns to `m.log`) and a `tea.Cmd` emitting `selectionChangedMsg`. Also notify `keyHandler` so the shortcut bar updates on `ModeSelect` enter/exit.
+- **`tea.KeyMsg` routing fix (regression guard)**: the current root `Update` at `model.go:87-95` forwards every `tea.KeyMsg` to *both* `m.keys.Update` *and* `m.log.Update` (the latter routes `j`/`k`/`up`/`down`/`pgup`/`pgdn` to the viewport for scroll). In `ModeSelect`, this would double-fire — pressing `j` would both extend the selection cursor *and* scroll the viewport, with the scroll then fighting the cursor-follow autoscroll. Fix: when `keys.handler.Mode() == ModeSelect`, skip the `m.log.Update(msg)` forward for `tea.KeyMsg`. `handleSelect` then has sole authority over key-driven motion, and it calls `m.log.SetYOffset`/`ScrollToCursor` explicitly to keep the cursor visible.
 
 ### `ralph-tui/internal/ui/keys.go` (modify)
 
@@ -118,14 +134,19 @@ The selection state thus holds `rawIdx`/`rawOffset` **plus** a derived `visualRo
 ### `ralph-tui/internal/ui/ui.go` (modify)
 
 - Add `ModeSelect` to the `Mode` enum. Placement: immediately before `ModeQuitting`, since `ModeQuitting` is conceptually terminal. (No code serializes `Mode` ordinals — verified via grep — so enum ordering is purely stylistic.)
-- Add `SelectShortcuts = "↑↓←→/hjkl extend  y copy  esc cancel  q quit"`.
+- Add `SelectShortcuts = "hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"`. This is the keyboard-mode footer. On mouse-release of a committed selection, swap in `SelectCommittedShortcuts = "y copy  esc cancel  drag for new selection"` so the user sees the exact next-step options instead of the keyboard-extension hints they don't need while holding a mouse-release state.
 - Update `NormalShortcuts` and `DoneShortcuts` to include `v select` (Normal: after the scroll hints, before `n next step`; Done: before `q quit`). Do **not** add it to `ErrorShortcuts` — `v` is blocked in ModeError.
 - `updateShortcutLineLocked`: map `ModeSelect → SelectShortcuts`.
 
 ### `ralph-tui/internal/ui/clipboard.go` (new)
 
-- Thin wrapper: `func CopyToClipboard(text string) error { return copyFn(text) }` with `var copyFn = clipboard.WriteAll` so tests can swap in a fake.
-- When `CopyToClipboard` fails (no `xclip`/`xsel` on Linux, OS permission denial, etc.), `handleSelect` returns a `tea.Cmd` whose closure emits a synthetic `LogLinesMsg{Lines: []string{"[copy failed: install xclip or xsel]"}}`. This routes through the existing `Update` path exactly like a streamed line — no cross-goroutine concerns, no new plumbing into `runner.SetSender`, no transient footer state. Mode still transitions back to `prevMode` in the same `handleSelect` pass.
+- Thin wrapper: `func CopyToClipboard(text string) error` tries, in order:
+  1. `copyFn(text)` — `var copyFn = clipboard.WriteAll` so tests can swap in a fake. This covers local macOS/Linux/Windows.
+  2. If `copyFn` returns a non-nil error **and** the process is running under a tty, write an **OSC 52** sequence to stderr: `fmt.Fprintf(os.Stderr, "\x1b]52;c;%s\x07", base64.StdEncoding.EncodeToString([]byte(text)))`. Most modern terminals (iTerm2, kitty, WezTerm, tmux with `set -g set-clipboard on`, recent xterm) intercept this and write to the local clipboard — which is the **only** mechanism that works over SSH into a headless host. Return nil if both mechanisms are tried (OSC 52 has no ack; best-effort).
+  3. Rationale for shipping OSC 52 now rather than deferring: Ralph's core deployment is "run on a cloud VM via SSH." `atotto/clipboard` on a headless Linux VM fails unconditionally (no `xclip`/`xsel`/X server). Without OSC 52, the keyboard/mouse select feature would be dead-in-the-water in the most common Ralph environment, making "complete solution" a misnomer. OSC 52 adds ~10 lines of Go and zero new dependencies.
+- Wrapping the fallback in `CopyToClipboard` (not `handleSelect`) keeps the control-flow linear: `handleSelect` sees one `error` return and reacts, regardless of which channel succeeded.
+- When `CopyToClipboard` returns an error (both `clipboard.WriteAll` failed **and** stderr is not a tty — e.g. a log-redirected run), `handleSelect` returns a `tea.Cmd` whose closure emits a synthetic `LogLinesMsg{Lines: []string{"[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]"}}`. This routes through the existing `Update` path exactly like a streamed line — no cross-goroutine concerns, no new plumbing into `runner.SetSender`, no transient footer state. Mode still transitions back to `prevMode` in the same `handleSelect` pass.
+- On success, `handleSelect` emits a parallel informational line `"[copied N chars]"` via the same synthetic-LogLinesMsg mechanism (see Copy format + feedback below).
 
 ### `ralph-tui/cmd/ralph-tui/main.go` (no structural change)
 
@@ -187,6 +208,17 @@ The selection state thus holds `rawIdx`/`rawOffset` **plus** a derived `visualRo
 - `TestCopy_EmptySelection_NoOp` — pressing y with an empty committed selection returns to prevMode without invoking copyFn.
 - `TestCopy_ClipboardError_AppendsLogLine` — fake copyFn returns error, assert the informational log line is appended to the ring buffer and the mode still transitions back to prevMode.
 - `TestExtractText_PartialRawLine_SingleLine` — selection inside one wrapped raw line but not including its start or end → substring only.
+- `TestKeys_V_StartsAtLastVisibleLine` — populate buffer with N lines, press `v`, assert selection anchor/cursor is on the last visible visual row at column 0 (not viewport top).
+- `TestKeys_DollarSign_JumpsToLineEnd_InSelectMode` — from `v`, press `$`, assert cursor lands at last column of the current visual row and anchor is unchanged.
+- `TestKeys_ShiftDown_ExtendsByLine_InSelectMode` — verifies whole-line extension preserves the virtual column.
+- `TestKeys_InSelectMode_DoesNotDoubleDispatchToViewport` — pressing `j` in `ModeSelect` moves the selection cursor and does **not** also scroll the viewport independently (regression guard for the `model.go` routing fix).
+- `TestMouse_BareClick_ClearsExistingSelection_AndReanchors` — commit a selection, then bare-click elsewhere; assert the old selection is gone and a new empty selection is anchored at the click cell (replacing the old "press on committed selection is ignored" semantics).
+- `TestMouse_ShiftClick_ExtendsCommittedSelection` — commit a selection, shift-click beyond its end; assert the cursor moves to the click cell and anchor stays put.
+- `TestMouse_ClickInSelectMode_EnteredViaV_ReanchorsCursor` — enter select mode via `v`, then left-click in the viewport; assert anchor and cursor both jump to the click cell.
+- `TestCopy_Success_AppendsConfirmationLogLine` — fake `copyFn` returns nil, assert a `"[copied N chars]"` log line is appended and mode transitions back.
+- `TestCopy_Failure_FallsBackToOSC52` — fake `copyFn` returns error, capture stderr, assert an OSC 52 (`\x1b]52;c;<base64>\x07`) sequence was written with the expected payload, and `CopyToClipboard` returns nil (tty-detected test harness). A parallel `TestCopy_Failure_NoTty_EmitsErrorLogLine` covers the no-tty path.
+- `TestSetMode_ExternalTransition_ClearsSelection` — with a committed selection visible in `ModeSelect`, call `h.SetMode(ModeError)` from another goroutine, push any message through `Model.Update`, and assert the selection is cleared before the next render.
+- `TestKeys_PgDn_MovesCursor_InSelectMode` — in select mode, `PgDn` moves the cursor and the viewport follows; cursor is still visible afterward.
 
 ### Manual verification
 
@@ -210,6 +242,7 @@ Run `make build && ./bin/ralph-tui -n 1` against a scratch repo with a Ralph-lab
 
 - **Empty viewport + v.** If `len(lines) == 0` when `v` is pressed, do nothing (don't transition to `ModeSelect`) so the user doesn't get stuck in an empty select state with no visual cursor.
 - **Mid-drag resize.** If a `tea.WindowSizeMsg` arrives while `selection.active` (drag in progress), force-commit the selection (`active = false; committed = true`) before rewrap. The user's raw anchor/cursor are preserved by raw coordinates; continuing the drag after resize would require the terminal to emit further motion events, which requires the button to still be held — which is an unobservable invariant. Committing is the safe choice.
+- **Orchestration forces mode change while a selection is visible.** `orchestrate.go:89` calls `h.SetMode(ModeError)` when a step fails, which can fire while the user has an active drag or committed selection in `ModeSelect`. Resolution: `KeyHandler.SetMode` is called only from the Update goroutine (`keys.go` handlers) or the orchestration goroutine; when the external path moves the user *out of* `ModeSelect`, the selection state on `logModel` would otherwise linger — rendering a reverse-video overlay with no mode to act on it. Fix: extend the `Model.Update` path so that when the observed mode transitions away from `ModeSelect` (either via keysModel or via an external `SetMode`), it calls `m.log.ClearSelection()` on the next message. Practically: a cheap `if prevObservedMode == ModeSelect && currentMode != ModeSelect { m.log = m.log.ClearSelection() }` check at the top of root `Update`, using a `prevObservedMode` field on `Model`. This is the single mode-change guard; it also covers any future external `SetMode` callers.
 - **Copy when selection is empty.** `y`/`Enter` with an empty selection (e.g., committed but `anchor == cursor`) is a no-op that still returns to `prevMode` — no clipboard write, no transient footer. Keeps the mode exit predictable.
 - **Terminal without mouse reporting.** If the user's terminal strips mouse bytes or `WithMouseCellMotion` has no effect, the keyboard (`v` + `hjkl`) path still works. No additional handling required.
 - **Very wide lines after rewrap.** `x/ansi.Wrap` with a limit of `viewport.Width` will hard-break any single token longer than the width. No risk of infinite recursion or O(n²) blowup; worst case is `raw_len / width` visual rows per raw line.
@@ -218,16 +251,16 @@ Run `make build && ./bin/ralph-tui -n 1` against a scratch repo with a Ralph-lab
 
 ## Review summary
 
-- **Iterations completed:** 3 passes + full agent validation (evidence-based-investigator + adversarial-validator).
-- **Assumptions challenged (12 total):** ordinal stability of `Mode` (refuted — not serialized), need for `muesli/reflow` (refuted — `x/ansi.Wrap` already transitive with matching API), raw-line ANSI cleanliness (verified), ring-buffer eviction rawIdx stability (refuted gap — now handled with decrement + underflow-clears), YOffset semantics & SetContent auto-bottom (verified), MouseMsg 0-indexing (verified), `v`/`h`/`l` key collisions (verified absent), clipboard-error surfacing via sender path (refuted — unreachable from Update goroutine; switched to synthetic `LogLinesMsg` via `tea.Cmd`), resize preserves top raw line (refuted — needed `rawOffset` too, not just `rawIdx`), `v` from ModeError safe (refuted — orchestrator blocks on `Actions`), HandleMouse pointer/value semantics (was underspecified — pinned to value return), visual-col → raw-byte translation (was implicit — extracted as `visualColToRawOffset` helper with tab-normalization on ingest).
-- **Consolidations:** dropped `muesli/reflow` in favor of already-transitive `x/ansi.Wrap`; replaced transient-footer KeyHandler field with a synthetic `LogLinesMsg`.
-- **Ambiguities resolved:** cursor visibility on keyboard entry (reverse-video initial cell), prevMode propagation from Select→QuitConfirm (uses the pre-Select idle mode), committed selection protection against stray click (bare click ignored), empty-viewport + `v` (no-op), mid-drag resize (force-commit before rewrap), clipboard failure surface (log line, not footer), ADR + semver bump (added).
-- **Validation adjustments:** 6 real gaps and 4 underspecified items from the adversarial pass were incorporated; 2 items (narrow-resize CPU spike, `n` from Select) judged non-blocking and documented.
-- **Stopped at 3 iterations:** structural changes after iteration 2 were concentrated in a single simplification (transient footer → log line). Further iteration passes would produce cosmetic wording changes only. Agent validation produced the largest downstream-edit set, which was applied as a final pass.
+- **Iterations completed:** 3 passes + full agent validation (evidence-based-investigator + adversarial-validator), then a follow-up simplicity/completeness pass focused on the end-user flow.
+- **Assumptions challenged (12 + 7 follow-up):** ordinal stability of `Mode` (refuted — not serialized), need for `muesli/reflow` (refuted — `x/ansi.Wrap` already transitive with matching API), raw-line ANSI cleanliness (verified), ring-buffer eviction rawIdx stability (refuted gap — now handled with decrement + underflow-clears), YOffset semantics & SetContent auto-bottom (verified), MouseMsg 0-indexing (verified), `v`/`h`/`l` key collisions (verified absent), clipboard-error surfacing via sender path (refuted — unreachable from Update goroutine; switched to synthetic `LogLinesMsg` via `tea.Cmd`), resize preserves top raw line (refuted — needed `rawOffset` too, not just `rawIdx`), `v` from ModeError safe (refuted — orchestrator blocks on `Actions`), HandleMouse pointer/value semantics (was underspecified — pinned to value return), visual-col → raw-byte translation (was implicit — extracted as `visualColToRawOffset` helper with tab-normalization on ingest).
+  - **Follow-up pass (simplicity + completeness):** (1) keyboard cursor top-left was wrong for the "copy recent line" flow → now starts at last visible row; (2) no `$`/`0`/`shift+↑↓` shortcuts made single-line copy a 5+ keystroke operation → added; (3) `tea.KeyMsg` was double-dispatched to both keysModel and logModel → routing guard added for `ModeSelect`; (4) external `SetMode` mid-selection left a stale overlay → auto-clear on mode-change guard added; (5) committed-selection press-protection rule violated the universal click-to-reanchor convention → simplified to "bare click always restarts, shift+click extends"; (6) no success feedback → synthetic `"[copied N chars]"` log line; (7) `atotto/clipboard` fails unconditionally over SSH to headless Linux (Ralph's primary deployment) → OSC 52 stderr fallback added.
+- **Consolidations:** dropped `muesli/reflow` in favor of already-transitive `x/ansi.Wrap`; replaced transient-footer KeyHandler field with a synthetic `LogLinesMsg`; the success-feedback and failure-feedback paths now share the synthetic-log-line mechanism.
+- **Ambiguities resolved:** cursor visibility on keyboard entry (reverse-video initial cell), initial cursor position (last visible row, column 0), prevMode propagation from Select→QuitConfirm (uses the pre-Select idle mode), stray-click on committed selection (restarts — matches convention), mouse-in-keyboard-select (re-anchors cursor), empty-viewport + `v` (no-op), mid-drag resize (force-commit before rewrap), orchestrator-triggered mode change mid-select (auto-clear selection), clipboard failure surface (OSC 52 fallback, then log line), copy success surface (confirmation log line), ADR + semver bump (added).
+- **Stopped at 3 iterations + 1 follow-up:** the follow-up pass was triggered by a user-facing rubric ("simple to use, complete solution") that surfaced flow-level gaps not visible in the original structural pass. Further iteration on this plan would produce only cosmetic changes.
 
 ## Out of scope (deferred)
 
-- OSC 52 clipboard for remote SSH sessions with no local clipboard daemon. `atotto/clipboard` on Linux relies on `xclip`/`xsel`; remote-over-SSH copy would need OSC 52. Capture as a follow-up if reported.
 - Search-in-log (`/` to find). Natural companion feature, separate task.
-- Select-all shortcut (`ctrl+a`). Trivial once selection plumbing exists; defer until requested.
-- Line-granularity selection (shift+↑/↓). Character-level from mouse + keyboard covers the asks.
+- Select-all shortcut (`ctrl+a`). Trivial once selection plumbing exists; defer until requested. The `v` + `gg` + `G` + `y` path is available for power users.
+- Double-click to select word / triple-click to select line. `tea.MouseMsg` does not expose click counts; detection requires custom timestamp deltas. Defer until reported. `shift+↑`/`shift+↓` (whole-row extension) + `0`/`$` (line-end jump) cover the most common "grab a line" case.
+- Middle-click paste / right-click menu. This plan is about *output* selection, not pasting input.
