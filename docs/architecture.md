@@ -150,15 +150,21 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
 
   Normal completion:
     → Run returns after writing the completion summary
-    → workflow goroutine enters ModeDone ("q quit" footer)
+    → workflow goroutine enters ModeDone ("↑/k up  ↓/j down  v select  q quit" footer)
     → user reviews output, then presses q → y to exit
 
                   ┌─────────────┐
                   │  ModeDone   │
                   │             │
+                  │ v ──────────┼──▶ ModeSelect
                   │ q ──────────┼──▶ ModeQuitConfirm
-                  │ (only key)  │    → y → tea.QuitMsg
-                  └─────────────┘
+                  └─────────────┘    → y → tea.QuitMsg
+
+  ModeSelect (entered by v from ModeNormal or ModeDone):
+    → reverse-video cursor cell at column 0 of last visible log row
+    → Esc clears selection and returns to prevMode
+    → q enters ModeQuitConfirm
+    → cursor movement and copy land in #105+
 
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
@@ -203,7 +209,7 @@ A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built roun
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A six-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeQuitting`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`) and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` (footer shows `q quit`) so the user can review output before quitting via `q` → `y`. Each mode displays its own shortcut bar text.
+A seven-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeSelect`, `ModeQuitting`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`) and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` so the user can review output; `v` enters `ModeSelect` (log text selection) and `q` → `y` exits. In `ModeSelect`, a reverse-video cursor cell is shown in the log panel; `Esc` returns to the prior mode and `q` enters quit confirmation. Each mode displays its own shortcut bar text.
 
 **Package:** `internal/ui/` (`ui.go`, `keys.go`)
 

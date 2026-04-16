@@ -178,14 +178,15 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 
 | Footer text | Mode |
 |-------------|------|
-| `↑/k up  ↓/j down  n next step  q quit` | Normal — a step is running; you can scroll or skip |
+| `↑/k up  ↓/j down  v select  n next step  q quit` | Normal — a step is running; you can scroll, select, or skip |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
 | `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
 | `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for quit confirmation |
-| `q quit` | Done — the workflow finished; review output, then press `q` → `y` to exit |
+| `↑/k up  ↓/j down  v select  q quit` | Done — the workflow finished; review output, select text, or press `q` → `y` to exit |
+| `hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit` | Select — `v` was pressed; reverse-video cursor visible in log panel |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
-When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone` with a `q quit` footer. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output.
+When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
 
@@ -193,7 +194,7 @@ See [Recovering from Step Failures](recovering-from-step-failures.md) for the Er
 
 - [Getting Started](getting-started.md) — Install and first-run walk-through
 - [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Six-mode state machine that drives the footer
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Seven-mode state machine that drives the footer
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
 - [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT

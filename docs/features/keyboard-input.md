@@ -86,16 +86,25 @@ Key files:
   Normal completion:
     → workflow goroutine enters ModeDone
     → TUI stays alive; user reviews output
+    → v → ModeSelect (selection cursor in log panel)
     → q → QuitConfirm → y → tea.QuitMsg exits TUI
 
                  ┌──────────────┐
                  │   ModeDone   │
                  │              │
-                 │ footer shows │
-                 │ "q quit"    │
-                 │              │
-                 │ q → QuitConfirm │
-                 └──────────────┘
+                 │ v → ModeSelect
+                 │ q → QuitConfirm
+                 └──────────────┘    → y → tea.QuitMsg
+
+  ┌─────────────────────────────────────────────┐
+  │                ModeSelect                   │
+  │                                             │
+  │  Entered by v from ModeNormal or ModeDone   │
+  │  Shows reverse-video cursor cell in log     │
+  │  Esc → clears selection, returns prevMode   │
+  │  q → ModeQuitConfirm                        │
+  │  Cursor movement / copy land in #105+       │
+  └─────────────────────────────────────────────┘
 ```
 
 ## Key Files
