@@ -244,6 +244,54 @@ func colToByteOffset(s string, col int) int {
 	return byteOff
 }
 
+// recomputeSelectionVisualCoords updates the visual coordinates (visualRow, col)
+// of the selection's anchor and cursor from their raw coordinates (rawIdx,
+// rawOffset) after a rewrap. Must be called after every rewrap while a
+// selection is visible so that renderContent highlights the correct rows.
+// Returns the zero-value selection when there is no active/committed selection
+// or when either pos cannot be located in visualLines (e.g. after eviction).
+func (m logModel) recomputeSelectionVisualCoords() selection {
+	if !m.sel.active && !m.sel.committed {
+		return m.sel
+	}
+	anchor, ok1 := m.findVisualPos(m.sel.anchor)
+	cursor, ok2 := m.findVisualPos(m.sel.cursor)
+	if !ok1 || !ok2 {
+		return selection{}
+	}
+	s := m.sel
+	s.anchor = anchor
+	s.cursor = cursor
+	return s
+}
+
+// findVisualPos scans visualLines to find the segment that contains p.rawIdx /
+// p.rawOffset and returns p with visualRow and col recomputed. The segment
+// chosen is the last entry whose rawIdx == p.rawIdx && rawOffset <= p.rawOffset.
+// Returns (p, false) when no matching segment exists (e.g. rawIdx was evicted).
+func (m logModel) findVisualPos(p pos) (pos, bool) {
+	found := -1
+	for i, vl := range m.visualLines {
+		if vl.rawIdx == p.rawIdx && vl.rawOffset <= p.rawOffset {
+			found = i
+		}
+	}
+	if found < 0 {
+		return p, false
+	}
+	vl := m.visualLines[found]
+	p.visualRow = found
+	// Recompute display column as the cell width from the segment start to
+	// p.rawOffset within the raw line.
+	if vl.rawIdx < len(m.lines) {
+		rawLine := m.lines[vl.rawIdx]
+		if vl.rawOffset <= p.rawOffset && p.rawOffset <= len(rawLine) {
+			p.col = lipgloss.Width(rawLine[vl.rawOffset:p.rawOffset])
+		}
+	}
+	return p, true
+}
+
 // Update handles incoming Bubble Tea messages. LogLinesMsg appends lines to the
 // ring buffer and calls SetContent once per batch; tea.KeyMsg "home"/"end" jump
 // to top/bottom; all other messages are forwarded to the underlying viewport.
@@ -254,13 +302,32 @@ func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
 			line = strings.ReplaceAll(line, "\t", "    ")
 			m.lines = append(m.lines, line)
 		}
+		evicted := 0
 		if len(m.lines) > logRingBufferCap {
-			m.lines = m.lines[len(m.lines)-logRingBufferCap:]
+			evicted = len(m.lines) - logRingBufferCap
+			m.lines = m.lines[evicted:]
+		}
+		// Adjust selection raw indices for evicted lines. If either endpoint
+		// underflows (its content has been dropped from the buffer), the whole
+		// selection is cleared — half-valid ranges would produce corrupt text.
+		if evicted > 0 && (m.sel.active || m.sel.committed) {
+			m.sel.anchor.rawIdx -= evicted
+			m.sel.cursor.rawIdx -= evicted
+			if m.sel.anchor.rawIdx < 0 || m.sel.cursor.rawIdx < 0 {
+				m.sel = selection{}
+			}
 		}
 		wasAtBottom := m.viewport.AtBottom()
 		m.rewrap(m.viewport.Width)
+		// Recompute visual coordinates from raw coordinates after every rewrap
+		// so renderContent highlights the correct rows. Always run (option 1)
+		// for a simple invariant; cost is negligible (linear scan over visualLines).
+		m.sel = m.recomputeSelectionVisualCoords()
 		m.viewport.SetContent(m.renderContent())
-		if wasAtBottom {
+		// Suppress auto-scroll-to-bottom while a selection is visible so that
+		// live-streaming output doesn't drag the viewport away from the selected
+		// range. Auto-scroll re-arms as soon as the selection is cleared.
+		if wasAtBottom && !m.sel.visible() {
 			m.viewport.GotoBottom()
 		}
 		return m, nil
