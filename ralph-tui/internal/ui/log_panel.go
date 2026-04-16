@@ -267,9 +267,15 @@ func (m logModel) Update(msg tea.Msg) (logModel, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "home":
+			// In ModeSelect, "home" is intercepted by handleSelectKey (via the
+			// routing guard in model.go) and dispatched to JumpSelectionCursorToLineStart.
+			// This branch is only reached in non-Select modes.
 			m.viewport.GotoTop()
 			return m, nil
 		case "end":
+			// In ModeSelect, "end" is intercepted by handleSelectKey (via the
+			// routing guard in model.go) and dispatched to JumpSelectionCursorToLineEnd.
+			// This branch is only reached in non-Select modes.
 			m.viewport.GotoBottom()
 			return m, nil
 		}
@@ -396,6 +402,17 @@ func (m logModel) autoscrollToCursor() logModel {
 	return m
 }
 
+// Selection cursor movement methods — guard invariant
+// ─────────────────────────────────────────────────────────────────────────────
+// Every method in this group (MoveSelectionCursor, JumpSelectionCursorToLineStart,
+// JumpSelectionCursorToLineEnd, ExtendSelectionByLine, PageSelectionCursor,
+// handleSelectKey) must begin with:
+//
+//	if !m.sel.active && !m.sel.committed { return m, nil }
+//
+// This prevents cursor movement on a zero-value (uninitialised) selection.
+// Any new method added to this group must include the same guard.
+
 // MoveSelectionCursor moves the selection cursor by (dx, dy) in visual-cell
 // space. The anchor stays fixed; only the cursor moves.
 //
@@ -409,7 +426,6 @@ func (m logModel) autoscrollToCursor() logModel {
 //
 // After updating the cursor, the viewport auto-scrolls if the cursor would
 // be out of view. rawIdx and rawOffset are recomputed from visual position.
-// Returns selectionChangedMsg via the cmd to signal a re-render pass.
 func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
 	if !m.sel.active && !m.sel.committed {
 		return m, nil
@@ -432,6 +448,9 @@ func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
 		// Recompute raw coordinates from the new display column.
 		if cur.visualRow < len(m.visualLines) {
 			vl := m.visualLines[cur.visualRow]
+			if vl.rawIdx < 0 || vl.rawIdx >= len(m.lines) {
+				return m, nil
+			}
 			cur.rawIdx = vl.rawIdx
 			cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, cur.col)
 		}
@@ -454,6 +473,9 @@ func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
 			if cur.col > lastCol {
 				cur.col = lastCol
 			}
+			if vl.rawIdx < 0 || vl.rawIdx >= len(m.lines) {
+				return m, nil
+			}
 			cur.rawIdx = vl.rawIdx
 			cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, cur.col)
 		}
@@ -462,7 +484,7 @@ func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
 	m.sel.cursor = cur
 	m = m.autoscrollToCursor()
 	m.viewport.SetContent(m.renderContent())
-	return m, func() tea.Msg { return selectionChangedMsg{} }
+	return m, nil
 }
 
 // JumpSelectionCursorToLineStart moves the selection cursor to column 0 of
@@ -480,8 +502,9 @@ func (m logModel) JumpSelectionCursorToLineStart() (logModel, tea.Cmd) {
 		cur.rawOffset = vl.rawOffset
 	}
 	m.sel.cursor = cur
+	m = m.autoscrollToCursor()
 	m.viewport.SetContent(m.renderContent())
-	return m, func() tea.Msg { return selectionChangedMsg{} }
+	return m, nil
 }
 
 // JumpSelectionCursorToLineEnd moves the selection cursor to the last display
@@ -493,6 +516,9 @@ func (m logModel) JumpSelectionCursorToLineEnd() (logModel, tea.Cmd) {
 	cur := m.sel.cursor
 	if cur.visualRow < len(m.visualLines) {
 		vl := m.visualLines[cur.visualRow]
+		if vl.rawIdx < 0 || vl.rawIdx >= len(m.lines) {
+			return m, nil
+		}
 		lastCol := lipgloss.Width(vl.text)
 		cur.col = lastCol
 		m.virtualCol = lastCol
@@ -500,8 +526,9 @@ func (m logModel) JumpSelectionCursorToLineEnd() (logModel, tea.Cmd) {
 		cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, lastCol)
 	}
 	m.sel.cursor = cur
+	m = m.autoscrollToCursor()
 	m.viewport.SetContent(m.renderContent())
-	return m, func() tea.Msg { return selectionChangedMsg{} }
+	return m, nil
 }
 
 // ExtendSelectionByLine moves the selection cursor by dy whole visual rows,

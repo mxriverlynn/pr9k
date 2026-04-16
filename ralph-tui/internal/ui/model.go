@@ -167,11 +167,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
 
-	case selectionChangedMsg:
-		// No-op: viewport content is already updated inline by the movement
-		// method that emitted this message. The message exists so that future
-		// hooks can react to cursor movement without re-architecting dispatch.
-
 	case headerStepStateMsg, headerPhaseStepsMsg:
 		m.header = m.header.apply(msg)
 

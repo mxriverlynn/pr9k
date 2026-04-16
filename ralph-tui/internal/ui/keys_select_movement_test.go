@@ -327,8 +327,8 @@ func TestMoveCursor_VirtualColumn_PreservedAcrossShortLine(t *testing.T) {
 	m := newSelectTestModel(t, ModeNormal)
 	lines := []string{
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // 38 'a's (>30)
-		"bbbbb",                                   // 5 chars
-		"cccccccccccccccccccccccccccccccccccccc",  // 38 'c's (>30)
+		"bbbbb",                                  // 5 chars
+		"cccccccccccccccccccccccccccccccccccccc", // 38 'c's (>30)
 	}
 	next, _ := m.Update(LogLinesMsg{Lines: lines})
 	m = next.(Model)
@@ -384,7 +384,7 @@ func TestMoveCursor_ClampsToLineEnd(t *testing.T) {
 	m := newSelectTestModel(t, ModeNormal)
 	lines := []string{
 		"aaaaaaaaaaaaaaaaaaaaaa", // 22 chars
-		"bb",                    // 2 chars
+		"bb",                     // 2 chars
 	}
 	next, _ := m.Update(LogLinesMsg{Lines: lines})
 	m = next.(Model)
