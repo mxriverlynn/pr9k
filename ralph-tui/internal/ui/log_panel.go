@@ -104,6 +104,23 @@ func (m *logModel) rewrap(width int) {
 			// that ansi.Wrap consumed as the word-break separator. Hyphens are
 			// kept in the segment output and not consumed, so only spaces need
 			// to be skipped here.
+			//
+			// NOTE: This assumes only ASCII space (' ') is used as a word-break
+			// separator, matching the breakpoints string " -" passed to
+			// ansi.Wrap. Non-ASCII Unicode whitespace (e.g. no-break space,
+			// em space) is not treated as a break point and does not need to be
+			// skipped.
+			//
+			// TODO(#103): rawOffset is computed from len(seg) — the byte length
+			// of the wrapped output segment — which diverges from the number of
+			// raw-line bytes consumed when ansi.Wrap rewrites ANSI escape
+			// sequences at wrap boundaries (e.g. inserting reset/re-open codes
+			// to make each segment independently renderable). If raw lines ever
+			// carry ANSI codes (e.g. coloured compiler output forwarded
+			// verbatim), scroll-position restoration and future copy/select will
+			// silently produce wrong offsets. Fix: strip ANSI from seg before
+			// using its length for offset math, or walk the raw line directly to
+			// match each segment's visible content.
 			offset += len(seg)
 			for offset < len(rawLine) && rawLine[offset] == ' ' {
 				offset++
