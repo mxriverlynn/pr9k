@@ -209,15 +209,14 @@ func TestSetMode_ExternalTransition_ClearsSelection(t *testing.T) {
 	}
 }
 
-// --- TP-104-08: j in ModeSelect does not scroll the viewport ---
+// --- TP-104-08: j in ModeSelect moves the cursor; viewport follows via autoscroll only ---
 
 func TestKeys_InSelectMode_DoesNotDoubleDispatchToViewport(t *testing.T) {
 	m := newSelectTestModel(t, ModeNormal)
-	// Populate enough lines to make j scrollable.
+	// Populate enough lines that j can move the cursor past the viewport edge.
 	populateLog(t, &m, 30)
-	// Scroll to top so j would have room to move.
+	// Scroll to top so the cursor starts at the last visible row (row 9).
 	m.log.viewport.GotoTop()
-	offsetBefore := m.log.viewport.YOffset
 
 	// Enter ModeSelect.
 	next, _ := m.Update(keyMsg("v"))
@@ -225,15 +224,28 @@ func TestKeys_InSelectMode_DoesNotDoubleDispatchToViewport(t *testing.T) {
 	if m.keys.handler.Mode() != ModeSelect {
 		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
 	}
+	cursorBefore := m.log.sel.cursor
 
-	// Press j — in ModeSelect this is a no-op in this ticket; the routing
-	// guard must prevent it from being double-dispatched to the viewport.
+	// Press j — in ModeSelect this moves the selection cursor down by 1 row.
+	// The routing guard must prevent j from ALSO being dispatched to the
+	// viewport's native scroll handler (which would over-scroll by one extra row).
 	next, _ = m.Update(keyMsg("j"))
 	m = next.(Model)
 
-	if m.log.viewport.YOffset != offsetBefore {
-		t.Errorf("viewport.YOffset changed after j in ModeSelect: before=%d after=%d",
-			offsetBefore, m.log.viewport.YOffset)
+	// Cursor must have moved exactly 1 row down.
+	wantRow := cursorBefore.visualRow + 1
+	if m.log.sel.cursor.visualRow != wantRow {
+		t.Errorf("expected cursor.visualRow=%d after j, got %d", wantRow, m.log.sel.cursor.visualRow)
+	}
+	// Viewport YOffset must reflect autoscroll only — not an extra viewport-level j-scroll.
+	// With YOffset=0 and Height=10, cursor at row 10 triggers autoscroll to YOffset=1.
+	wantOffset := 0
+	if m.log.sel.cursor.visualRow >= m.log.viewport.Height {
+		wantOffset = m.log.sel.cursor.visualRow - m.log.viewport.Height + 1
+	}
+	if m.log.viewport.YOffset != wantOffset {
+		t.Errorf("viewport.YOffset=%d, want %d (autoscroll only, no double-dispatch)",
+			m.log.viewport.YOffset, wantOffset)
 	}
 }
 

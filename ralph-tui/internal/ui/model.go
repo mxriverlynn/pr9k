@@ -124,6 +124,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Selection movement: if still in ModeSelect after key dispatch,
+		// delegate movement keys to the log panel. Mode transitions (esc, q)
+		// are handled by handleSelect in keys.go and have already changed the
+		// mode before this check.
+		if modeBeforeKey == ModeSelect && m.keys.handler.Mode() == ModeSelect {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.handleSelectKey(msg)
+			cmds = append(cmds, lcmd)
+		}
+
 		// Immediate selection clear: if a key transitioned the mode away from
 		// ModeSelect (e.g., Esc), clear the selection overlay now so there is
 		// no single-frame stale highlight. The prevObservedMode guard at the
@@ -134,8 +144,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Key routing guard: in ModeSelect, skip the log.Update forward for
 		// tea.KeyMsg. handleSelect has sole authority over key dispatch in this
-		// mode; viewport scrolling during selection is driven explicitly by the
-		// movement logic (#105), not by double-dispatched key events.
+		// mode; viewport scrolling during selection is driven by the movement
+		// methods above, not by double-dispatched key events.
 		// Use the pre-dispatch mode so that a key that exits ModeSelect (e.g.,
 		// Esc) also doesn't double-dispatch to the viewport.
 		if modeBeforeKey != ModeSelect {
@@ -156,6 +166,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var lcmd tea.Cmd
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
+
+	case selectionChangedMsg:
+		// No-op: viewport content is already updated inline by the movement
+		// method that emitted this message. The message exists so that future
+		// hooks can react to cursor movement without re-architecting dispatch.
 
 	case headerStepStateMsg, headerPhaseStepsMsg:
 		m.header = m.header.apply(msg)

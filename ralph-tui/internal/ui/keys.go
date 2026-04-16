@@ -142,8 +142,9 @@ func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
 }
 
 // handleSelect handles key events in ModeSelect. Esc returns to the prior
-// mode; q enters ModeQuitConfirm (same pattern as handleNormal/handleDone).
-// Cursor movement and copy land in later tickets.
+// mode; q enters ModeQuitConfirm. Cursor movement keys (hjkl/arrows, 0/$,
+// shift+↑↓, J/K, PgUp/PgDn) are handled by logModel.handleSelectKey via
+// model.go after this handler returns; copy (y/Enter) lands in #107.
 func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	switch key.String() {
 	case "esc":
@@ -155,13 +156,15 @@ func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 	case "q":
+		// The pre-Select idle mode (Normal or Done) is already saved in
+		// prevMode from when `v` was pressed. Do not overwrite it — Esc from
+		// QuitConfirm must restore the real idle mode, not ModeSelect itself.
+		// Selection clearing happens via model.go's post-dispatch guard.
 		m.handler.mu.Lock()
-		m.handler.prevMode = m.handler.mode
 		m.handler.mode = ModeQuitConfirm
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 	}
-	// All other keys are no-ops in this ticket; movement and copy land in #105.
 	return m, nil
 }
 

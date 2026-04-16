@@ -41,6 +41,7 @@ type logModel struct {
 	lines       []string     // ring buffer, cap logRingBufferCap; one entry per original logical line
 	visualLines []visualLine // rebuilt on every rewrap; one entry per wrapped visual row
 	sel         selection    // current text selection; zero value = no selection
+	virtualCol  int          // vim-style virtual column; remembered during vertical cursor movement so that moving through a shorter line and then back to a longer one restores the original column
 }
 
 // newLogModel constructs a logModel with a custom KeyMap that removes f/b/u/d
@@ -380,4 +381,173 @@ func (m logModel) initSelectionAtLastVisibleRow() selection {
 		col:       0,
 	}
 	return selection{anchor: p, cursor: p, active: true}
+}
+
+// autoscrollToCursor adjusts the viewport YOffset so the selection cursor
+// is visible. Called after every cursor movement. If the cursor row is above
+// the viewport, scroll up; if below, scroll down.
+func (m logModel) autoscrollToCursor() logModel {
+	row := m.sel.cursor.visualRow
+	if row < m.viewport.YOffset {
+		m.viewport.SetYOffset(row)
+	} else if row >= m.viewport.YOffset+m.viewport.Height {
+		m.viewport.SetYOffset(row - m.viewport.Height + 1)
+	}
+	return m
+}
+
+// MoveSelectionCursor moves the selection cursor by (dx, dy) in visual-cell
+// space. The anchor stays fixed; only the cursor moves.
+//
+// Horizontal movement (dx != 0) advances or retreats one display column,
+// clamped to [0, lastColOfRow], and updates virtualCol so that vertical
+// moves remember this position.
+//
+// Vertical movement (dy != 0) advances or retreats one visual row, clamped
+// to [0, len(visualLines)-1]. The column is restored from virtualCol and
+// clamped to the new row's last column (vim-style short-line behavior).
+//
+// After updating the cursor, the viewport auto-scrolls if the cursor would
+// be out of view. rawIdx and rawOffset are recomputed from visual position.
+// Returns selectionChangedMsg via the cmd to signal a re-render pass.
+func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
+	if !m.sel.active && !m.sel.committed {
+		return m, nil
+	}
+	cur := m.sel.cursor
+
+	if dx != 0 {
+		newCol := cur.col + dx
+		if newCol < 0 {
+			newCol = 0
+		}
+		if cur.visualRow < len(m.visualLines) {
+			lastCol := lipgloss.Width(m.visualLines[cur.visualRow].text)
+			if newCol > lastCol {
+				newCol = lastCol
+			}
+		}
+		cur.col = newCol
+		m.virtualCol = newCol
+		// Recompute raw coordinates from the new display column.
+		if cur.visualRow < len(m.visualLines) {
+			vl := m.visualLines[cur.visualRow]
+			cur.rawIdx = vl.rawIdx
+			cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, cur.col)
+		}
+	}
+
+	if dy != 0 {
+		newRow := cur.visualRow + dy
+		if newRow < 0 {
+			newRow = 0
+		}
+		if newRow >= len(m.visualLines) {
+			newRow = len(m.visualLines) - 1
+		}
+		cur.visualRow = newRow
+		if newRow < len(m.visualLines) {
+			vl := m.visualLines[newRow]
+			lastCol := lipgloss.Width(vl.text)
+			// Restore virtualCol, clamped to the new row's width.
+			cur.col = m.virtualCol
+			if cur.col > lastCol {
+				cur.col = lastCol
+			}
+			cur.rawIdx = vl.rawIdx
+			cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, cur.col)
+		}
+	}
+
+	m.sel.cursor = cur
+	m = m.autoscrollToCursor()
+	m.viewport.SetContent(m.renderContent())
+	return m, func() tea.Msg { return selectionChangedMsg{} }
+}
+
+// JumpSelectionCursorToLineStart moves the selection cursor to column 0 of
+// the current visual row (vim `0` / Home). The anchor stays fixed.
+func (m logModel) JumpSelectionCursorToLineStart() (logModel, tea.Cmd) {
+	if !m.sel.active && !m.sel.committed {
+		return m, nil
+	}
+	cur := m.sel.cursor
+	cur.col = 0
+	m.virtualCol = 0
+	if cur.visualRow < len(m.visualLines) {
+		vl := m.visualLines[cur.visualRow]
+		cur.rawIdx = vl.rawIdx
+		cur.rawOffset = vl.rawOffset
+	}
+	m.sel.cursor = cur
+	m.viewport.SetContent(m.renderContent())
+	return m, func() tea.Msg { return selectionChangedMsg{} }
+}
+
+// JumpSelectionCursorToLineEnd moves the selection cursor to the last display
+// column of the current visual row (vim `$` / End). The anchor stays fixed.
+func (m logModel) JumpSelectionCursorToLineEnd() (logModel, tea.Cmd) {
+	if !m.sel.active && !m.sel.committed {
+		return m, nil
+	}
+	cur := m.sel.cursor
+	if cur.visualRow < len(m.visualLines) {
+		vl := m.visualLines[cur.visualRow]
+		lastCol := lipgloss.Width(vl.text)
+		cur.col = lastCol
+		m.virtualCol = lastCol
+		cur.rawIdx = vl.rawIdx
+		cur.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, lastCol)
+	}
+	m.sel.cursor = cur
+	m.viewport.SetContent(m.renderContent())
+	return m, func() tea.Msg { return selectionChangedMsg{} }
+}
+
+// ExtendSelectionByLine moves the selection cursor by dy whole visual rows,
+// preserving the virtual column across shorter lines. Equivalent to
+// MoveSelectionCursor(0, dy). The anchor stays fixed.
+func (m logModel) ExtendSelectionByLine(dy int) (logModel, tea.Cmd) {
+	return m.MoveSelectionCursor(0, dy)
+}
+
+// PageSelectionCursor moves the selection cursor by (viewport.Height - 1)
+// visual rows in the direction of dy (+1 = down, -1 = up). The viewport
+// auto-scrolls to follow the cursor. The anchor stays fixed.
+func (m logModel) PageSelectionCursor(dy int) (logModel, tea.Cmd) {
+	pageSize := m.viewport.Height - 1
+	if pageSize < 1 {
+		pageSize = 1
+	}
+	return m.MoveSelectionCursor(0, dy*pageSize)
+}
+
+// handleSelectKey dispatches a key event to the appropriate selection cursor
+// movement method. Called by model.go when the mode is ModeSelect and a key
+// has not already caused a mode transition (esc, q are handled by keys.go).
+// Returns (m, nil) for unrecognised keys (no-op).
+func (m logModel) handleSelectKey(key tea.KeyMsg) (logModel, tea.Cmd) {
+	switch key.String() {
+	case "h", "left":
+		return m.MoveSelectionCursor(-1, 0)
+	case "l", "right":
+		return m.MoveSelectionCursor(+1, 0)
+	case "j", "down":
+		return m.MoveSelectionCursor(0, +1)
+	case "k", "up":
+		return m.MoveSelectionCursor(0, -1)
+	case "0", "home":
+		return m.JumpSelectionCursorToLineStart()
+	case "$", "end":
+		return m.JumpSelectionCursorToLineEnd()
+	case "K", "shift+up":
+		return m.ExtendSelectionByLine(-1)
+	case "J", "shift+down":
+		return m.ExtendSelectionByLine(+1)
+	case "pgup":
+		return m.PageSelectionCursor(-1)
+	case "pgdown":
+		return m.PageSelectionCursor(+1)
+	}
+	return m, nil
 }

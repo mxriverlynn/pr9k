@@ -60,5 +60,12 @@ type headerPhaseStepsMsg struct {
 	names []string
 }
 
+// selectionChangedMsg is emitted (via tea.Cmd) by logModel selection cursor
+// movement methods after the cursor has been updated and the viewport content
+// has already been refreshed inline. model.go handles it as a no-op; the
+// message exists so that future hooks (e.g. a status bar update) can react to
+// cursor movement without re-architecting the dispatch path.
+type selectionChangedMsg struct{}
+
 // Ensure LogLinesMsg satisfies tea.Msg at compile time.
 var _ tea.Msg = LogLinesMsg{}
