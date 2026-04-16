@@ -25,7 +25,7 @@ func TestCopyToClipboard_EmptyString_Succeeds(t *testing.T) {
 	}
 	isTTYFn = func() bool { return false }
 
-	err := CopyToClipboard("")
+	err := copyToClipboard("")
 	if err != nil {
 		t.Fatalf("expected nil error for empty string, got %v", err)
 	}
@@ -49,7 +49,7 @@ func TestCopyToClipboard_MultiByteUTF8_OSC52Base64Correct(t *testing.T) {
 	t.Cleanup(func() { stderrWriter = origStderr })
 
 	const text = "こんにちは" // 5 runes, 15 bytes
-	err := CopyToClipboard(text)
+	err := copyToClipboard(text)
 	if err != nil {
 		t.Fatalf("expected nil error on OSC 52 path, got %v", err)
 	}
@@ -73,7 +73,7 @@ func TestCopyToClipboard_Success_NoStderrOutput(t *testing.T) {
 	stderrWriter = &buf
 	t.Cleanup(func() { stderrWriter = origStderr })
 
-	err := CopyToClipboard("hello")
+	err := copyToClipboard("hello")
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCopyToClipboard_LargeText_OSC52WritesFullPayload(t *testing.T) {
 	t.Cleanup(func() { stderrWriter = origStderr })
 
 	text := strings.Repeat("A", 70*1024) // 70 KB
-	err := CopyToClipboard(text)
+	err := copyToClipboard(text)
 	if err != nil {
 		t.Fatalf("expected nil error on OSC 52 path, got %v", err)
 	}
@@ -171,6 +171,33 @@ func TestCopySelectedText_Failure_ReturnsErrorMsg(t *testing.T) {
 	}
 	if !strings.Contains(ll.Lines[0], "copy failed") {
 		t.Errorf("expected [copy failed ...] line, got %q", ll.Lines[0])
+	}
+}
+
+// C2-04: copySelectedText must not call copyFn before cmd() is invoked —
+// the clipboard write must run inside the tea.Cmd closure (M1 async fix).
+func TestCopySelectedText_CopyFn_NotCalledBeforeCmdInvocation(t *testing.T) {
+	origCopy, origTTY := copyFn, isTTYFn
+	resetClipboardFns(t, origCopy, origTTY)
+
+	var invoked bool
+	copyFn = func(text string) error {
+		invoked = true
+		return nil
+	}
+	isTTYFn = func() bool { return false }
+
+	cmd := copySelectedText("hello")
+	if invoked {
+		t.Error("copyFn must not be called before cmd() is invoked (clipboard write must be async)")
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil cmd for non-empty text")
+	}
+	// Only after invoking cmd() should the copy happen.
+	cmd()
+	if !invoked {
+		t.Error("copyFn must be called when cmd() is invoked")
 	}
 }
 

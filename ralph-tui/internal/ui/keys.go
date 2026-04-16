@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -180,28 +178,6 @@ func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mu.Unlock()
 	}
 	return m, nil
-}
-
-// copySelectedText performs the clipboard copy for a committed selection and
-// returns a tea.Cmd that appends the appropriate feedback log line. Called by
-// model.go after y/Enter exits ModeSelect. text is the raw selected text
-// (already extracted by model.go before ClearSelection is called).
-//
-// If text is empty, no copy is attempted and nil is returned (silent no-op).
-func copySelectedText(text string) tea.Cmd {
-	if text == "" {
-		return nil
-	}
-	err := CopyToClipboard(text)
-	var line string
-	if err == nil {
-		line = fmt.Sprintf("[copied %d chars]", len(text))
-	} else {
-		line = "[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]"
-	}
-	return func() tea.Msg {
-		return LogLinesMsg{Lines: []string{line}}
-	}
 }
 
 func (m keysModel) handleQuitConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {

@@ -296,9 +296,9 @@ func TestCopy_Failure_FallsBackToOSC52(t *testing.T) {
 	t.Cleanup(func() { stderrWriter = origStderr })
 
 	const text = "hello OSC52"
-	err := CopyToClipboard(text)
+	err := copyToClipboard(text)
 	if err != nil {
-		t.Fatalf("CopyToClipboard should return nil on OSC 52 path, got %v", err)
+		t.Fatalf("copyToClipboard should return nil on OSC 52 path, got %v", err)
 	}
 
 	expected := fmt.Sprintf("\x1b]52;c;%s\x07", base64.StdEncoding.EncodeToString([]byte(text)))
@@ -322,7 +322,7 @@ func TestCopy_Failure_NoTty_EmitsErrorLogLine(t *testing.T) {
 	stderrWriter = &buf
 	t.Cleanup(func() { stderrWriter = origStderr })
 
-	err := CopyToClipboard("test")
+	err := copyToClipboard("test")
 	if err == nil {
 		t.Fatal("expected error when not a tty and copyFn fails")
 	}
