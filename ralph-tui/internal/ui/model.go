@@ -110,10 +110,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so that SelectShortcuts is restored when the user resumes keyboard control.
 		if modeBeforeKey == ModeSelect {
 			m.keys.handler.mu.Lock()
-			if m.keys.handler.selectJustReleased {
-				m.keys.handler.selectJustReleased = false
-				m.keys.handler.updateShortcutLineLocked()
-			}
+			m.keys.handler.clearJustReleasedLocked()
 			m.keys.handler.mu.Unlock()
 		}
 
@@ -186,10 +183,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// release should not keep showing SelectCommittedShortcuts).
 		if m.keys.handler.Mode() == ModeSelect {
 			m.keys.handler.mu.Lock()
-			if m.keys.handler.selectJustReleased {
-				m.keys.handler.selectJustReleased = false
-				m.keys.handler.updateShortcutLineLocked()
-			}
+			m.keys.handler.clearJustReleasedLocked()
 			m.keys.handler.mu.Unlock()
 		}
 
@@ -200,8 +194,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var lcmd tea.Cmd
 			m.log, lcmd = m.log.Update(msg)
 			cmds = append(cmds, lcmd)
-		} else {
+		} else if msg.Button == tea.MouseButtonLeft || msg.Button == tea.MouseButtonNone {
 			// Left button press / motion / release: handle for text selection.
+			// Guard against right-click and middle-click: some terminal emulators
+			// (e.g., iTerm2 in extended mouse mode) report non-left buttons as
+			// non-wheel events; without this guard they would trigger selection.
 			// logTopRow is the 0-indexed terminal row where the viewport content
 			// begins: 1 (top border) + gridRows (checkbox grid) + 1 (hrule).
 			// logLeftCol is 1 (inside the left border character).
@@ -228,7 +225,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Transition from Normal or Done to ModeSelect on left-press.
 				// ModeSelect (entered via v) stays in ModeSelect — bare click
 				// re-anchors the selection cursor (handled inside HandleMouse).
-				if currentMode == ModeNormal || currentMode == ModeDone {
+				// Gate on sel.active: if resolveVisualPos returned false (e.g., the
+				// click landed in empty viewport padding below the content), HandleMouse
+				// leaves sel.active=false and we must not enter ModeSelect with a
+				// zero-value selection.
+				if (currentMode == ModeNormal || currentMode == ModeDone) && m.log.sel.active {
 					m.keys.handler.mu.Lock()
 					m.keys.handler.prevMode = currentMode
 					m.keys.handler.mode = ModeSelect
@@ -244,7 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					visualRow := m.log.viewport.YOffset + (msg.Y - logTopRow)
 					col := msg.X - logLeftCol
 					if col < 0 {
-						col = 0
+						col = 0 // belt-and-suspenders: resolveVisualPos also clamps to [0, rowWidth]
 					}
 					p := pos{visualRow: visualRow, col: col}
 					var lcmd tea.Cmd
@@ -255,6 +256,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.MouseActionRelease:
 				// Commit any active drag selection.
 				if m.log.sel.active {
+					// ok is intentionally discarded: HandleMouse.Release does not use p;
+					// it only commits the selection whose cursor was already positioned
+					// by preceding Motion events.
 					p, _ := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
 					var lcmd tea.Cmd
 					m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)

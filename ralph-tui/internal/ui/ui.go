@@ -129,6 +129,15 @@ func (h *KeyHandler) ForceQuit() {
 	}
 }
 
+// clearJustReleasedLocked clears the selectJustReleased flag and refreshes the
+// shortcut line if the flag was set. Precondition: caller must hold h.mu.
+func (h *KeyHandler) clearJustReleasedLocked() {
+	if h.selectJustReleased {
+		h.selectJustReleased = false
+		h.updateShortcutLineLocked()
+	}
+}
+
 // updateShortcutLineLocked updates h.shortcutLine based on the current mode.
 // Precondition: caller must hold h.mu.
 func (h *KeyHandler) updateShortcutLineLocked() {
