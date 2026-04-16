@@ -91,6 +91,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
   - [Breaking Out of the Loop](docs/how-to/breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
   - [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md) — Error mode decisions: continue, retry, or quit
   - [Quitting Gracefully](docs/how-to/quitting-gracefully.md) — The `q`/`y` flow, Escape cancel, SIGINT, exit codes
+  - [Passing Environment Variables](docs/how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
   - [Debugging a Run](docs/how-to/debugging-a-run.md) — Reading the log file, finding captures, reproducing failures
 - **Feature Documentation** (in [`docs/features/`](docs/features/)) — implementation details for each ralph-tui package:
   - [CLI & Configuration](docs/features/cli-configuration.md) — Argument parsing and project directory resolution
