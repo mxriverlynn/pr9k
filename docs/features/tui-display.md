@@ -81,7 +81,9 @@ Key files:
 | `ralph-tui/internal/ui/log_panel_wrap_test.go` | 30 unit tests covering word-wrap, rawOffset accuracy, ring-buffer eviction, SetSize edge cases, auto-scroll behavior, ANSI preservation, and integration via tea.WindowSizeMsg |
 | `ralph-tui/internal/ui/selection.go` | `pos` and `selection` data types; `visible()`, `normalized()`, `contains()`, `extractText()`, `mouseToViewport()`, `visualColToRawOffset()` pure helpers |
 | `ralph-tui/internal/ui/selection_test.go` | 39 unit tests for all selection data types and helpers, including bounds-guard, edge cases, input immutability, and zero-value safety |
-| `ralph-tui/internal/ui/select_mode_test.go` | 10 integration tests for `ModeSelect` entry/exit, shortcut bar, routing guard, and external mode-change clearing |
+| `ralph-tui/internal/ui/select_mode_test.go` | 16 integration tests for `ModeSelect` entry/exit, shortcut bar, routing guard, and external mode-change clearing |
+| `ralph-tui/internal/ui/log_panel_ring_eviction_test.go` | 6 tests for ring-buffer eviction rawIdx adjustment, underflow clearing, auto-scroll suppression, and visual-coord recompute |
+| `ralph-tui/internal/ui/log_panel_eviction_recompute_test.go` | 20 edge-case tests for `recomputeSelectionVisualCoords`, `findVisualPos`, eviction adjustment, auto-scroll suppression, SetSize interaction, and model.go integration |
 | `ralph-tui/internal/ui/terminal.go` | `TerminalWidth()` via ioctl + `DefaultTerminalWidth` fallback |
 
 ## Core Types
@@ -386,6 +388,32 @@ When the mode is `ModeSelect` and a key has not caused a mode transition (Esc an
 
 **Bounds guard on ring-buffer eviction:** before indexing `m.lines[vl.rawIdx]`, `MoveSelectionCursor` and `JumpSelectionCursorToLineEnd` check `vl.rawIdx >= 0 && vl.rawIdx < len(m.lines)` and return `(m, nil)` if the index is stale. This prevents panics when the ring buffer wraps and an old `rawIdx` no longer points to a valid entry.
 
+### Ring-Buffer Eviction and Selection Recompute
+
+When new log lines push the ring buffer past `logRingBufferCap` (2000), old lines are evicted from the front. Two interleaved concerns must be handled on every `LogLinesMsg`:
+
+**Eviction adjustment:** If a selection is active or committed and lines are evicted, the selection's `rawIdx` values are decremented by the eviction count so they still point to the same logical content (now at a lower index). If either `rawIdx` underflows to < 0, the entire selection is cleared — half-valid ranges would produce corrupt text on copy.
+
+```
+if evicted > 0 && (sel.active || sel.committed) {
+    sel.anchor.rawIdx -= evicted
+    sel.cursor.rawIdx -= evicted
+    if sel.anchor.rawIdx < 0 || sel.cursor.rawIdx < 0 {
+        sel = selection{}  // clear the whole thing
+    }
+}
+```
+
+**Visual coordinate recompute:** After every `rewrap`, `recomputeSelectionVisualCoords()` is called to update `anchor.visualRow`/`col` and `cursor.visualRow`/`col` from their authoritative `rawIdx`/`rawOffset` coordinates. This keeps `renderContent` highlighting the correct rows after wrapping changes how many visual lines each raw line occupies. If either position cannot be found in `visualLines` (e.g., `rawIdx` was evicted and the underflow guard missed it, or the offset is past the end of the raw line), the selection is cleared.
+
+**`recomputeSelectionVisualCoords()`** — delegates to `findVisualPos` for both anchor and cursor. Returns the zero-value `selection{}` when the selection is not visible or either position is not locatable.
+
+**`findVisualPos(p pos) (pos, bool)`** — scans `visualLines` for the last entry where `rawIdx == p.rawIdx && rawOffset <= p.rawOffset`, sets `p.visualRow` to that index, and recomputes `p.col` as `lipgloss.Width(rawLine[vl.rawOffset:p.rawOffset])`. Returns `(p, false)` when no matching segment exists.
+
+**Auto-scroll suppression:** `wasAtBottom` is snapshotted before the rewrap. After the rewrap and visual-coord recompute, `GotoBottom()` is only called when `wasAtBottom && !sel.visible()`. This prevents live-streaming output from dragging the viewport away from the selected range while a selection is active or committed. Auto-scroll re-arms as soon as the selection is cleared.
+
+**Known limitation (P1, deferred):** `SetSize` does not call `recomputeSelectionVisualCoords` after its rewrap. Visual coordinates on an active selection will be stale until the next `LogLinesMsg` triggers a recompute. Low severity in practice because resizes and active selections rarely coincide.
+
 ### Selection Primitives
 
 `ralph-tui/internal/ui/selection.go` defines the coordinate and selection data types used for text selection in the log panel, along with pure helper functions.
@@ -576,7 +604,9 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 - `ralph-tui/internal/ui/selection_test.go` — 39 tests across 8 categories: `normalized()` edge cases (same-position, rawIdx ordering priority), `extractText` edge cases (three-or-more lines, full raw line, empty middle line, boundary offsets), `extractText` bounds guards (negative rawIdx, out-of-range rawIdx/rawOffset, reversed same-line offsets — 7 guard paths), `mouseToViewport` edge cases (exact top/bottom boundary, negative col no-panic), `visualColToRawOffset` edge cases (col=0 returns segmentStart, empty rawLine, segmentStart at end, multi-byte grapheme "é"), `contains()` edge cases (empty selection, reversed anchor/cursor, single-row col=0 included), `visible()` edge cases (active+committed simultaneously, committed reversed anchor/cursor), input immutability (lines slice not mutated after `extractText`), zero-value struct safety (`pos{}` and `selection{}` don't panic in any function)
 - `ralph-tui/internal/ui/log_panel_selection_test.go` — 17 tests across 4 categories: `renderContent` overlay correctness (empty selection cursor cell, single-row range, multi-row range, no-selection fast-path, committed selection), split helper unit tests (`splitAtCol` start/past-end/empty, `splitAtCols` empty-range/full-row, `colToByteOffset` multi-byte), `initSelectionAtLastVisibleRow` edge cases (empty visual lines, fewer lines than viewport, rawIdx/rawOffset values), `SetSelection`/`ClearSelection`/`SelectedText` accessor correctness
-- `ralph-tui/internal/ui/keys_select_movement_test.go` — 15 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor stays fixed, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by one row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to keep cursor visible, q from ModeSelect enters QuitConfirm with pre-Select `prevMode` preserved, Esc from QuitConfirm restores pre-Select idle mode
+- `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor stays fixed, arrow keys move cursor, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by one row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to keep cursor visible, cursor clamps to line end on narrow rows, q from ModeSelect enters QuitConfirm with pre-Select `prevMode` preserved, q clears selection before entering QuitConfirm, SelectedText updated after cursor moves
+- `ralph-tui/internal/ui/log_panel_ring_eviction_test.go` — 6 tests: rawIdx decremented after eviction (SelectedText unchanged), anchor underflow clears selection, cursor underflow clears whole selection, auto-scroll suppressed during visible selection, auto-scroll re-arms after selection cleared, stale visualRow corrected by post-eviction recompute
+- `ralph-tui/internal/ui/log_panel_eviction_recompute_test.go` — 20 edge-case tests across 7 categories: `recomputeSelectionVisualCoords` (no-op on zero-value, invalid rawIdx returns zero, preserves active/committed flags), `findVisualPos` (empty visualLines, last matching segment for wrapped line, col recomputed from rawOffset, col skip when rawOffset past end), eviction adjustment (inactive no-op, boundary rawIdx==0 survives, successive evictions cumulative), auto-scroll suppression (active selection suppresses, empty committed does not, not-at-bottom blocks independently), eviction + recompute interaction (stale visualRow corrected, underflow clears before recompute), SetSize interaction (does not recompute; subsequent LogLinesMsg corrects), model.go integration (LogLinesMsg preserves selection in ModeSelect, external SetMode clears selection on next Update)
 
 ## Additional Information
 

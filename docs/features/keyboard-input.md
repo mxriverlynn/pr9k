@@ -15,7 +15,7 @@ A seven-mode state machine that routes keypresses and communicates user decision
 - In Error mode (entered when a step fails), `c` continues past the failure, `r` retries the step, and `q` enters quit confirmation
 - In QuitConfirm mode, `y` flips to the `Quitting` mode (footer shows `Quitting...`), calls `ForceQuit`, and returns `tea.QuitMsg` to exit the TUI; `n` or `<Escape>` cancel and restore the previous mode
 - In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation; `v` enters `ModeSelect`
-- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; cursor movement and copy land in later tickets (#105+)
+- In Select mode (entered when `v` is pressed from Normal or Done), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; `y` copy is planned for a later ticket
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
 
@@ -103,7 +103,7 @@ Key files:
   │  Shows reverse-video cursor cell in log     │
   │  Esc → clears selection, returns prevMode   │
   │  q → ModeQuitConfirm                        │
-  │  Cursor movement / copy land in #105+       │
+  │  Cursor movement implemented; y copy planned │
   └─────────────────────────────────────────────┘
 ```
 
@@ -341,7 +341,7 @@ This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the vie
 
 - `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all seven modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all seven modes
 - `ralph-tui/internal/ui/select_mode_test.go` — 16 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, `Esc` clears immediately (not next update), prevObservedMode double-guard idempotency, `LogLinesMsg` in select does not clear selection, external `SetMode` clears selection on next Update, unknown key no-op, `home`/`end` not forwarded; `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error, `v` from Done restores Done on Esc
-- `ralph-tui/internal/ui/keys_select_movement_test.go` — 15 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, Esc from QuitConfirm restores idle mode
+- `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, arrow keys move cursor, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, cursor clamps to line end on narrow rows, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, q clears selection before entering QuitConfirm, Esc from QuitConfirm restores idle mode, SelectedText updated after cursor moves
 
 ## Additional Information
 
