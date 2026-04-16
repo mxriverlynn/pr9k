@@ -19,7 +19,7 @@ issuenum=$(gh api graphql -f query='
       }
     }
   }' -f q="repo:$repo is:issue is:open assignee:$username label:$ralphlabel" \
-  | jq '.data.search.nodes[] | select([.blockedBy.nodes[] | select(.state == "OPEN")] | length == 0) | .number'
+  | jq -r '[.data.search.nodes[] | select([.blockedBy.nodes[] | select(.state == "OPEN")] | length == 0) | .number] | sort | .[0] // empty'
 )
 
 echo $issuenum
