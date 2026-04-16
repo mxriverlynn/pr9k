@@ -392,6 +392,58 @@ case HeartbeatTickMsg:
 
 The general rule: every operation that depends on a resource being non-nil belongs inside the non-nil check for that resource, including cleanup, rescheduling, and return values. An operation placed after the guard implicitly assumes the resource is always available — but the guard was written precisely because that assumption is not always true.
 
+## Extract repeated state-reset patterns into a named helper
+
+When the same flag-clearing or state-reset sequence appears in three or more places, extract it into a named unexported method. Duplicated reset logic drifts: a new field added to the reset must be updated in every copy, and missing one silently introduces a bug.
+
+```go
+// Bad — selectJustReleased clearing repeated in 3 places across model.go
+h.mu.Lock()
+h.selectJustReleased = false
+h.updateShortcutLineLocked()
+h.mu.Unlock()
+
+// Good — extract into a named helper; apply the Locked suffix if the caller must hold the mutex
+func (h *KeyHandler) clearJustReleasedLocked() {
+    h.selectJustReleased = false
+    h.updateShortcutLineLocked()
+}
+
+// All three call sites become a single line:
+h.mu.Lock()
+h.clearJustReleasedLocked()
+h.mu.Unlock()
+```
+
+The threshold is three — two copies are often fine, but a third signals that the pattern is a concept and should be named.
+
+## Function comments must accurately describe the implementation
+
+When a function iterates by rune but the comment says "grapheme cluster", when a method clears state "on the next Update" but it actually clears it immediately — those inaccuracies become traps. Future maintainers act on the comment, not the code, and introduce real bugs.
+
+```go
+// Bad — misleads readers into thinking grapheme-cluster semantics are applied
+for _, r := range s {
+    col += runewidth.RuneWidth(r)
+    if col > targetCol {
+        break
+    }
+    // Advance one rune (grapheme cluster).  ← wrong label; it's a rune, not a cluster
+    byteOffset += utf8.RuneLen(r)
+}
+
+// Good — name matches the unit of iteration
+    // Advance one rune.
+    byteOffset += utf8.RuneLen(r)
+```
+
+Checklist when writing a doc comment for a function that processes text:
+- Does it say "rune" when it uses `range string`?
+- Does it say "grapheme cluster" only when it uses a grapheme-segmenting library (e.g., `rivo/uniseg`)?
+- Does it say "byte" only when it indexes with `[]byte` or advances by `utf8.RuneLen`?
+
+The distinction matters because rune iteration and grapheme-cluster iteration produce different results for multi-codepoint characters (e.g., emoji with skin-tone modifiers, combined accent characters). A wrong label here creates a future ANSI/Unicode correctness bug.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
