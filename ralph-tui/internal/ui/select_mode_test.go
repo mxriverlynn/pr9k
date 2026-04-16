@@ -266,6 +266,169 @@ func TestShortcuts_NormalAndDone_IncludeVSelect(t *testing.T) {
 	}
 }
 
+// --- TP-104-11: v from Done restores Done on Esc ---
+
+func TestModel_VFromDone_RestoresDoneOnEsc(t *testing.T) {
+	m := newSelectTestModel(t, ModeDone)
+	populateLog(t, &m, 5)
+
+	// Enter ModeSelect from Done.
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
+	}
+
+	// Esc must restore ModeDone, not ModeNormal.
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	next, _ = m.Update(escMsg)
+	m = next.(Model)
+
+	if m.keys.handler.Mode() != ModeDone {
+		t.Errorf("expected ModeDone after Esc from ModeSelect (entered from Done), got %v",
+			m.keys.handler.Mode())
+	}
+}
+
+// --- TP-104-12: Esc clears selection in the same Update call ---
+
+func TestModel_EscClearsImmediately_NotNextUpdate(t *testing.T) {
+	m := newSelectTestModel(t, ModeNormal)
+	populateLog(t, &m, 5)
+
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
+	}
+	if !m.log.sel.active {
+		t.Fatal("precondition: expected sel.active after v")
+	}
+
+	// Esc must clear the selection immediately — not on the next Update call.
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	next, _ = m.Update(escMsg)
+	m = next.(Model)
+
+	if m.log.sel.active || m.log.sel.committed {
+		t.Error("expected selection cleared immediately after Esc, got active/committed sel")
+	}
+	if m.keys.handler.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after Esc, got %v", m.keys.handler.Mode())
+	}
+}
+
+// --- TP-104-13: prevObservedMode double-guard is idempotent ---
+
+func TestModel_PrevObservedMode_DoubleGuard_Idempotent(t *testing.T) {
+	m := newSelectTestModel(t, ModeNormal)
+	populateLog(t, &m, 5)
+
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+
+	// Esc exits ModeSelect and clears selection immediately.
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	next, _ = m.Update(escMsg)
+	m = next.(Model)
+	if m.log.sel.active || m.log.sel.committed {
+		t.Fatal("precondition: expected sel cleared after Esc")
+	}
+
+	// Push a second message — the prevObservedMode guard must be a no-op.
+	next, _ = m.Update(keyMsg("j"))
+	m = next.(Model)
+
+	if m.log.sel.active || m.log.sel.committed {
+		t.Error("second Update must not re-activate sel; prevObservedMode guard must be idempotent")
+	}
+	if m.keys.handler.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after second Update, got %v", m.keys.handler.Mode())
+	}
+}
+
+// --- TP-104-14: LogLinesMsg in ModeSelect does not clear selection ---
+
+func TestModel_LogLinesMsg_InSelect_DoesNotClearSelection(t *testing.T) {
+	m := newSelectTestModel(t, ModeNormal)
+	populateLog(t, &m, 5)
+
+	// Enter ModeSelect.
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
+	}
+	if !m.log.sel.active {
+		t.Fatal("precondition: expected sel.active after v")
+	}
+
+	// Receive LogLinesMsg while in ModeSelect — must not clear the selection.
+	next, _ = m.Update(LogLinesMsg{Lines: []string{"new line"}})
+	m = next.(Model)
+
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Errorf("expected ModeSelect after LogLinesMsg, got %v", m.keys.handler.Mode())
+	}
+	if !m.log.sel.active {
+		t.Error("expected sel.active preserved after LogLinesMsg in ModeSelect")
+	}
+}
+
+// --- TP-104-15: Unknown key in ModeSelect is a no-op ---
+
+func TestHandleSelect_UnknownKey_NoOp(t *testing.T) {
+	m := newSelectTestModel(t, ModeNormal)
+	populateLog(t, &m, 5)
+
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
+	}
+
+	// Press an arbitrary key — must stay in ModeSelect with no side effects.
+	next, _ = m.Update(keyMsg("x"))
+	m = next.(Model)
+
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Errorf("expected ModeSelect after 'x', got %v", m.keys.handler.Mode())
+	}
+	if !m.log.sel.active {
+		t.Error("expected sel.active preserved after unknown key in ModeSelect")
+	}
+}
+
+// --- TP-104-16: Home/End in ModeSelect do not scroll the viewport ---
+
+func TestHandleSelect_HomeEnd_NotForwarded(t *testing.T) {
+	m := newSelectTestModel(t, ModeNormal)
+	populateLog(t, &m, 30)
+	// After populateLog, auto-scroll puts us at the bottom.
+	// Record that offset and verify Home does not change it.
+	offsetBefore := m.log.viewport.YOffset
+
+	// Enter ModeSelect.
+	next, _ := m.Update(keyMsg("v"))
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Fatalf("precondition: expected ModeSelect, got %v", m.keys.handler.Mode())
+	}
+
+	// Press Home — the routing guard must prevent the log viewport from scrolling.
+	homeMsg := tea.KeyMsg{Type: tea.KeyHome}
+	next, _ = m.Update(homeMsg)
+	m = next.(Model)
+
+	if m.log.viewport.YOffset != offsetBefore {
+		t.Errorf("Home in ModeSelect changed viewport YOffset: before=%d after=%d",
+			offsetBefore, m.log.viewport.YOffset)
+	}
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Errorf("expected ModeSelect after Home, got %v", m.keys.handler.Mode())
+	}
+}
+
 // Mode.String returns a human-readable mode name for test output.
 func (m Mode) String() string {
 	switch m {
