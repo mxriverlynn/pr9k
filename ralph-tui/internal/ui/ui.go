@@ -30,12 +30,12 @@ const (
 const AppTitle = "Power-Ralph.9000"
 
 const (
-	NormalShortcuts    = "↑/k up  ↓/j down  n next step  q quit"
-	ErrorShortcuts     = "c continue  r retry  q quit"
-	QuitConfirmPrompt  = "Quit " + AppTitle + "? (y/n, esc to cancel)"
-	NextConfirmPrompt  = "Skip current step? (y/n, esc to cancel)"
-	DoneShortcuts      = "q quit"
-	QuittingLine       = "Quitting..."
+	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
+	ErrorShortcuts    = "c continue  r retry  q quit"
+	QuitConfirmPrompt = "Quit " + AppTitle + "? (y/n, esc to cancel)"
+	NextConfirmPrompt = "Skip current step? (y/n, esc to cancel)"
+	DoneShortcuts     = "q quit"
+	QuittingLine      = "Quitting..."
 )
 
 // KeyHandler is a state machine that tracks keyboard mode
