@@ -357,11 +357,117 @@ func (m logModel) View() string {
 	return m.viewport.View()
 }
 
+// resolveVisualPos fills in rawIdx, rawOffset, and (clamped) col on p by
+// looking up the visual line at p.visualRow. Returns (p, false) when
+// p.visualRow is out of range or the backing raw line is invalid.
+// p.col is clamped to [0, rowWidth] so that clicks past the end of a short
+// row are anchored at the row's last column rather than overflowing into
+// the next raw line's territory.
+func (m logModel) resolveVisualPos(p pos) (pos, bool) {
+	if p.visualRow < 0 || p.visualRow >= len(m.visualLines) {
+		return p, false
+	}
+	vl := m.visualLines[p.visualRow]
+	p.rawIdx = vl.rawIdx
+	if vl.rawIdx < 0 || vl.rawIdx >= len(m.lines) {
+		return p, false
+	}
+	rowWidth := lipgloss.Width(vl.text)
+	if p.col < 0 {
+		p.col = 0
+	}
+	if p.col > rowWidth {
+		p.col = rowWidth
+	}
+	p.rawOffset = visualColToRawOffset(m.lines[vl.rawIdx], vl.rawOffset, p.col)
+	return p, true
+}
+
+// HandleMouse applies a single translated mouse event to the selection state.
+// p is a viewport-space position (visualRow, col) produced by mouseToViewport
+// or by manual coordinate arithmetic for out-of-bounds auto-scroll events.
+// action is one of tea.MouseActionPress, tea.MouseActionMotion, or
+// tea.MouseActionRelease. shift is the Shift modifier from the mouse event.
+//
+// Press (no shift): clears any existing selection and anchors a new one at p
+// with active=true. If shift is set and a non-empty committed selection exists,
+// only the cursor is moved to p (shift-click extend).
+//
+// Motion: extends the cursor endpoint only when active=true. Auto-scrolls one
+// line per event when the pointer is above or below the visible window.
+//
+// Release: commits an active selection (active=false, committed=true).
+func (m logModel) HandleMouse(p pos, action tea.MouseAction, shift bool) (logModel, tea.Cmd) {
+	switch action {
+	case tea.MouseActionPress:
+		resolved, ok := m.resolveVisualPos(p)
+		if !ok {
+			return m, nil
+		}
+		if shift && m.sel.committed && m.sel.visible() {
+			// Shift-click: extend the committed selection's cursor to the click
+			// cell; the anchor stays fixed.
+			m.sel.cursor = resolved
+		} else {
+			// Bare press: clear existing selection and anchor a new one at the
+			// click cell. This also re-anchors when already in ModeSelect via v.
+			m.sel = selection{anchor: resolved, cursor: resolved, active: true}
+		}
+		m.viewport.SetContent(m.renderContent())
+
+	case tea.MouseActionMotion:
+		if !m.sel.active {
+			return m, nil
+		}
+		// Auto-scroll during drag: one line per motion event. Fires even when
+		// the pointer is outside the viewport content area (visualRow may be
+		// negative or past len(visualLines)).
+		if p.visualRow < m.viewport.YOffset {
+			m.viewport.SetYOffset(m.viewport.YOffset - 1)
+		} else if p.visualRow > m.viewport.YOffset+m.viewport.Height-1 {
+			m.viewport.SetYOffset(m.viewport.YOffset + 1)
+		}
+		// Clamp visual row to the valid range before resolving raw coords.
+		clampedRow := p.visualRow
+		if clampedRow < 0 {
+			clampedRow = 0
+		}
+		if len(m.visualLines) > 0 && clampedRow >= len(m.visualLines) {
+			clampedRow = len(m.visualLines) - 1
+		}
+		clampedP := pos{visualRow: clampedRow, col: p.col}
+		if resolved, ok := m.resolveVisualPos(clampedP); ok {
+			m.sel.cursor = resolved
+		}
+		m.viewport.SetContent(m.renderContent())
+
+	case tea.MouseActionRelease:
+		if !m.sel.active {
+			return m, nil
+		}
+		// Commit the selection regardless of where the pointer was released.
+		// The cursor position was already updated by the preceding Motion events.
+		m.sel.active = false
+		m.sel.committed = true
+		m.viewport.SetContent(m.renderContent())
+	}
+
+	return m, nil
+}
+
 // SetSize resizes the viewport. If the width changed, content is re-wrapped and
 // the scroll position is restored to the same raw line (including intra-line
 // segment offset) that was at the top of the viewport before the resize.
 // Height-only changes skip the rewrap step.
 func (m *logModel) SetSize(width, height int) {
+	// Mid-drag resize: force-commit the active selection before rewrapping so
+	// the selection state remains valid. Raw coordinates (rawIdx/rawOffset) are
+	// preserved by the rewrap scroll-restoration logic below.
+	if m.sel.active {
+		m.sel.active = false
+		m.sel.committed = true
+	}
+
 	widthChanged := width != m.viewport.Width
 
 	m.viewport.Width = width

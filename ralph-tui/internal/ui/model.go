@@ -105,6 +105,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// that was active when this key arrived, not the post-dispatch mode.
 		modeBeforeKey := m.keys.handler.Mode()
 
+		// Clear the "just released" committed-shortcut flag on any key in ModeSelect.
+		// The flag is set by a mouse drag release and cleared on the next event
+		// so that SelectShortcuts is restored when the user resumes keyboard control.
+		if modeBeforeKey == ModeSelect {
+			m.keys.handler.mu.Lock()
+			if m.keys.handler.selectJustReleased {
+				m.keys.handler.selectJustReleased = false
+				m.keys.handler.updateShortcutLineLocked()
+			}
+			m.keys.handler.mu.Unlock()
+		}
+
 		var kcmd tea.Cmd
 		m.keys, kcmd = m.keys.Update(msg)
 		cmds = append(cmds, kcmd)
@@ -168,12 +180,97 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, lcmd)
 
 	case tea.MouseMsg:
-		// Forward mouse events (wheel up/down, etc.) to the log viewport.
-		// bubbles/viewport enables MouseWheelEnabled by default, so wheel
-		// press events scroll the log body by MouseWheelDelta (3) lines.
-		var lcmd tea.Cmd
-		m.log, lcmd = m.log.Update(msg)
-		cmds = append(cmds, lcmd)
+		// On any mouse event while in ModeSelect, clear the "just released"
+		// committed-shortcut flag so that SelectShortcuts is restored before
+		// the new event is processed (a subsequent press or wheel after a drag
+		// release should not keep showing SelectCommittedShortcuts).
+		if m.keys.handler.Mode() == ModeSelect {
+			m.keys.handler.mu.Lock()
+			if m.keys.handler.selectJustReleased {
+				m.keys.handler.selectJustReleased = false
+				m.keys.handler.updateShortcutLineLocked()
+			}
+			m.keys.handler.mu.Unlock()
+		}
+
+		// Wheel events: always forward to the viewport for scrolling in any mode.
+		// The viewport's built-in wheel handler scrolls MouseWheelDelta (3) lines.
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown ||
+			msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.Update(msg)
+			cmds = append(cmds, lcmd)
+		} else {
+			// Left button press / motion / release: handle for text selection.
+			// logTopRow is the 0-indexed terminal row where the viewport content
+			// begins: 1 (top border) + gridRows (checkbox grid) + 1 (hrule).
+			// logLeftCol is 1 (inside the left border character).
+			gridRows := len(m.header.header.Rows)
+			logTopRow := gridRows + 2
+			logLeftCol := 1
+
+			currentMode := m.keys.handler.Mode()
+
+			switch msg.Action {
+			case tea.MouseActionPress:
+				// Ignore left-press in modes where selection is not meaningful.
+				if currentMode == ModeError || currentMode == ModeQuitConfirm ||
+					currentMode == ModeNextConfirm || currentMode == ModeQuitting {
+					break
+				}
+				p, ok := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
+				if !ok {
+					break
+				}
+				var lcmd tea.Cmd
+				m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+				cmds = append(cmds, lcmd)
+				// Transition from Normal or Done to ModeSelect on left-press.
+				// ModeSelect (entered via v) stays in ModeSelect — bare click
+				// re-anchors the selection cursor (handled inside HandleMouse).
+				if currentMode == ModeNormal || currentMode == ModeDone {
+					m.keys.handler.mu.Lock()
+					m.keys.handler.prevMode = currentMode
+					m.keys.handler.mode = ModeSelect
+					m.keys.handler.updateShortcutLineLocked()
+					m.keys.handler.mu.Unlock()
+				}
+
+			case tea.MouseActionMotion:
+				// Extend the selection during an active drag. Compute the visual
+				// row without clamping to the viewport bounds so that auto-scroll
+				// can fire when the pointer moves above or below the content area.
+				if m.log.sel.active {
+					visualRow := m.log.viewport.YOffset + (msg.Y - logTopRow)
+					col := msg.X - logLeftCol
+					if col < 0 {
+						col = 0
+					}
+					p := pos{visualRow: visualRow, col: col}
+					var lcmd tea.Cmd
+					m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+					cmds = append(cmds, lcmd)
+				}
+
+			case tea.MouseActionRelease:
+				// Commit any active drag selection.
+				if m.log.sel.active {
+					p, _ := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
+					var lcmd tea.Cmd
+					m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+					cmds = append(cmds, lcmd)
+					// Switch the shortcut footer to SelectCommittedShortcuts so
+					// the user sees "y copy  esc cancel" immediately after release.
+					// The flag is cleared on the next key or mouse event.
+					if m.keys.handler.Mode() == ModeSelect {
+						m.keys.handler.mu.Lock()
+						m.keys.handler.selectJustReleased = true
+						m.keys.handler.updateShortcutLineLocked()
+						m.keys.handler.mu.Unlock()
+					}
+				}
+			}
+		}
 
 	case headerStepStateMsg, headerPhaseStepsMsg:
 		m.header = m.header.apply(msg)
