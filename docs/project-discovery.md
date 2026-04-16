@@ -28,7 +28,7 @@
 - Package manager: Go modules
 - Dependency manifest: `ralph-tui/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/ralph-tui`
-- Current version: `0.3.1` (single source of truth: `ralph-tui/internal/version/version.go`)
+- Current version: `0.4.1` (single source of truth: `ralph-tui/internal/version/version.go`)
 - External dependencies: `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
@@ -79,6 +79,7 @@
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
+  - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
 - **Coding Standards** — Conventions governing Go code in ralph-tui:
   - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md), [Lint and Tooling](coding-standards/lint-and-tooling.md), [Versioning](coding-standards/versioning.md)
 - [ralph-tui Plan](plans/ralph-tui.md) — Original specification and design rationale

@@ -124,38 +124,47 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
                   ┌─────────────┐
                   │ ModeNormal  │
                   │             │
-                  │ n → skip    │
-                  │ q ──────────┼──────┐
-                  └──────┬──────┘      │
-                         │             │
-                   step fails          │
-                         │             │
-                         ▼             ▼
-                  ┌─────────────┐  ┌───────────────────┐
-                  │ ModeError   │  │ ModeQuitConfirm   │
-                  │             │  │                   │
-                  │ c → continue│  │ y → ModeQuitting  │
-                  │ r → retry   │  │     + ForceQuit   │
-                  │ q ──────────┼─▶│ n, Esc → prevMode │
-                  └─────────────┘  └─────────┬─────────┘
-                                             │ y
-                                             ▼
-                                    ┌─────────────────┐
-                                    │  ModeQuitting   │
-                                    │                 │
-                                    │ footer shows    │
-                                    │ "Quitting..."   │
-                                    │ (terminal)      │
-                                    └─────────────────┘
+                  │ n ──────────┼──────────────────────┐
+                  │ q ──────────┼──────┐               │
+                  └──────┬──────┘      │               │
+                         │             │               │
+                   step fails          │               │
+                         │             │               ▼
+                         ▼             ▼       ┌────────────────────┐
+                  ┌─────────────┐  ┌──────────────────┐│ ModeNextConfirm  │
+                  │ ModeError   │  │ ModeQuitConfirm  ││                  │
+                  │             │  │                  ││ y → cancel step  │
+                  │ c → continue│  │ y → ModeQuitting ││     + prevMode   │
+                  │ r → retry   │  │     + ForceQuit  ││ n, Esc → prevMode│
+                  │ q ──────────┼─▶│ n, Esc → prevMode│└────────────────────┘
+                  └─────────────┘  └────────┬─────────┘
+                                            │ y
+                                            ▼
+                                   ┌─────────────────┐
+                                   │  ModeQuitting   │
+                                   │                 │
+                                   │ footer shows    │
+                                   │ "Quitting..."   │
+                                   │ (terminal)      │
+                                   └─────────────────┘
+
+  Normal completion:
+    → Run returns after writing the completion summary
+    → workflow goroutine enters ModeDone ("q quit" footer)
+    → user reviews output, then presses q → y to exit
+
+                  ┌─────────────┐
+                  │  ModeDone   │
+                  │             │
+                  │ q ──────────┼──▶ ModeQuitConfirm
+                  │ (only key)  │    → y → tea.QuitMsg
+                  └─────────────┘
 
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
-    (unified with the QuitConfirm 'y' path)
-
-  Normal completion:
-    → Run returns after writing the completion summary
-    → workflow goroutine restores the terminal and os.Exit(0)s
+    (unified with the QuitConfirm 'y' path;
+     active in all modes including ModeDone)
 ```
 
 ## Features
@@ -190,13 +199,13 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built rounded frame (no `lipgloss.Border` wrapper, so the two internal horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders). The current iteration/issue is embedded into the top-border title — `Power-Ralph.9000 — Iteration N/M — Issue #<id>` in bounded mode, or `Power-Ralph.9000 — Iteration N — Issue #<id>` when running unbounded (`--iterations 0`); the same string is set as the OS window title via `tea.SetWindowTitle`. The app name `Power-Ralph.9000` (from the `AppTitle` constant) renders green and the iteration detail after the ` — ` separator renders white. Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is rendered in white and is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback. D23 heartbeat: when no stream-json event arrives for ≥15 s during an active claude step, the iteration title appends `  ⋯ thinking (Ns)`; the suffix updates in-place each second and is cleared as soon as the next event arrives. The heartbeat reader is installed via `StatusHeader.SetHeartbeatReader(runner)` in `main.go` before the model is constructed; a separate 1-second ticker goroutine in `main.go` dispatches `HeartbeatTickMsg` via `program.Send` — `Model.Init()` returns nil and the ticker is not owned by the Bubble Tea event loop. `Model.Update()` delegates `HeartbeatTickMsg` to `StatusHeader.HandleHeartbeatTick()`. The `Runner` in `workflow.go` implements `HeartbeatReader` by exposing `HeartbeatSilence() (time.Duration, bool)` under `processMu`.
 
-**Package:** `internal/ui/` (`header.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `terminal.go`)
+**Package:** `internal/ui/` (`header.go`, `keys.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `terminal.go`)
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A four-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeQuitting`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` skips the current step and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. When the workflow finishes normally, `Run` returns on its own and the workflow goroutine exits the process directly — no "press any key to exit" state. Each mode displays its own shortcut bar text.
+A six-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeQuitting`) that routes keypresses and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`) and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` (footer shows `q quit`) so the user can review output before quitting via `q` → `y`. Each mode displays its own shortcut bar text.
 
-**Package:** `internal/ui/` (`ui.go`)
+**Package:** `internal/ui/` (`ui.go`, `keys.go`)
 
 ### [Signal Handling & Shutdown](features/signal-handling.md)
 
@@ -259,8 +268,11 @@ cmd/ralph-tui/main.go
     └── internal/workflow      (subprocess execution, run loop)
             ├── internal/claudestream  (stream-json pipeline)
             ├── internal/logger
+            ├── internal/preflight
+            ├── internal/sandbox
             ├── internal/steps
-            └── internal/ui
+            ├── internal/ui
+            └── internal/vars
 
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)
@@ -280,6 +292,7 @@ internal/claudestream          (stream-json parsing, rendering, aggregation)
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
+  - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
 - [ralph-tui Plan](plans/ralph-tui.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration
 - **Coding Standards** — Conventions that govern ralph-tui implementation:

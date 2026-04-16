@@ -29,6 +29,10 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
 		return m.handleError(key)
 	case ModeQuitConfirm:
 		return m.handleQuitConfirm(key)
+	case ModeNextConfirm:
+		return m.handleNextConfirm(key)
+	case ModeDone:
+		return m.handleDone(key)
 	case ModeQuitting:
 		// All keys silently ignored so a user mashing keys during shutdown
 		// can't inject a second ActionQuit or retrigger the cancel hook.
@@ -44,15 +48,12 @@ func (m keysModel) handleNormal(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		if cancel == nil {
 			return m, nil
 		}
-		// Offload the 3-second blocking Terminate call to a goroutine via
-		// tea.Cmd so the Update goroutine is not frozen while waiting for
-		// SIGTERM / SIGKILL to propagate. We don't need a result message —
-		// the workflow goroutine's next RunStep will observe WasTerminated
-		// and unwind on its own.
-		return m, func() tea.Msg {
-			cancel()
-			return nil // Bubble Tea ignores nil messages
-		}
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeNextConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+		return m, nil
 	case "q":
 		m.handler.mu.Lock()
 		m.handler.prevMode = m.handler.mode
@@ -85,6 +86,42 @@ func (m keysModel) handleError(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	return m, nil
 }
 
+func (m keysModel) handleNextConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {
+	switch key.String() {
+	case "y":
+		cancel := m.handler.Cancel()
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+		if cancel == nil {
+			return m, nil
+		}
+		return m, func() tea.Msg {
+			cancel()
+			return nil
+		}
+	case "n", "esc":
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	}
+	return m, nil
+}
+
+func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
+	switch key.String() {
+	case "q":
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeQuitConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	}
+	return m, nil
+}
+
 func (m keysModel) handleQuitConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {
 	switch key.String() {
 	case "y":
@@ -92,10 +129,12 @@ func (m keysModel) handleQuitConfirm(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		// tea.Cmd so the Update goroutine is not frozen. ForceQuit sets
 		// ModeQuitting internally under h.mu, so the footer updates on the
 		// next tick. ForceQuit is idempotent, so a second call from the
-		// signal path racing with y-confirm is harmless.
+		// signal path racing with y-confirm is harmless. Return tea.QuitMsg
+		// so the TUI exits even when there is no workflow goroutine to call
+		// program.Quit() (e.g. ModeDone).
 		return m, func() tea.Msg {
 			m.handler.ForceQuit()
-			return nil
+			return tea.QuitMsg{}
 		}
 	case "n", "esc":
 		m.handler.mu.Lock()
