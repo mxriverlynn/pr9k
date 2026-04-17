@@ -1,5 +1,10 @@
 {
   "env": ["GH_TOKEN"],
+  "statusLine": {
+    "type": "command",
+    "command": "scripts/statusline",
+    "refreshIntervalSeconds": 5
+  },
   "initialize": [
     { "name": "Splash",          "isClaude": false, "command": ["cat", "{{WORKFLOW_DIR}}/ralph-art.txt"] },
     { "name": "Get GitHub user", "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
