@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-16
+- **Last Updated:** 2026-04-17
 - **Authors:**
   - River Bailey
 
@@ -204,6 +204,35 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
 }
 // ... RenderIterationLine, SetPhaseSteps, etc. similarly
 ```
+
+### Mode-Change Status-Line Trigger (WithModeTrigger)
+
+`WithModeTrigger(fn func()) Model` installs a mode-transition callback on the `Model`. The callback fires exactly once per `Update` call whenever the mode changes — detected by comparing the current mode to `prevObservedMode`, which stores the mode observed at the end of the previous `Update`. This covers all three ways a mode can change: keyboard input, mouse input, and external `h.SetMode` calls from the orchestration goroutine.
+
+```go
+func (m Model) WithModeTrigger(fn func()) Model {
+    m.triggerFn = fn
+    return m
+}
+```
+
+The trigger fires at the end of `Update`, after all dispatch:
+
+```go
+newMode := m.keys.handler.Mode()
+if newMode != m.prevObservedMode && m.triggerFn != nil {
+    m.triggerFn()
+}
+m.prevObservedMode = newMode
+```
+
+`prevObservedMode` serves double duty: it also drives the ModeSelect external-mode-change guard (clearing `logModel.sel` when the orchestration goroutine sets a new mode while a selection is visible).
+
+**`tea.QuitMsg` exception:** `tea.QuitMsg` short-circuits before the trigger check (`model.go:326-327`). Any mode transition that emits `tea.Quit` is reflected by the preceding `Update`'s trigger, not by the `QuitMsg` handler.
+
+**Wiring:** `WithModeTrigger` follows the same returning-`Model` builder pattern as `WithHeartbeat`. In the current codebase, `main.go` does not yet wire a real Runner via `WithModeTrigger` — instantiation is deferred to a follow-up issue. Both `fn == nil` and `cfg.Runner == nil` are safe.
+
+**Non-blocking requirement:** `fn` must not block. `Runner.Trigger()` satisfies this via a buffered channel (capacity 4) with drop-on-full semantics — a slow status-line script cannot back-pressure the Bubble Tea goroutine.
 
 ### Heartbeat Indicator (D23)
 
@@ -656,7 +685,7 @@ if len(stepFile.Initialize) > 0 {
 
 - `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for every log-body helper: StepSeparator / RetryStepSeparator formatting, StepStartBanner (ASCII/empty/Unicode rune-count assertions), PhaseBanner (width matching, clamp on non-positive width, `═` fill), CaptureLog (simple/empty/multi-line-escaped/embedded-quotes), CompletionSummary (format exactness)
-- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds
+- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds; `WithModeTrigger` tests: `TestModel_ModeTrigger_NormalToQuitConfirm` (1 trigger on `q`), `TestModel_ModeTrigger_ErrorToQuitConfirm` (1 trigger after seeding error mode), `TestModel_ModeTrigger_NextConfirmToNormal` (1 trigger on cancel), `TestModel_ModeTrigger_SelectToNormal` (1 trigger on Esc), `TestModel_ModeTrigger_MousePressNormalToSelect` (1 trigger on left-press), `TestModel_ModeTrigger_NoFireOnSameMode` (0 triggers for no-op keys), `TestModel_ModeTrigger_NilTriggerFn_NoPanic` (nil fn safe), `TestModel_ModeTrigger_ExactlyOnePerTransition` (cumulative count correct across two transitions)
 - `ralph-tui/internal/ui/header_test.go` — D23 heartbeat unit tests on `StatusHeader` directly: `TestStatusHeader_HandleHeartbeatTick_NilReader` (clears suffix, no-op), `TestStatusHeader_HandleHeartbeatTick_ShowsSuffix` (≥15s silence → suffix set), `TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold` (<15s → no suffix), `TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive` (inactive → suffix cleared), `TestStatusHeader_HandleHeartbeatTick_CallsReader` (reader call count incremented), `TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables` (nil after non-nil → suffix cleared on next tick)
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 - `ralph-tui/internal/ui/selection_test.go` — 39 tests across 8 categories: `normalized()` edge cases (same-position, rawIdx ordering priority), `extractText` edge cases (three-or-more lines, full raw line, empty middle line, boundary offsets), `extractText` bounds guards (negative rawIdx, out-of-range rawIdx/rawOffset, reversed same-line offsets — 7 guard paths), `mouseToViewport` edge cases (exact top/bottom boundary, negative col no-panic), `visualColToRawOffset` edge cases (col=0 returns segmentStart, empty rawLine, segmentStart at end, multi-byte grapheme "é"), `contains()` edge cases (empty selection, reversed anchor/cursor, single-row col=0 included), `visible()` edge cases (active+committed simultaneously, committed reversed anchor/cursor), input immutability (lines slice not mutated after `extractText`), zero-value struct safety (`pos{}` and `selection{}` don't panic in any function)

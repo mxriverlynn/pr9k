@@ -2,7 +2,7 @@
 
 Owns and resolves runtime variable state for a ralph-tui run, providing two scoped tables (persistent and iteration) plus a set of built-in variables seeded from CLI flags and updated by the orchestrator.
 
-- **Last Updated:** 2026-04-10
+- **Last Updated:** 2026-04-17
 - **Authors:**
   - River Bailey
 
@@ -144,6 +144,20 @@ func (vt *VarTable) SetStep(num, count int, name string)
 
 Orchestrator-facing setters that update the built-in variables in the persistent table.
 
+### AllCaptures
+
+```go
+func (vt *VarTable) AllCaptures(phase Phase) map[string]string
+```
+
+Returns a defensive copy of all non-built-in (user-defined) variables visible in the given phase. Reserved built-in names (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) are excluded from the result.
+
+Resolution mirrors `Get`:
+- During `Iteration`: both the persistent and iteration tables contribute; iteration entries shadow persistent ones.
+- During `Initialize` or `Finalize`: only the persistent table is included.
+
+Used by `workflow.buildState` to populate the `Captures` field of `statusline.State` before each `PushState` call. Callers own the returned map — mutations do not affect the VarTable.
+
 ## Substitution Engine
 
 `vars.Substitute` expands `{{VAR_NAME}}` tokens in a string using the variable values from a `VarTable`:
@@ -197,6 +211,7 @@ These are programming errors, not runtime conditions — the step validator (iss
 - Empty-string returns for unknown variables
 - Reserved-name protection (`Bind` panics)
 - Finalize-phase `Bind` panic
+- `AllCaptures`: reserved names excluded, non-nil map on fresh table, defensive copy (mutation does not affect VarTable), iteration-scoped entries shadow persistent ones, iteration entries excluded after `SetPhase(Finalize)`, reserved names excluded even after `SetIteration`/`SetStep`
 
 `Substitute` / `ExtractReferences` covered behaviors:
 - Token replacement using iteration and persistent scopes

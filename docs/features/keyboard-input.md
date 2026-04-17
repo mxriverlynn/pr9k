@@ -2,7 +2,7 @@
 
 A seven-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
-- **Last Updated:** 2026-04-16
+- **Last Updated:** 2026-04-17
 - **Authors:**
   - River Bailey
 
@@ -332,6 +332,14 @@ func (h *KeyHandler) ShortcutLine() string {
 ```
 
 The shortcut line is updated internally by `updateShortcutLineLocked()` whenever the mode changes. `Model.View()` calls `ShortcutLine()` directly to read the current text for the footer.
+
+### SelectJustReleased
+
+```go
+func (h *KeyHandler) SelectJustReleased() bool
+```
+
+A mutex-protected getter that reports whether a mouse drag selection was just committed (the mouse was released, producing a `SelectCommittedShortcuts` footer). The flag is set inside `updateShortcutLineLocked` when the mode is `ModeSelect` and a release event committed the drag, and is cleared on the next key or mouse event via `clearJustReleasedLocked()`. Used by tests to assert the committed-shortcut path without reaching through unexported fields.
 
 ### Dual-Routing of tea.KeyMsg
 
