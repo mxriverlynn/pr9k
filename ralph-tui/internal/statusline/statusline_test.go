@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -473,6 +475,23 @@ func runTestHelper(mode string) {
 		}
 		time.Sleep(50 * time.Millisecond)
 		fmt.Println("counted")
+	case "ansi-multiline":
+		// emit a line with ANSI escape sequences and CR, followed by a second line
+		fmt.Print("  pre\x1b[2Jclean\r\nignored\n")
+	case "blank-lines":
+		// emit leading blank/whitespace-only lines followed by content
+		fmt.Print("\n\n  \nreal-value\nsecond-line\n")
+	case "echo-stdin":
+		// read JSON payload from stdin, echo the field named by HELPER_ECHO_FIELD
+		data, _ := io.ReadAll(os.Stdin)
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			os.Exit(1)
+		}
+		field := os.Getenv("HELPER_ECHO_FIELD")
+		if v, ok := m[field]; ok {
+			fmt.Println(v)
+		}
 	}
 	os.Exit(0)
 }
@@ -903,4 +922,307 @@ func readLogFiles(dir string) ([]string, error) {
 		}
 	}
 	return lines, nil
+}
+
+// =============================================================================
+// New Runner tests (T1–T13)
+// =============================================================================
+
+// T1 — New(nil, ...) must return a no-op runner.
+func TestRunner_NewWithNilCfgIsNoOp(t *testing.T) {
+	r := statusline.New(nil, "", "", nil)
+	if r.Enabled() {
+		t.Error("Enabled() should be false for nil-config runner")
+	}
+}
+
+// T2 — New with an unresolvable bare command name must return a no-op runner.
+func TestRunner_NewWithUnresolvableCommandIsNoOp(t *testing.T) {
+	r := statusline.New(&statusline.Config{Command: "definitely-not-on-path-xyz"}, "", "", nil)
+	if r.Enabled() {
+		t.Error("Enabled() should be false for unresolvable command")
+	}
+}
+
+// T3 — Script output containing ANSI escapes and CR: Sanitize must be wired
+// into exec so the cached value is clean.
+func TestRunner_SanitizedOutput(t *testing.T) {
+	runner := newRunner(t, "ansi-multiline", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	got := runner.LastOutput()
+	// ANSI erase-display and CR must be stripped; leading spaces and text kept.
+	if !strings.Contains(got, "preclean") {
+		t.Errorf("LastOutput() = %q, want it to contain %q (sanitized)", got, "preclean")
+	}
+	if strings.ContainsAny(got, "\x1b\r") {
+		t.Errorf("LastOutput() = %q still contains raw control bytes", got)
+	}
+}
+
+// T4 — Leading blank/whitespace-only lines: firstNonEmptyLine must skip them.
+func TestRunner_FirstNonEmptyLineFromMultiLineStdout(t *testing.T) {
+	runner := newRunner(t, "blank-lines", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := runner.LastOutput(); got != "real-value" {
+		t.Errorf("LastOutput() = %q, want %q", got, "real-value")
+	}
+}
+
+// T5 — PushState → BuildPayload → cmd.Stdin: the injected state reaches the
+// script as a JSON payload on stdin.
+func TestRunner_PayloadDeliveredToScriptStdin(t *testing.T) {
+	runner := newRunner(t, "echo-stdin",
+		map[string]string{"HELPER_ECHO_FIELD": "phase"},
+		intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+
+	runner.PushState(statusline.State{Phase: "iteration"})
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := runner.LastOutput(); got != "iteration" {
+		t.Errorf("LastOutput() = %q, want %q", got, "iteration")
+	}
+}
+
+// T6 — SetModeGetter: the getter is invoked per run and its value reaches the
+// script's stdin payload.
+func TestRunner_ModeGetterInvokedPerRun(t *testing.T) {
+	var called int
+	runner := newRunner(t, "echo-stdin",
+		map[string]string{"HELPER_ECHO_FIELD": "mode"},
+		intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	runner.SetModeGetter(func() string {
+		called++
+		return "error"
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := runner.LastOutput(); got != "error" {
+		t.Errorf("LastOutput() = %q, want %q", got, "error")
+	}
+	if called == 0 {
+		t.Error("modeGetter was never called")
+	}
+}
+
+// T7 — SetSender is called exactly once after a single successful Trigger.
+func TestRunner_SenderInvokedOnSuccess(t *testing.T) {
+	runner := newRunner(t, "output",
+		map[string]string{"HELPER_OUTPUT": "hi"},
+		intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	var mu sync.Mutex
+	var calls int
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 1 {
+		t.Errorf("sender called %d times, want 1", got)
+	}
+}
+
+// T8 — SetSender must not be called when the script exits non-zero.
+func TestRunner_SenderNotInvokedOnFailure(t *testing.T) {
+	runner := newRunner(t, "exit1", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	var mu sync.Mutex
+	var calls int
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("sender called %d times after non-zero exit, want 0", got)
+	}
+}
+
+// T9 — Shutdown is idempotent: calling it twice must not panic.
+func TestRunner_ShutdownIdempotent(t *testing.T) {
+	runner := newRunner(t, "output",
+		map[string]string{"HELPER_OUTPUT": "x"},
+		intPtr(0))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+
+	runner.Shutdown()
+	runner.Shutdown() // must not panic or block
+}
+
+// T10 — Shutdown before Start must not panic (r.cancel is nil).
+func TestRunner_ShutdownBeforeStart(t *testing.T) {
+	runner := newRunner(t, "output",
+		map[string]string{"HELPER_OUTPUT": "x"},
+		intPtr(0))
+	runner.Shutdown() // cancel is nil — must not panic
+}
+
+// T11 — When stdout exceeds 8 KB, the logger receives a truncation message.
+func TestRunner_BoundedStdoutLogsTruncation(t *testing.T) {
+	t.Setenv("STATUSLINE_TEST_HELPER", "bigout")
+
+	tmpDir := t.TempDir()
+	log, err := logger.NewLogger(tmpDir)
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+
+	cfg := &statusline.Config{Command: os.Args[0], RefreshIntervalSeconds: intPtr(0)}
+	runner := statusline.New(cfg, "", tmpDir, log)
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	time.Sleep(500 * time.Millisecond)
+	_ = log.Close()
+
+	entries, err := readLogFiles(tmpDir)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e, "[statusline]") && strings.Contains(e, "stdout truncated at 8 KB") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("[statusline] truncation log entry not found; log lines: %v", entries)
+	}
+}
+
+// T12 — Cancelling the parent context stops the worker without calling Shutdown.
+func TestRunner_ParentContextCancelStopsWorker(t *testing.T) {
+	runner := newRunner(t, "output",
+		map[string]string{"HELPER_OUTPUT": "x"},
+		intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	runner.Start(ctx)
+	time.Sleep(20 * time.Millisecond) // let worker goroutine start
+
+	cancel()
+
+	ok := waitCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		return runtime.NumGoroutine() <= before+1
+	})
+	if !ok {
+		t.Errorf("worker did not drain within 500 ms after parent context cancel: before=%d after=%d",
+			before, runtime.NumGoroutine())
+	}
+}
+
+// T13 — Relative command path is joined with workflowDir and executed.
+func TestRunner_RelativePathResolution(t *testing.T) {
+	workflowDir := t.TempDir()
+	scriptsDir := filepath.Join(workflowDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+	// Copy the running test binary to scripts/helper so the subprocess helper
+	// mechanism (STATUSLINE_TEST_HELPER) works at the resolved path.
+	helperPath := filepath.Join(scriptsDir, "helper")
+	data, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatalf("read test binary: %v", err)
+	}
+	if err := os.WriteFile(helperPath, data, 0o755); err != nil {
+		t.Fatalf("write helper binary: %v", err)
+	}
+
+	t.Setenv("STATUSLINE_TEST_HELPER", "output")
+	t.Setenv("HELPER_OUTPUT", "relative-ok")
+
+	cfg := &statusline.Config{
+		Command:                "scripts/helper",
+		RefreshIntervalSeconds: intPtr(0),
+	}
+	runner := statusline.New(cfg, workflowDir, t.TempDir(), nil)
+	t.Cleanup(runner.Shutdown)
+
+	if !runner.Enabled() {
+		t.Fatal("runner should be enabled for relative path within workflowDir")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := runner.LastOutput(); got != "relative-ok" {
+		t.Errorf("LastOutput() = %q, want %q", got, "relative-ok")
+	}
 }
