@@ -23,7 +23,7 @@ Key implementation files:
 - `ralph-tui/cmd/ralph-tui/main.go` — wiring (construct Runner, wire sender, set mode getter)
 - `ralph-tui/internal/workflow/run.go` — push closure at every VarTable mutation site
 
-See [`docs/features/statusline.md`](statusline.md) for the package-level reference (Runner API, State, BuildPayload, Sanitize).
+See [`docs/code-packages/statusline.md`](../code-packages/statusline.md) for the package-level reference (Runner API, State, BuildPayload, Sanitize).
 
 ## Configuration
 

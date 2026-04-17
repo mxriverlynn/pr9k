@@ -348,10 +348,10 @@ The two version tests read the expected string from `version.Version` rather tha
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Decision rationale for splitting the single `--project-dir` flag into `--workflow-dir` + `--project-dir`
 - [Versioning](../coding-standards/versioning.md) — Single-source-of-truth rule for `version.Version`, what counts as ralph-tui's public API (CLI flags, `--version` output format), and how to bump the version
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How WorkflowDir affects config and prompt file resolution
-- [Step Definitions & Prompt Building](step-definitions.md) — How WorkflowDir resolves config and prompt files
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — How WorkflowDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
 - [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries WorkflowDir and Iterations into the Run loop
 - [TUI Status Header & Log Display](tui-display.md) — Where the `version.Version` constant is rendered as the footer label
-- [File Logging](file-logging.md) — How ProjectDir determines the log file location
+- [File Logging](../code-packages/logger.md) — How ProjectDir determines the log file location
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including CLI design decisions
 - [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for symlink-safe path resolution

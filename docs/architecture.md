@@ -192,7 +192,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
 
 ## Features
 
-Each feature is documented in detail in its own file under [`docs/features/`](features/).
+Each feature is documented in detail under [`docs/features/`](features/) (user-facing behavior) or [`docs/code-packages/`](code-packages/) (per-Go-package API reference).
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
@@ -200,7 +200,7 @@ Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir
 
 **Packages:** `internal/cli/`, `internal/version/`
 
-### [Step Definitions & Prompt Building](features/step-definitions.md)
+### [Step Definitions & Prompt Building](code-packages/steps.md)
 
 Loads workflow step definitions from `ralph-steps.json`, which contains initialize, iteration, and finalization step groups. Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and applies `{{VAR}}` substitution using the active `VarTable` and phase.
 
@@ -236,43 +236,43 @@ Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHan
 
 **Package:** `cmd/ralph-tui/` (`main.go`)
 
-### [File Logging](features/file-logging.md)
+### [File Logging](code-packages/logger.md)
 
 A concurrent-safe file logger that writes timestamped, context-prefixed lines to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (millisecond precision). Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close. Exposes `RunStamp()` — the log basename without `.log` — which `main.go` passes into `RunConfig.RunStamp` for artifact directory naming by `claudestream.Pipeline`.
 
 **Package:** `internal/logger/`
 
-### [Variable State Management](features/variable-state.md)
+### [Variable State Management](code-packages/vars.md)
 
 `VarTable` owns all runtime variable state for a single run. It maintains two scoped tables — persistent (survives the whole run) and iteration (cleared at the start of each iteration) — plus seven built-in variables seeded from CLI flags and updated by the orchestrator (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). Resolution order during an iteration step is iteration table → persistent table; during initialize or finalize, only the persistent table is consulted. `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase.
 
 **Package:** `internal/vars/`
 
-### [Config Validation](features/config-validation.md)
+### [Config Validation](code-packages/validator.md)
 
 Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Validates the optional top-level `statusLine` block (command resolvability, `refreshIntervalSeconds` range, unknown-field rejection). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
-### [Status Line](features/statusline.md)
+### [Status Line](code-packages/statusline.md)
 
 A user-configured command that runs on a schedule and displays its first non-empty output line in the TUI footer. `Runner` manages a background worker goroutine that executes the command as a subprocess, delivers workflow state as JSON on stdin via `BuildPayload`, sanitizes stdout with `Sanitize` (strips dangerous control sequences, preserves SGR colors and OSC 8 hyperlinks), and caches the result. Refreshes are triggered by the workflow goroutine at phase/iteration/step boundaries and by an optional timer (default 5 s, configurable via `refreshIntervalSeconds`, disabled with `0`). A `StatusLineUpdatedMsg` is sent to the Bubble Tea program after each exit-0 run. All exported methods are goroutine-safe. The command inherits the full host environment (explicit trust-model decision for user-authored scripts). `New` returns a no-op `Runner` if the config is nil or the command is unresolvable. Shutdown must be called after `program.Run()` returns to avoid sending to a killed Bubble Tea program.
 
 **Package:** `internal/statusline/`
 
-### [Docker Sandbox](features/sandbox.md)
+### [Docker Sandbox](code-packages/sandbox.md)
 
 The `internal/sandbox` package constructs the `docker run` argv that wraps every Claude step, manages the container ID file (cidfile) lifecycle, and provides a terminator closure that signals the running container on shutdown. `BuildRunArgs` is a pure function (uid/gid as parameters) that emits `--mount type=bind,...` mounts for the target repo and Claude profile directory, an env passthrough with deduplication and set-on-host filtering, and the claude invocation flags. `BuiltinEnvAllowlist` names five env vars always included in the passthrough. `Path()`/`Cleanup()` reserve and clean up the cidfile path. `NewTerminator` returns a closure that polls the cidfile for the container ID, delivers `docker kill --signal` to the container, and falls back to signaling the docker CLI process if the container never started.
 
 **Package:** `internal/sandbox/`
 
-### [Preflight Checks](features/preflight.md)
+### [Preflight Checks](code-packages/preflight.md)
 
 Startup validation that runs before the main orchestration loop. Resolves and validates the Claude profile directory (`ResolveProfileDir` / `CheckProfileDir`), checks for Docker binary availability, daemon reachability, and sandbox image presence via the injectable `Prober` interface, and verifies the credentials file is non-empty (`CheckCredentials`). All checks are collected before returning (collect-all-errors via `Run`) so the caller sees the full list of failures in one pass. `RealProber` uses `exec.CommandContext` with a 10-second timeout for each Docker probe to guard against a frozen daemon.
 
 **Package:** `internal/preflight/`
 
-### [Stream JSON Pipeline](features/stream-json-pipeline.md)
+### [Stream JSON Pipeline](code-packages/claudestream.md)
 
 Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. `Parser` dispatches raw lines to typed event structs (`SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`, `RateLimitEvent`); malformed lines return a `*MalformedLineError` carrying the raw bytes. `Renderer` converts events to human-readable display lines for the TUI (assistant text split on newlines, tool_use as `→ Name summary` indicators, nothing for thinking/user/result events) and produces a per-step closing summary via `Finalize`. `Aggregator` folds events into `StepStats` (token counts, cost, duration, session ID) and exposes `Result()` for `captureAs` binding and `Err()` for `is_error` detection. `RawWriter` persists verbatim bytes to a per-step `.jsonl` file (`O_TRUNC` on open so retries overwrite). `Slug` converts step names to kebab-case identifiers for filenames. `Pipeline` composes all four behind a single `Observe(line []byte) []string` entry point, tracks the first write error via `WriteErr()`, stamps `LastEventAt` atomically for the heartbeat goroutine, and appends a sentinel line after the result event for crash-resilience.
 

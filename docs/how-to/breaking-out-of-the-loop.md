@@ -141,4 +141,4 @@ For handling step failures, see [Recovering from Step Failures](recovering-from-
 - [Building Custom Workflows](building-custom-workflows.md) — Full step schema including `breakLoopIfEmpty`
 - [Recovering from Step Failures](recovering-from-step-failures.md) — The distinction between "nothing to do" and "something broke"
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Implementation: the `lastState == StepDone` guard, remaining-step skipping
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Step schema reference
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Step schema reference

@@ -280,11 +280,11 @@ Tests use an `os.Args[0]`-as-script-stub pattern: the test binary re-invokes its
 
 ## Additional Information
 
-- [Status Line Feature](status-line.md) — User-facing feature doc: config schema, script contract, refresh triggers, help modal, lifecycle, and observability
-- [Step Definitions](step-definitions.md) — `StatusLineConfig` struct loaded from `ralph-steps.json`
-- [Config Validation](config-validation.md) — Validation rules for the `statusLine` block
-- [CLI Configuration & Wiring](cli-configuration.md) — `wiring.go` helpers (`modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `runWithShutdown`) that connect the `Runner` to `main.go`
-- [TUI Display](tui-display.md) — `WithModeTrigger` mode-change choke point that fires `Runner.Trigger()` on every UI mode transition
+- [Status Line Feature](../features/status-line.md) — User-facing feature doc: config schema, script contract, refresh triggers, help modal, lifecycle, and observability
+- [Step Definitions](steps.md) — `StatusLineConfig` struct loaded from `ralph-steps.json`
+- [Config Validation](validator.md) — Validation rules for the `statusLine` block
+- [CLI Configuration & Wiring](../features/cli-configuration.md) — `wiring.go` helpers (`modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `runWithShutdown`) that connect the `Runner` to `main.go`
+- [TUI Display](../features/tui-display.md) — `WithModeTrigger` mode-change choke point that fires `Runner.Trigger()` on every UI mode transition
 - [Architecture Overview](../architecture.md) — Package dependency graph and system block diagram
 - [Concurrency Standards](../coding-standards/concurrency.md) — WaitGroup drain and snapshot-then-unlock patterns used by this package
 - [Testing Standards](../coding-standards/testing.md) — `waitCondition` helper usage instead of `time.Sleep`

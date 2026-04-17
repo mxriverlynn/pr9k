@@ -159,6 +159,6 @@ When `get_next_issue` prints an empty line (no more issues), `LastCapture()` is 
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit when the capture is empty
 - [Building Custom Workflows](building-custom-workflows.md) — Full step schema and workflow structure
 - [Debugging a Run](debugging-a-run.md) — Reading capture logs in the log file
-- [Variable State Management](../features/variable-state.md) — VarTable internals: scopes, phase transitions, binding semantics, and the difference between non-claude and claude captureAs binding
+- [Variable State Management](../code-packages/vars.md) — VarTable internals: scopes, phase transitions, binding semantics, and the difference between non-claude and claude captureAs binding
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How `LastCapture()` extracts the last non-empty stdout line (non-claude) or `result.result` (claude)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where in the Run loop the bind happens

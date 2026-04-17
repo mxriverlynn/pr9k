@@ -386,11 +386,11 @@ When creating a new helper, ask: "which file would a maintainer look in first fo
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup; RunHeader phase-specific render methods as the canonical phase-splitting example
 - [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState; SetPhaseSteps panic-on-overflow as the appropriate choice for programming errors
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Precondition validation on empty PromptFile
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand; panicking sentinel in NewRunner for missing SetSender
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `updateShortcutLineLocked` as the canonical `Locked`-suffix example
 - [Error Handling](error-handling.md) — Complementary standards for error message formatting
 - [Concurrency](concurrency.md) — Complementary standards for mutex-protected getters (unexported fields)
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
-- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)

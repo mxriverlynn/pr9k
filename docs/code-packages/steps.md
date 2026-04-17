@@ -192,9 +192,9 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix step types
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
-- [CLI & Configuration](cli-configuration.md) — How ProjectDir is resolved and passed to step loading
-- [Workflow Orchestration](workflow-orchestration.md) — How loaded steps are resolved and executed
-- [Subprocess Execution & Streaming](subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
+- [CLI & Configuration](../features/cli-configuration.md) — How ProjectDir is resolved and passed to step loading
+- [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

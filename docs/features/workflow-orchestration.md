@@ -176,7 +176,7 @@ type ResolvedStep struct {
 
 Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
-See [Config Validation](config-validation.md) for the full list of validation rules.
+See [Config Validation](../code-packages/validator.md) for the full list of validation rules.
 
 ### Status-Line State Pushing
 
@@ -620,18 +620,18 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 ## Additional Information
 
 - [Status Line Feature](status-line.md) — Configuration, script contract, refresh trigger matrix, and lifecycle
-- [Status Line Package](statusline.md) — Runner API, State, BuildPayload, Sanitize, and concurrency model
+- [Status Line Package](../code-packages/statusline.md) — Runner API, State, BuildPayload, Sanitize, and concurrency model
 - [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create and modify workflow step sequences
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How iteration variables are captured and injected into steps
-- [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — How steps are loaded and prompts are built
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How RunStep executes subprocesses; how LastCapture returns stdout output
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How user decisions flow through the Actions channel
 - [Signal Handling & Shutdown](signal-handling.md) — How ForceQuit injects ActionQuit for clean shutdown
 - [TUI Status Header](tui-display.md) — How step state updates are rendered
-- [File Logging](file-logging.md) — How step separator lines are written to the log file
-- [Variable State Management](variable-state.md) — VarTable scopes, phase transitions, and CaptureAs binding
+- [File Logging](../code-packages/logger.md) — How step separator lines are written to the log file
+- [Variable State Management](../code-packages/vars.md) — VarTable scopes, phase transitions, and CaptureAs binding
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
 - [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters

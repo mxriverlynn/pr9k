@@ -79,7 +79,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 - Safety requirements that are opt-out accidentally become opt-out the first
   time they are inconvenient. An unconditional requirement keeps the invariant
   binary.
-- The startup preflight (see `docs/features/preflight.md`) checks for Docker
+- The startup preflight (see `docs/code-packages/preflight.md`) checks for Docker
   reachability and the sandbox image before the TUI starts, so users get a
   clear actionable error rather than a mid-run failure.
 - The `ralph-tui sandbox create` subcommand (see `docs/features/sandbox-subcommand.md`)
@@ -135,7 +135,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
   mount layout, env allowlist, cidfile termination, and residual risks
 - [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — user-facing
   guide: install Docker, run `sandbox create`, authenticate profile
-- [Preflight Feature Doc](../features/preflight.md) — startup validation
+- [Preflight Package Doc](../code-packages/preflight.md) — startup validation
   including Docker reachability and sandbox image presence
 - [Sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — `sandbox create`
   subcommand implementation

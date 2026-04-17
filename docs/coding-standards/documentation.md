@@ -9,21 +9,28 @@ User-visible surfaces that require doc updates:
 - New or changed `ralph-steps.json` schema fields
 - New or changed `{{VAR}}` template tokens
 - New TUI modes, keyboard shortcuts, or UI regions
-- New or changed step error categories (for `config-validation.md`)
+- New or changed step error categories (for `code-packages/validator.md`)
 - New packages in the architecture graph (for `architecture.md`)
 - New how-to workflows (add a guide in `docs/how-to/`)
 
-**How to find the right doc files:** Every doc file that touches the changed surface is listed in `CLAUDE.md` under "Architecture & Feature Documentation" and "How-To Guides". Check `CLAUDE.md` first, then search for the specific changed identifier in the docs directory.
+**How to find the right doc files:** Every doc file that touches the changed surface is listed in `CLAUDE.md` under "Feature Documentation", "Code Package Documentation", and "How-To Guides". Check `CLAUDE.md` first, then search for the specific changed identifier in the docs directory.
 
 A code review finding "docs not updated for the new X" is always a medium-severity issue. The pattern has repeated across every major feature in this codebase; do not let it recur.
 
 ## Update CLAUDE.md when adding new doc files
 
-When you create a new doc file in `docs/features/`, `docs/how-to/`, `docs/adr/`, or `docs/coding-standards/`, add a link to it in `CLAUDE.md` under the appropriate section. `CLAUDE.md` is the single index that agents and developers use to discover documentation — an unlinked doc file is effectively invisible.
+When you create a new doc file in `docs/features/`, `docs/code-packages/`, `docs/how-to/`, `docs/adr/`, or `docs/coding-standards/`, add a link to it in `CLAUDE.md` under the appropriate section. `CLAUDE.md` is the single index that agents and developers use to discover documentation — an unlinked doc file is effectively invisible.
+
+Pick the right directory for new docs:
+- `docs/features/` — user-facing behavior, configuration schema, cross-package integration
+- `docs/code-packages/` — per-Go-package API reference (types, methods, synchronization, lifecycle). Name the file after the Go package it documents (e.g., `statusline.md` for `internal/statusline`).
 
 ```markdown
-<!-- In CLAUDE.md under "Architecture & Feature Documentation": -->
+<!-- In CLAUDE.md under "Feature Documentation": -->
 - [`docs/features/my-feature.md`](docs/features/my-feature.md) — One-line description of what this doc covers
+
+<!-- In CLAUDE.md under "Code Package Documentation": -->
+- [`docs/code-packages/mypkg.md`](docs/code-packages/mypkg.md) — `internal/mypkg`: one-line description of the package API
 ```
 
 The one-line description must be specific enough to tell a reader whether this doc is what they are looking for without having to open it.
@@ -70,4 +77,4 @@ This is especially important for scripts: unlike Go code that fails to compile, 
 - [CLAUDE.md](../../CLAUDE.md) — Index of all doc files; update when adding any new doc
 - [Versioning](versioning.md) — When a version bump is required and how to bump
 - [Testing](testing.md) — Doc integrity tests for embedded version strings
-- [Config Validation](../features/config-validation.md) — Error categories; update when adding new validation rules
+- [Config Validation](../code-packages/validator.md) — Error categories; update when adding new validation rules

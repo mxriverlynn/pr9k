@@ -223,8 +223,8 @@ These are programming errors, not runtime conditions — the step validator (iss
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams
-- [Workflow Orchestration](workflow-orchestration.md) — How the orchestrator calls `SetPhase`, `SetIteration`, `SetStep`, and `ResetIteration`
-- [Step Definitions & Prompt Building](step-definitions.md) — `CaptureAs` field on `Step` that feeds `Bind`
+- [Workflow Orchestration](../features/workflow-orchestration.md) — How the orchestrator calls `SetPhase`, `SetIteration`, `SetStep`, and `ResetIteration`
+- [Step Definitions & Prompt Building](steps.md) — `CaptureAs` field on `Step` that feeds `Bind`
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — End-to-end guide to how variables flow through the workflow
 - [API Design](../coding-standards/api-design.md) — Precondition validation patterns (panic vs. error)
 - [Testing](../coding-standards/testing.md) — Race detector requirement and testing conventions

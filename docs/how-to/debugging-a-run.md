@@ -33,7 +33,7 @@ Each line is timestamp-prefixed by `logger.Log()` and includes the current step 
 2026-04-10T22:22:31.740 [Get next issue] ─────────────────────────────
 ```
 
-For details on the logger format, see [File Logging](../features/file-logging.md).
+For details on the logger format, see [File Logging](../code-packages/logger.md).
 
 ## JSONL artifacts for claude steps
 
@@ -226,7 +226,7 @@ ralph-steps.json: step "Feature work": promptFile not found: prompts/feature-wor
 ralph-steps.json: step "Close issue": command[1] references unresolved variable {{ISSUE_ID}} in finalize phase
 ```
 
-Fix the underlying config issue and re-run. See [Config Validation](../features/config-validation.md) for the full validation rules.
+Fix the underlying config issue and re-run. See [Config Validation](../code-packages/validator.md) for the full validation rules.
 
 ## Related documentation
 
@@ -235,7 +235,7 @@ Fix the underlying config issue and re-run. See [Config Validation](../features/
 - [Variable Output & Injection](variable-output-and-injection.md) — Substitution rules and file-based data passing
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` semantics and how to verify it fired
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions during a live run
-- [File Logging](../features/file-logging.md) — Log file format, timestamp, context prefix, and RunStamp (per-run artifact directory name)
-- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — The `claudestream` package that produces the JSONL artifacts: event types, parser, renderer, aggregator
-- [Config Validation](../features/config-validation.md) — Validator error format and rules
+- [File Logging](../code-packages/logger.md) — Log file format, timestamp, context prefix, and RunStamp (per-run artifact directory name)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — The `claudestream` package that produces the JSONL artifacts: event types, parser, renderer, aggregator
+- [Config Validation](../code-packages/validator.md) — Validator error format and rules
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where build errors get logged

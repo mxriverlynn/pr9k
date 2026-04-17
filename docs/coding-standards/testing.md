@@ -506,11 +506,11 @@ When a doc file contains an embedded version string (e.g., a sample payload, an 
 // doc_integrity_test.go
 func TestDocIntegrity_StatuslineMd_PayloadVersionMatchesCurrent(t *testing.T) {
     root := projectRoot(t)
-    data, err := os.ReadFile(filepath.Join(root, "docs/features/statusline.md"))
+    data, err := os.ReadFile(filepath.Join(root, "docs/code-packages/statusline.md"))
     require.NoError(t, err)
     want := `"version": "` + version.Version + `"`
     require.Contains(t, string(data), want,
-        "docs/features/statusline.md payload example must match current version")
+        "docs/code-packages/statusline.md payload example must match current version")
 }
 ```
 
@@ -607,17 +607,17 @@ Apply this pattern any time a correctness property is "this must happen asynchro
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `TestIterationLabel` as an example of a test name matching full scope (bounded + unbounded); fakeRunHeader as the canonical capturing fake pattern
-- [File Logging](../features/file-logging.md) — Close idempotency testing applied to Logger
+- [File Logging](../code-packages/logger.md) — Close idempotency testing applied to Logger
 - [TUI Status Header](../features/tui-display.md) — Bounds guard testing on SetStepState; phase transition testing via SetPhaseSteps; grid layout structural variants (TP-001–TP-005)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — WasTerminated flag reset testing, input slice immutability in ResolveCommand; stdout-only capture contract (D4) tested via TestLastCapture_StderrNotCaptured
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes); newTestKeyHandler as the canonical async signal injection pattern
 - [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration
-- [Config Validation](../features/config-validation.md) — Positive and negative scope-visibility tests for variable table phase propagation
+- [Config Validation](../code-packages/validator.md) — Positive and negative scope-visibility tests for variable table phase propagation
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify; channel priming before blocking receives
 - [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests; public accessors over private field access from tests
 - [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage
 - [Documentation](documentation.md) — Doc integrity test patterns for files with embedded version strings
-- [File Logging](../features/file-logging.md) — `runStampRe` package-level variable as the canonical shared-regex example (issue #90)
-- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)
-- [Status Line](../features/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)
+- [File Logging](../code-packages/logger.md) — `runStampRe` package-level variable as the canonical shared-regex example (issue #90)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)
+- [Status Line](../code-packages/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)

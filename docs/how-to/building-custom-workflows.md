@@ -12,7 +12,7 @@ Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to t
 
 Steps execute in the order they appear in each array.
 
-An optional top-level **`statusLine`** object can also be added to configure a status-line command displayed by the TUI (see [Config Validation — statusLine block](../features/config-validation.md#statusline-block-category-statusline) for the schema). The runner's output appears in the TUI footer during Normal mode; press `?` to open the help modal. See [Status Line](../features/statusline.md) for runtime behavior, stdin payload schema, and writing custom status-line scripts.
+An optional top-level **`statusLine`** object can also be added to configure a status-line command displayed by the TUI (see [Config Validation — statusLine block](../code-packages/validator.md#statusline-block-category-statusline) for the schema). The runner's output appears in the TUI footer during Normal mode; press `?` to open the help modal. See [Status Line](../features/status-line.md) for runtime behavior, stdin payload schema, and writing custom status-line scripts.
 
 ## Step Schema
 
@@ -27,7 +27,7 @@ Each step object has the following fields:
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
 | `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
 | `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
-| `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../features/config-validation.md) for allowed names) |
+| `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../code-packages/validator.md) for allowed names) |
 
 ## Claude Steps
 
@@ -150,6 +150,6 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
 - [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures
 - [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `ralph-steps.json`, not Go code; includes documented exceptions
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Implementation details of step loading and prompt construction
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Implementation details of step loading and prompt construction
 - [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
 - [Subprocess Execution](../features/subprocess-execution.md) — How steps are executed as subprocesses

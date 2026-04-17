@@ -731,6 +731,6 @@ Key files:
 - [Workflow Orchestration](workflow-orchestration.md) — How step state transitions are triggered during orchestration
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How the shortcut bar text changes with keyboard modes
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log stream
-- [Step Definitions & Prompt Building](step-definitions.md) — Where step names displayed in the header originate
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Where step names displayed in the header originate
 - [API Design](../coding-standards/api-design.md) — Coding standards for bounds guards on array indexers (used by SetStepState)
-- [Status Line](statusline.md) — StatusReader interface, footer switch, and `? Help` trigger that activate the overlay path
+- [Status Line](../code-packages/statusline.md) — StatusReader interface, footer switch, and `? Help` trigger that activate the overlay path

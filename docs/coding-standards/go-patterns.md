@@ -489,8 +489,8 @@ Apply to any switch that maps an internal iota-based type to a string, error cat
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Phase-specific render methods using `substitute` for conditional format strings
 - [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid; write-only `iterationLine` field removed from `headerModel` (issue #75)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability
-- [File Logging](../features/file-logging.md) — 0o700 dir / 0o600 file permission hardening applied to logger
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
+- [File Logging](../code-packages/logger.md) — 0o700 dir / 0o600 file permission hardening applied to logger
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Slice allocation in buildIterationSteps/buildFinalizeSteps
 - [Testing](testing.md) — Standards for runtime.Caller(0) in test helpers and input slice immutability tests
 - [API Design](api-design.md) — Complementary standards for platform-scoped assumptions
 - [Concurrency](concurrency.md) — Complementary concurrency patterns

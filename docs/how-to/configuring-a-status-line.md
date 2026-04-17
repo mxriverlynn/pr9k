@@ -159,6 +159,6 @@ The script inherits the full host environment, including `ANTHROPIC_API_KEY`, `G
 ## Related documentation
 
 - [Status Line Feature](../features/status-line.md) — Full feature reference: config schema, stdin JSON field table, stdout rules, refresh trigger matrix, help modal, concurrency model, and lifecycle
-- [Status Line Package](../features/statusline.md) — Package-level reference: `Runner` API, `State`, `BuildPayload`, `Sanitize`, and shutdown ordering
+- [Status Line Package](../code-packages/statusline.md) — Package-level reference: `Runner` API, `State`, `BuildPayload`, `Sanitize`, and shutdown ordering
 - [Reading the TUI](reading-the-tui.md) — Status-line footer display, `? Help` trigger, and help modal walkthrough
-- [Config Validation](../features/config-validation.md) — Validation rules applied to the `statusLine` block at startup
+- [Config Validation](../code-packages/validator.md) — Validation rules applied to the `statusLine` block at startup

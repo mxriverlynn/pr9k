@@ -58,26 +58,36 @@ Use `go build` — `go run` won't work because `workflowDir` is resolved via `os
 
 See [`docs/architecture.md`](docs/architecture.md) for detailed architectural documentation including block diagrams, data flow, and links to feature-level docs.
 
-## Architecture & Feature Documentation
+## Architecture
 
 - [`docs/architecture.md`](docs/architecture.md) — System-level architecture overview with block diagrams, data flow, keyboard state machine, and package dependency graph
+
+## Feature Documentation
+
+User-facing behavior, configuration, and cross-package integration. Each file lives in [`docs/features/`](docs/features/).
+
 - [`docs/features/cli-configuration.md`](docs/features/cli-configuration.md) — CLI argument parsing with cobra flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, `--version`/`-v`), workflow directory resolution from the executable path, and project directory resolution from `os.Getwd()`
-- [`docs/features/step-definitions.md`](docs/features/step-definitions.md) — JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/features/subprocess-execution.md`](docs/features/subprocess-execution.md) — Subprocess lifecycle management with real-time io.Pipe streaming and sendLine callback (SetSender), graceful SIGTERM/SIGKILL termination, and output capture
 - [`docs/features/workflow-orchestration.md`](docs/features/workflow-orchestration.md) — The Run loop driving iterations and finalization, and the Orchestrate step sequencer with interactive error recovery
 - [`docs/features/tui-display.md`](docs/features/tui-display.md) — Pointer-mutable status header with checkbox-based step progress, word-wrap log panel with scroll-position preservation, and text selection (`pos`, `selection`, `ModeSelect`, clipboard copy with OSC 52 fallback, mouse drag selection)
 - [`docs/features/keyboard-input.md`](docs/features/keyboard-input.md) — Eight-mode keyboard state machine (Normal/Error/QuitConfirm/NextConfirm/Done/Select/Quitting/Help) and channel-based action dispatch
 - [`docs/features/signal-handling.md`](docs/features/signal-handling.md) — OS signal handling (SIGINT/SIGTERM) triggering clean shutdown via ForceQuit
-- [`docs/features/file-logging.md`](docs/features/file-logging.md) — Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
-- [`docs/features/variable-state.md`](docs/features/variable-state.md) — `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
-- [`docs/features/config-validation.md`](docs/features/config-validation.md) — D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules B and C, statusLine block validation, and structured error collection
-- [`docs/features/status-line.md`](docs/features/status-line.md) — **Feature-level:** status-line purpose, config schema, path resolution, script contract (stdin JSON payload, stdout rules, timeout), refresh triggers, cold-start fallback, help modal, concurrency model, lifecycle, observability, and out-of-scope list
-- [`docs/features/statusline.md`](docs/features/statusline.md) — **Package-level:** `Runner` goroutine lifecycle, `State` snapshot, `BuildPayload` stdin JSON, `Sanitize` ANSI output filtering, single-flight exec, 8 KB stdout limit, full-env trust model, and cold-start / shutdown ordering
+- [`docs/features/status-line.md`](docs/features/status-line.md) — Status-line feature: purpose, config schema, path resolution, script contract (stdin JSON payload, stdout rules, timeout), refresh triggers, cold-start fallback, help modal, concurrency model, lifecycle, observability, and out-of-scope list
 - [`docs/features/docker-sandbox.md`](docs/features/docker-sandbox.md) — Docker sandbox architecture: mount layout (`<projectDir>` → `/home/agent/workspace`, `<profileDir>` → `/home/agent/.claude`), `BuildRunArgs` command shape, env allowlist behavior, UID/GID mapping, cidfile-driven termination, and residual risks
-- [`docs/features/sandbox.md`](docs/features/sandbox.md) — Docker sandbox package: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
-- [`docs/features/preflight.md`](docs/features/preflight.md) — Preflight package: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 - [`docs/features/sandbox-subcommand.md`](docs/features/sandbox-subcommand.md) — `sandbox create` and `sandbox login` subcommands: Docker check, image pull, smoke test with ANSI sanitization for create; interactive claude REPL with auto-pull and profile-dir auto-create for login; shared helpers and dependency injection design
-- [`docs/features/stream-json-pipeline.md`](docs/features/stream-json-pipeline.md) — `internal/claudestream` package: Parser (NDJSON line → typed Event), Renderer (events → TUI display lines, tool summary, Finalize), Aggregator (StepStats, captureAs result, is_error detection), RawWriter (per-step .jsonl persistence with O_TRUNC retry semantics), Slug (kebab filename generation), and Pipeline (single Observe entry point, atomic LastEventAt, crash-resilience sentinel)
+
+## Code Package Documentation
+
+Per-Go-package API references (types, methods, synchronization, lifecycle) for contributors working on the internal packages. Each file lives in [`docs/code-packages/`](docs/code-packages/) and is named after the Go package it documents.
+
+- [`docs/code-packages/steps.md`](docs/code-packages/steps.md) — `internal/steps`: JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
+- [`docs/code-packages/logger.md`](docs/code-packages/logger.md) — `internal/logger`: Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
+- [`docs/code-packages/vars.md`](docs/code-packages/vars.md) — `internal/vars`: `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
+- [`docs/code-packages/validator.md`](docs/code-packages/validator.md) — `internal/validator`: D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules B and C, statusLine block validation, and structured error collection
+- [`docs/code-packages/statusline.md`](docs/code-packages/statusline.md) — `internal/statusline`: `Runner` goroutine lifecycle, `State` snapshot, `BuildPayload` stdin JSON, `Sanitize` ANSI output filtering, single-flight exec, 8 KB stdout limit, full-env trust model, and cold-start / shutdown ordering
+- [`docs/code-packages/sandbox.md`](docs/code-packages/sandbox.md) — `internal/sandbox`: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
+- [`docs/code-packages/preflight.md`](docs/code-packages/preflight.md) — `internal/preflight`: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
+- [`docs/code-packages/claudestream.md`](docs/code-packages/claudestream.md) — `internal/claudestream`: Parser (NDJSON line → typed Event), Renderer (events → TUI display lines, tool summary, Finalize), Aggregator (StepStats, captureAs result, is_error detection), RawWriter (per-step .jsonl persistence with O_TRUNC retry semantics), Slug (kebab filename generation), and Pipeline (single Observe entry point, atomic LastEventAt, crash-resilience sentinel)
 
 ## ADRs
 

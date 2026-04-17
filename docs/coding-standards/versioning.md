@@ -56,5 +56,5 @@ If a pre-release suffix is ever needed (release candidates, betas, nightly build
 
 - [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) — The full spec. This standard does not restate it; if a question is not answered above, the answer is in the spec.
 - [`ralph-tui/internal/version/version.go`](../../ralph-tui/internal/version/version.go) — The single source of truth for the current version.
-- [Step Definitions](../features/step-definitions.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
+- [Step Definitions](../code-packages/steps.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
 - [CLI Configuration](../features/cli-configuration.md) — The CLI flag surface, another public-API surface governed by this standard.
