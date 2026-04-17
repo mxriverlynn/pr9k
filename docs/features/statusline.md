@@ -76,7 +76,7 @@ In addition, one initial `PushState` (without a `Trigger`) is emitted immediatel
 
 The trigger function must be non-blocking. `Runner.Trigger()` satisfies this via a buffered channel (capacity 4) that drops on full — a slow status-line script cannot back-pressure the bubbletea goroutine.
 
-`WithModeTrigger` follows the same returning-Model builder shape as `WithHeartbeat`. Both `cfg.Runner == nil` and `triggerFn == nil` are safe (required because `main.go` does not yet instantiate a real Runner — wiring is deferred to a follow-up issue).
+`WithModeTrigger` follows the same returning-Model builder shape as `WithHeartbeat`. Both `cfg.Runner == nil` and `triggerFn == nil` are safe. `main.go` wires the runner's `Trigger` method as the mode-transition callback via `WithModeTrigger(statusRunner.Trigger)`.
 
 ## Configuration
 

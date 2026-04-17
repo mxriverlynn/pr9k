@@ -12,7 +12,7 @@ Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to t
 
 Steps execute in the order they appear in each array.
 
-An optional top-level **`statusLine`** object can also be added to configure a status-line command displayed by the TUI (see [Config Validation — statusLine block](../features/config-validation.md#statusline-block-category-statusline) for the schema). TUI wiring for `statusLine` is a work in progress.
+An optional top-level **`statusLine`** object can also be added to configure a status-line command displayed by the TUI (see [Config Validation — statusLine block](../features/config-validation.md#statusline-block-category-statusline) for the schema). The runner's output appears in the TUI footer during Normal mode; press `?` to open the help modal. See [Status Line](../features/statusline.md) for runtime behavior, stdin payload schema, and writing custom status-line scripts.
 
 ## Step Schema
 

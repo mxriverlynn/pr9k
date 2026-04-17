@@ -19,8 +19,10 @@ Key files:
 - `ralph-tui/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir`
 - `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
 - `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
-- `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`
+- `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`; assembles all services and starts the status-line runner before handing off to `runWithShutdown`
+- `ralph-tui/cmd/ralph-tui/wiring.go` — Pure helper functions extracted from `main.go` for testability: `modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `buildRunConfig`, `runWithShutdown`, and the `teaProgram`/`shutdownable` interfaces
 - `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
+- `ralph-tui/cmd/ralph-tui/wiring_test.go` — 14 unit tests for all wiring helpers (mode-string table, sender payload discard, mode-getter freshness, config nil/populated, shutdown ordering, run-error propagation, RunConfig field mapping)
 
 ## Architecture
 
@@ -317,6 +319,27 @@ The two version tests read the expected string from `version.Version` rather tha
 | `TestStartup_LoggerFailure` (TP-003) | Unwritable projectDir → ok=false, svc=nil after validation and preflight pass |
 | `TestStartup_ValidationOnlyErrors` (TP-004) | Invalid step file + passing prober → ok=false; "config error:" and "validation error(s)" in output; no "preflight:" line |
 | `TestStartup_PreflightOnlyErrors` (WARN-005) | Valid step file + failing prober (docker binary unavailable) → ok=false; "preflight:" in output; no "validation error(s)" line |
+
+### wiring.go Tests
+
+`ralph-tui/cmd/ralph-tui/wiring_test.go` covers the pure helper functions extracted from `main.go`:
+
+| Test | What It Validates |
+|------|-------------------|
+| `TestModeString_AllModes` | All 8 `ui.Mode` values map to the correct lowercase string |
+| `TestNewStatusLineSender_PayloadDiscarded` | Sender ignores its argument; only `StatusLineUpdatedMsg` is forwarded |
+| `TestNewStatusLineSender_AlwaysStatusLineUpdatedMsg` | Forwarded message is always `ui.StatusLineUpdatedMsg{}` regardless of argument |
+| `TestNewModeGetter_ReflectsCurrentMode` | Returned closure reads the live mode from the handler, not a snapshot |
+| `TestNewModeGetter_DoesNotSnapshotAtCreation` | Mode after construction is returned, not mode at construction time |
+| `TestBuildStatusLineConfig_Nil` | Nil `StatusLineConfig` → nil `*statusline.Config` (no-op runner path) |
+| `TestBuildStatusLineConfig_Populated` | Non-nil config → correct Command and RefreshIntervalSeconds values |
+| `TestBuildStatusLineConfig_NilInterval` | Nil interval pointer passes through as nil |
+| `TestRunWithShutdown_OrderIsRunThenShutdown` | `prog.Run()` completes before `runner.Shutdown()` is called |
+| `TestRunWithShutdown_WaitsForWorkflowDone` | Waits for `workflowDone` channel before returning |
+| `TestRunWithShutdown_ShutdownPrecedesWorkflowDone` | `Shutdown()` is called before `workflowDone` is received |
+| `TestRunWithShutdown_PropagatesRunError` | Error returned by `prog.Run()` is propagated to caller |
+| `TestBuildRunConfig_RunnerFieldIdentity` | `RunConfig.Runner` is the same pointer as the runner passed in |
+| `TestBuildRunConfig_FieldMapping` | All `RunConfig` fields match the inputs passed to `buildRunConfig` |
 
 ## Additional Information
 

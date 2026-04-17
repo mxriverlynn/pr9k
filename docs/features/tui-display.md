@@ -230,7 +230,7 @@ m.prevObservedMode = newMode
 
 **`tea.QuitMsg` exception:** `tea.QuitMsg` short-circuits before the trigger check (`model.go:326-327`). Any mode transition that emits `tea.Quit` is reflected by the preceding `Update`'s trigger, not by the `QuitMsg` handler.
 
-**Wiring:** `WithModeTrigger` follows the same returning-`Model` builder pattern as `WithHeartbeat`. In the current codebase, `main.go` does not yet wire a real Runner via `WithModeTrigger` — instantiation is deferred to a follow-up issue. Both `fn == nil` and `cfg.Runner == nil` are safe.
+**Wiring:** `WithModeTrigger` follows the same returning-`Model` builder pattern as `WithHeartbeat`. `main.go` wires the status-line runner's `Trigger` method via `WithModeTrigger(statusRunner.Trigger)`. Both `fn == nil` and `cfg.Runner == nil` are safe.
 
 **Non-blocking requirement:** `fn` must not block. `Runner.Trigger()` satisfies this via a buffered channel (capacity 4) with drop-on-full semantics — a slow status-line script cannot back-pressure the Bubble Tea goroutine.
 
