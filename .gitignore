@@ -42,3 +42,6 @@ code-review.md
 
 # Runtime logs
 logs/
+
+# Local Go module cache
+.gopath/

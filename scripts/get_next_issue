@@ -1,8 +1,25 @@
 #!/bin/bash
 set -e
 
+repo=$(gh repo view --json nameWithOwner -q ".nameWithOwner")
 ralphlabel="ralph"
 username=$1
-issuenum=$(gh issue list -a "$username" -l "$ralphlabel" -s open --json number -q '.[].number' | sort -n | head -n 1)
+
+# get next issue that has no open blockers
+issuenum=$(gh api graphql -f query='
+  query($q: String!) {
+    search(query: $q, type: ISSUE, first: 100) {
+      nodes {
+        ... on Issue {
+          number
+          title
+          url
+          blockedBy(first: 100) { nodes { state } }
+        }
+      }
+    }
+  }' -f q="repo:$repo is:issue is:open assignee:$username label:$ralphlabel" \
+  | jq -r '[.data.search.nodes[] | select([.blockedBy.nodes[] | select(.state == "OPEN")] | length == 0) | .number] | sort | .[0] // empty'
+)
 
 echo $issuenum

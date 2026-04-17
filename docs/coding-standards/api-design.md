@@ -242,6 +242,101 @@ Apply any time:
 
 Consistency note: this codebase also uses `var _ tea.Msg = LogLinesMsg{}` for message types — the same pattern, applied to a struct value rather than a pointer.
 
+## Unexport when all callers are package-internal
+
+When a function or method is only ever called from within its own package, keep it unexported. Exporting unnecessarily widens the public API surface, constrains future refactoring, and misleads callers in other packages about what the package intends to expose.
+
+```go
+// Bad — exported but never called outside the package
+func MouseToViewport(x, y, yOffset, height int) (pos, bool) { ... }
+func CopyToClipboard(text string) error { ... }
+
+// Good — unexported; callers within the package use it directly
+func mouseToViewport(x, y, yOffset, height int) (pos, bool) { ... }
+func copyToClipboard(text string) error { ... }
+```
+
+Apply this audit whenever you add a function: if you can't name a concrete caller outside the package, make it unexported. If a future need arises to call it externally, export it then — the reverse is a breaking change, but exporting is always addable.
+
+## Gate mode transitions on precondition success
+
+When a UI event triggers a mode transition, verify that the precondition for the new mode is actually satisfied before committing the transition. Entering a mode with uninitialized or zero-value state creates a degenerate display and forces every downstream handler to guard against that degenerate state.
+
+```go
+// Bad — enters ModeSelect even when HandleMouse found nothing to select
+// (click below content returns a zero-value selection with active=false)
+m.log.HandleMouse(p, msg.Action, shift)
+m.keys.SetMode(ModeSelect)
+
+// Good — only enter ModeSelect if the selection is actually active
+m.log.HandleMouse(p, msg.Action, shift)
+if m.log.sel.active {
+    m.keys.SetMode(ModeSelect)
+}
+```
+
+Apply any time a mode represents a meaningful state (e.g., "text is selected", "step is in error") — the transition must be predicated on that state being true, not merely on the event that was supposed to produce it.
+
+## Guard catch-all event branches with explicit type checks
+
+When an `else` or `default` branch handles a specific class of events (e.g., left mouse button), add an explicit guard expression. An unguarded `else` accidentally captures unrelated events (right-click, middle-click) that were never intended to enter that path, silently applying inappropriate logic.
+
+```go
+// Bad — right-click and middle-click fall through to the selection handler
+if msg.Action == tea.MouseActionPress && isScrollWheel(msg) {
+    // scroll
+} else {
+    m.log.HandleMouse(p, msg.Action, false) // selection — but for any button!
+}
+
+// Good — explicit button guard prevents non-left events from triggering selection
+if msg.Action == tea.MouseActionPress && isScrollWheel(msg) {
+    // scroll
+} else if msg.Button == tea.MouseButtonLeft || msg.Button == tea.MouseButtonNone {
+    m.log.HandleMouse(p, msg.Action, false)
+}
+```
+
+Apply whenever a catch-all branch is semantically specific to a subset of values that triggered it.
+
+## Document shared guard invariants above method groups
+
+When a group of methods shares a precondition (e.g., all must bail out when the selection is inactive), document the invariant in a comment block above the first method in the group. Distributing the guard silently across six identical checks is error-prone — adding a seventh method may omit it, and reviewers have no signal that the guard is required.
+
+```go
+// Movement methods: MoveSelectionCursor, JumpSelectionCursorToLineStart,
+// JumpSelectionCursorToLineEnd, ExtendSelectionByLine, PageSelectionCursor.
+//
+// INVARIANT: every method in this group must bail out early when
+// !m.sel.active && !m.sel.committed. The guard is intentionally
+// duplicated in each method (not extracted) so each is self-contained,
+// but the requirement is not optional — omitting it on a new method
+// corrupts the selection state.
+func (m logModel) MoveSelectionCursor(dx, dy int) (logModel, tea.Cmd) {
+    if !m.sel.active && !m.sel.committed {
+        return m, nil
+    }
+    // ...
+}
+```
+
+The comment serves as a checklist: anyone adding a method to the group sees the invariant at the declaration site, not buried in a code-review comment.
+
+## Place helpers in the file that matches their domain
+
+When an unexported helper function's logic belongs to a domain that has its own file, place it in that file rather than the file where you happen to be working. Logic that lives in the wrong file is harder to find, harder to test in isolation, and tends to attract unrelated additions.
+
+```go
+// Bad — copySelectedText is a clipboard operation but lives in keys.go
+// because that is where the y/Enter case was being implemented
+func copySelectedText(text string) tea.Cmd { ... } // in keys.go
+
+// Good — move to clipboard.go where all clipboard operations live
+func copySelectedText(text string) tea.Cmd { ... } // in clipboard.go
+```
+
+When creating a new helper, ask: "which file would a maintainer look in first for this logic?" Place it there, not in the file where you first needed it.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles

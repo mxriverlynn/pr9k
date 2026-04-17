@@ -20,6 +20,7 @@ const (
 	ModeQuitConfirm
 	ModeNextConfirm // entered after the user presses n; shows "Skip current step?" prompt
 	ModeDone        // entered after the workflow completes; shows "q quit" footer
+	ModeSelect      // entered when user presses 'v'; shows selection cursor overlay
 	ModeQuitting    // entered after the user confirms a quit; footer shows "Quitting..."
 )
 
@@ -30,12 +31,14 @@ const (
 const AppTitle = "Power-Ralph.9000"
 
 const (
-	NormalShortcuts   = "↑/k up  ↓/j down  n next step  q quit"
-	ErrorShortcuts    = "c continue  r retry  q quit"
-	QuitConfirmPrompt = "Quit " + AppTitle + "? (y/n, esc to cancel)"
-	NextConfirmPrompt = "Skip current step? (y/n, esc to cancel)"
-	DoneShortcuts     = "q quit"
-	QuittingLine      = "Quitting..."
+	NormalShortcuts          = "↑/k up  ↓/j down  v select  n next step  q quit"
+	ErrorShortcuts           = "c continue  r retry  q quit"
+	QuitConfirmPrompt        = "Quit " + AppTitle + "? (y/n, esc to cancel)"
+	NextConfirmPrompt        = "Skip current step? (y/n, esc to cancel)"
+	DoneShortcuts            = "↑/k up  ↓/j down  v select  q quit"
+	SelectShortcuts          = "hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"
+	SelectCommittedShortcuts = "y copy  esc cancel  drag for new selection"
+	QuittingLine             = "Quitting..."
 )
 
 // KeyHandler is a state machine that tracks keyboard mode
@@ -44,12 +47,13 @@ const (
 // Dispatch logic lives in keysModel (internal/ui/keys.go), which translates
 // tea.KeyMsg events into mode transitions and Actions sends.
 type KeyHandler struct {
-	mode         Mode   // protected by mu
-	prevMode     Mode   // protected by mu
-	cancel       func() // cancels the current subprocess (used by n in normal mode)
-	Actions      chan StepAction
-	mu           sync.Mutex
-	shortcutLine string // protected by mu; use ShortcutLine() to access
+	mode               Mode   // protected by mu
+	prevMode           Mode   // protected by mu
+	cancel             func() // cancels the current subprocess (used by n in normal mode)
+	Actions            chan StepAction
+	mu                 sync.Mutex
+	shortcutLine       string // protected by mu; use ShortcutLine() to access
+	selectJustReleased bool   // protected by mu; true after a mouse drag release; cleared on next event
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -125,6 +129,15 @@ func (h *KeyHandler) ForceQuit() {
 	}
 }
 
+// clearJustReleasedLocked clears the selectJustReleased flag and refreshes the
+// shortcut line if the flag was set. Precondition: caller must hold h.mu.
+func (h *KeyHandler) clearJustReleasedLocked() {
+	if h.selectJustReleased {
+		h.selectJustReleased = false
+		h.updateShortcutLineLocked()
+	}
+}
+
 // updateShortcutLineLocked updates h.shortcutLine based on the current mode.
 // Precondition: caller must hold h.mu.
 func (h *KeyHandler) updateShortcutLineLocked() {
@@ -139,6 +152,12 @@ func (h *KeyHandler) updateShortcutLineLocked() {
 		h.shortcutLine = NextConfirmPrompt
 	case ModeDone:
 		h.shortcutLine = DoneShortcuts
+	case ModeSelect:
+		if h.selectJustReleased {
+			h.shortcutLine = SelectCommittedShortcuts
+		} else {
+			h.shortcutLine = SelectShortcuts
+		}
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
 	default:

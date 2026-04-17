@@ -1,6 +1,8 @@
 package ui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // keysModel is the Bubble Tea sub-model responsible for keyboard dispatch.
 // It holds a reference to the KeyHandler (which owns mode state and the
@@ -33,6 +35,8 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
 		return m.handleNextConfirm(key)
 	case ModeDone:
 		return m.handleDone(key)
+	case ModeSelect:
+		return m.handleSelect(key)
 	case ModeQuitting:
 		// All keys silently ignored so a user mashing keys during shutdown
 		// can't inject a second ActionQuit or retrigger the cancel hook.
@@ -58,6 +62,16 @@ func (m keysModel) handleNormal(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mu.Lock()
 		m.handler.prevMode = m.handler.mode
 		m.handler.mode = ModeQuitConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+		return m, nil
+	case "v":
+		// v enters ModeSelect. The guard for len(lines) == 0 and the
+		// selection initialisation (initSelectionAtLastVisibleRow) are
+		// handled in model.go's root Update, which has access to logModel.
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeSelect
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 		return m, nil
@@ -116,6 +130,50 @@ func (m keysModel) handleDone(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mu.Lock()
 		m.handler.prevMode = m.handler.mode
 		m.handler.mode = ModeQuitConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	case "v":
+		// v enters ModeSelect. See handleNormal for the same pattern.
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeSelect
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	}
+	return m, nil
+}
+
+// handleSelect handles key events in ModeSelect. Esc returns to the prior
+// mode; q enters ModeQuitConfirm; y/Enter transitions back to the prior mode
+// so model.go can perform the copy (it has access to logModel.SelectedText()).
+// Cursor movement keys (hjkl/arrows, 0/$, shift+↑↓, J/K, PgUp/PgDn) are
+// handled by logModel.handleSelectKey via model.go after this handler returns.
+func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		// Return to the pre-select mode. Selection clearing is handled
+		// immediately by model.go's post-dispatch guard in the same Update
+		// call. The prevObservedMode guard covers the external SetMode path.
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	case "q":
+		// The pre-Select idle mode (Normal or Done) is already saved in
+		// prevMode from when `v` was pressed. Do not overwrite it — Esc from
+		// QuitConfirm must restore the real idle mode, not ModeSelect itself.
+		// Selection clearing happens via model.go's post-dispatch guard.
+		m.handler.mu.Lock()
+		m.handler.mode = ModeQuitConfirm
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	case "y", "enter":
+		// Return to the pre-select mode. The actual copy (clipboard write,
+		// feedback log line) is performed by model.go's routing after key
+		// dispatch, which has access to logModel.SelectedText(). Selection
+		// clearing also happens there via the post-dispatch guard.
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 	}

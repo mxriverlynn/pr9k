@@ -382,6 +382,144 @@ if exec.writeRunSummaryCalls != 1 {
 
 A shared slice can still be useful for content inspection (verifying what was written), but the call count for each distinct method must be independent so the test distinguishes which method was called.
 
+## Test helpers should return all values callers need
+
+When a test helper constructs a composite value (e.g., a `Model` plus its `*KeyHandler`), return all values that individual test cases will need rather than just the primary one. Returning only the primary value forces callers to duplicate inline construction to obtain the secondary value, and that duplication drifts when the helper changes.
+
+```go
+// Bad — returns only Model; tests that need *KeyHandler duplicate the full setup inline
+func newSelectTestModel(t *testing.T, mode Mode) Model { ... }
+
+// Good — returns both; callers ignore what they don't need with _
+func newSelectTestModel(t *testing.T, mode Mode) (Model, *KeyHandler) { ... }
+
+// Call sites stay concise:
+m, _ := newSelectTestModel(t, ModeNormal)       // most tests ignore kh
+m, kh := newSelectTestModel(t, ModeNormal)      // tests that need kh get it cleanly
+```
+
+When reviewing a test helper: if any test calls the helper and then rebuilds part of its setup to get a value the helper discards, expand the helper's return signature.
+
+## Assert that triggering conditions actually occurred
+
+When a test relies on a side effect (eviction, insertion, truncation) having happened before asserting the behavior that depends on it, add an assertion that the side effect itself occurred. Without it, the test may pass vacuously — producing a green result even when the eviction logic is broken and the buffer never reached capacity.
+
+```go
+// Bad — if logRingBufferCap is larger than expected, pushes don't evict and
+// the test passes vacuously (it tests nothing about eviction behavior)
+for i := 0; i < logRingBufferCap+1; i++ {
+    m = pushLine(m, fmt.Sprintf("line %d", i))
+}
+require.Equal(t, 0, m.log.sel.anchor.rawIdx) // could be trivially true
+
+// Good — assert eviction happened before asserting the dependent behavior
+for i := 0; i < logRingBufferCap+1; i++ {
+    m = pushLine(m, fmt.Sprintf("line %d", i))
+}
+require.Equal(t, logRingBufferCap, len(m.log.lines), "eviction must have occurred")
+require.Equal(t, 0, m.log.sel.anchor.rawIdx)
+```
+
+Apply whenever a test's assertion is meaningful only if a prior operation had a particular effect. State that effect explicitly.
+
+## Comment tests that verify known limitations
+
+When a test verifies behavior that is a known limitation rather than a desired feature — typically a deferred-work item explicitly noted in code comments or the design doc — add a comment in the test body stating this. Without it, future readers may mistake the test for a feature specification and wonder why they can't improve the behavior.
+
+```go
+// Good — makes the deferred nature explicit in the test itself
+func TestSetSize_DoesNotRecomputeSelectionVisualCoords(t *testing.T) {
+    // This test verifies a known limitation (P1 from the design doc):
+    // SetSize does not call recomputeSelectionVisualCoords after rewrap,
+    // so visual coords on sel.anchor/cursor are stale until the next
+    // LogLinesMsg arrives. This is intentional; the recompute-on-resize
+    // work is tracked in issue #XXX. Do not "fix" this test without
+    // addressing the underlying deferred work.
+    ...
+}
+```
+
+## Use t.Fatal not t.Skip when a skip condition is unreachable
+
+`t.Skip` is for tests that are legitimately skipped under certain runtime conditions (missing tools, wrong OS, etc.). If the skip condition cannot be reached given the test setup, use `t.Fatal` instead. A `t.Skip` on an unreachable branch silently masks regressions — the test body stops executing without any failure signal.
+
+```go
+// Bad — skip is unreachable with 20 lines at viewport height=5;
+// if the setup changes and this fires, the test silently passes
+if m.log.viewport.YOffset != 0 {
+    t.Skip("viewport already not at bottom — test precondition not met")
+}
+
+// Good — t.Fatal signals a test-setup bug; the condition should never be true
+if m.log.viewport.YOffset != 0 {
+    t.Fatal("test setup error: viewport is not at bottom before auto-scroll test")
+}
+```
+
+Ask: "Can this condition ever be true given the test setup?" If no, use `t.Fatal`. Reserve `t.Skip` for conditions that legitimately vary by environment.
+
+## Document no-parallel constraint for package-level var mutation
+
+When tests mutate package-level variables (e.g., function pointers used as seams for dependency injection), those tests must not use `t.Parallel()`. Document this constraint next to the variable declarations in production code so the restriction is visible to everyone who might add a test, not just those who read the test file.
+
+```go
+// In clipboard.go — production code:
+
+// copyFn, isTTYFn, and stderrWriter are package-level vars to allow test injection.
+// Tests that mutate these vars must NOT call t.Parallel() — concurrent mutation
+// produces data races. Each test must save and restore the original value.
+var copyFn = clipboard.WriteAll
+var isTTYFn = func() bool { return term.IsTerminal(int(os.Stderr.Fd())) }
+var stderrWriter io.Writer = os.Stderr
+```
+
+The constraint lives in the production file because that is where a new test author discovers the seam. A comment only in the test file is invisible until they've already introduced a parallel test.
+
+## Never hardcode version strings in tests
+
+Tests that verify version correctness must read from the authoritative package constant, not hardcode the expected value as a string literal. Hardcoded version strings cause a class of false positives: after a version bump the hardcoded literal goes stale and the test fails with a misleading message that suggests the bump is wrong, rather than that the test is wrong.
+
+```go
+// Bad — hardcodes "0.5.0"; the test fails after every version bump
+func TestVersion_IsCurrentRelease(t *testing.T) {
+    require.Equal(t, "0.5.0", version.Version)
+}
+
+// Good — tests structural correctness; survives any valid version bump
+func TestVersion_FollowsSemver(t *testing.T) {
+    parts := strings.Split(version.Version, ".")
+    require.Len(t, parts, 3, "version must be MAJOR.MINOR.PATCH")
+    for _, p := range parts {
+        _, err := strconv.Atoi(p)
+        require.NoError(t, err, "each version component must be numeric")
+    }
+}
+```
+
+If you need to assert a specific version (e.g., as a one-time audit in a doc-integrity test), express it as `version.Version == "0.5.0"` inside a conditional, not as the expected argument to `require.Equal` — and add a comment explaining that the test will need to be updated after the next version bump.
+
+## Add a test to verify the async pattern when it is critical
+
+When correctness depends on a function being called asynchronously (inside a `tea.Cmd` closure) rather than synchronously in `Update()`, add a test that proves the synchronous path does not call the function. This guards against future refactors that accidentally move the call back into the synchronous path.
+
+```go
+// Verifies that copyFn is not called during Update() — only after cmd() is invoked.
+// Without this guard, a refactor that moves CopyToClipboard out of the Cmd closure
+// would freeze the TUI under slow clipboard daemons and all tests would still pass.
+func TestCopySelectedText_CopyFnNotCalledBeforeCmdInvoked(t *testing.T) {
+    called := false
+    copyFn = func(text string) error { called = true; return nil }
+    defer resetClipboardFns()
+
+    cmd := copySelectedText("hello")
+    require.False(t, called, "copyFn must not be called before cmd() is invoked")
+    _ = cmd() // now invoke the cmd; copyFn must fire
+    require.True(t, called)
+}
+```
+
+Apply this pattern any time a correctness property is "this must happen asynchronously" and a synchronous implementation would compile and pass all other tests.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)

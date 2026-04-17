@@ -193,7 +193,7 @@ When adding any new blocking receive to orchestration code:
 
 ## Wrap blocking operations in tea.Cmd closures
 
-In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
+In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks, or external process invocations). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
 
 ```go
 // Bad — Terminate() blocks up to 3 seconds; freezes the event loop
@@ -209,6 +209,24 @@ func (m keysModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     return m, func() tea.Msg {
         m.handler.Terminate() // runs off the Update goroutine
         return tea.Quit()
+    }
+}
+```
+
+**External process calls require the same discipline.** `clipboard.WriteAll` shells out to `xclip`, `xsel`, or `pbcopy`. Calling it synchronously inside `Update()` freezes the TUI for the duration of the daemon round-trip (or indefinitely if the daemon is absent). The fix is identical — move the call into the returned cmd closure:
+
+```go
+// Bad — clipboard write blocks Update(); slow daemon freezes the TUI
+func copySelectedText(text string) tea.Cmd {
+    err := copyToClipboard(text) // shells out to xclip/pbcopy — may block
+    return func() tea.Msg { return makeLogLinesMsg(err) }
+}
+
+// Good — blocking call is inside the closure, not before it
+func copySelectedText(text string) tea.Cmd {
+    return func() tea.Msg {
+        err := copyToClipboard(text) // runs in a separate goroutine
+        return makeLogLinesMsg(err)
     }
 }
 ```

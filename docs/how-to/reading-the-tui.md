@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.4.1 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.5.0 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -145,22 +145,34 @@ Ralph completed after 2 iteration(s) and 2 finalizing tasks.
 
 Phase banners use `═` (double horizontal) and are full-width; per-step banners use `─` (single horizontal) and match the heading width. This three-tier hierarchy — phase > iteration > step — lets you visually trace where you are in the log at a glance.
 
+### Word-wrap
+
+Lines longer than the viewport width wrap at word boundaries — no content is hidden off the right edge. A token with no spaces (a long URL or a stream-json blob) hard-wraps at the width boundary. Wrapped segments start at column 0 with no hanging indent.
+
+When you resize the terminal, content re-wraps to the new width and the viewport scrolls so the same logical line stays at the top of the visible area, even if it occupied multiple wrapped rows before the resize.
+
 ### Scrolling
 
 The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — ralph-tui enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
 
 ### Selecting log text to copy
 
-`tea.WithMouseCellMotion()` enables application mouse capture, which tells mainstream terminals (iTerm2, Ghostty, Kitty, xterm) to forward mouse drags to the application rather than performing local text selection. As a result, a plain drag no longer selects text in the log panel.
+ralph-tui handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
 
-To select and copy text from the log panel, hold the modifier key that overrides the application's mouse capture:
+**In-app mouse selection (recommended):**
+- **Left-click and drag** in the log viewport to select text. As you drag, the selected region is highlighted in reverse-video. Dragging past the top or bottom edge auto-scrolls one line per event.
+- **Release** to commit the selection. The footer switches to `y copy  esc cancel  drag for new selection`.
+- **Shift-click** to extend the committed selection's cursor without moving the anchor.
+- Press **`y`** or **`Enter`** to copy. Press **`Esc`** to cancel.
+
+**Terminal text selection (fallback):** if you need to copy text using the terminal's built-in selection mechanism (for example, to capture content outside the log viewport), hold the modifier key that overrides application mouse mode before dragging:
 
 | Platform | Override key | Gesture |
 |----------|-------------|---------|
 | macOS | `Option` | Hold Option, then drag to select |
 | Linux / Windows | `Shift` | Hold Shift, then drag to select |
 
-The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode.
+The modifier key bypass is a standard feature of every mainstream terminal that supports application mouse mode. In-app selection via left-drag is generally preferred because it correctly tracks word-wrapped visual lines and copies raw text without wrap-induced newlines.
 
 ## Region 3 — the shortcut footer
 
@@ -172,22 +184,54 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 
 | Footer text | Mode |
 |-------------|------|
-| `↑/k up  ↓/j down  n next step  q quit` | Normal — a step is running; you can scroll or skip |
+| `↑/k up  ↓/j down  v select  n next step  q quit` | Normal — a step is running; you can scroll, select, or skip |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
 | `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
 | `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for quit confirmation |
-| `q quit` | Done — the workflow finished; review output, then press `q` → `y` to exit |
+| `↑/k up  ↓/j down  v select  q quit` | Done — the workflow finished; review output, select text, or press `q` → `y` to exit |
+| `hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit` | Select — keyboard cursor visible; move to extend selection, `y` to copy |
+| `y copy  esc cancel  drag for new selection` | Select (committed) — shown after a mouse drag release; any key restores the Select footer |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
-When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone` with a `q quit` footer. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output.
+When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
+
+### Using Select mode
+
+Enter `ModeSelect` by pressing `v` from Normal or Done mode (keyboard cursor appears at column 0 of the last visible log row), or by left-clicking the log viewport (mouse cursor anchors at the click cell). The footer changes to show the select-mode shortcuts.
+
+Move the keyboard cursor with vim-style keys:
+
+| Keys | Action |
+|------|--------|
+| `h` / `←` | Move left one column |
+| `l` / `→` | Move right one column |
+| `j` / `↓` | Move down one row |
+| `k` / `↑` | Move up one row |
+| `0` / `Home` | Jump to start of current line |
+| `$` / `End` | Jump to end of current line |
+| `J` / `Shift+↓` | Extend selection down one row |
+| `K` / `Shift+↑` | Extend selection up one row |
+| `PgDn` / `PgUp` | Move down / up one page |
+| `y` / `Enter` | Copy selected text to clipboard and exit Select mode |
+
+The cursor behaves like vim's visual mode: vertical movement remembers the intended column (`virtualCol`) and restores it when returning to a longer line. The viewport auto-scrolls to keep the cursor visible.
+
+Press `y` or `Enter` to copy the selected text to the clipboard and return to Normal or Done mode. A `[copied N chars]` confirmation line appears in the log on success. In headless or SSH environments where no clipboard daemon is available, an OSC 52 escape sequence is sent to the terminal so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can still deliver the payload.
+
+Press `Esc` to clear the selection and return to Normal or Done mode without copying. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
+
+Note: `v` (keyboard entry) is blocked in Error, QuitConfirm, NextConfirm, and Quitting modes — only Normal and Done accept it. If the log panel is empty, `v` is a no-op. Mouse left-click is similarly ignored in Error, QuitConfirm, NextConfirm, and Quitting modes.
 
 See [Recovering from Step Failures](recovering-from-step-failures.md) for the Error-mode decision tree and [Quitting Gracefully](quitting-gracefully.md) for the quit flow.
+
+For a step-by-step walkthrough of the three common copy paths (mouse drag, keyboard single line, keyboard multi-line), OSC 52 SSH fallback, and Linux clipboard tool requirements, see [Copying Log Text](copying-log-text.md).
 
 ## Related documentation
 
 - [Getting Started](getting-started.md) — Install and first-run walk-through
+- [Copying Log Text](copying-log-text.md) — Step-by-step walkthroughs for mouse and keyboard selection, OSC 52 fallback, and Linux clipboard dependencies
 - [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Six-mode state machine that drives the footer
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Seven-mode state machine that drives the footer
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
 - [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT

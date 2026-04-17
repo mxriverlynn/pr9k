@@ -100,7 +100,7 @@ func main() {
 		os.Exit(1)
 	}
 	if cfg == nil {
-		os.Exit(0)
+		return
 	}
 
 	profileDir := preflight.ResolveProfileDir()

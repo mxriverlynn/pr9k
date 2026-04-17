@@ -47,12 +47,13 @@ func (m headerModel) iterLine() string {
 // keyboard dispatch — plus the terminal dimensions and a version label for the
 // shortcut footer.
 type Model struct {
-	header       headerModel
-	log          logModel
-	keys         keysModel
-	width        int
-	height       int
-	versionLabel string
+	header           headerModel
+	log              logModel
+	keys             keysModel
+	width            int
+	height           int
+	versionLabel     string
+	prevObservedMode Mode // used to detect external SetMode transitions out of ModeSelect
 }
 
 // NewModel constructs the root Model. initialHeader must be pre-populated
@@ -85,14 +86,90 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	// Mode-change guard: if the mode transitioned away from ModeSelect since the
+	// last Update (covers external SetMode calls from the orchestration goroutine),
+	// clear any lingering selection overlay so a stale reverse-video highlight
+	// never lingers.
+	//
+	// prevObservedMode is updated at the end of Update (after all dispatch) so
+	// it reflects the mode as it was when control last returned to the caller —
+	// i.e., the mode seen by the previous rendered frame.
+	currentMode := m.keys.handler.Mode()
+	if m.prevObservedMode == ModeSelect && currentMode != ModeSelect {
+		m.log = m.log.ClearSelection()
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Capture mode before key dispatch so the routing guard uses the mode
+		// that was active when this key arrived, not the post-dispatch mode.
+		modeBeforeKey := m.keys.handler.Mode()
+
+		// Clear the "just released" committed-shortcut flag on any key in ModeSelect.
+		// The flag is set by a mouse drag release and cleared on the next event
+		// so that SelectShortcuts is restored when the user resumes keyboard control.
+		if modeBeforeKey == ModeSelect {
+			m.keys.handler.mu.Lock()
+			m.keys.handler.clearJustReleasedLocked()
+			m.keys.handler.mu.Unlock()
+		}
+
 		var kcmd tea.Cmd
 		m.keys, kcmd = m.keys.Update(msg)
 		cmds = append(cmds, kcmd)
-		var lcmd tea.Cmd
-		m.log, lcmd = m.log.Update(msg) // viewport scroll
-		cmds = append(cmds, lcmd)
+
+		// Post-dispatch: handle v entering ModeSelect. keys.go sets the mode
+		// unconditionally; we revert if the log buffer is empty, or initialize
+		// the selection cursor otherwise.
+		if m.keys.handler.Mode() == ModeSelect && modeBeforeKey != ModeSelect {
+			if len(m.log.lines) == 0 {
+				// Revert: can't select in an empty viewport.
+				m.keys.handler.mu.Lock()
+				m.keys.handler.mode = m.keys.handler.prevMode
+				m.keys.handler.updateShortcutLineLocked()
+				m.keys.handler.mu.Unlock()
+			} else {
+				m.log = m.log.SetSelection(m.log.initSelectionAtLastVisibleRow())
+			}
+		}
+
+		// Selection movement: if still in ModeSelect after key dispatch,
+		// delegate movement keys to the log panel. Mode transitions (esc, q)
+		// are handled by handleSelect in keys.go and have already changed the
+		// mode before this check.
+		if modeBeforeKey == ModeSelect && m.keys.handler.Mode() == ModeSelect {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.handleSelectKey(msg)
+			cmds = append(cmds, lcmd)
+		}
+
+		// Immediate selection clear: if a key transitioned the mode away from
+		// ModeSelect (e.g., Esc, y, Enter), clear the selection overlay now so
+		// there is no single-frame stale highlight. For y/Enter, extract the
+		// selected text before clearing and enqueue the clipboard copy + feedback
+		// log line. The prevObservedMode guard at the top of Update covers the
+		// external SetMode path (orchestration goroutine).
+		if modeBeforeKey == ModeSelect && m.keys.handler.Mode() != ModeSelect {
+			switch msg.String() {
+			case "y", "enter":
+				// Extract text before ClearSelection removes the selection state.
+				text := m.log.SelectedText()
+				cmds = append(cmds, copySelectedText(text))
+			}
+			m.log = m.log.ClearSelection()
+		}
+
+		// Key routing guard: in ModeSelect, skip the log.Update forward for
+		// tea.KeyMsg. handleSelect has sole authority over key dispatch in this
+		// mode; viewport scrolling during selection is driven by the movement
+		// methods above, not by double-dispatched key events.
+		// Use the pre-dispatch mode so that a key that exits ModeSelect (e.g.,
+		// Esc) also doesn't double-dispatch to the viewport.
+		if modeBeforeKey != ModeSelect {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.Update(msg) // viewport scroll
+			cmds = append(cmds, lcmd)
+		}
 
 	case LogLinesMsg:
 		var lcmd tea.Cmd
@@ -100,12 +177,104 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, lcmd)
 
 	case tea.MouseMsg:
-		// Forward mouse events (wheel up/down, etc.) to the log viewport.
-		// bubbles/viewport enables MouseWheelEnabled by default, so wheel
-		// press events scroll the log body by MouseWheelDelta (3) lines.
-		var lcmd tea.Cmd
-		m.log, lcmd = m.log.Update(msg)
-		cmds = append(cmds, lcmd)
+		// On any mouse event while in ModeSelect, clear the "just released"
+		// committed-shortcut flag so that SelectShortcuts is restored before
+		// the new event is processed (a subsequent press or wheel after a drag
+		// release should not keep showing SelectCommittedShortcuts).
+		if m.keys.handler.Mode() == ModeSelect {
+			m.keys.handler.mu.Lock()
+			m.keys.handler.clearJustReleasedLocked()
+			m.keys.handler.mu.Unlock()
+		}
+
+		// Wheel events: always forward to the viewport for scrolling in any mode.
+		// The viewport's built-in wheel handler scrolls MouseWheelDelta (3) lines.
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown ||
+			msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight {
+			var lcmd tea.Cmd
+			m.log, lcmd = m.log.Update(msg)
+			cmds = append(cmds, lcmd)
+		} else if msg.Button == tea.MouseButtonLeft || msg.Button == tea.MouseButtonNone {
+			// Left button press / motion / release: handle for text selection.
+			// Guard against right-click and middle-click: some terminal emulators
+			// (e.g., iTerm2 in extended mouse mode) report non-left buttons as
+			// non-wheel events; without this guard they would trigger selection.
+			// logTopRow is the 0-indexed terminal row where the viewport content
+			// begins: 1 (top border) + gridRows (checkbox grid) + 1 (hrule).
+			// logLeftCol is 1 (inside the left border character).
+			gridRows := len(m.header.header.Rows)
+			logTopRow := gridRows + 2
+			logLeftCol := 1
+
+			currentMode := m.keys.handler.Mode()
+
+			switch msg.Action {
+			case tea.MouseActionPress:
+				// Ignore left-press in modes where selection is not meaningful.
+				if currentMode == ModeError || currentMode == ModeQuitConfirm ||
+					currentMode == ModeNextConfirm || currentMode == ModeQuitting {
+					break
+				}
+				p, ok := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
+				if !ok {
+					break
+				}
+				var lcmd tea.Cmd
+				m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+				cmds = append(cmds, lcmd)
+				// Transition from Normal or Done to ModeSelect on left-press.
+				// ModeSelect (entered via v) stays in ModeSelect — bare click
+				// re-anchors the selection cursor (handled inside HandleMouse).
+				// Gate on sel.active: if resolveVisualPos returned false (e.g., the
+				// click landed in empty viewport padding below the content), HandleMouse
+				// leaves sel.active=false and we must not enter ModeSelect with a
+				// zero-value selection.
+				if (currentMode == ModeNormal || currentMode == ModeDone) && m.log.sel.active {
+					m.keys.handler.mu.Lock()
+					m.keys.handler.prevMode = currentMode
+					m.keys.handler.mode = ModeSelect
+					m.keys.handler.updateShortcutLineLocked()
+					m.keys.handler.mu.Unlock()
+				}
+
+			case tea.MouseActionMotion:
+				// Extend the selection during an active drag. Compute the visual
+				// row without clamping to the viewport bounds so that auto-scroll
+				// can fire when the pointer moves above or below the content area.
+				if m.log.sel.active {
+					visualRow := m.log.viewport.YOffset + (msg.Y - logTopRow)
+					col := msg.X - logLeftCol
+					if col < 0 {
+						col = 0 // belt-and-suspenders: resolveVisualPos also clamps to [0, rowWidth]
+					}
+					p := pos{visualRow: visualRow, col: col}
+					var lcmd tea.Cmd
+					m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+					cmds = append(cmds, lcmd)
+				}
+
+			case tea.MouseActionRelease:
+				// Commit any active drag selection.
+				if m.log.sel.active {
+					// ok is intentionally discarded: HandleMouse.Release does not use p;
+					// it only commits the selection whose cursor was already positioned
+					// by preceding Motion events.
+					p, _ := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
+					var lcmd tea.Cmd
+					m.log, lcmd = m.log.HandleMouse(p, msg.Action, msg.Shift)
+					cmds = append(cmds, lcmd)
+					// Switch the shortcut footer to SelectCommittedShortcuts so
+					// the user sees "y copy  esc cancel" immediately after release.
+					// The flag is cleared on the next key or mouse event.
+					if m.keys.handler.Mode() == ModeSelect {
+						m.keys.handler.mu.Lock()
+						m.keys.handler.selectJustReleased = true
+						m.keys.handler.updateShortcutLineLocked()
+						m.keys.handler.mu.Unlock()
+					}
+				}
+			}
+		}
 
 	case headerStepStateMsg, headerPhaseStepsMsg:
 		m.header = m.header.apply(msg)
@@ -148,6 +317,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.QuitMsg:
 		return m, tea.Quit
 	}
+
+	// Update prevObservedMode after all dispatch so it reflects the mode that
+	// will be in effect when control returns to the caller. The guard at the
+	// top of the next Update call uses this to detect external SetMode
+	// transitions that happened between two consecutive Bubble Tea updates.
+	m.prevObservedMode = m.keys.handler.Mode()
 
 	return m, tea.Batch(cmds...)
 }
