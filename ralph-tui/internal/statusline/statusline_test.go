@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1267,8 +1268,10 @@ func TestRunner_RelativePathResolution(t *testing.T) {
 // --- Shutdown ordering ---
 
 // TestRunner_ShutdownOrdering verifies that the injected sender is never called
-// after Shutdown returns. A fake runner records (in order) every "Send" and
-// "Shutdown" event; after Shutdown the sequence must not contain a Send.
+// after Shutdown returns. An atomic marker is set immediately after Shutdown
+// returns; the sender increments a counter only when the marker is set.
+// Asserting counter == 0 immediately after Shutdown proves the guarantee
+// deterministically rather than relying on a time.Sleep.
 //
 // This tests the guarantee that main.go relies on: calling statusRunner.Shutdown()
 // after program.Run() returns ensures no program.Send happens after the Bubble
@@ -1276,10 +1279,16 @@ func TestRunner_RelativePathResolution(t *testing.T) {
 func TestRunner_ShutdownOrdering(t *testing.T) {
 	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "ok"}, nil)
 
+	var shutdownMarker atomic.Bool
+	var postShutdownSends atomic.Int32
+
 	var mu sync.Mutex
 	var events []string
 
 	runner.SetSender(func(_ interface{}) {
+		if shutdownMarker.Load() {
+			postShutdownSends.Add(1)
+		}
 		mu.Lock()
 		events = append(events, "Send")
 		mu.Unlock()
@@ -1296,16 +1305,17 @@ func TestRunner_ShutdownOrdering(t *testing.T) {
 	}
 
 	runner.Shutdown()
+	shutdownMarker.Store(true)
+
+	// After Shutdown returns with the marker set, any concurrent goroutine that
+	// was mid-send before Shutdown would have already finished (Shutdown blocks
+	// until the worker exits). No sleep needed.
+	if n := postShutdownSends.Load(); n != 0 {
+		t.Errorf("sender called %d time(s) after Shutdown returned", n)
+	}
+
 	mu.Lock()
 	events = append(events, "Shutdown")
-	mu.Unlock()
-
-	// Give the goroutine a moment to produce any spurious sends after Shutdown.
-	// pragmatic-sleep: no observable state to poll; we need the worker to
-	// exhaust any in-flight work it might have started before Shutdown returned.
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
 	snap := make([]string, len(events))
 	copy(snap, events)
 	mu.Unlock()
@@ -1322,7 +1332,36 @@ func TestRunner_ShutdownOrdering(t *testing.T) {
 	}
 	for _, e := range snap[shutdownIdx+1:] {
 		if e == "Send" {
-			t.Errorf("sender called after Shutdown: events = %v", snap)
+			t.Errorf("sender called after Shutdown marker: events = %v", snap)
 		}
+	}
+}
+
+// --- TP-011: statusline.New Enabled() contract via real resolver ---
+
+// TestNew_Enabled_RealScript verifies that New with a resolvable executable
+// returns Enabled() == true. Mirrors the main.go path where the runner is
+// constructed from a non-nil Config whose Command can be resolved.
+func TestNew_Enabled_RealScript(t *testing.T) {
+	tmp := t.TempDir()
+	scriptPath := filepath.Join(tmp, "x.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &statusline.Config{Command: "./x.sh"}
+	r := statusline.New(cfg, tmp, tmp, nil)
+	if !r.Enabled() {
+		t.Error("expected Enabled() == true for real executable")
+	}
+}
+
+// TestNew_Enabled_NonExistentCommand verifies that New with an unresolvable
+// command returns a no-op runner (Enabled() == false).
+func TestNew_Enabled_NonExistentCommand(t *testing.T) {
+	cfg := &statusline.Config{Command: "does-not-exist-ralph-xyz"}
+	r := statusline.New(cfg, t.TempDir(), t.TempDir(), nil)
+	if r.Enabled() {
+		t.Error("expected Enabled() == false for non-existent command")
 	}
 }

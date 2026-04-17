@@ -120,14 +120,7 @@ func main() {
 	// Build the statusline runner from config. New() returns a no-op runner
 	// when StatusLine is nil or its command cannot be resolved, so all method
 	// calls below are safe regardless of configuration.
-	var slCfg *statusline.Config
-	if stepFile.StatusLine != nil {
-		slCfg = &statusline.Config{
-			Command:                stepFile.StatusLine.Command,
-			RefreshIntervalSeconds: stepFile.StatusLine.RefreshIntervalSeconds,
-		}
-	}
-	statusRunner := statusline.New(slCfg, cfg.WorkflowDir, cfg.ProjectDir, log)
+	statusRunner := statusline.New(buildStatusLineConfig(stepFile.StatusLine), cfg.WorkflowDir, cfg.ProjectDir, log)
 	keyHandler.SetStatusLineActive(statusRunner.Enabled())
 
 	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
@@ -169,34 +162,11 @@ func main() {
 	// Inject the Bubble Tea sender so the worker goroutine can notify the TUI
 	// when the status-line cache is updated. The sender wraps the ui-package
 	// message type so statusline does not import bubbletea.
-	statusRunner.SetSender(func(_ interface{}) {
-		program.Send(ui.StatusLineUpdatedMsg{})
-	})
+	statusRunner.SetSender(newStatusLineSender(program.Send))
 
 	// Inject the mode reader so the stdin payload reflects the current UI mode
 	// at the moment the script is invoked.
-	statusRunner.SetModeGetter(func() string {
-		switch keyHandler.Mode() {
-		case ui.ModeNormal:
-			return "normal"
-		case ui.ModeError:
-			return "error"
-		case ui.ModeQuitConfirm:
-			return "quitconfirm"
-		case ui.ModeNextConfirm:
-			return "nextconfirm"
-		case ui.ModeDone:
-			return "done"
-		case ui.ModeSelect:
-			return "select"
-		case ui.ModeQuitting:
-			return "quitting"
-		case ui.ModeHelp:
-			return "help"
-		default:
-			return "unknown"
-		}
-	})
+	statusRunner.SetModeGetter(newModeGetter(keyHandler))
 
 	// Start the status-line worker goroutine. The initial state push happens
 	// inside workflow.Run (issue #116); the runner fires on its timer and on
@@ -226,17 +196,7 @@ func main() {
 		logWidth = ui.DefaultTerminalWidth
 	}
 
-	runCfg := workflow.RunConfig{
-		WorkflowDir:     cfg.WorkflowDir,
-		Iterations:      cfg.Iterations,
-		Env:             stepFile.Env,
-		InitializeSteps: stepFile.Initialize,
-		Steps:           stepFile.Iteration,
-		FinalizeSteps:   stepFile.Finalize,
-		LogWidth:        logWidth,
-		RunStamp:        log.RunStamp(),
-		Runner:          statusRunner,
-	}
+	runCfg := buildRunConfig(cfg, stepFile, statusRunner, logWidth, log.RunStamp())
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are
 	// written non-blockingly; drops are acceptable since the file logger still
@@ -306,26 +266,15 @@ func main() {
 		keyHandler.SetMode(ui.ModeDone)
 	}()
 
-	_, runErr := program.Run()
-	signal.Stop(sigChan)
-
 	// Shut down the status-line runner before waiting for the workflow goroutine.
-	// This blocks until the worker drains (bounded 2 s deadline), ensuring no
-	// program.Send calls happen after program.Run() has returned.
+	// runWithShutdown: blocks until the worker drains (bounded 2 s deadline in
+	// Shutdown, plus 4 s for workflowDone), ensuring no program.Send calls
+	// happen after program.Run() has returned.
 	// Note: the SIGINT path (program.Kill() → os.Exit(1)) does not reach here;
 	// any in-flight script on that path is orphaned until the OS reaps the
 	// process tree (matches claude-step behavior on forced exit).
-	statusRunner.Shutdown()
-
-	// Wait for the workflow goroutine to finish cleanup (log flush, channel
-	// close). Needed because handleQuitConfirm's tea.QuitMsg can cause
-	// program.Run() to return before the workflow goroutine finishes — the
-	// mid-workflow quit path sends tea.QuitMsg immediately after ForceQuit,
-	// racing with the goroutine's log.Close() and close(lineCh).
-	select {
-	case <-workflowDone:
-	case <-time.After(4 * time.Second):
-	}
+	runErr := runWithShutdown(program, statusRunner, workflowDone)
+	signal.Stop(sigChan)
 
 	// program.Kill() (signal-path forced shutdown after 2s grace) causes Run
 	// to return tea.ErrProgramKilled. That is a normal forced-exit path, not
