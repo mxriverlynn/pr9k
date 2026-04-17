@@ -473,7 +473,7 @@ func runTestHelper(mode string) {
 			fp, _ := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 			if fp != nil {
 				_, _ = fp.WriteString("x")
-				fp.Close()
+				_ = fp.Close()
 			}
 		}
 		time.Sleep(50 * time.Millisecond)

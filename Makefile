@@ -15,11 +15,13 @@ test:
 lint:
 	cd ralph-tui && golangci-lint run
 
+GOFMT_PATHS := cmd internal tools.go
+
 format:
-	cd ralph-tui && gofmt -w .
+	cd ralph-tui && gofmt -w $(GOFMT_PATHS)
 
 format-check:
-	@cd ralph-tui && unformatted=$$(gofmt -l .); \
+	@cd ralph-tui && unformatted=$$(gofmt -l $(GOFMT_PATHS)); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files not formatted:"; \
 		echo "$$unformatted"; \

@@ -13,12 +13,12 @@ func Sanitize(b []byte) string {
 	i := 0
 	for i < len(b) {
 		c := b[i]
-		switch {
-		case c == '\r':
+		switch c {
+		case '\r':
 			i++
-		case c == '\x07': // bare BEL
+		case '\x07': // bare BEL
 			i++
-		case c == '\x1b':
+		case '\x1b':
 			if i+1 >= len(b) {
 				// bare ESC at EOF — drop it
 				i++
