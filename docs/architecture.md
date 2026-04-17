@@ -127,18 +127,19 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
                   │ v ──────────┼──▶ ModeSelect
                   │ n ──────────┼──────────────────────┐
                   │ q ──────────┼──────┐               │
-                  └──────┬──────┘      │               │
-                         │             │               │
-                   step fails          │               │
-                         │             │               ▼
-                         ▼             ▼       ┌────────────────────┐
-                  ┌─────────────┐  ┌──────────────────┐│ ModeNextConfirm  │
-                  │ ModeError   │  │ ModeQuitConfirm  ││                  │
-                  │             │  │                  ││ y → cancel step  │
-                  │ c → continue│  │ y → ModeQuitting ││     + prevMode   │
-                  │ r → retry   │  │     + ForceQuit  ││ n, Esc → prevMode│
-                  │ q ──────────┼─▶│ n, Esc → prevMode│└────────────────────┘
-                  └─────────────┘  └────────┬─────────┘
+                  │ ? (active)  ├──────┼───────────────┼──▶ ModeHelp
+                  └──────┬──────┘      │               │      │ Esc → prevMode
+                         │             │               │      │ q → QuitConfirm
+                   step fails          │               │      └──────────────┐
+                         │             │               │                     │
+                         ▼             ▼               ▼                     │
+                  ┌─────────────┐  ┌──────────────────┐ ┌─────────────────┐  │
+                  │ ModeError   │  │ ModeQuitConfirm  │ │ ModeNextConfirm │  │
+                  │             │  │                  │ │                 │◄─┘
+                  │ c → continue│  │ y → ModeQuitting │ │ y → cancel step │
+                  │ r → retry   │  │     + ForceQuit  │ │     + prevMode  │
+                  │ q ──────────┼─▶│ n, Esc → prevMode│ │ n, Esc → prevMode│
+                  └─────────────┘  └────────┬─────────┘ └─────────────────┘
                                             │ y
                                             ▼
                                    ┌─────────────────┐
@@ -221,7 +222,7 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built rounded frame (no `lipgloss.Border` wrapper, so the two internal horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders). The current iteration/issue is embedded into the top-border title — `Power-Ralph.9000 — Iteration N/M — Issue #<id>` in bounded mode, or `Power-Ralph.9000 — Iteration N — Issue #<id>` when running unbounded (`--iterations 0`); the same string is set as the OS window title via `tea.SetWindowTitle`. The app name `Power-Ralph.9000` (from the `AppTitle` constant) renders green and the iteration detail after the ` — ` separator renders white. Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is rendered in white and is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback. D23 heartbeat: when no stream-json event arrives for ≥15 s during an active claude step, the iteration title appends `  ⋯ thinking (Ns)`; the suffix updates in-place each second and is cleared as soon as the next event arrives. The heartbeat reader is installed via `StatusHeader.SetHeartbeatReader(runner)` in `main.go` before the model is constructed; a separate 1-second ticker goroutine in `main.go` dispatches `HeartbeatTickMsg` via `program.Send` — `Model.Init()` returns nil and the ticker is not owned by the Bubble Tea event loop. `Model.Update()` delegates `HeartbeatTickMsg` to `StatusHeader.HandleHeartbeatTick()`. The `Runner` in `workflow.go` implements `HeartbeatReader` by exposing `HeartbeatSilence() (time.Duration, bool)` under `processMu`.
 
-**Package:** `internal/ui/` (`header.go`, `keys.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `selection.go`, `terminal.go`)
+**Package:** `internal/ui/` (`header.go`, `keys.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `overlay.go`, `selection.go`, `statusreader.go`, `terminal.go`)
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
