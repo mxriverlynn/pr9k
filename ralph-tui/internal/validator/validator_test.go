@@ -1644,7 +1644,7 @@ func TestValidate_StatusLine_Absent(t *testing.T) {
 func TestValidate_StatusLine_ValidFull(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "status.sh")
-	writeStepsJSON(t, dir, minimalWithStatusLine(fmt.Sprintf(`"statusLine":{"type":"command","command":"scripts/status.sh","refreshInterval":5}`)))
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"command","command":"scripts/status.sh","refreshIntervalSeconds":5}`))
 	errs := validator.Validate(dir)
 	requireNoErrors(t, errs)
 }
@@ -1681,7 +1681,7 @@ func TestValidate_StatusLine_RefreshIntervalAbsent(t *testing.T) {
 func TestValidate_StatusLine_RefreshIntervalZero(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "status.sh")
-	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshInterval":0}`))
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshIntervalSeconds":0}`))
 	errs := validator.Validate(dir)
 	requireNoErrors(t, errs)
 }
@@ -1689,9 +1689,9 @@ func TestValidate_StatusLine_RefreshIntervalZero(t *testing.T) {
 func TestValidate_StatusLine_RefreshIntervalNegative(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "status.sh")
-	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshInterval":-1}`))
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshIntervalSeconds":-1}`))
 	errs := validator.Validate(dir)
-	requireError(t, errs, "refreshInterval must be >= 0")
+	requireError(t, errs, "refreshIntervalSeconds must be >= 0")
 }
 
 func TestValidate_StatusLine_TypeCommand(t *testing.T) {

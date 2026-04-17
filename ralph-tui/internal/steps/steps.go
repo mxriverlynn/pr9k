@@ -25,10 +25,11 @@ type Step struct {
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
+// Populated by LoadSteps; not yet consumed by the TUI (wiring is a follow-up).
 type StatusLineConfig struct {
-	Type            string `json:"type,omitempty"`
-	Command         string `json:"command"`
-	RefreshInterval *int   `json:"refreshInterval,omitempty"`
+	Type                    string `json:"type,omitempty"`
+	Command                 string `json:"command"`
+	RefreshIntervalSeconds  *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.

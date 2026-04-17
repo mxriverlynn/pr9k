@@ -53,9 +53,9 @@ type vStep struct {
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
 type vStatusLine struct {
-	Type            string `json:"type,omitempty"`
-	Command         string `json:"command"`
-	RefreshInterval *int   `json:"refreshInterval,omitempty"`
+	Type                   string `json:"type,omitempty"`
+	Command                string `json:"command"`
+	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
 // vFile is the strict top-level struct.
@@ -179,8 +179,8 @@ func Validate(workflowDir string) []Error {
 				errs = append(errs, cfgErr("statusline", "config", "", msg))
 			}
 		}
-		if sl.RefreshInterval != nil && *sl.RefreshInterval < 0 {
-			errs = append(errs, cfgErr("statusline", "config", "", "refreshInterval must be >= 0 (0 disables the timer)"))
+		if sl.RefreshIntervalSeconds != nil && *sl.RefreshIntervalSeconds < 0 {
+			errs = append(errs, cfgErr("statusline", "config", "", "refreshIntervalSeconds must be >= 0 (0 disables the timer)"))
 		}
 	}
 

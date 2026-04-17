@@ -59,6 +59,18 @@ The optional top-level `env` array lists host environment variable names that ra
 
 Duplicates within the `env` array and overlap with built-in variable names are harmless and produce no errors. Env validation runs before the scope walk; errors here do not block phase validation.
 
+### statusLine block (Category "statusline")
+
+The optional top-level `statusLine` object configures a status-line command displayed by the TUI. Validation runs before the phase walk; errors use `Category="statusline"`, `Phase="config"`, no `StepName`.
+
+- `type`, when present, must be `"command"`. Omitting it is valid.
+- `command` is required and must resolve — either as a path relative to `workflowDir`, an absolute path, or a bare name found via `PATH` lookup (same resolution as non-claude step commands).
+- `refreshIntervalSeconds`, when present, must be `>= 0` (`0` disables the timer). The unit is seconds.
+
+Unknown subfields are rejected (strict decode). Absent `statusLine` is valid and produces no errors.
+
+*`StepFile.StatusLine` is populated by `LoadSteps` but not yet consumed by the TUI — wiring is a follow-up.*
+
 ### Sandbox Rules B, C
 
 Two additional rules protect sandbox isolation. Both fire regardless of which phase the step is in.
