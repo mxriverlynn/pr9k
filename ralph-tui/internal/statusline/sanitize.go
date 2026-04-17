@@ -5,7 +5,9 @@ import "bytes"
 // Sanitize strips disallowed control sequences from script stdout before
 // caching. Preserved: SGR color escapes (\x1b[…m) and OSC 8 hyperlinks.
 // Stripped: \r, CSI cursor/erase sequences, other OSC sequences, bare \x1b,
-// BEL, and trailing whitespace. Mid-sequence truncation at EOF does not panic.
+// BEL, and trailing space/tab. Callers should pass a single pre-split line;
+// newlines and other vertical whitespace are not stripped here.
+// Mid-sequence truncation at EOF does not panic.
 func Sanitize(b []byte) string {
 	out := make([]byte, 0, len(b))
 	i := 0
@@ -75,7 +77,6 @@ func consumeOSC(b []byte, start int, out []byte) (int, []byte) {
 	oscNum := string(b[numStart:i])
 
 	// Find the terminator: BEL (\x07) or ST (\x1b\x5c)
-	body := i
 	terminated := false
 	for i < len(b) {
 		if b[i] == '\x07' {
@@ -96,6 +97,5 @@ func consumeOSC(b []byte, start int, out []byte) (int, []byte) {
 		out = append(out, b[start:i]...)
 	}
 	// all other OSC, or any unterminated OSC — drop
-	_ = body
 	return i, out
 }

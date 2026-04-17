@@ -343,6 +343,20 @@ func TestBuildPayload_CapturesNotDeepCopied(t *testing.T) {
 	}
 }
 
+// L3 — OSC 88 starts with "8" but is not OSC 8; must be dropped, not preserved.
+func TestSanitize_OSC88IsDropped(t *testing.T) {
+	// OSC 88 with BEL terminator — must not be preserved (prefix "8" ≠ number "8")
+	got := statusline.Sanitize([]byte("\x1b]88;extra\x07visible"))
+	if got != "visible" {
+		t.Errorf("got %q, want %q", got, "visible")
+	}
+	// OSC 88 with ST terminator
+	got = statusline.Sanitize([]byte("\x1b]88;extra\x1b\\visible"))
+	if got != "visible" {
+		t.Errorf("ST-terminated OSC 88: got %q, want %q", got, "visible")
+	}
+}
+
 // T8 — BuildPayload output is deterministic and contains exactly the schema keys.
 func TestBuildPayload_DeterministicSchemaKeys(t *testing.T) {
 	s := statusline.State{

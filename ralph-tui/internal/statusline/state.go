@@ -16,7 +16,7 @@ type State struct {
 	StepName      string
 	WorkflowDir   string
 	ProjectDir    string
-	// Captures is a defensive copy of the VarTable snapshot visible in the
-	// current phase.
+	// Captures holds the VarTable snapshot visible in the current phase.
+	// Callers must supply a defensive copy; State and BuildPayload do not copy.
 	Captures map[string]string
 }
