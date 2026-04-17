@@ -243,9 +243,15 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Config Validation](features/config-validation.md)
 
-Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Validates the optional top-level `statusLine` block (command resolvability, `refreshIntervalSeconds` range, unknown-field rejection). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
+
+### [Status Line](features/statusline.md)
+
+A user-configured command that runs on a schedule and displays its first non-empty output line in the TUI footer. `Runner` manages a background worker goroutine that executes the command as a subprocess, delivers workflow state as JSON on stdin via `BuildPayload`, sanitizes stdout with `Sanitize` (strips dangerous control sequences, preserves SGR colors and OSC 8 hyperlinks), and caches the result. Refreshes are triggered by the workflow goroutine at phase/iteration/step boundaries and by an optional timer (default 5 s, configurable via `refreshIntervalSeconds`, disabled with `0`). A `StatusLineUpdatedMsg` is sent to the Bubble Tea program after each exit-0 run. All exported methods are goroutine-safe. The command inherits the full host environment (explicit trust-model decision for user-authored scripts). `New` returns a no-op `Runner` if the config is nil or the command is unresolvable. Shutdown must be called after `program.Run()` returns to avoid sending to a killed Bubble Tea program.
+
+**Package:** `internal/statusline/`
 
 ### [Docker Sandbox](features/sandbox.md)
 
@@ -275,6 +281,8 @@ cmd/ralph-tui/main.go
     ├── internal/preflight     (startup validation)
     │       └── internal/sandbox
     ├── internal/sandbox       (docker run argv, cidfile, terminator)
+    ├── internal/statusline    (status-line runner, state, payload, sanitizer)
+    │       └── internal/logger
     ├── internal/steps         (step loading)
     ├── internal/ui            (key handling, header, orchestration)
     ├── internal/validator     (config validation)
@@ -292,6 +300,9 @@ cmd/ralph-tui/main.go
 
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)
+
+internal/statusline            (status-line runner, state, payload, sanitizer)
+    └── internal/logger
 ```
 
 ## Key Design Principles

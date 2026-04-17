@@ -69,7 +69,7 @@ The optional top-level `statusLine` object configures a status-line command disp
 
 Unknown subfields are rejected (strict decode). Absent `statusLine` is valid and produces no errors.
 
-*`StepFile.StatusLine` is populated by `LoadSteps` but not yet consumed by the TUI — wiring is a follow-up.*
+See [Status Line](statusline.md) for the full runtime contract, including the `Runner` lifecycle, stdin payload schema, and ANSI sanitization.
 
 ### Sandbox Rules B, C
 

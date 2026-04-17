@@ -68,7 +68,7 @@ type Step struct {
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
-// Populated by LoadSteps; not yet consumed by the TUI (wiring is a follow-up).
+// Consumed by the statusline package to construct a Runner.
 type StatusLineConfig struct {
     Type                   string `json:"type,omitempty"`
     Command                string `json:"command"`
