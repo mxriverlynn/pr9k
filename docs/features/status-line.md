@@ -90,10 +90,10 @@ The script receives a single JSON object on stdin:
 | `step.num` | int | Current step number within phase (1-based) |
 | `step.count` | int | Total step count in phase |
 | `step.name` | string | Step name from `ralph-steps.json` |
-| `mode` | string | Current UI mode: `"normal"`, `"error"`, `"select"`, etc. |
+| `mode` | string | Current UI mode: `"normal"`, `"error"`, `"quitconfirm"`, `"nextconfirm"`, `"done"`, `"select"`, `"quitting"`, or `"help"` |
 | `workflowDir` | string | Workflow bundle directory |
 | `projectDir` | string | Target repository directory |
-| `captures` | object | All user-defined captured variables visible in current phase |
+| `captures` | object | All user-defined captured variables visible in current phase; built-in variables (WORKFLOW_DIR, PROJECT_DIR, MAX_ITER, ITER, STEP_NUM, STEP_COUNT, STEP_NAME) are excluded |
 
 All fields are always present. `captures` is always a JSON object (never null).
 

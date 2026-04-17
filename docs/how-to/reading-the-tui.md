@@ -253,7 +253,7 @@ For a step-by-step walkthrough of the three common copy paths (mouse drag, keybo
 - [Getting Started](getting-started.md) — Install and first-run walk-through
 - [Copying Log Text](copying-log-text.md) — Step-by-step walkthroughs for mouse and keyboard selection, OSC 52 fallback, and Linux clipboard dependencies
 - [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Seven-mode state machine that drives the footer
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Eight-mode state machine that drives the footer
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
 - [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT

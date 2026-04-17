@@ -214,6 +214,8 @@ if cfg.Runner != nil {
 
 The invariant is: `triggers == len(pushes) − 1` (the initial seed push has no trigger). `cfg.Runner == nil` is safe on all paths.
 
+A second trigger source exists outside the workflow goroutine: `ui.Model.Update` detects UI mode transitions and calls `cfg.Runner.Trigger()` once per mode change via `WithModeTrigger`. See [TUI Display: Mode-Change Status-Line Trigger](tui-display.md) for the implementation.
+
 ### The Run Loop
 
 `Run()` executes the full workflow lifecycle in three phases, all driven by the `VarTable`. A local `emitBlank` closure writes a single blank separator line before every content block (iteration separator, Orchestrate call, phase banner, capture log, completion summary) — no-op on the very first call so the log does not begin with a blank line. A `writePhaseBanner` closure calls `emitBlank` then writes `PhaseBanner(name, logWidth)` to the log. A `writeCaptureLog` closure calls `emitBlank` then writes `CaptureLog(varName, value)`.
@@ -617,6 +619,8 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 
 ## Additional Information
 
+- [Status Line Feature](status-line.md) — Configuration, script contract, refresh trigger matrix, and lifecycle
+- [Status Line Package](statusline.md) — Runner API, State, BuildPayload, Sanitize, and concurrency model
 - [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create and modify workflow step sequences
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How iteration variables are captured and injected into steps

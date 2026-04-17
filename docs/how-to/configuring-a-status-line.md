@@ -155,3 +155,10 @@ Examples:
 ## Security note
 
 The script inherits the full host environment, including `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, and other secrets present at startup. Treat the script with the same level of trust as the workflow binary itself. The script is **not** sandboxed inside Docker.
+
+## Related documentation
+
+- [Status Line Feature](../features/status-line.md) — Full feature reference: config schema, stdin JSON field table, stdout rules, refresh trigger matrix, help modal, concurrency model, and lifecycle
+- [Status Line Package](../features/statusline.md) — Package-level reference: `Runner` API, `State`, `BuildPayload`, `Sanitize`, and shutdown ordering
+- [Reading the TUI](reading-the-tui.md) — Status-line footer display, `? Help` trigger, and help modal walkthrough
+- [Config Validation](../features/config-validation.md) — Validation rules applied to the `statusLine` block at startup
