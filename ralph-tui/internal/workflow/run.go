@@ -210,6 +210,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 	// Seed the runner with an initial State immediately after VarTable
 	// construction so the timer goroutine never fires against a zero-value State.
+	// buildState is phase-pure: it reads phase as a parameter without consulting
+	// any internal phase field on vt, so this call is safe before vt.SetPhase.
 	if cfg.Runner != nil {
 		cfg.Runner.PushState(buildState(vt, vars.Initialize, cfg.RunStamp, version.Version))
 	}

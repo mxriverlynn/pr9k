@@ -53,7 +53,7 @@ type Model struct {
 	width            int
 	height           int
 	versionLabel     string
-	prevObservedMode Mode   // used to detect external SetMode transitions out of ModeSelect
+	prevObservedMode Mode   // holds the mode observed at the end of the previous Update; used both to detect external SetMode transitions out of ModeSelect (selection clearing) and to drive the once-per-transition status-line trigger fired below.
 	triggerFn        func() // called once per mode transition; nil means no-op
 }
 
@@ -80,6 +80,10 @@ func (m Model) WithHeartbeat(h HeartbeatReader) Model {
 // WithModeTrigger installs a mode-transition trigger on the Model. fn is
 // called exactly once in Model.Update whenever the mode changes from one
 // Update call to the next. When the status line is disabled, pass nil (safe).
+// Note: tea.QuitMsg short-circuits before the trigger check; any mode
+// transition that emits tea.Quit is reflected by the Update call that preceded
+// QuitMsg, not by the QuitMsg handler itself. fn must be non-blocking —
+// Runner.Trigger satisfies this guarantee via its buffered drop-on-full channel.
 func (m Model) WithModeTrigger(fn func()) Model {
 	m.triggerFn = fn
 	return m

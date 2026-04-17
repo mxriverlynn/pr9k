@@ -4498,8 +4498,8 @@ func TestRun_StatusRunner_BreakLoopIfEmpty_BalanceInvariant(t *testing.T) {
 }
 
 // TP-009: ResetIteration clears iteration-scoped captures visible in pushes.
-// The push after ResetIteration must not contain ITER_VAR from the previous
-// iteration; the push after Bind must contain the new value.
+// The push after Bind for iteration 2 must contain ITER_VAR == "second", and
+// no push for iteration 2 must contain ITER_VAR == "first".
 func TestRun_StatusRunner_ResetIterationClearsCaptures(t *testing.T) {
 	runner := &fakeStatusRunner{}
 	executor := &fakeExecutor{
@@ -4517,40 +4517,11 @@ func TestRun_StatusRunner_ResetIterationClearsCaptures(t *testing.T) {
 
 	Run(executor, header, kh, cfg)
 
-	// The push sequence per iteration is:
-	// ResetIteration push, SetIteration push, SetPhase(Iter) push, SetStep push, Bind push
-	// Find the ResetIteration push for iteration 2 (first push with Phase=="iteration"
-	// that does NOT have ITER_VAR — that's the ResetIteration push).
-	// We look for the second Phase=="iteration" push that has ITER_VAR=="" to identify reset.
-	var resetPush *statusline.State
-	iterPushCount := 0
-	for i := range runner.pushStates {
-		s := runner.pushStates[i]
-		if s.Phase == "iteration" {
-			iterPushCount++
-			// The 4th iteration-phase push is ResetIteration for iter 2
-			// (iter1: reset, setIter, setPhase, setStep, bind = 5 pushes; iter2 starts at push 6)
-			// Find the first push in iter-2 sequence: ITER_VAR absent and Iteration == 1 (prev)
-			// Simpler: find push where ITER_VAR is absent and we've seen a bind push before it.
-			if _, ok := s.Captures["ITER_VAR"]; !ok && iterPushCount > 5 {
-				cp := s
-				resetPush = &cp
-				break
-			}
-		}
-	}
-	if resetPush == nil {
-		// Fallback: just verify that there exists a finalize push without ITER_VAR.
-		// The real check is: the balance invariant held.
-		t.Log("could not isolate reset push; checking balance invariant instead")
-	}
-
-	// Primary assertion: balance invariant.
 	if runner.triggers != len(runner.pushStates)-1 {
 		t.Errorf("balance invariant: triggers=%d, pushes=%d", runner.triggers, len(runner.pushStates))
 	}
 
-	// Find the first Bind push for iteration 2 (should contain ITER_VAR == "second").
+	// Iteration 2's bind push must contain ITER_VAR == "second".
 	found := false
 	for _, s := range runner.pushStates {
 		if s.Phase == "iteration" && s.Captures["ITER_VAR"] == "second" {
@@ -4561,6 +4532,19 @@ func TestRun_StatusRunner_ResetIterationClearsCaptures(t *testing.T) {
 	if !found {
 		t.Error("expected a push with ITER_VAR=second (iteration 2 bind) but none found")
 	}
+
+	// No push from iteration 2 onward should contain ITER_VAR == "first".
+	// After ResetIteration, the previous iteration's captures are cleared.
+	seenSecond := false
+	for _, s := range runner.pushStates {
+		if s.Phase == "iteration" && s.Captures["ITER_VAR"] == "second" {
+			seenSecond = true
+		}
+		if seenSecond && s.Captures["ITER_VAR"] == "first" {
+			t.Error("found ITER_VAR=first in a push after iteration 2 started (ResetIteration should have cleared it)")
+			break
+		}
+	}
 }
 
 // TP-020: ActionQuit during finalize — balance invariant holds.
@@ -4569,9 +4553,21 @@ func TestRun_StatusRunner_QuitDuringFinalize_BalanceInvariant(t *testing.T) {
 	kh := ui.NewKeyHandler(func() {}, actions)
 
 	runner := &fakeStatusRunner{}
+	finalizeSeen := make(chan struct{}, 1)
 	executor := &fakeExecutor{
 		// iter-step succeeds, final-step fails → enters error mode
 		runStepErrors: []error{nil, errors.New("finalize failed")},
+		onLog: func(line string) {
+			// writePhaseBanner("Finalizing") writes exactly "Finalizing" as the heading.
+			// Signal as soon as the finalize phase banner appears so ActionQuit lands
+			// in the buffered actions channel before Orchestrate starts the step.
+			if line == "Finalizing" {
+				select {
+				case finalizeSeen <- struct{}{}:
+				default:
+				}
+			}
+		},
 	}
 	header := &fakeRunHeader{}
 
@@ -4589,7 +4585,11 @@ func TestRun_StatusRunner_QuitDuringFinalize_BalanceInvariant(t *testing.T) {
 		Run(executor, header, kh, cfg)
 	}()
 
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-finalizeSeen:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not reach finalize phase in time")
+	}
 	actions <- ui.ActionQuit
 
 	select {

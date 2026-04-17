@@ -50,6 +50,34 @@ timer goroutine (optional, interval > 0):
   tick every RefreshIntervalSeconds → runner.Trigger()
 ```
 
+## Refresh Triggers
+
+The status-line runner is driven by two independent trigger sources:
+
+### Workflow-side push closure
+
+After every meaningful VarTable mutation in `workflow.Run`, a `push(phase)` closure calls `cfg.Runner.PushState(buildState(vt, phase, ...))` then `cfg.Runner.Trigger()`. The five call sites are:
+
+| Event | VarTable call | push call |
+|---|---|---|
+| Phase set | `vt.SetPhase` | `push(phase)` |
+| Iteration number | `vt.SetIteration` | `push(vars.Iteration)` |
+| Iteration reset | `vt.ResetIteration` | `push(vars.Iteration)` |
+| Step update | `vt.SetStep` | `push(phase)` |
+| Capture bind | `vt.Bind` | `push(phase)` |
+
+In addition, one initial `PushState` (without a `Trigger`) is emitted immediately after `vars.New` — before any `vt.SetPhase` call — so the timer goroutine never fires against a zero-value `State`. The invariant is: `triggers == len(pushes) − 1`.
+
+`buildState` is phase-pure: it accepts phase as a parameter and does not consult any internal phase field on `VarTable`, so the initial push is safe to call before `vt.SetPhase`.
+
+### Model-side mode-change choke point
+
+`ui.Model.Update` detects mode transitions via a `prevObservedMode` field that stores the mode observed at the end of each `Update` call. When the mode changes between two consecutive `Update` calls — whether from keyboard, mouse, or an external `SetMode` call by the orchestration goroutine — the trigger function installed via `WithModeTrigger` fires exactly once. `tea.QuitMsg` short-circuits before this check; any mode transition that emits `tea.Quit` is reflected by the preceding `Update`, not by the `QuitMsg` handler.
+
+The trigger function must be non-blocking. `Runner.Trigger()` satisfies this via a buffered channel (capacity 4) that drops on full — a slow status-line script cannot back-pressure the bubbletea goroutine.
+
+`WithModeTrigger` follows the same returning-Model builder shape as `WithHeartbeat`. Both `cfg.Runner == nil` and `triggerFn == nil` are safe (required because `main.go` does not yet instantiate a real Runner — wiring is deferred to a follow-up issue).
+
 ## Configuration
 
 The `statusLine` block is optional. When absent, `StepFile.StatusLine` is nil and `New` returns a no-op `Runner`.

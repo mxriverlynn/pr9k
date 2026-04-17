@@ -1426,10 +1426,7 @@ func TestModel_ModeTrigger_SelectModeRelease_SetsJustReleasedNoTrigger(t *testin
 	if m.keys.handler.Mode() != ModeSelect {
 		t.Error("expected to stay in ModeSelect after release")
 	}
-	m.keys.handler.mu.Lock()
-	jreleased := m.keys.handler.selectJustReleased
-	m.keys.handler.mu.Unlock()
-	if !jreleased {
+	if !m.keys.handler.SelectJustReleased() {
 		t.Error("expected selectJustReleased=true after mouse release in ModeSelect")
 	}
 }

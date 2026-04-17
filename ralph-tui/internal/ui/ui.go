@@ -129,6 +129,14 @@ func (h *KeyHandler) ForceQuit() {
 	}
 }
 
+// SelectJustReleased reports whether a mouse drag selection was just committed
+// (mouse was released). The flag is cleared on the next key or mouse event.
+func (h *KeyHandler) SelectJustReleased() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.selectJustReleased
+}
+
 // clearJustReleasedLocked clears the selectJustReleased flag and refreshes the
 // shortcut line if the flag was set. Precondition: caller must hold h.mu.
 func (h *KeyHandler) clearJustReleasedLocked() {
