@@ -1641,18 +1641,6 @@ func TestModel_ModeTrigger_QuestionMark_NoOp_NoFire(t *testing.T) {
 
 // --- Status-line footer rendering tests (issue #118) ---
 
-// mockStatusReader is a test double for StatusReader that lets callers control
-// Enabled/HasOutput/LastOutput independently.
-type mockStatusReader struct {
-	enabled   bool
-	hasOutput bool
-	output    string
-}
-
-func (r *mockStatusReader) Enabled() bool      { return r.enabled }
-func (r *mockStatusReader) HasOutput() bool    { return r.hasOutput }
-func (r *mockStatusReader) LastOutput() string { return r.output }
-
 // newTestModelWithStatus returns a Model with a given StatusReader installed
 // and a fixed 80×24 terminal size with a minimal log viewport.
 func newTestModelWithStatus(t *testing.T, sr StatusReader) Model {
@@ -1883,10 +1871,23 @@ func TestModel_ModeHelp_WheelEvent_ForwardedToViewport(t *testing.T) {
 
 // --- ModeHelp modal visibility and content tests (issue #118) ---
 
+// assertModalFits fails the test immediately if the modal rendered by m would
+// exceed the frame height, indicating the test fixture height is too small for
+// the current modal row count. Update m.height (or reduce m.log.SetSize) if
+// you add rows to renderHelpModal.
+func assertModalFits(t *testing.T, m Model) {
+	t.Helper()
+	modal := m.renderHelpModal()
+	modalH := len(strings.Split(modal, "\n"))
+	if modalH > m.height {
+		t.Fatalf("test fixture misconfigured: modal height %d exceeds frame height %d; update newTestModelModeHelp fixture if the modal row count changed", modalH, m.height)
+	}
+}
+
 // newTestModelModeHelp returns a Model in ModeHelp with an 80-column terminal.
 // The viewport is set to 18 rows and m.height is set to 6+18=24 so that the
 // frame height equals m.height. This ensures the centering math in View() keeps
-// the full 22-row help modal inside the 24-row frame without clipping.
+// the full help modal inside the 24-row frame without clipping.
 // Calls t.Skip if ModeHelp could not be entered.
 func newTestModelModeHelp(t *testing.T) Model {
 	t.Helper()
@@ -1907,6 +1908,7 @@ func newTestModelModeHelp(t *testing.T) Model {
 	if m.keys.handler.Mode() != ModeHelp {
 		t.Skip("ModeHelp not entered; skipping test")
 	}
+	assertModalFits(t, m)
 	return m
 }
 
@@ -2012,13 +2014,13 @@ func TestView_StatusLine_FooterFrameRowWidthStable_ANSIPreserved(t *testing.T) {
 	}
 }
 
-// TestView_ModeHelp_SmallTerminal_ModalClampedTo20ColWidth verifies that on a
-// sub-24-column terminal (m.width=10, so m.width-4=6) the modal's content rows
-// are clamped to 20 columns by the floor at renderHelpModal lines 547–549.
-// The title row can overflow (the title string is wider than 18 inner columns),
-// so we check the blank row immediately after the title border, which must have
-// visual width == 20.
-func TestView_ModeHelp_SmallTerminal_ModalClampedTo20ColWidth(t *testing.T) {
+// TestView_ModeHelp_SmallTerminal_ModalClampedTo29ColWidth verifies that on a
+// sub-33-column terminal (m.width=10, so m.width-4=6) the modal is clamped to
+// 29 columns by the floor in renderHelpModal. 29 columns ensures the title
+// " Help: Keyboard Shortcuts " (26 chars + 1 lead dash = 27 inner columns) always
+// fits without overflowing the top border. Content rows are checked (not the
+// title border) to confirm the clamp applies uniformly.
+func TestView_ModeHelp_SmallTerminal_ModalClampedTo29ColWidth(t *testing.T) {
 	header := NewStatusHeader(1)
 	header.SetPhaseSteps([]string{"step"})
 	actions := make(chan StepAction, 10)
@@ -2037,13 +2039,56 @@ func TestView_ModeHelp_SmallTerminal_ModalClampedTo20ColWidth(t *testing.T) {
 
 	modal := m.renderHelpModal()
 	lines := strings.Split(modal, "\n")
-	// lines[0] is the title border (can overflow); lines[1] is the first
-	// blank content row from wrapLine("") which must equal modalWidth=20.
+	// lines[0] is the title border; lines[1] is the first blank content row.
+	// With the floor at 29 the title (27 inner columns) fits exactly, so both
+	// the title row and content rows are 29 visible columns wide.
 	if len(lines) < 2 {
 		t.Fatalf("modal has fewer than 2 lines: %d", len(lines))
 	}
-	if got := lipgloss.Width(lines[1]); got != 20 {
-		t.Errorf("modal content row visual width = %d, want 20 (clamped floor)", got)
+	if got := lipgloss.Width(lines[1]); got != 29 {
+		t.Errorf("modal content row visual width = %d, want 29 (clamped floor)", got)
+	}
+}
+
+// TestView_ModeHelp_ShortFrame_EscHintAlwaysVisible verifies that when the
+// terminal is shorter than the modal, View() pins the bottom border and esc
+// hint to the last two visible rows. The user must always be able to see the
+// dismissal cue even on a very short terminal.
+func TestView_ModeHelp_ShortFrame_EscHintAlwaysVisible(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test")
+	m.width = 80
+	// Use a height shorter than the modal (modal is ~22 rows; use 10).
+	m.height = 10
+	m.log.SetSize(76, 4)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping short-frame test")
+	}
+
+	frameLines := strings.Split(m.View(), "\n")
+	// The esc hint must appear in the frame despite clipping.
+	plain := stripANSI(strings.Join(frameLines, "\n"))
+	if !strings.Contains(plain, "esc") {
+		t.Errorf("esc dismissal hint not found in short-frame ModeHelp view; plain:\n%s", plain)
+	}
+	// The bottom border character must appear in the last frame line that
+	// contains modal content (look for "╯").
+	found := false
+	for _, l := range frameLines {
+		if strings.Contains(stripANSI(l), "╯") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("modal bottom border '╯' not found in short-frame view; plain:\n%s", plain)
 	}
 }
 
@@ -2137,18 +2182,17 @@ func TestModel_ErrorMode_MousePress_StillSwallowed(t *testing.T) {
 // TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter verifies
 // that the footer reads StatusReader on every View() call rather than caching.
 // Covers the cold-start → populated transition that happens at runtime.
+// Each state is isolated via WithStatusRunner so a future caching optimization
+// cannot cause false-positive test passes.
 func TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter(t *testing.T) {
-	sr := &mockStatusReader{enabled: false, hasOutput: false, output: ""}
-	m := newTestModelWithStatus(t, sr)
+	m := newTestModelWithStatus(t, &mockStatusReader{enabled: false, hasOutput: false, output: ""})
 
 	plain1 := stripANSI(m.View())
 	if strings.Contains(plain1, "? Help") {
 		t.Error("first View should not contain '? Help' when runner is disabled")
 	}
 
-	sr.enabled = true
-	sr.hasOutput = true
-	sr.output = "build passing"
+	m = m.WithStatusRunner(&mockStatusReader{enabled: true, hasOutput: true, output: "build passing"})
 
 	plain2 := stripANSI(m.View())
 	if !strings.Contains(plain2, "? Help") {
@@ -2158,6 +2202,18 @@ func TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter(t *testin
 		t.Errorf("second View should contain status text after runner flip; plain:\n%s", plain2)
 	}
 }
+
+// mockStatusReader is a test double for StatusReader that lets callers control
+// Enabled/HasOutput/LastOutput independently.
+type mockStatusReader struct {
+	enabled   bool
+	hasOutput bool
+	output    string
+}
+
+func (r *mockStatusReader) Enabled() bool      { return r.enabled }
+func (r *mockStatusReader) HasOutput() bool    { return r.hasOutput }
+func (r *mockStatusReader) LastOutput() string { return r.output }
 
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {

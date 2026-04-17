@@ -698,6 +698,30 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/mouse_selection_test.go` — 16 integration tests covering all mouse selection acceptance criteria: left-drag selects text with live reverse-video feedback, release commits and shows `SelectCommittedShortcuts`, dragging past top/bottom edge auto-scrolls one line per motion, bare click re-anchors selection, shift-click extends committed selection's cursor, left-press in Error/QuitConfirm/NextConfirm/Quitting is a no-op, wheel scrolls in every mode, mid-drag resize force-commits without losing raw coords, `y` copies committed selection and exits ModeSelect
 - `ralph-tui/internal/ui/mouse_selection_extra_test.go` — 24 additional tests across 7 categories: `resolveVisualPos` (negative row false, row past end false, col clamped to row width, col clamped to 0 for negative), `HandleMouse` unit tests (empty visualLines no-op, motion guard `!active`, release guard `!active`, shift-press on no committed selection clears-and-re-anchors, negative row clamped to 0), model.go mouse routing (press above viewport `ok=false` no-op, press below content no-op, stray motion no-op when not active, stray release no-op), `selectJustReleased` lifecycle (cleared by wheel event, cleared by second press, NOT set by keyboard `v`), auto-scroll clamping (multi-event scrolls accumulate, stops at top boundary, stops at bottom boundary), shift-click edge cases (same cell as cursor is no-op, click before anchor moves cursor left, click during active drag ignored), `SelectCommittedShortcuts` constant and `updateShortcutLineLocked` path
 
+## Overlay Primitive and Help Modal
+
+### overlay.go
+
+Two-function ANSI-aware splice primitive in `ralph-tui/internal/ui/overlay.go`:
+
+- **`overlay(base, modal string, top, left int) string`** — splices a multi-line modal string over a base frame row-by-row. `top`/`left` are 0-indexed terminal coordinates of the modal's top-left corner. Modal rows that fall outside the base frame are silently clipped; negative offsets are clamped to zero. The base frame's ANSI state outside the replaced region is fully preserved.
+- **`spliceAt(base, insert string, left int) string`** — column-splices a single line: replaces the visual column range `[left, left+width(insert))` in `base` with `insert`. Uses `charmbracelet/x/ansi.Truncate` / `TruncateLeft` for ANSI-aware column arithmetic — wide runes straddling a boundary are replaced with a space, and ANSI state outside the replaced region is preserved.
+
+### renderHelpModal / ModeHelp overlay path
+
+`Model.renderHelpModal()` builds a centered help modal string sized to `min(termWidth-4, 70)` columns, with a floor of 29 columns so the title string `" Help: Keyboard Shortcuts "` (26 visible characters + 1 lead dash = 27 inner columns) always fits within the top border without overflowing. The modal contains four sections (Normal, Select, Error, Done) rendered from the `HelpModal*` constants via `colorShortcutLine`, an `esc  close` footer row right-aligned in the inner width, and a bottom border.
+
+When in `ModeHelp`, `Model.View()`:
+1. Builds the full base frame (shortcut-bar footer, because `footerMode == ModeHelp` takes the else branch and renders `HelpModeShortcuts`).
+2. Calls `renderHelpModal()`, computes centering offsets `top = (height-modalH)/2`, `left = (width-modalW)/2`, each clamped to 0.
+3. **Height-clipping guard:** if `modalH > m.height` (terminal is shorter than the modal), the last two modal rows (bottom border + esc-hint footer row) are pinned to the last two visible frame rows so the dismissal cue is always on screen.
+4. Calls `overlay(frame, modal, top, left)` to splice the modal over the frame.
+
+Key files:
+- `ralph-tui/internal/ui/overlay.go` — `overlay` and `spliceAt` primitives
+- `ralph-tui/internal/ui/overlay_test.go` — 5 tests: ANSI preservation outside modal, ANSI colors inside insert survive, wide-rune boundary handling, modal rows past base clipped without panic, empty base no-panic, negative top/left clipped gracefully
+- `ralph-tui/internal/ui/model_test.go` — ModeHelp modal tests: visibility, all four section labels in order, nil status runner no-panic, footer width stable with ANSI, 29-column floor clamp, short-frame esc hint always visible, centering math, right/middle click guard; `assertModalFits` fixture helper fails fast if modal height exceeds frame height
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how the header fits into the TUI
@@ -706,3 +730,4 @@ if len(stepFile.Initialize) > 0 {
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log stream
 - [Step Definitions & Prompt Building](step-definitions.md) — Where step names displayed in the header originate
 - [API Design](../coding-standards/api-design.md) — Coding standards for bounds guards on array indexers (used by SetStepState)
+- [Status Line](statusline.md) — StatusReader interface, footer switch, and `? Help` trigger that activate the overlay path

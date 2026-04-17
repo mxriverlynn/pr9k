@@ -524,6 +524,18 @@ func (m Model) View() string {
 		modalLines := strings.Split(modal, "\n")
 		modalH := len(modalLines)
 		modalW := lipgloss.Width(modalLines[0])
+		// If the modal is taller than the frame, pin the esc hint (second-to-last
+		// line) and bottom border (last line) to the last two visible rows so the
+		// user always sees the dismissal cue regardless of terminal height.
+		if modalH > m.height && m.height >= 2 {
+			bottomLine := modalLines[modalH-1]
+			footerLine := modalLines[modalH-2]
+			modalLines = modalLines[:m.height]
+			modalLines[m.height-1] = bottomLine
+			modalLines[m.height-2] = footerLine
+			modal = strings.Join(modalLines, "\n")
+			modalH = m.height
+		}
 		top := (m.height - modalH) / 2
 		left := (m.width - modalW) / 2
 		if top < 0 {
@@ -544,8 +556,8 @@ func (m Model) View() string {
 // aligned "esc  close" footer row.
 func (m Model) renderHelpModal() string {
 	modalWidth := min(m.width-4, 70)
-	if modalWidth < 20 {
-		modalWidth = 20
+	if modalWidth < 29 {
+		modalWidth = 29
 	}
 	innerW := modalWidth - 2 // subtract the two border characters
 

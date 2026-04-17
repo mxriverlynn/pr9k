@@ -180,17 +180,39 @@ A single line assembled in `Model.View()` using Lip Gloss layout: the mode-depen
 
 The footer uses a two-tone color scheme: the version label on the right renders in **white**. On the left, for the key-mapping lines (Normal and Error modes), each mapped key token (e.g. `↑/k`, `n`, `q`, `c`, `r`) renders in **white** and its trailing description (e.g. `up`, `next step`, `quit`) renders in **light gray**. For the status-message lines the whole line renders in **white** — with one exception: in the quit-confirm prompt, the embedded `Power-Ralph.9000` substring renders in **green** to match the top-border title's brand color, so the confirmation footer and the title line read as the same app.
 
+### Status-line footer path
+
+When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
+
+```
+[status text…]  ? Help  ralph-tui v0.5.0
+```
+
+The status text is the sanitized first non-empty line of the most recent command run. It is left-truncated to protect the `? Help` hint and version label. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.
+
+### `? Help` and the help modal
+
+When the status-line footer is active and you press `?`, the TUI enters **ModeHelp**: a centered overlay modal appears showing the keyboard shortcuts for all four modes (Normal, Select, Error, Done). The footer switches to `esc  close` for the duration. Press `<Escape>` to dismiss; press `q` to enter the quit-confirm prompt instead.
+
+The modal is ANSI-aware: it is splice-rendered over the base frame without disturbing the underlying content or color state. On very short terminals (where the modal is taller than the frame), the bottom border and `esc  close` footer row are always pinned to the last visible rows so the dismissal cue is never hidden.
+
+Non-wheel mouse events (left-click, right-click, middle-click) inside the modal do not transition to ModeSelect. Wheel events still scroll the underlying viewport.
+
+### Footer text by mode
+
 The left-side shortcut bar is the clearest way to tell what state the handler is in:
 
 | Footer text | Mode |
 |-------------|------|
-| `↑/k up  ↓/j down  v select  n next step  q quit` | Normal — a step is running; you can scroll, select, or skip |
+| `[status text]  ? Help  [version]` | Normal with status-line active and populated |
+| `↑/k up  ↓/j down  v select  n next step  q quit` | Normal — standard shortcut bar (status-line disabled or cold-start) |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
 | `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
 | `Quit Power-Ralph.9000? (y/n, esc to cancel)` | QuitConfirm — you pressed `q`, waiting for quit confirmation |
 | `↑/k up  ↓/j down  v select  q quit` | Done — the workflow finished; review output, select text, or press `q` → `y` to exit |
 | `hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit` | Select — keyboard cursor visible; move to extend selection, `y` to copy |
 | `y copy  esc cancel  drag for new selection` | Select (committed) — shown after a mouse drag release; any key restores the Select footer |
+| `esc  close` | Help — the keyboard shortcut modal is open |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
 When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.

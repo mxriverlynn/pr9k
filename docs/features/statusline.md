@@ -224,6 +224,40 @@ Callers should pass a single pre-split line. Truncated or malformed sequences at
 3. **During run**: the workflow goroutine calls `PushState(s)` then `Trigger()` at phase/iteration/step boundaries; the UI goroutine calls `Trigger()` on mode changes.
 4. **`Shutdown()`**: sets `stopped`, cancels the internal context, waits up to 2 s for the worker to drain. Must be called from `main.go` after `program.Run()` returns — **not** from a workflow goroutine defer — to avoid sending messages to a killed Bubble Tea program.
 
+## TUI Display Contract
+
+The status-line feature integrates with the TUI through three touchpoints: the `StatusReader` interface, the footer switch, and the `? Help` trigger.
+
+### StatusReader interface
+
+`model.go` defines `StatusReader`, a read-only view of runner state:
+
+```go
+type StatusReader interface {
+    Enabled() bool
+    HasOutput() bool
+    LastOutput() string
+}
+```
+
+`*statusline.Runner` satisfies this interface (compile-time assertion in `internal/ui/statusreader.go`). Pass the runner to `Model.WithStatusRunner(r)` to wire it into the TUI. Passing nil (or a disabled runner with `Enabled()==false`) falls back to the shortcut-bar path — no panic.
+
+### Footer switch
+
+`Model.View()` selects one of two footer rendering paths each frame:
+
+1. **Status-line path** — active when `footerMode == ModeNormal && runner.Enabled() && runner.HasOutput()`. Renders: `[truncated status text]  [? Help]  [version]` (status budget computed to preserve the `? Help` and version labels). On very narrow terminals the version label may be silently truncated first; the `? Help` hint is always protected.
+2. **Shortcut-bar path** — all other modes and conditions, including ModeHelp itself (which shows `HelpModeShortcuts`). Cold-start (HasOutput=false) always takes this path.
+
+### `? Help` trigger and help modal
+
+When the status-line path is active (runner enabled + has output), `SetStatusLineActive(true)` must be called on the `KeyHandler` so the `?` key transitions to `ModeHelp`. In ModeHelp:
+
+- `Model.View()` renders a centered help modal (overlay-spliced over the base frame) with a four-section shortcut grid for Normal / Select / Error / Done modes and an `esc  close` footer row.
+- The footer shows `HelpModeShortcuts` (not the status text) for the duration of ModeHelp.
+- `<Escape>` restores the prior mode; `q` enters `ModeQuitConfirm`.
+- Non-wheel mouse events (left-, right-, middle-click) in ModeHelp are suppressed and do not transition to ModeSelect. Wheel events still scroll the underlying viewport.
+
 ## Cold-Start Behavior
 
 `HasOutput()` returns false until the first exit-0 run. The TUI footer displays the keyboard shortcut bar (not a status-line error message) during cold-start.
