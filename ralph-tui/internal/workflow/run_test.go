@@ -4738,3 +4738,143 @@ func TestRun_StatusRunner_FinalizeOnlyPhase(t *testing.T) {
 		t.Error("expected a finalize push with StepName=only-final")
 	}
 }
+
+// --- TP-001: buildStep delivers containerEnv to docker argv (iteration phase) ---
+
+// TestBuildStep_ContainerEnvDelivered_IterationPhase (TP-001) verifies end-to-end
+// that a non-nil containerEnv map flows through buildStep into the docker argv as
+// consecutive -e KEY=VALUE pairs in sorted key order, placed after CLAUDE_CONFIG_DIR.
+func TestBuildStep_ContainerEnvDelivered_IterationPhase(t *testing.T) {
+	workflowDir := t.TempDir()
+	promptsDir := filepath.Join(workflowDir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "step.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
+
+	exec := &fakeExecutor{projectDir: t.TempDir()}
+	vt := vars.New(workflowDir, exec.projectDir, 3)
+	vt.SetPhase(vars.Iteration)
+	vt.SetIteration(1)
+	vt.SetStep(1, 1, "step1")
+
+	s := steps.Step{
+		Name:       "step1",
+		IsClaude:   true,
+		Model:      "sonnet",
+		PromptFile: "step.txt",
+	}
+	containerEnv := map[string]string{"GOCACHE": "/tmp/gc", "GOPATH": "/tmp/go"}
+
+	resolved, err := buildStep(workflowDir, s, vt, vars.Iteration, nil, containerEnv, exec)
+	if err != nil {
+		t.Fatalf("buildStep error: %v", err)
+	}
+
+	// Both entries must appear as -e KEY=VALUE pairs.
+	gcacheIdx := findConsecutive(resolved.Command, "-e", "GOCACHE=/tmp/gc")
+	gopathIdx := findConsecutive(resolved.Command, "-e", "GOPATH=/tmp/go")
+	if gcacheIdx < 0 {
+		t.Fatal("-e GOCACHE=/tmp/gc not found in command")
+	}
+	if gopathIdx < 0 {
+		t.Fatal("-e GOPATH=/tmp/go not found in command")
+	}
+	// GOCACHE < GOPATH alphabetically — sorted order.
+	if gcacheIdx >= gopathIdx {
+		t.Errorf("GOCACHE (idx %d) must come before GOPATH (idx %d) in sorted order", gcacheIdx, gopathIdx)
+	}
+	// containerEnv must appear after CLAUDE_CONFIG_DIR.
+	claudeConfigIdx := findConsecutivePrefix(resolved.Command, "-e", "CLAUDE_CONFIG_DIR=")
+	if claudeConfigIdx < 0 {
+		t.Fatal("CLAUDE_CONFIG_DIR not found in command")
+	}
+	if claudeConfigIdx >= gcacheIdx {
+		t.Errorf("CLAUDE_CONFIG_DIR (idx %d) must come before containerEnv GOCACHE (idx %d)", claudeConfigIdx, gcacheIdx)
+	}
+}
+
+// --- TP-002: containerEnv reaches all three phases ---
+
+// TestBuildStep_ContainerEnvDelivered_AllPhases (TP-002) verifies that a non-nil
+// containerEnv map is threaded through buildStep for all three phase call sites
+// (initialize, iteration, finalize), so a regression dropping the parameter from
+// any phase is caught.
+func TestBuildStep_ContainerEnvDelivered_AllPhases(t *testing.T) {
+	workflowDir := t.TempDir()
+	promptsDir := filepath.Join(workflowDir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "step.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
+
+	exec := &fakeExecutor{projectDir: t.TempDir()}
+	containerEnv := map[string]string{"MY_KEY": "my_value"}
+	s := steps.Step{
+		Name:       "step",
+		IsClaude:   true,
+		Model:      "sonnet",
+		PromptFile: "step.txt",
+	}
+
+	phaseTests := []struct {
+		name  string
+		phase vars.Phase
+	}{
+		{"Initialize", vars.Initialize},
+		{"Iteration", vars.Iteration},
+		{"Finalize", vars.Finalize},
+	}
+
+	for _, tc := range phaseTests {
+		t.Run(tc.name, func(t *testing.T) {
+			vt := vars.New(workflowDir, exec.projectDir, 3)
+			vt.SetPhase(tc.phase)
+			if tc.phase == vars.Iteration {
+				vt.SetIteration(1)
+			}
+			vt.SetStep(1, 1, s.Name)
+
+			resolved, err := buildStep(workflowDir, s, vt, tc.phase, nil, containerEnv, exec)
+			if err != nil {
+				t.Fatalf("buildStep error: %v", err)
+			}
+
+			if findConsecutive(resolved.Command, "-e", "MY_KEY=my_value") < 0 {
+				t.Errorf("phase %s: -e MY_KEY=my_value not found in command %v", tc.name, resolved.Command)
+			}
+		})
+	}
+}
+
+// findConsecutive returns the index of flag in args where args[i]==flag and
+// args[i+1]==value, or -1 if not found.
+func findConsecutive(args []string, flag, value string) int {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return i
+		}
+	}
+	return -1
+}
+
+// findConsecutivePrefix returns the index where args[i]==flag and
+// strings.HasPrefix(args[i+1], prefix), or -1 if not found.
+func findConsecutivePrefix(args []string, flag, prefix string) int {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && strings.HasPrefix(args[i+1], prefix) {
+			return i
+		}
+	}
+	return -1
+}

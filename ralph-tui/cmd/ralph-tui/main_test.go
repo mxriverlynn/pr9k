@@ -389,3 +389,145 @@ func TestStartup_PreflightOnlyErrors(t *testing.T) {
 		t.Errorf("clean validation should produce no 'validation error(s)' line, got: %q", got)
 	}
 }
+
+// writeWarningOnlyStepFile creates a ralph-steps.json that triggers only a
+// warning-level validation finding (GITHUB_TOKEN in containerEnv), no fatal errors.
+func writeWarningOnlyStepFile(t *testing.T, dir string) {
+	t.Helper()
+	content := `{
+		"containerEnv": {"GITHUB_TOKEN": "hardcoded-value"},
+		"initialize": [],
+		"iteration": [
+			{ "name": "noop", "isClaude": false, "command": ["true"] }
+		],
+		"finalize": []
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeWarningAndFatalStepFile creates a ralph-steps.json with both a fatal
+// containerEnv error (CLAUDE_CONFIG_DIR is reserved) and a non-fatal warning
+// (GITHUB_TOKEN looks like a secret).
+func writeWarningAndFatalStepFile(t *testing.T, dir string) {
+	t.Helper()
+	content := `{
+		"containerEnv": {
+			"CLAUDE_CONFIG_DIR": "bad",
+			"GITHUB_TOKEN": "hardcoded-value"
+		},
+		"initialize": [],
+		"iteration": [
+			{ "name": "noop", "isClaude": false, "command": ["true"] }
+		],
+		"finalize": []
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestStartup_WarningOnlyValidation_ProceedsAndPrintsWarning (TP-003) verifies
+// that startup() returns ok=true and non-nil services when validation produces
+// only non-fatal warnings (no fatal errors, no preflight errors), and that the
+// warning text appears in stderr output.
+func TestStartup_WarningOnlyValidation_ProceedsAndPrintsWarning(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeWarningOnlyStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if !ok {
+		t.Fatalf("startup() returned ok=false with warning-only config; want true. stderr=%q", buf.String())
+	}
+	if svc == nil {
+		t.Fatal("startup() returned nil services with warning-only config")
+	}
+	defer func() { _ = svc.log.Close() }()
+
+	got := buf.String()
+	if !strings.Contains(got, "config warning:") {
+		t.Errorf("expected 'config warning:' in output, got: %q", got)
+	}
+}
+
+// TestStartup_WarningOnlyValidation_NoValidationErrorCountLine (TP-004) verifies
+// that when validation produces only non-fatal warnings, the "N validation error(s)"
+// count line is NOT printed — it must only appear when fatalCount > 0.
+func TestStartup_WarningOnlyValidation_NoValidationErrorCountLine(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeWarningOnlyStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	_, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if !ok {
+		t.Fatalf("startup() returned ok=false with warning-only config. stderr=%q", buf.String())
+	}
+
+	got := buf.String()
+	if strings.Contains(got, "validation error(s)") {
+		t.Errorf("warning-only config should not produce 'validation error(s)' line, got: %q", got)
+	}
+}
+
+// TestStartup_FatalAndWarningValidation_CountsOnlyFatals (TP-014) verifies that
+// when a step file combines a fatal error (reserved CLAUDE_CONFIG_DIR key) with a
+// non-fatal warning (GITHUB_TOKEN), the output includes BOTH messages but the
+// "N validation error(s)" count line reports only the fatal count (1, not 2).
+// Intent: regression guard for the inline-mix print behavior in main.go:60-65.
+func TestStartup_FatalAndWarningValidation_CountsOnlyFatals(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeWarningAndFatalStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    true,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false with fatal validation error")
+	}
+	if svc != nil {
+		t.Error("startup() returned non-nil services on validation failure")
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "CLAUDE_CONFIG_DIR") {
+		t.Errorf("expected CLAUDE_CONFIG_DIR in output, got: %q", got)
+	}
+	if !strings.Contains(got, "GITHUB_TOKEN") {
+		t.Errorf("expected GITHUB_TOKEN in output, got: %q", got)
+	}
+	// Fatal count is 1 (CLAUDE_CONFIG_DIR), warning is non-fatal — count must be 1 not 2.
+	if !strings.Contains(got, "1 validation error(s)") {
+		t.Errorf("expected '1 validation error(s)' in output, got: %q", got)
+	}
+	if strings.Contains(got, "2 validation error(s)") {
+		t.Errorf("count line must not report 2 (non-fatal warning counts as error), got: %q", got)
+	}
+}

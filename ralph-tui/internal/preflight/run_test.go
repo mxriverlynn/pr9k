@@ -346,3 +346,74 @@ func TestRun_RalphCache_ReadOnlyProjectDirSurfacesError(t *testing.T) {
 		t.Errorf("expected a .ralph-cache error for read-only projectDir; got: %v", result.Errors)
 	}
 }
+
+// TestRun_RalphCache_FileClashSurfacesError (TP-010) verifies that when a regular
+// file already exists at .ralph-cache (e.g. a git-tracked placeholder), Run
+// surfaces an error with the expected prefix and .ralph-cache in the message.
+func TestRun_RalphCache_FileClashSurfacesError(t *testing.T) {
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	cachePath := filepath.Join(projectDir, ".ralph-cache")
+	if err := os.WriteFile(cachePath, []byte("placeholder"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Run(projectDir, profileDir, allGreenProber)
+
+	var cacheErr error
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), ".ralph-cache") {
+			cacheErr = e
+			break
+		}
+	}
+	if cacheErr == nil {
+		t.Fatalf("expected a .ralph-cache error when it exists as a regular file; got: %v", result.Errors)
+	}
+	if !strings.Contains(cacheErr.Error(), "preflight: could not create .ralph-cache in") {
+		t.Errorf("error message has wrong format: %q", cacheErr.Error())
+	}
+}
+
+// TestRun_CollectsAllErrors_CacheProfileDocker (TP-011) documents the collect-all
+// design: a .ralph-cache creation failure does not short-circuit the profile or
+// docker checks — all three errors surface before Run returns.
+func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	projectDir := filepath.Join(parent, "readonly-project")
+	if err := os.Mkdir(projectDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(projectDir, 0o755) })
+
+	result := Run(projectDir, "/tmp/ralph-nonexistent-profile-xyzzy11", missingBinaryProber)
+
+	hasCache := false
+	hasProfile := false
+	hasDocker := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), ".ralph-cache") {
+			hasCache = true
+		}
+		if strings.Contains(e.Error(), "claude profile directory") {
+			hasProfile = true
+		}
+		if strings.Contains(e.Error(), "docker is not installed") {
+			hasDocker = true
+		}
+	}
+	if !hasCache {
+		t.Errorf("expected .ralph-cache error in: %v", result.Errors)
+	}
+	if !hasProfile {
+		t.Errorf("expected profile-dir error in: %v", result.Errors)
+	}
+	if !hasDocker {
+		t.Errorf("expected docker error in: %v", result.Errors)
+	}
+}

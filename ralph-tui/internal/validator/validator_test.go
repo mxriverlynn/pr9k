@@ -1946,3 +1946,127 @@ func TestValidate_ContainerEnv_UnknownFieldRejected(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireError(t, errs, "malformed JSON")
 }
+
+// --- TP-006: Error.IsFatal ---
+
+func TestError_IsFatal(t *testing.T) {
+	cases := []struct {
+		severity string
+		want     bool
+	}{
+		{"", true},
+		{validator.SeverityError, true},
+		{validator.SeverityWarning, false},
+		{validator.SeverityInfo, false},
+	}
+	for _, tc := range cases {
+		e := validator.Error{Severity: tc.severity, Category: "test", Phase: "config", Problem: "p"}
+		got := e.IsFatal()
+		if got != tc.want {
+			t.Errorf("severity=%q: IsFatal()=%v, want %v", tc.severity, got, tc.want)
+		}
+	}
+}
+
+// --- TP-007: FatalErrorCount ---
+
+func TestFatalErrorCount(t *testing.T) {
+	t.Run("mixed severities counts only fatal", func(t *testing.T) {
+		errs := []validator.Error{
+			{Severity: "", Category: "test", Phase: "p", Problem: "a"},
+			{Severity: validator.SeverityError, Category: "test", Phase: "p", Problem: "b"},
+			{Severity: validator.SeverityWarning, Category: "test", Phase: "p", Problem: "c"},
+			{Severity: validator.SeverityInfo, Category: "test", Phase: "p", Problem: "d"},
+		}
+		got := validator.FatalErrorCount(errs)
+		if got != 2 {
+			t.Errorf("FatalErrorCount = %d, want 2", got)
+		}
+	})
+	t.Run("nil slice returns 0", func(t *testing.T) {
+		got := validator.FatalErrorCount(nil)
+		if got != 0 {
+			t.Errorf("FatalErrorCount(nil) = %d, want 0", got)
+		}
+	})
+}
+
+// --- TP-008: Error.Error() prefix and contents (file-level and step-level, all severities) ---
+
+func TestError_ErrorString(t *testing.T) {
+	cases := []struct {
+		name         string
+		e            validator.Error
+		wantPrefix   string
+		wantContains []string
+	}{
+		{
+			name:         "error file-level",
+			e:            validator.Error{Severity: validator.SeverityError, Category: "file", Phase: "config", Problem: "missing"},
+			wantPrefix:   "config error:",
+			wantContains: []string{"file", "config", "missing"},
+		},
+		{
+			name:         "error step-level",
+			e:            validator.Error{Severity: validator.SeverityError, Category: "schema", Phase: "iteration", StepName: "My Step", Problem: "bad field"},
+			wantPrefix:   "config error:",
+			wantContains: []string{"schema", "iteration", "My Step", "bad field"},
+		},
+		{
+			name:         "warning file-level",
+			e:            validator.Error{Severity: validator.SeverityWarning, Category: "containerEnv", Phase: "config", Problem: "looks like a secret"},
+			wantPrefix:   "config warning:",
+			wantContains: []string{"containerEnv", "config", "looks like a secret"},
+		},
+		{
+			name:         "warning step-level",
+			e:            validator.Error{Severity: validator.SeverityWarning, Category: "containerEnv", Phase: "config", StepName: "Feature work", Problem: "something"},
+			wantPrefix:   "config warning:",
+			wantContains: []string{"containerEnv", "config", "Feature work", "something"},
+		},
+		{
+			name:         "info file-level",
+			e:            validator.Error{Severity: validator.SeverityInfo, Category: "containerEnv", Phase: "config", Problem: "also in allowlist"},
+			wantPrefix:   "config info:",
+			wantContains: []string{"containerEnv", "config", "also in allowlist"},
+		},
+		{
+			name:         "info step-level",
+			e:            validator.Error{Severity: validator.SeverityInfo, Category: "env", Phase: "iteration", StepName: "Deploy", Problem: "notice"},
+			wantPrefix:   "config info:",
+			wantContains: []string{"env", "iteration", "Deploy", "notice"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.e.Error()
+			if !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("Error() = %q, want prefix %q", got, tc.wantPrefix)
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("Error() = %q, want contains %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
+// --- TP-012: step-level Error() includes quoted step name ---
+
+func TestError_StepLevel_QuotedStepName(t *testing.T) {
+	e := validator.Error{
+		Severity: validator.SeverityWarning,
+		Category: "containerEnv",
+		Phase:    "config",
+		StepName: "Feature work",
+		Problem:  "literal value committed to repo",
+	}
+	got := e.Error()
+	if !strings.HasPrefix(got, "config warning:") {
+		t.Errorf("Error() = %q, want prefix %q", got, "config warning:")
+	}
+	if !strings.Contains(got, `"Feature work"`) {
+		t.Errorf("Error() = %q, want quoted step name \"Feature work\"", got)
+	}
+}

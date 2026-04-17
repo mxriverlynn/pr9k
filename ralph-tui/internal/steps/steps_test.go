@@ -644,3 +644,62 @@ func TestLoadSteps_StatusLineRefreshIntervalAbsentIsNilPointer(t *testing.T) {
 		t.Errorf("expected RefreshIntervalSeconds to be nil when absent, got %d", *got.StatusLine.RefreshIntervalSeconds)
 	}
 }
+
+// --- TP-009: ContainerEnv JSON deserialization ---
+
+// TestLoadSteps_ContainerEnvPopulated verifies that a populated containerEnv map
+// is correctly deserialized from ralph-steps.json.
+func TestLoadSteps_ContainerEnvPopulated(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"containerEnv":{"K":"V"},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 1 {
+		t.Fatalf("expected ContainerEnv length 1, got %d: %v", len(got.ContainerEnv), got.ContainerEnv)
+	}
+	if got.ContainerEnv["K"] != "V" {
+		t.Errorf(`ContainerEnv["K"] = %q, want "V"`, got.ContainerEnv["K"])
+	}
+}
+
+// TestLoadSteps_ContainerEnvAbsentIsNil verifies that an absent containerEnv key
+// deserializes to a nil/empty map.
+func TestLoadSteps_ContainerEnvAbsentIsNil(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 0 {
+		t.Errorf("expected ContainerEnv nil/empty when absent from JSON, got %v", got.ContainerEnv)
+	}
+}
+
+// TestLoadSteps_ContainerEnvEmptyMap verifies that an explicit empty containerEnv
+// object deserializes to an empty map without error.
+func TestLoadSteps_ContainerEnvEmptyMap(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"containerEnv":{},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 0 {
+		t.Errorf("expected ContainerEnv empty for explicit {}, got %v", got.ContainerEnv)
+	}
+}

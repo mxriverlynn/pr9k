@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -539,5 +541,49 @@ func TestBuildLoginArgs_ForwardsTERMWhenSet(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("argv missing consecutive `-e TERM` pair; got %v", args)
+	}
+}
+
+// TestBuildRunArgs_ContainerEnv_NilAllowlistOrdering (TP-013) verifies that when
+// the allowlist is nil but containerEnv is non-empty, the CLAUDE_CONFIG_DIR entry
+// still appears before the containerEnv entries in the resulting argv.
+func TestBuildRunArgs_ContainerEnv_NilAllowlistOrdering(t *testing.T) {
+	containerEnv := map[string]string{"FOO": "x"}
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		nil, containerEnv, testModel, "prompt")
+
+	claudeConfigIdx := -1
+	fooIdx := -1
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && strings.HasPrefix(args[i+1], "CLAUDE_CONFIG_DIR=") {
+			claudeConfigIdx = i
+		}
+		if args[i] == "-e" && args[i+1] == "FOO=x" {
+			fooIdx = i
+		}
+	}
+	if claudeConfigIdx < 0 {
+		t.Fatal("CLAUDE_CONFIG_DIR not found in args")
+	}
+	if fooIdx < 0 {
+		t.Fatal("-e FOO=x not found in args")
+	}
+	if claudeConfigIdx >= fooIdx {
+		t.Errorf("CLAUDE_CONFIG_DIR (idx %d) must appear before containerEnv FOO=x (idx %d)", claudeConfigIdx, fooIdx)
+	}
+}
+
+// TestBuildRunArgs_DoesNotMutateContainerEnv (TP-015) verifies that BuildRunArgs
+// does not modify the containerEnv map passed by the caller, matching the
+// input-immutability standard from docs/coding-standards/testing.md.
+func TestBuildRunArgs_DoesNotMutateContainerEnv(t *testing.T) {
+	containerEnv := map[string]string{"ALPHA": "a", "BETA": "b"}
+	original := maps.Clone(containerEnv)
+
+	_ = BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		nil, containerEnv, testModel, "prompt")
+
+	if !reflect.DeepEqual(containerEnv, original) {
+		t.Errorf("BuildRunArgs mutated containerEnv: before=%v after=%v", original, containerEnv)
 	}
 }

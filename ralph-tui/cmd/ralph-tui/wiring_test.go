@@ -348,3 +348,31 @@ func TestBuildRunConfig_FieldMapping(t *testing.T) {
 		t.Errorf("RunStamp = %q, want %q", got.RunStamp, "run-stamp")
 	}
 }
+
+// TestBuildRunConfig_ContainerEnvFieldMapping (TP-005) verifies that
+// StepFile.ContainerEnv is assigned to RunConfig.ContainerEnv in buildRunConfig.
+// This seam is the gateway between config parsing and orchestration; a missing
+// assignment here silently drops the entire containerEnv feature.
+func TestBuildRunConfig_ContainerEnvFieldMapping(t *testing.T) {
+	cfg := &cli.Config{
+		WorkflowDir: "/workflow",
+		Iterations:  1,
+	}
+	stepFile := steps.StepFile{
+		ContainerEnv: map[string]string{"FOO": "1", "BAR": "2"},
+		Iteration:    []steps.Step{{Name: "iter"}},
+	}
+	runner := statusline.NewNoOp()
+
+	got := buildRunConfig(cfg, stepFile, runner, 80, "stamp")
+
+	if len(got.ContainerEnv) != 2 {
+		t.Fatalf("ContainerEnv length = %d, want 2; got %v", len(got.ContainerEnv), got.ContainerEnv)
+	}
+	if got.ContainerEnv["FOO"] != "1" {
+		t.Errorf("ContainerEnv[\"FOO\"] = %q, want \"1\"", got.ContainerEnv["FOO"])
+	}
+	if got.ContainerEnv["BAR"] != "2" {
+		t.Errorf("ContainerEnv[\"BAR\"] = %q, want \"2\"", got.ContainerEnv["BAR"])
+	}
+}
