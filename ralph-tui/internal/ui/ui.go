@@ -22,6 +22,7 @@ const (
 	ModeDone        // entered after the workflow completes; shows "q quit" footer
 	ModeSelect      // entered when user presses 'v'; shows selection cursor overlay
 	ModeQuitting    // entered after the user confirms a quit; footer shows "Quitting..."
+	ModeHelp        // entered via ? in ModeNormal (when StatusLineActive); esc/q exit
 )
 
 // AppTitle is the canonical display name of the application. Use this
@@ -39,6 +40,31 @@ const (
 	SelectShortcuts          = "hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"
 	SelectCommittedShortcuts = "y copy  esc cancel  drag for new selection"
 	QuittingLine             = "Quitting..."
+	HelpModeShortcuts        = "esc  close"
+)
+
+// Modal body constants for the Help modal (§Help modal in docs/plans/status-line/design.md).
+// Each constant contains only the two-column grid rows for that mode section;
+// the modal header, section labels, and borders are rendered separately.
+// Width target: ~67 columns of interior space.
+const (
+	HelpModalNormal = "" +
+		"  ↑ / k        scroll up              n      skip to next step\n" +
+		"  ↓ / j        scroll down            q      quit\n" +
+		"  v            enter select mode      ?      show this help"
+
+	HelpModalSelect = "" +
+		"  hjkl / ↑↓←→  extend selection       y      copy selection\n" +
+		"  0 / $        to line start / end    esc    cancel selection\n" +
+		"  ⇧ ↑ / ⇧ ↓    extend by line         q      quit"
+
+	HelpModalError = "" +
+		"  c            continue to next step  r      retry failed step\n" +
+		"  q            quit"
+
+	HelpModalDone = "" +
+		"  ↑ / k        scroll up              v      enter select mode\n" +
+		"  ↓ / j        scroll down            q      quit"
 )
 
 // KeyHandler is a state machine that tracks keyboard mode
@@ -54,6 +80,7 @@ type KeyHandler struct {
 	mu                 sync.Mutex
 	shortcutLine       string // protected by mu; use ShortcutLine() to access
 	selectJustReleased bool   // protected by mu; true after a mouse drag release; cleared on next event
+	statusLineActive   bool   // protected by mu; true when a statusLine command is configured
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -137,6 +164,24 @@ func (h *KeyHandler) SelectJustReleased() bool {
 	return h.selectJustReleased
 }
 
+// StatusLineActive reports whether a statusLine command is configured.
+// When false, the ? key in ModeNormal is a no-op and ModeHelp is unreachable.
+// Safe to call from any goroutine.
+func (h *KeyHandler) StatusLineActive() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.statusLineActive
+}
+
+// SetStatusLineActive sets whether a statusLine command is configured.
+// Call this from main.go after constructing the Runner (issue #117).
+// Safe to call from any goroutine.
+func (h *KeyHandler) SetStatusLineActive(active bool) {
+	h.mu.Lock()
+	h.statusLineActive = active
+	h.mu.Unlock()
+}
+
 // clearJustReleasedLocked clears the selectJustReleased flag and refreshes the
 // shortcut line if the flag was set. Precondition: caller must hold h.mu.
 func (h *KeyHandler) clearJustReleasedLocked() {
@@ -168,6 +213,8 @@ func (h *KeyHandler) updateShortcutLineLocked() {
 		}
 	case ModeQuitting:
 		h.shortcutLine = QuittingLine
+	case ModeHelp:
+		h.shortcutLine = HelpModeShortcuts
 	default:
 		// Unknown mode: reset to normal shortcuts so the shortcut bar stays
 		// usable if a future mode is added without updating this switch.

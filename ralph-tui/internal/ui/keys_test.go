@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -432,5 +433,194 @@ func TestHandleQuitConfirm_UnrecognizedKey_NoOp(t *testing.T) {
 	}
 	if h.Mode() != ModeQuitConfirm {
 		t.Errorf("mode changed unexpectedly: got %v", h.Mode())
+	}
+}
+
+// --- ModeHelp tests ---
+
+func TestHandleNormal_QuestionMark_WithStatusLineActive_EntersModeHelp(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	_, cmd := m.Update(keyMsg("?"))
+	if cmd != nil {
+		t.Error("expected nil cmd for ? in normal mode")
+	}
+	if h.Mode() != ModeHelp {
+		t.Errorf("expected ModeHelp, got %v", h.Mode())
+	}
+	h.mu.Lock()
+	prev := h.prevMode
+	h.mu.Unlock()
+	if prev != ModeNormal {
+		t.Errorf("expected prevMode ModeNormal, got %v", prev)
+	}
+}
+
+func TestHandleNormal_QuestionMark_WithStatusLineInactive_NoOp(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	// statusLineActive defaults to false — do not call SetStatusLineActive
+	m := newKeysModel(h)
+
+	_, cmd := m.Update(keyMsg("?"))
+	if cmd != nil {
+		t.Error("expected nil cmd for ? when status line inactive")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal (no-op), got %v", h.Mode())
+	}
+}
+
+func TestHandleHelp_Esc_ReturnsToPrevMode(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // enter ModeHelp, prevMode = ModeNormal
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	_, cmd := m.Update(escMsg)
+	if cmd != nil {
+		t.Error("expected nil cmd for esc in help mode")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after esc, got %v", h.Mode())
+	}
+}
+
+func TestHandleHelp_Q_EntersModeQuitConfirm_LeavesPrevModeUntouched(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // enter ModeHelp, prevMode = ModeNormal
+
+	_, cmd := m.Update(keyMsg("q"))
+	if cmd != nil {
+		t.Error("expected nil cmd for q in help mode")
+	}
+	if h.Mode() != ModeQuitConfirm {
+		t.Errorf("expected ModeQuitConfirm, got %v", h.Mode())
+	}
+	// prevMode must still be ModeNormal (not ModeHelp) so QuitConfirm.Esc
+	// restores the original idle mode.
+	h.mu.Lock()
+	prev := h.prevMode
+	h.mu.Unlock()
+	if prev != ModeNormal {
+		t.Errorf("expected prevMode ModeNormal (unchanged), got %v", prev)
+	}
+}
+
+func TestHandleQuitConfirm_Esc_EnteredViaHelp_ReturnsToPrevMode(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // Normal → Help, prevMode = ModeNormal
+	m.Update(keyMsg("q")) // Help → QuitConfirm, prevMode still ModeNormal
+
+	escMsg := tea.KeyMsg{Type: tea.KeyEsc}
+	_, cmd := m.Update(escMsg)
+	if cmd != nil {
+		t.Error("expected nil cmd for esc in quit-confirm mode entered via help")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal (not ModeHelp), got %v", h.Mode())
+	}
+}
+
+func TestUpdateShortcutLineLocked_ModeHelp_SetsHelpModeShortcuts(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?"))
+	if h.ShortcutLine() != HelpModeShortcuts {
+		t.Errorf("expected HelpModeShortcuts %q, got %q", HelpModeShortcuts, h.ShortcutLine())
+	}
+}
+
+func TestHandleHelp_UnrecognizedKey_NoOp(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // enter ModeHelp
+	_, cmd := m.Update(keyMsg("x"))
+	if cmd != nil {
+		t.Error("expected nil cmd for unrecognized key in help mode")
+	}
+	if h.Mode() != ModeHelp {
+		t.Errorf("mode changed unexpectedly: got %v", h.Mode())
+	}
+}
+
+// --- Parity test: footer shortcut constants ↔ modal body constants ---
+//
+// Every key token that appears in a footer shortcut constant must appear in the
+// corresponding modal constant, and vice versa. The only allowed modal-only
+// token is "?" in HelpModalNormal (it is conditional in the footer but always
+// present in the modal so users can read what it does).
+
+func TestShortcutModalParity(t *testing.T) {
+	type pair struct {
+		name       string
+		footer     string
+		modal      string
+		tokens     []string // expected in both footer and modal
+		modalExtra []string // allowed in modal but not required in footer
+	}
+	pairs := []pair{
+		{
+			name:       "Normal",
+			footer:     NormalShortcuts,
+			modal:      HelpModalNormal,
+			tokens:     []string{"↑", "k", "↓", "j", "v", "n", "q"},
+			modalExtra: []string{"?"},
+		},
+		{
+			name:   "Select",
+			footer: SelectShortcuts,
+			modal:  HelpModalSelect,
+			tokens: []string{"hjkl", "↑", "↓", "←", "→", "0", "$", "⇧", "y", "esc", "q"},
+		},
+		{
+			name:   "Error",
+			footer: ErrorShortcuts,
+			modal:  HelpModalError,
+			tokens: []string{"c", "r", "q"},
+		},
+		{
+			name:   "Done",
+			footer: DoneShortcuts,
+			modal:  HelpModalDone,
+			tokens: []string{"↑", "k", "↓", "j", "v", "q"},
+		},
+	}
+
+	for _, p := range pairs {
+		// Every shared token must appear in the footer.
+		for _, tok := range p.tokens {
+			if !strings.Contains(p.footer, tok) {
+				t.Errorf("parity[%s]: footer missing token %q", p.name, tok)
+			}
+		}
+		// Every shared token must appear in the modal.
+		for _, tok := range p.tokens {
+			if !strings.Contains(p.modal, tok) {
+				t.Errorf("parity[%s]: modal missing token %q", p.name, tok)
+			}
+		}
+		// Modal-extra tokens must appear in the modal but need not be in the footer.
+		for _, tok := range p.modalExtra {
+			if !strings.Contains(p.modal, tok) {
+				t.Errorf("parity[%s]: modal missing modal-only token %q", p.name, tok)
+			}
+		}
 	}
 }
