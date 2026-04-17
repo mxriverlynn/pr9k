@@ -97,6 +97,10 @@ type shutdownable interface {
 	Shutdown()
 }
 
+// workflowDoneTimeout is the maximum time runWithShutdown waits for the
+// workflow goroutine to finish after Shutdown returns.
+const workflowDoneTimeout = 4 * time.Second
+
 // runWithShutdown runs prog, then shuts down the status-line runner before
 // waiting for the workflow goroutine. This ordering ensures no program.Send
 // calls happen after the Bubble Tea program has stopped.
@@ -105,7 +109,7 @@ func runWithShutdown(prog teaProgram, runner shutdownable, workflowDone <-chan s
 	runner.Shutdown()
 	select {
 	case <-workflowDone:
-	case <-time.After(4 * time.Second):
+	case <-time.After(workflowDoneTimeout):
 	}
 	return err
 }

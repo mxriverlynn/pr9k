@@ -172,6 +172,9 @@ func main() {
 	// inside workflow.Run (issue #116); the runner fires on its timer and on
 	// mode-change triggers from the Model.
 	statusCtx, statusCancel := context.WithCancel(context.Background())
+	// Belt-and-suspenders: runWithShutdown calls runner.Shutdown() first,
+	// which cancels the runner's internal context. This defer is a safety net
+	// for early-return paths that bypass runWithShutdown.
 	defer statusCancel()
 	statusRunner.Start(statusCtx)
 

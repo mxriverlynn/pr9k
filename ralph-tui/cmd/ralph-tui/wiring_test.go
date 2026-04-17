@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -152,14 +153,15 @@ func TestBuildStatusLineConfig_NilInterval(t *testing.T) {
 // --- TP-005: runWithShutdown ordering ---
 
 type fakeTeaProgram struct {
-	onRun func()
+	onRun   func()
+	runErr  error
 }
 
 func (f *fakeTeaProgram) Run() (tea.Model, error) {
 	if f.onRun != nil {
 		f.onRun()
 	}
-	return nil, nil
+	return nil, f.runErr
 }
 
 type fakeShutdowner struct {
@@ -226,7 +228,7 @@ func TestRunWithShutdown_WaitsForWorkflowDone(t *testing.T) {
 	}
 }
 
-func TestRunWithShutdown_ShutdownBeforeWorkflowDone(t *testing.T) {
+func TestRunWithShutdown_ShutdownPrecedesWorkflowDone(t *testing.T) {
 	var mu sync.Mutex
 	var events []string
 	record := func(e string) {
@@ -270,6 +272,22 @@ func TestRunWithShutdown_ShutdownBeforeWorkflowDone(t *testing.T) {
 	}
 	if shutdownIdx >= workflowIdx {
 		t.Errorf("Shutdown (%d) must precede WorkflowDone (%d); events = %v", shutdownIdx, workflowIdx, snap)
+	}
+}
+
+// --- TP-005b: runWithShutdown error propagation ---
+
+func TestRunWithShutdown_PropagatesRunError(t *testing.T) {
+	sentinel := errors.New("tea program error")
+	workflowDone := make(chan struct{})
+	close(workflowDone)
+
+	fakeProg := &fakeTeaProgram{runErr: sentinel}
+	fakeRunner := &fakeShutdowner{}
+
+	err := runWithShutdown(fakeProg, fakeRunner, workflowDone)
+	if !errors.Is(err, sentinel) {
+		t.Errorf("runWithShutdown error = %v, want %v", err, sentinel)
 	}
 }
 
