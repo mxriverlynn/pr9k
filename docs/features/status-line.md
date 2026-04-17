@@ -97,7 +97,7 @@ The script receives a single JSON object on stdin:
 
 All fields are always present. `captures` is always a JSON object (never null).
 
-**The script must drain stdin before exiting.** If the script exits without reading, ralph-tui's stdin write blocks until the pipe closes, which triggers the 2-second command timeout. The sample `scripts/statusline` uses `cat >/dev/null` to drain stdin cheaply.
+**The script must drain stdin before exiting.** If the script exits without reading, ralph-tui's stdin write blocks until the pipe closes, which triggers the 2-second command timeout. The sample `scripts/statusline` uses `input=$(cat)` to drain and capture stdin for processing.
 
 ### Stdout
 

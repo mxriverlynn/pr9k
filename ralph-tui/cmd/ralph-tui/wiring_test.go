@@ -153,8 +153,8 @@ func TestBuildStatusLineConfig_NilInterval(t *testing.T) {
 // --- TP-005: runWithShutdown ordering ---
 
 type fakeTeaProgram struct {
-	onRun   func()
-	runErr  error
+	onRun  func()
+	runErr error
 }
 
 func (f *fakeTeaProgram) Run() (tea.Model, error) {

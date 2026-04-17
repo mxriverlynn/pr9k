@@ -6,6 +6,8 @@ ralph-tui can display live workflow state in the TUI footer by running a custom 
 
 - ralph-tui 0.6.0 or later
 - A `ralph-steps.json` in your workflow directory
+- [`jq`](https://jqlang.github.io/jq/) — required by the sample script to parse stdin JSON
+- `git` (optional) — used by the sample script to display the current branch
 
 ## Step 1 — Add a `statusLine` block to `ralph-steps.json`
 
@@ -26,15 +28,39 @@ The `command` field is required. `type` and `refreshIntervalSeconds` are optiona
 
 ## Step 2 — Copy or write a script
 
-The sample script at `scripts/statusline` in the ralph-tui distribution is a minimal starting point:
+The sample script at `scripts/statusline` in the ralph-tui distribution reads ralph-tui's JSON payload and prints the current phase, iteration, step name, and issue ID with ANSI color:
 
 ```bash
 #!/usr/bin/env bash
-# ralph-tui status line.
-# Claude Code-compatible: reads a single JSON object from stdin.
-# For MVP this script ignores the input and prints a static line.
-cat >/dev/null
-echo "testing status line"
+# ralph-tui status line — demo script, adapt for your needs.
+# Reads ralph-tui's JSON payload from stdin and prints a single status line.
+# Requires: bash 3.1+, jq; git is used when available for branch display.
+
+command -v jq >/dev/null || { printf 'statusline: jq is required\n' >&2; exit 1; }
+
+input=$(cat)
+
+PHASE=$(echo "$input" | jq -r '.phase // "unknown"')
+ITER=$(echo "$input" | jq -r '.iteration // 0')
+MAX=$(echo "$input" | jq -r '.maxIterations // 0')
+STEP=$(echo "$input" | jq -r '.step.name // ""')
+ISSUE=$(echo "$input" | jq -r '.captures.ISSUE_ID // ""')
+
+CYAN='\033[36m'; YELLOW='\033[33m'; RESET='\033[0m'
+
+BRANCH=""
+git rev-parse --git-dir > /dev/null 2>&1 && BRANCH=" | 🌿 $(git branch --show-current 2>/dev/null)"
+
+ITER_LABEL=""
+if [ "$MAX" -gt 0 ] 2>/dev/null; then ITER_LABEL=" ${ITER}/${MAX}"
+elif [ "$ITER" -gt 0 ] 2>/dev/null; then ITER_LABEL=" ${ITER}"; fi
+
+EXTRAS=""
+[ -n "$STEP" ] && EXTRAS="${EXTRAS} › ${STEP}"
+[ -n "$ISSUE" ] && EXTRAS="${EXTRAS} | ${YELLOW}#${ISSUE}${RESET}"
+
+line="${CYAN}${PHASE}${ITER_LABEL}${RESET}${EXTRAS}${BRANCH}"
+printf '%b\n' "$line"
 ```
 
 Copy it into your workflow's `scripts/` directory and make it executable:
@@ -44,25 +70,11 @@ cp /path/to/ralph-tui/scripts/statusline scripts/statusline
 chmod +x scripts/statusline
 ```
 
-The `cat >/dev/null` line is important: it drains stdin so the pipe closes cleanly. Without it ralph-tui's stdin write blocks until the 2-second command timeout fires.
+The script uses `input=$(cat)` to drain stdin before processing, which is required — if the script exits without reading, ralph-tui's stdin write blocks until the 2-second command timeout fires.
 
-## Step 3 — Read workflow state with `jq`
+## Step 3 — Available stdin fields
 
-The script receives a JSON object on stdin. Here is a script that shows the current phase, iteration, and issue ID:
-
-```bash
-#!/usr/bin/env bash
-input=$(cat)
-phase=$(echo "$input" | jq -r '.phase')
-iter=$(echo "$input" | jq -r '.iteration')
-issue=$(echo "$input" | jq -r '.captures.ISSUE_ID // ""')
-
-if [ -n "$issue" ]; then
-    echo "$phase  iter $iter  #$issue"
-else
-    echo "$phase  iter $iter"
-fi
-```
+The script receives a JSON object on stdin with the following fields:
 
 Available fields from stdin:
 

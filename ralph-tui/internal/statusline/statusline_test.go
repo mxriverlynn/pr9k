@@ -1447,17 +1447,20 @@ func TestSampleScript_Executable(t *testing.T) {
 // Runs the script directly (not through Runner) to pin the stdin-drain contract
 // independent of the Runner wrapper's Sanitize pipeline.
 func TestSampleScript_DirectExec_DrainAndOutput(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not found in PATH; skipping script exec test")
+	}
 	root := workspaceRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Fatalf("scripts/statusline not found: %v", err)
 	}
 
-	// Send valid JSON via stdin to exercise the drain guarantee.
-	// The script reads all of stdin before processing, so any-size input is drained.
-	payload := `{"model":{"display_name":"test"},"workspace":{"current_dir":"/tmp"}` +
-		`,"cost":{"total_cost_usd":0,"total_duration_ms":0}` +
-		`,"context_window":{"used_percentage":0}}`
+	// Send a ralph-tui-schema payload via stdin to exercise the drain guarantee.
+	payload := `{"phase":"iteration","iteration":1,"maxIterations":3,` +
+		`"step":{"num":1,"count":5,"name":"feature-work"},` +
+		`"mode":"normal","captures":{},"version":"0.6.0",` +
+		`"workflowDir":"/tmp","projectDir":"/tmp"}`
 
 	var stdout bytes.Buffer
 	cmd := exec.Command(scriptPath)
@@ -1476,6 +1479,9 @@ func TestSampleScript_DirectExec_DrainAndOutput(t *testing.T) {
 // TP-006: scripts/statusline must produce no stderr output.
 // Stderr leakage bypasses the Sanitize pipeline and would appear raw in logs.
 func TestSampleScript_DirectExec_StderrSilent(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not found in PATH; skipping script exec test")
+	}
 	root := workspaceRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
@@ -1499,6 +1505,9 @@ func TestSampleScript_DirectExec_StderrSilent(t *testing.T) {
 // TP-007: scripts/statusline must exit 0.
 // A non-zero exit triggers the Runner's non-zero-exit code path and discards output.
 func TestSampleScript_DirectExec_ExitZero(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not found in PATH; skipping script exec test")
+	}
 	root := workspaceRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {

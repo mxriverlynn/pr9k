@@ -47,4 +47,4 @@ logs/
 .gopath/
 .gopath-rw/
 .gocache/
-.go126
+.go[0-9]*
