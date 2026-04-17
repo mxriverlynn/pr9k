@@ -97,7 +97,8 @@ Add one new, optional top-level key: `statusLine`. The value is an object:
 {
   "env": ["GH_TOKEN"],
   "statusLine": {
-    "command": "scripts/statusline"
+    "command": "scripts/statusline",
+    "refreshInterval": 5
   },
   "initialize": [ /* ... */ ],
   "iteration":  [ /* ... */ ],
@@ -105,9 +106,10 @@ Add one new, optional top-level key: `statusLine`. The value is an object:
 }
 ```
 
-| Field     | Required | Type   | Meaning                                                                                     |
-|-----------|----------|--------|---------------------------------------------------------------------------------------------|
-| `command` | yes      | string | Path to the executable to run for each status-line refresh. Path resolution rules below.    |
+| Field             | Required | Type    | Default | Meaning                                                                                                                  |
+|-------------------|----------|---------|---------|--------------------------------------------------------------------------------------------------------------------------|
+| `command`         | yes      | string  | —       | Path to the executable to run for each status-line refresh. Path resolution rules below.                                 |
+| `refreshInterval` | no       | integer | `5`     | Seconds between timer-driven refreshes, in addition to event triggers. `0` disables the timer. Minimum (when `>0`) is `1`. |
 
 **Path resolution** matches the existing `command[0]` resolution in
 `ralph-tui/internal/validator/validator.go:394 validateCommandPath`:
@@ -139,10 +141,6 @@ add a second type, `type` can be added as an optional string defaulting to
 
 ### Deferred fields (explicitly out of scope for MVP)
 
-- `refreshInterval` (periodic re-run). Event-driven updates alone (see
-  [Refresh triggers](#refresh-triggers)) are sufficient for ralph-tui's
-  workflow, where step and iteration transitions happen continuously during a
-  run. Add when a user reports needing a wall-clock timer.
 - `padding` (horizontal indent).
 - `subagentStatusLine` (Claude Code has one; ralph-tui has no subagents).
 - `type`: see above.
@@ -272,7 +270,8 @@ the status-line package.
 
 ## Refresh triggers
 
-The status-line script runs on ralph-tui-side events. MVP triggers:
+The status-line script runs on ralph-tui-side events *and* a periodic timer.
+MVP triggers:
 
 1. **Startup** — one run immediately after the first frame paints, so the
    footer isn't empty on the first render.
@@ -285,12 +284,24 @@ The status-line script runs on ralph-tui-side events. MVP triggers:
    user transitions `ModeNormal ↔ anything else`. The status line is only
    rendered in `ModeNormal`, but re-running on transition keeps it fresh when
    the user returns.
+6. **Timer** — every `refreshInterval` seconds (default `5`). This covers
+   wall-clock data (elapsed time, idle-while-claude-thinks) and keeps the
+   footer current when ralph-tui is blocked on a long-running claude step.
+   Set `refreshInterval: 0` to disable the timer entirely and rely on events
+   only.
 
-We deliberately *do not* add a wall-clock timer in MVP. The heartbeat
-ticker (`HeartbeatTickMsg`, 1 Hz, `main.go:157`) is a tempting piggyback,
-but firing the script at 1 Hz is wasteful given the current trigger set
-already covers all meaningful state changes. If users need a clock or a
-`git status` refresh during idle, add a `refreshInterval` field later.
+The timer runs in its own goroutine, started in `main.go` alongside the
+`HeartbeatTickMsg` ticker. It emits into the same
+`statusline.TriggerCh` buffered channel as the event triggers, so
+single-flight de-duplication happens in one place. If the user is actively
+causing events (step transitions, etc.) the timer adds no extra work because
+a trigger is already in flight or queued.
+
+We deliberately *don't* piggyback on the existing `HeartbeatTickMsg` (1 Hz,
+`main.go:157`). Firing the script at 1 Hz is wasteful, and the two timers
+have different requirements: heartbeat is a render-side tick owned by the
+Bubble Tea program, while the status-line timer wants to drop trigger events
+into a channel independent of the UI goroutine.
 
 ### Plumbing
 
@@ -325,7 +336,10 @@ Add a new category `statusline` to `internal/validator/validator.go`. Extend
 
 ```go
 type vStatusLine struct {
-    Command string `json:"command"`
+    Command         string `json:"command"`
+    // Pointer so we can distinguish absent (default applies) from
+    // explicit 0 (timer disabled).
+    RefreshInterval *int   `json:"refreshInterval,omitempty"`
 }
 
 type vFile struct {
@@ -343,7 +357,11 @@ Validation rules when `vf.StatusLine != nil`:
 2. **Resolvable binary.** Reuse `validateCommandPath(workflowDir,
    vf.StatusLine.Command)`. Same messages as existing step-command
    validation — this is deliberate for consistency.
-3. **Unknown fields rejected** — `DisallowUnknownFields()` on the parent
+3. **`refreshInterval` bounds.** If set, must be `>= 0`. Negative values →
+   `statusline: refreshInterval must be >= 0 (0 disables the timer)`.
+   Fractional JSON numbers fail parse because the field decodes to `*int`.
+   Absent → default `5`. Explicit `0` → timer disabled.
+4. **Unknown fields rejected** — `DisallowUnknownFields()` on the parent
    decoder already handles this since `vStatusLine` has no unexported
    embedded types.
 
@@ -580,9 +598,11 @@ The sample is there for users who opt in.
   0`).
 - `statusline.Runner` — single-flight drops overlapping triggers, not
   overlaps them; timeout kills process and produces fallback; empty stdout
-  returns empty; non-zero exit returns last-good.
-- `validator` — `statusLine` missing command, bad command path, valid
-  config, unknown extra field.
+  returns empty; non-zero exit returns last-good; `refreshInterval: 0`
+  disables the timer; default `5` fires at the expected cadence.
+- `validator` — `statusLine` missing command, bad command path, negative
+  `refreshInterval`, explicit zero, absent (default applies), unknown extra
+  field, valid config.
 - `ui.overlay` — ANSI-aware splice preserves escape codes in the base lines
   not covered by the modal; modal colors survive; no grapheme splitting
   artifacts with wide runes.
@@ -623,7 +643,6 @@ follow-up if user demand arises.
 
 | Feature                                  | Reason deferred                                                                    |
 |------------------------------------------|------------------------------------------------------------------------------------|
-| `refreshInterval` field                  | Event triggers already cover ralph-tui's state changes. Add when someone needs it. |
 | `padding` field                          | Not needed for the bordered layout we have.                                        |
 | `type` discriminator                     | YAGNI; additive later.                                                             |
 | Multi-line status lines                  | Requires variable-height footer — a larger layout change.                          |
