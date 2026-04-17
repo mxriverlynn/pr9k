@@ -53,7 +53,8 @@ type Model struct {
 	width            int
 	height           int
 	versionLabel     string
-	prevObservedMode Mode // used to detect external SetMode transitions out of ModeSelect
+	prevObservedMode Mode   // used to detect external SetMode transitions out of ModeSelect
+	triggerFn        func() // called once per mode transition; nil means no-op
 }
 
 // NewModel constructs the root Model. initialHeader must be pre-populated
@@ -73,6 +74,14 @@ func NewModel(initialHeader *StatusHeader, keyHandler *KeyHandler, versionLabel 
 // header.SetHeartbeatReader(runner) directly before constructing the model.
 func (m Model) WithHeartbeat(h HeartbeatReader) Model {
 	m.header.header.SetHeartbeatReader(h)
+	return m
+}
+
+// WithModeTrigger installs a mode-transition trigger on the Model. fn is
+// called exactly once in Model.Update whenever the mode changes from one
+// Update call to the next. When the status line is disabled, pass nil (safe).
+func (m Model) WithModeTrigger(fn func()) Model {
+	m.triggerFn = fn
 	return m
 }
 
@@ -322,7 +331,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// will be in effect when control returns to the caller. The guard at the
 	// top of the next Update call uses this to detect external SetMode
 	// transitions that happened between two consecutive Bubble Tea updates.
-	m.prevObservedMode = m.keys.handler.Mode()
+	// When the mode changed, fire the status-line trigger exactly once so the
+	// status-line script can reflect the new mode on its next run.
+	newMode := m.keys.handler.Mode()
+	if newMode != m.prevObservedMode && m.triggerFn != nil {
+		m.triggerFn()
+	}
+	m.prevObservedMode = newMode
 
 	return m, tea.Batch(cmds...)
 }

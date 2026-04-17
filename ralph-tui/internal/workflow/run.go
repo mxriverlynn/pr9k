@@ -3,15 +3,62 @@ package workflow
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
+
+// StatusRunner is the interface for driving status-line refreshes from the
+// workflow goroutine. *statusline.Runner satisfies this interface.
+// A nil StatusRunner is safe: all push/trigger calls check for nil first.
+type StatusRunner interface {
+	PushState(statusline.State)
+	Trigger()
+}
+
+// buildState snapshots the current workflow state into a statusline.State.
+// It reads all built-in variables from vt using the given phase's resolution
+// rules and copies non-built-in captures as a defensive map. sessionID and ver
+// are forwarded verbatim.
+func buildState(vt *vars.VarTable, phase vars.Phase, sessionID, ver string) statusline.State {
+	getInt := func(name string) int {
+		v, _ := vt.GetInPhase(phase, name)
+		n, _ := strconv.Atoi(v)
+		return n
+	}
+	getString := func(name string) string {
+		v, _ := vt.GetInPhase(phase, name)
+		return v
+	}
+	phaseStr := "initialize"
+	switch phase {
+	case vars.Iteration:
+		phaseStr = "iteration"
+	case vars.Finalize:
+		phaseStr = "finalize"
+	}
+	return statusline.State{
+		SessionID:     sessionID,
+		Version:       ver,
+		Phase:         phaseStr,
+		Iteration:     getInt("ITER"),
+		MaxIterations: getInt("MAX_ITER"),
+		StepNum:       getInt("STEP_NUM"),
+		StepCount:     getInt("STEP_COUNT"),
+		StepName:      getString("STEP_NAME"),
+		WorkflowDir:   getString("WORKFLOW_DIR"),
+		ProjectDir:    getString("PROJECT_DIR"),
+		Captures:      vt.AllCaptures(phase),
+	}
+}
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
 // *Runner satisfies this interface.
@@ -122,6 +169,9 @@ type RunConfig struct {
 	// main.go. When empty, JSONL artifact paths are not populated for claude
 	// steps (persistence is skipped).
 	RunStamp string
+	// Runner is the optional status-line runner. When nil, all PushState and
+	// Trigger calls are skipped.
+	Runner StatusRunner
 }
 
 // noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
@@ -157,6 +207,24 @@ type RunResult struct {
 // — initialize, iteration loop, finalize — via VarTable-based substitution.
 func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg RunConfig) RunResult {
 	vt := vars.New(cfg.WorkflowDir, executor.ProjectDir(), cfg.Iterations)
+
+	// Seed the runner with an initial State immediately after VarTable
+	// construction so the timer goroutine never fires against a zero-value State.
+	if cfg.Runner != nil {
+		cfg.Runner.PushState(buildState(vt, vars.Initialize, cfg.RunStamp, version.Version))
+	}
+
+	// push snapshots the current VarTable state and fires a Trigger so the
+	// status-line script re-runs after each meaningful mutation. Called after
+	// every vt.SetPhase / vt.SetIteration / vt.ResetIteration / vt.SetStep /
+	// vt.Bind call.
+	push := func(phase vars.Phase) {
+		if cfg.Runner == nil {
+			return
+		}
+		cfg.Runner.PushState(buildState(vt, phase, cfg.RunStamp, version.Version))
+		cfg.Runner.Trigger()
+	}
 
 	// rs accumulates StepStats across all claude step invocations in the run
 	// (D21, D25). Owned exclusively by this goroutine — no mutex required.
@@ -214,11 +282,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)
+	push(vars.Initialize)
 	if len(cfg.InitializeSteps) > 0 {
 		writePhaseBanner("Initializing")
 	}
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
+		push(vars.Initialize)
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
@@ -237,6 +307,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		if s.CaptureAs != "" {
 			captured := executor.LastCapture()
 			vt.Bind(vars.Initialize, s.CaptureAs, captured)
+			push(vars.Initialize)
 			writeCaptureLog(s.CaptureAs, captured)
 		}
 	}
@@ -248,8 +319,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		iterationsRun = i
 		vt.ResetIteration()
+		push(vars.Iteration)
 		vt.SetIteration(i)
+		push(vars.Iteration)
 		vt.SetPhase(vars.Iteration)
+		push(vars.Iteration)
 
 		header.RenderIterationLine(i, cfg.Iterations, "")
 		iterStepNames := make([]string, len(cfg.Steps))
@@ -264,6 +338,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		breakOuter := false
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
+			push(vars.Iteration)
 			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, executor)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
@@ -283,6 +358,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
+				push(vars.Iteration)
 				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
 				header.RenderIterationLine(i, cfg.Iterations, issueID)
 				writeCaptureLog(s.CaptureAs, captured)
@@ -311,11 +387,13 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	header.SetPhaseSteps(finalizeNames)
 
 	vt.SetPhase(vars.Finalize)
+	push(vars.Finalize)
 	if len(cfg.FinalizeSteps) > 0 {
 		writePhaseBanner("Finalizing")
 	}
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
+		push(vars.Finalize)
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))

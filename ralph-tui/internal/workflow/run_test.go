@@ -13,6 +13,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
@@ -3986,5 +3987,292 @@ func TestRun_RunSummary_MultipleClaudeStepsAccumulate(t *testing.T) {
 	// Combined cost.
 	if !strings.Contains(runSummary, "$0.0300000") {
 		t.Errorf("run summary %q should reflect combined cost $0.03", runSummary)
+	}
+}
+
+// --- StatusRunner / buildState tests ---
+
+// fakeStatusRunner records PushState and Trigger calls for assertions.
+type fakeStatusRunner struct {
+	pushStates []statusline.State
+	triggers   int
+}
+
+func (r *fakeStatusRunner) PushState(s statusline.State) {
+	r.pushStates = append(r.pushStates, s)
+}
+
+func (r *fakeStatusRunner) Trigger() {
+	r.triggers++
+}
+
+// TestBuildState_PopulatesAllFields verifies that buildState reads all
+// built-in variables from the VarTable and returns a correctly populated State.
+func TestBuildState_PopulatesAllFields(t *testing.T) {
+	vt := vars.New("/workflow", "/project", 5)
+	vt.SetIteration(2)
+	vt.SetStep(3, 7, "my-step")
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Initialize, "FOO", "bar")
+
+	state := buildState(vt, vars.Iteration, "sess-123", "0.5.0")
+
+	if state.SessionID != "sess-123" {
+		t.Errorf("SessionID: want %q, got %q", "sess-123", state.SessionID)
+	}
+	if state.Version != "0.5.0" {
+		t.Errorf("Version: want %q, got %q", "0.5.0", state.Version)
+	}
+	if state.Phase != "iteration" {
+		t.Errorf("Phase: want %q, got %q", "iteration", state.Phase)
+	}
+	if state.Iteration != 2 {
+		t.Errorf("Iteration: want 2, got %d", state.Iteration)
+	}
+	if state.MaxIterations != 5 {
+		t.Errorf("MaxIterations: want 5, got %d", state.MaxIterations)
+	}
+	if state.StepNum != 3 {
+		t.Errorf("StepNum: want 3, got %d", state.StepNum)
+	}
+	if state.StepCount != 7 {
+		t.Errorf("StepCount: want 7, got %d", state.StepCount)
+	}
+	if state.StepName != "my-step" {
+		t.Errorf("StepName: want %q, got %q", "my-step", state.StepName)
+	}
+	if state.WorkflowDir != "/workflow" {
+		t.Errorf("WorkflowDir: want %q, got %q", "/workflow", state.WorkflowDir)
+	}
+	if state.ProjectDir != "/project" {
+		t.Errorf("ProjectDir: want %q, got %q", "/project", state.ProjectDir)
+	}
+	if state.Captures["FOO"] != "bar" {
+		t.Errorf("Captures[FOO]: want %q, got %q", "bar", state.Captures["FOO"])
+	}
+}
+
+// TestBuildState_PhaseStrings verifies the three phase string conversions.
+func TestBuildState_PhaseStrings(t *testing.T) {
+	vt := vars.New("/wd", "/pd", 1)
+	cases := []struct {
+		phase vars.Phase
+		want  string
+	}{
+		{vars.Initialize, "initialize"},
+		{vars.Iteration, "iteration"},
+		{vars.Finalize, "finalize"},
+	}
+	for _, tc := range cases {
+		s := buildState(vt, tc.phase, "", "")
+		if s.Phase != tc.want {
+			t.Errorf("phase %v: want %q, got %q", tc.phase, tc.want, s.Phase)
+		}
+	}
+}
+
+// TestBuildState_CapturesIsDefensiveCopy verifies that mutating the returned
+// Captures map does not affect subsequent buildState calls or the VarTable.
+func TestBuildState_CapturesIsDefensiveCopy(t *testing.T) {
+	vt := vars.New("/wd", "/pd", 1)
+	vt.SetPhase(vars.Initialize)
+	vt.Bind(vars.Initialize, "KEY", "original")
+
+	s1 := buildState(vt, vars.Initialize, "", "")
+
+	// Mutate the returned map.
+	s1.Captures["KEY"] = "mutated"
+	s1.Captures["NEW"] = "injected"
+
+	// A second call must return fresh copies from the VarTable.
+	s2 := buildState(vt, vars.Initialize, "", "")
+	if s2.Captures["KEY"] != "original" {
+		t.Errorf("Captures[KEY] after mutation: want %q, got %q", "original", s2.Captures["KEY"])
+	}
+	if _, ok := s2.Captures["NEW"]; ok {
+		t.Error("Captures[NEW] should not appear in second buildState call")
+	}
+}
+
+// TestBuildState_IterationPhaseIncludesIterCaptures verifies that iteration
+// captures shadow persistent ones and are included only for Iteration phase.
+func TestBuildState_IterationPhaseIncludesIterCaptures(t *testing.T) {
+	vt := vars.New("/wd", "/pd", 1)
+	vt.SetPhase(vars.Initialize)
+	vt.Bind(vars.Initialize, "PERSISTENT", "pval")
+	vt.SetPhase(vars.Iteration)
+	vt.Bind(vars.Iteration, "ITER_VAR", "ival")
+
+	// Iteration phase includes both.
+	iterState := buildState(vt, vars.Iteration, "", "")
+	if iterState.Captures["PERSISTENT"] != "pval" {
+		t.Errorf("Iteration phase: want PERSISTENT=%q, got %q", "pval", iterState.Captures["PERSISTENT"])
+	}
+	if iterState.Captures["ITER_VAR"] != "ival" {
+		t.Errorf("Iteration phase: want ITER_VAR=%q, got %q", "ival", iterState.Captures["ITER_VAR"])
+	}
+
+	// Finalize phase excludes iteration-scoped captures.
+	finalState := buildState(vt, vars.Finalize, "", "")
+	if finalState.Captures["PERSISTENT"] != "pval" {
+		t.Errorf("Finalize phase: want PERSISTENT=%q, got %q", "pval", finalState.Captures["PERSISTENT"])
+	}
+	if _, ok := finalState.Captures["ITER_VAR"]; ok {
+		t.Error("Finalize phase must not include iteration-scoped ITER_VAR")
+	}
+}
+
+// TestRun_StatusRunner_InitialPushNoTrigger verifies that the initial PushState
+// call happens immediately (before any mutation) and does not fire a Trigger.
+func TestRun_StatusRunner_InitialPushNoTrigger(t *testing.T) {
+	runner := &fakeStatusRunner{}
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		Runner:      runner,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(runner.pushStates) == 0 {
+		t.Fatal("expected at least one PushState call")
+	}
+	// The first push must have phase "initialize" (zero-state before any mutation).
+	if runner.pushStates[0].Phase != "initialize" {
+		t.Errorf("initial push: want phase %q, got %q", "initialize", runner.pushStates[0].Phase)
+	}
+	// Triggers must equal pushes-1 (initial push has no trigger).
+	if runner.triggers != len(runner.pushStates)-1 {
+		t.Errorf("triggers: want %d (pushes-1), got %d", len(runner.pushStates)-1, runner.triggers)
+	}
+}
+
+// TestRun_StatusRunner_PushAtEveryMutationSite runs a one-iteration workflow
+// with one initialize step (captureAs), one iteration step (captureAs), and
+// one finalize step. It asserts that PushState+Trigger fires at every
+// VarTable mutation site and that phases are correct at each site.
+func TestRun_StatusRunner_PushAtEveryMutationSite(t *testing.T) {
+	runner := &fakeStatusRunner{}
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"init-val", "iter-val", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{captureStep("init", "INIT_VAR")},
+		Steps:           []steps.Step{captureStep("iter", "ITER_RESULT")},
+		FinalizeSteps:   nonClaudeSteps("final"),
+		Runner:          runner,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Expected push sequence (index: description):
+	// 0: initial (no trigger)
+	// 1: SetPhase(Initialize)
+	// 2: SetStep init-1
+	// 3: Bind INIT_VAR
+	// 4: ResetIteration
+	// 5: SetIteration(1)
+	// 6: SetPhase(Iteration)
+	// 7: SetStep iter-1
+	// 8: Bind ITER_RESULT
+	// 9: SetPhase(Finalize)
+	// 10: SetStep final-1
+	// Total: 11 pushes, 10 triggers
+	const wantPushes = 11
+	const wantTriggers = 10
+	if len(runner.pushStates) != wantPushes {
+		t.Errorf("PushState calls: want %d, got %d", wantPushes, len(runner.pushStates))
+	}
+	if runner.triggers != wantTriggers {
+		t.Errorf("Trigger calls: want %d, got %d", wantTriggers, runner.triggers)
+	}
+
+	// Spot-check phases at key indices (if enough pushes were recorded).
+	phaseAt := func(idx int) string {
+		if idx < len(runner.pushStates) {
+			return runner.pushStates[idx].Phase
+		}
+		return "<missing>"
+	}
+	if phaseAt(0) != "initialize" {
+		t.Errorf("push[0] phase: want %q, got %q", "initialize", phaseAt(0))
+	}
+	if phaseAt(1) != "initialize" {
+		t.Errorf("push[1] phase (SetPhase Init): want %q, got %q", "initialize", phaseAt(1))
+	}
+	if phaseAt(4) != "iteration" {
+		t.Errorf("push[4] phase (ResetIteration): want %q, got %q", "iteration", phaseAt(4))
+	}
+	if phaseAt(6) != "iteration" {
+		t.Errorf("push[6] phase (SetPhase Iteration): want %q, got %q", "iteration", phaseAt(6))
+	}
+	if phaseAt(9) != "finalize" {
+		t.Errorf("push[9] phase (SetPhase Finalize): want %q, got %q", "finalize", phaseAt(9))
+	}
+	if phaseAt(10) != "finalize" {
+		t.Errorf("push[10] phase (SetStep finalize): want %q, got %q", "finalize", phaseAt(10))
+	}
+}
+
+// TestRun_StatusRunner_NilRunnerNoPanic verifies that Run does not panic when
+// Runner is nil (the common case when no status line is configured).
+func TestRun_StatusRunner_NilRunnerNoPanic(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("step1"),
+		Runner:      nil, // explicit nil
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Run panicked with nil Runner: %v", r)
+		}
+	}()
+	Run(executor, header, kh, cfg)
+}
+
+// TestRun_StatusRunner_CaptureReflectedInNextPush verifies that after a Bind
+// call the following State snapshot includes the captured value.
+func TestRun_StatusRunner_CaptureReflectedInNextPush(t *testing.T) {
+	runner := &fakeStatusRunner{}
+	executor := &fakeExecutor{
+		runStepCaptures: []string{"captured-value"},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{captureStep("get-val", "MY_VAR")},
+		Runner:          runner,
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Find the push that follows the Bind call (index 3 in the expected sequence:
+	// 0=initial, 1=SetPhase, 2=SetStep, 3=Bind).
+	const bindPushIdx = 3
+	if len(runner.pushStates) <= bindPushIdx {
+		t.Fatalf("not enough pushes: want at least %d, got %d", bindPushIdx+1, len(runner.pushStates))
+	}
+	got := runner.pushStates[bindPushIdx].Captures["MY_VAR"]
+	if got != "captured-value" {
+		t.Errorf("push[%d] Captures[MY_VAR]: want %q, got %q", bindPushIdx, "captured-value", got)
 	}
 }

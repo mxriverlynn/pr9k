@@ -1085,6 +1085,184 @@ func TestModel_HeartbeatTick_FractionalSeconds_Truncated(t *testing.T) {
 	}
 }
 
+// --- Mode-change trigger choke point tests (issue #116) ---
+
+// newTestModelWithTrigger returns a Model with a trigger counter wired in.
+func newTestModelWithTrigger(t *testing.T) (Model, *int) {
+	t.Helper()
+	count := 0
+	m := newTestModel(t).WithModeTrigger(func() { count++ })
+	return m, &count
+}
+
+// TestModel_ModeTrigger_NormalToQuitConfirm verifies that pressing 'q' in
+// ModeNormal (→ ModeQuitConfirm) fires exactly one trigger.
+func TestModel_ModeTrigger_NormalToQuitConfirm(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+
+	if *count != 1 {
+		t.Errorf("Normal→QuitConfirm: want 1 trigger, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_ErrorToQuitConfirm verifies that pressing 'q' in
+// ModeError (→ ModeQuitConfirm) fires exactly one trigger.
+func TestModel_ModeTrigger_ErrorToQuitConfirm(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	// Externally set error mode (simulating orchestrator step failure), then
+	// sync prevObservedMode via a no-op heartbeat update.
+	m.keys.handler.SetMode(ModeError)
+	{
+		next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+		m = next.(Model)
+	}
+	*count = 0 // reset the trigger fired by the Normal→Error sync
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+
+	if *count != 1 {
+		t.Errorf("Error→QuitConfirm: want 1 trigger, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_NextConfirmToNormal verifies that pressing 'n' (cancel)
+// in ModeNextConfirm (→ back to ModeNormal) fires exactly one trigger.
+func TestModel_ModeTrigger_NextConfirmToNormal(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	// Enter NextConfirm first.
+	{
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+		m = next.(Model)
+	}
+	*count = 0 // reset after Normal→NextConfirm trigger
+
+	// Cancel back to Normal.
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+
+	if *count != 1 {
+		t.Errorf("NextConfirm→Normal: want 1 trigger, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_SelectToNormal verifies that pressing Esc in ModeSelect
+// (→ prior mode) fires exactly one trigger.
+func TestModel_ModeTrigger_SelectToNormal(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.log.SetSize(76, 10)
+	// Add a line so 'v' can enter select mode.
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: []string{"line"}})
+		m = next.(Model)
+	}
+	// Enter select mode.
+	{
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+		m = next.(Model)
+	}
+	*count = 0 // reset
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+
+	if *count != 1 {
+		t.Errorf("Select→Normal (Esc): want 1 trigger, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_MousePressNormalToSelect verifies that a left-click in
+// the log area while in ModeNormal (→ ModeSelect) fires exactly one trigger.
+func TestModel_ModeTrigger_MousePressNormalToSelect(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+	// Add lines so the click lands on content.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "content line"
+	}
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: lines})
+		m = next.(Model)
+	}
+
+	// logTopRow = 1 (border) + gridRows + 1 (hrule)
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+
+	_, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      2,
+		Y:      logTopRow,
+	})
+
+	// The click may or may not enter ModeSelect depending on whether the viewport
+	// has content at that row. Either way, if mode changed the trigger must fire.
+	if m.keys.handler.Mode() == ModeSelect && *count != 1 {
+		t.Errorf("MousePress Normal→Select: want 1 trigger, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_NoFireOnSameMode verifies that events that do not
+// change the mode produce zero triggers.
+func TestModel_ModeTrigger_NoFireOnSameMode(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	// Keys that do nothing in ModeNormal (no mode transition).
+	for _, key := range []string{"a", "b", "c", "r", "x"} {
+		_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	}
+
+	if *count != 0 {
+		t.Errorf("no-op keys in ModeNormal: want 0 triggers, got %d", *count)
+	}
+}
+
+// TestModel_ModeTrigger_NilTriggerFn_NoPanic verifies that a Model with no
+// WithModeTrigger call (nil triggerFn) does not panic on mode transitions.
+func TestModel_ModeTrigger_NilTriggerFn_NoPanic(t *testing.T) {
+	m := newTestModel(t) // no WithModeTrigger
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("Update panicked with nil triggerFn: %v", r)
+		}
+	}()
+
+	// Trigger a mode change — must not panic.
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+}
+
+// TestModel_ModeTrigger_ExactlyOnePerTransition verifies that a sequence of
+// distinct mode transitions each fire exactly one trigger and the counts
+// accumulate correctly.
+func TestModel_ModeTrigger_ExactlyOnePerTransition(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.log.SetSize(76, 10)
+
+	// Add a log line so 'v' can enter ModeSelect.
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: []string{"line"}})
+		m = next.(Model)
+	}
+
+	transitions := []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("q")}, // Normal → QuitConfirm
+		{Type: tea.KeyRunes, Runes: []rune("n")}, // QuitConfirm → Normal (prevMode)
+	}
+	for i, key := range transitions {
+		next, _ := m.Update(key)
+		m = next.(Model)
+		want := i + 1
+		if *count != want {
+			t.Errorf("after transition %d: want %d triggers total, got %d", i+1, want, *count)
+		}
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
