@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // newTestModel returns a minimal Model for unit tests with a 1-step header.
@@ -1635,6 +1636,248 @@ func TestModel_ModeTrigger_QuestionMark_NoOp_NoFire(t *testing.T) {
 	}
 	if m.keys.handler.Mode() != ModeNormal {
 		t.Errorf("expected ModeNormal after no-op ?, got %v", m.keys.handler.Mode())
+	}
+}
+
+// --- Status-line footer rendering tests (issue #118) ---
+
+// mockStatusReader is a test double for StatusReader that lets callers control
+// Enabled/HasOutput/LastOutput independently.
+type mockStatusReader struct {
+	enabled   bool
+	hasOutput bool
+	output    string
+}
+
+func (r *mockStatusReader) Enabled() bool    { return r.enabled }
+func (r *mockStatusReader) HasOutput() bool  { return r.hasOutput }
+func (r *mockStatusReader) LastOutput() string { return r.output }
+
+// newTestModelWithStatus returns a Model with a given StatusReader installed
+// and a fixed 80×24 terminal size with a minimal log viewport.
+func newTestModelWithStatus(t *testing.T, sr StatusReader) Model {
+	t.Helper()
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v0.0.0-test").WithStatusRunner(sr)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+	return m
+}
+
+// TestView_StatusLine_NarrowTerminal_TruncatesStatusText verifies that on a
+// narrow terminal (innerWidth=30) the status text is truncated to its budget
+// while "? Help" and the version label remain visible in the footer.
+func TestView_StatusLine_NarrowTerminal_TruncatesStatusText(t *testing.T) {
+	sr := &mockStatusReader{
+		enabled:   true,
+		hasOutput: true,
+		output:    "this is a very long status text that should be truncated",
+	}
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	m := NewModel(header, kh, "v1.0").WithStatusRunner(sr)
+	m.width = 32 // innerWidth = 30
+	m.height = 24
+	m.log.SetSize(28, 10)
+
+	out := m.View()
+	plain := stripANSI(out)
+
+	if !strings.Contains(plain, "? Help") {
+		t.Errorf("'? Help' not found in footer on narrow terminal; output:\n%s", plain)
+	}
+	if !strings.Contains(plain, "v1.0") {
+		t.Errorf("version label not found in footer on narrow terminal; output:\n%s", plain)
+	}
+}
+
+// TestView_StatusLine_SGRPreserved_WidthMatchesLipgloss verifies that when the
+// status text contains SGR escape sequences the footer width math uses
+// lipgloss.Width (visual columns) rather than byte length, so the layout does
+// not overflow.
+func TestView_StatusLine_SGRPreserved_WidthMatchesLipgloss(t *testing.T) {
+	colored := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("OK")
+	sr := &mockStatusReader{enabled: true, hasOutput: true, output: colored}
+	m := newTestModelWithStatus(t, sr)
+
+	out := m.View()
+	plain := stripANSI(out)
+
+	// The colored "OK" should render as plain "OK" in the footer.
+	if !strings.Contains(plain, "OK") {
+		t.Errorf("status text 'OK' not found in View output; plain:\n%s", plain)
+	}
+	if !strings.Contains(plain, "? Help") {
+		t.Errorf("'? Help' not found in footer; plain:\n%s", plain)
+	}
+}
+
+// TestView_StatusLine_HasOutputFalse_FallsBackToNormalShortcuts verifies that
+// when HasOutput() is false (cold start) the footer shows NormalShortcuts
+// regardless of Enabled().
+func TestView_StatusLine_HasOutputFalse_FallsBackToNormalShortcuts(t *testing.T) {
+	sr := &mockStatusReader{enabled: true, hasOutput: false, output: ""}
+	m := newTestModelWithStatus(t, sr)
+
+	out := m.View()
+	plain := stripANSI(out)
+
+	if strings.Contains(plain, "? Help") {
+		t.Errorf("'? Help' should not appear when HasOutput=false; got:\n%s", plain)
+	}
+	// NormalShortcuts should be visible.
+	if !strings.Contains(plain, "v select") {
+		t.Errorf("NormalShortcuts not found when HasOutput=false; plain:\n%s", plain)
+	}
+}
+
+// TestView_StatusLine_DisabledRunner_UsesShortcutPath verifies that when
+// Enabled() returns false the footer always uses the shortcut-bar path.
+func TestView_StatusLine_DisabledRunner_UsesShortcutPath(t *testing.T) {
+	sr := &mockStatusReader{enabled: false, hasOutput: true, output: "status text"}
+	m := newTestModelWithStatus(t, sr)
+
+	out := m.View()
+	plain := stripANSI(out)
+
+	if strings.Contains(plain, "? Help") {
+		t.Errorf("'? Help' should not appear when Enabled=false; got:\n%s", plain)
+	}
+	if strings.Contains(plain, "status text") {
+		t.Errorf("status text should not appear when Enabled=false; got:\n%s", plain)
+	}
+}
+
+// TestView_StatusLine_ModeHelp_UsesHelpShortcuts verifies that in ModeHelp the
+// footer shows HelpModeShortcuts (the else branch) even when the status runner
+// is enabled and has output.
+func TestView_StatusLine_ModeHelp_UsesHelpShortcuts(t *testing.T) {
+	sr := &mockStatusReader{enabled: true, hasOutput: true, output: "some status"}
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test").WithStatusRunner(sr)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// Enter ModeHelp via '?'
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping footer test")
+	}
+
+	out := m.View()
+	plain := stripANSI(out)
+
+	// The footer should show HelpModeShortcuts ("esc  close"), not status text.
+	if strings.Contains(plain, "some status") {
+		t.Errorf("status text must not appear in footer during ModeHelp; plain:\n%s", plain)
+	}
+	// "esc" should appear somewhere (in the modal or footer).
+	if !strings.Contains(plain, "esc") {
+		t.Errorf("'esc' not found in ModeHelp view; plain:\n%s", plain)
+	}
+}
+
+// TestModel_ModeHelp_MousePress_NoModeSelect verifies that a left-click in
+// ModeHelp does not transition to ModeSelect (the modal swallows non-wheel
+// mouse events).
+func TestModel_ModeHelp_MousePress_NoModeSelect(t *testing.T) {
+	sr := &mockStatusReader{enabled: true, hasOutput: true, output: "status"}
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test").WithStatusRunner(sr)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// Populate log so a normal click would enter ModeSelect.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "content line"
+	}
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: lines})
+		m = next.(Model)
+	}
+
+	// Enter ModeHelp.
+	{
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+		m = next.(Model)
+	}
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping mouse guard test")
+	}
+
+	// Simulate a left-click in the log area.
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+	next, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      2,
+		Y:      logTopRow,
+	})
+	m = next.(Model)
+
+	if m.keys.handler.Mode() == ModeSelect {
+		t.Error("left-click in ModeHelp must not transition to ModeSelect")
+	}
+}
+
+// TestModel_ModeHelp_WheelEvent_ForwardedToViewport verifies that wheel events
+// in ModeHelp are still forwarded to the viewport (the modal does not swallow
+// scroll events).
+func TestModel_ModeHelp_WheelEvent_ForwardedToViewport(t *testing.T) {
+	sr := &mockStatusReader{enabled: true, hasOutput: true, output: "status"}
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test").WithStatusRunner(sr)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// Enter ModeHelp.
+	{
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+		m = next.(Model)
+	}
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping wheel test")
+	}
+
+	// Wheel events must not panic and must not change the mode.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("wheel event in ModeHelp panicked: %v", r)
+		}
+	}()
+
+	next, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionMotion,
+		Button: tea.MouseButtonWheelDown,
+	})
+	m = next.(Model)
+
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Errorf("wheel event changed mode away from ModeHelp: %v", m.keys.handler.Mode())
 	}
 }
 

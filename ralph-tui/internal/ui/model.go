@@ -42,6 +42,16 @@ func (m headerModel) iterLine() string {
 	return m.header.IterationLine
 }
 
+// StatusReader provides read-only access to the current status-line runner
+// state. *statusline.Runner satisfies this interface. Pass nil (or a disabled
+// runner) when no status line is configured — Enabled() returning false causes
+// the footer to fall back to the shortcut-bar path.
+type StatusReader interface {
+	Enabled() bool
+	HasOutput() bool
+	LastOutput() string
+}
+
 // Model is the root Bubble Tea model. It holds three sub-models — one for the
 // header (checkbox grid), one for the scrollable log panel, and one for
 // keyboard dispatch — plus the terminal dimensions and a version label for the
@@ -53,8 +63,9 @@ type Model struct {
 	width            int
 	height           int
 	versionLabel     string
-	prevObservedMode Mode   // holds the mode observed at the end of the previous Update; used both to detect external SetMode transitions out of ModeSelect (selection clearing) and to drive the once-per-transition status-line trigger fired below.
-	triggerFn        func() // called once per mode transition; nil means no-op
+	prevObservedMode Mode         // holds the mode observed at the end of the previous Update; used both to detect external SetMode transitions out of ModeSelect (selection clearing) and to drive the once-per-transition status-line trigger fired below.
+	triggerFn        func()       // called once per mode transition; nil means no-op
+	statusRunner     StatusReader // nil or disabled → footer uses shortcut-bar path
 }
 
 // NewModel constructs the root Model. initialHeader must be pre-populated
@@ -74,6 +85,15 @@ func NewModel(initialHeader *StatusHeader, keyHandler *KeyHandler, versionLabel 
 // header.SetHeartbeatReader(runner) directly before constructing the model.
 func (m Model) WithHeartbeat(h HeartbeatReader) Model {
 	m.header.header.SetHeartbeatReader(h)
+	return m
+}
+
+// WithStatusRunner installs a StatusReader on the Model. When the runner is
+// enabled and has output, Model.View() switches the footer from the shortcut
+// bar to the status-line display path (status text + "? Help" + version).
+// Pass nil to disable the status-line footer path.
+func (m Model) WithStatusRunner(r StatusReader) Model {
+	m.statusRunner = r
 	return m
 }
 
@@ -223,9 +243,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch msg.Action {
 			case tea.MouseActionPress:
-				// Ignore left-press in modes where selection is not meaningful.
+				// Ignore left-press in modes where selection is not meaningful,
+				// and in ModeHelp where the modal is a true overlay (wheel events
+				// still scroll the underlying viewport; only non-wheel presses are
+				// suppressed so the modal cannot be accidentally dismissed by a click).
 				if currentMode == ModeError || currentMode == ModeQuitConfirm ||
-					currentMode == ModeNextConfirm || currentMode == ModeQuitting {
+					currentMode == ModeNextConfirm || currentMode == ModeQuitting ||
+					currentMode == ModeHelp {
 					break
 				}
 				p, ok := mouseToViewport(msg, logTopRow, logLeftCol, m.log.viewport)
@@ -440,30 +464,159 @@ func (m Model) View() string {
 	sb.WriteString(hruleLine)
 	sb.WriteString("\n")
 
-	// Shortcut footer: shortcut bar on the left, version label on the right.
-	shortcut := m.keys.handler.ShortcutLine()
-	footerWidth := innerWidth
+	// Shortcut footer — two rendering paths:
+	// (1) ModeNormal with a status runner configured, enabled, and populated:
+	//     show the status-line text on the left, then "? Help" and the version
+	//     label flush-right so the user can still see the version.
+	// (2) All other modes (including ModeHelp itself): show the mode's shortcut
+	//     string. updateShortcutLineLocked already set HelpModeShortcuts for
+	//     ModeHelp, so no dedicated path is needed here.
+	footerMode := m.keys.handler.Mode()
 	versionWidth := lipgloss.Width(m.versionLabel)
-	shortcutWidth := footerWidth - versionWidth - 1
-	if shortcutWidth < 0 {
-		shortcutWidth = 0
+	whiteVer := lipgloss.NewStyle().Foreground(White).Render(m.versionLabel)
+
+	var footer string
+	if footerMode == ModeNormal &&
+		m.statusRunner != nil && m.statusRunner.Enabled() && m.statusRunner.HasOutput() {
+		statusText := m.statusRunner.LastOutput()
+		helpHint := colorShortcutLine("? Help")
+		helpWidth := lipgloss.Width(helpHint)
+		// Reserve: 2-space gap before helpHint, helpHint itself, 1+ space before version.
+		statusBudget := innerWidth - helpWidth - 2 - versionWidth - 1
+		if statusBudget < 0 {
+			statusBudget = 0
+		}
+		statusTrunc := lipgloss.NewStyle().MaxWidth(statusBudget).Render(statusText)
+		spacerW := innerWidth - lipgloss.Width(statusTrunc) - 2 - helpWidth - versionWidth
+		if spacerW < 0 {
+			spacerW = 0
+		}
+		footer = statusTrunc + "  " + helpHint + strings.Repeat(" ", spacerW) + whiteVer
+	} else {
+		shortcut := m.keys.handler.ShortcutLine()
+		footerWidth := innerWidth
+		shortcutWidth := footerWidth - versionWidth - 1
+		if shortcutWidth < 0 {
+			shortcutWidth = 0
+		}
+		// Color the shortcut line (mapped keys white, descriptions gray), then
+		// truncate — MaxWidth is ANSI-aware so coloring survives truncation.
+		shortcutTrunc := lipgloss.NewStyle().MaxWidth(shortcutWidth).Render(colorShortcutLine(shortcut))
+		spacerWidth := footerWidth - lipgloss.Width(shortcutTrunc) - versionWidth
+		if spacerWidth < 0 {
+			spacerWidth = 0
+		}
+		footer = shortcutTrunc + strings.Repeat(" ", spacerWidth) + whiteVer
 	}
-	// Color the shortcut line (mapped keys white, descriptions gray), then
-	// truncate — MaxWidth is ANSI-aware so coloring survives truncation.
-	shortcutTrunc := lipgloss.NewStyle().MaxWidth(shortcutWidth).Render(colorShortcutLine(shortcut))
-	spacerWidth := footerWidth - lipgloss.Width(shortcutTrunc) - versionWidth
-	if spacerWidth < 0 {
-		spacerWidth = 0
-	}
-	footer := shortcutTrunc +
-		strings.Repeat(" ", spacerWidth) +
-		lipgloss.NewStyle().Foreground(White).Render(m.versionLabel)
 	sb.WriteString(wrapLine(footer))
 	sb.WriteString("\n")
 
 	// Bottom border.
 	sb.WriteString(bottomBorder)
 
+	frame := sb.String()
+
+	// When in ModeHelp, compute the centered help modal and splice it over the
+	// frame using the overlay helper. The modal is a complete ANSI-styled string;
+	// the overlay splice preserves base-frame ANSI outside the modal region.
+	if footerMode == ModeHelp {
+		modal := m.renderHelpModal()
+		modalLines := strings.Split(modal, "\n")
+		modalH := len(modalLines)
+		modalW := lipgloss.Width(modalLines[0])
+		top := (m.height - modalH) / 2
+		left := (m.width - modalW) / 2
+		if top < 0 {
+			top = 0
+		}
+		if left < 0 {
+			left = 0
+		}
+		return overlay(frame, modal, top, left)
+	}
+
+	return frame
+}
+
+// renderHelpModal builds the centered help modal string. The modal is sized
+// to min(terminalWidth-4, 70) columns and contains all four mode-section
+// tables from the HelpModal* constants, with a title border and a right-
+// aligned "esc  close" footer row.
+func (m Model) renderHelpModal() string {
+	modalWidth := min(m.width-4, 70)
+	if modalWidth < 20 {
+		modalWidth = 20
+	}
+	innerW := modalWidth - 2 // subtract the two border characters
+
+	gray := lipgloss.NewStyle().Foreground(LightGray)
+	white := lipgloss.NewStyle().Foreground(White)
+	vbar := gray.Render("│")
+
+	// wrapLine centres a content string in the modal's inner width, truncating
+	// long lines and padding short ones so the right border stays aligned.
+	wrapLine := func(content string) string {
+		truncated := lipgloss.NewStyle().MaxWidth(innerW).Render(content)
+		pad := innerW - lipgloss.Width(truncated)
+		if pad < 0 {
+			pad = 0
+		}
+		return vbar + truncated + strings.Repeat(" ", pad) + vbar
+	}
+
+	// Top border: "╭─ Help: Keyboard Shortcuts ──...──╮"
+	titleText := " Help: Keyboard Shortcuts "
+	leadDash := "─"
+	titleWidth := 1 + lipgloss.Width(titleText) // leadDash (1) + titleText
+	fillRight := innerW - titleWidth
+	if fillRight < 0 {
+		fillRight = 0
+	}
+	topBorder := gray.Render("╭"+leadDash) +
+		white.Render(titleText) +
+		gray.Render(strings.Repeat("─", fillRight)+"╮")
+
+	var rows []string
+	rows = append(rows, wrapLine("")) // blank line after top border
+
+	// addSection renders a section label followed by the multi-line HelpModal*
+	// constant. Section labels are white; content lines are colored via
+	// colorShortcutLine (white keys, gray descriptions). Content lines from the
+	// constants carry a 2-space indent; we prepend another 2 spaces so the
+	// label/content relationship is visually clear (label at col 2, content at col 4).
+	addSection := func(label, content string) {
+		rows = append(rows, wrapLine("  "+white.Render(label)))
+		for _, l := range strings.Split(content, "\n") {
+			rows = append(rows, wrapLine(colorShortcutLine("  "+l)))
+		}
+	}
+
+	addSection("Normal", HelpModalNormal)
+	rows = append(rows, wrapLine(""))
+	addSection("Select", HelpModalSelect)
+	rows = append(rows, wrapLine(""))
+	addSection("Error", HelpModalError)
+	rows = append(rows, wrapLine(""))
+	addSection("Done", HelpModalDone)
+	rows = append(rows, wrapLine("")) // blank before footer row
+
+	// Footer: "esc  close" right-aligned with 2 trailing spaces.
+	footerText := colorShortcutLine(HelpModeShortcuts)
+	footerW := lipgloss.Width(footerText)
+	footerPad := innerW - footerW - 2
+	if footerPad < 0 {
+		footerPad = 0
+	}
+	rows = append(rows, wrapLine(strings.Repeat(" ", footerPad)+footerText+"  "))
+
+	bottomBorder := gray.Render("╰" + strings.Repeat("─", innerW) + "╯")
+
+	var sb strings.Builder
+	sb.WriteString(topBorder + "\n")
+	for _, row := range rows {
+		sb.WriteString(row + "\n")
+	}
+	sb.WriteString(bottomBorder)
 	return sb.String()
 }
 
