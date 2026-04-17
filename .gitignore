@@ -45,3 +45,6 @@ logs/
 
 # Local Go module cache
 .gopath/
+.gopath-rw/
+.gocache/
+.go126
