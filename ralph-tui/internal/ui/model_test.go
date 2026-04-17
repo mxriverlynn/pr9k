@@ -1529,6 +1529,95 @@ func TestModel_ModeTrigger_RightMiddleMouseInNormal_NoFire(t *testing.T) {
 	}
 }
 
+// TestModel_ModeTrigger_Help_FiresOnEachEdge verifies that the mode-change
+// trigger fires once for each Help-related edge: Normal→Help (?), Help→Normal
+// (esc), Help→QuitConfirm (q), and QuitConfirm→Normal (esc, entered via Help).
+func TestModel_ModeTrigger_Help_FiresOnEachEdge(t *testing.T) {
+	t.Run("NormalToHelp", func(t *testing.T) {
+		m, count := newTestModelWithTrigger(t)
+		m.keys.handler.SetStatusLineActive(true)
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+		m = next.(Model)
+
+		if *count != 1 {
+			t.Errorf("Normal→Help (?): want 1 trigger, got %d", *count)
+		}
+		if m.keys.handler.Mode() != ModeHelp {
+			t.Errorf("expected ModeHelp after ?, got %v", m.keys.handler.Mode())
+		}
+	})
+
+	t.Run("HelpToNormalViaEsc", func(t *testing.T) {
+		m, count := newTestModelWithTrigger(t)
+		m.keys.handler.SetStatusLineActive(true)
+
+		{
+			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+			m = next.(Model)
+		}
+		*count = 0
+
+		{
+			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+			m = next.(Model)
+		}
+
+		if *count != 1 {
+			t.Errorf("Help→Normal (esc): want 1 trigger, got %d", *count)
+		}
+		if m.keys.handler.Mode() != ModeNormal {
+			t.Errorf("expected ModeNormal after esc from Help, got %v", m.keys.handler.Mode())
+		}
+	})
+
+	t.Run("HelpToQuitConfirmViaQ", func(t *testing.T) {
+		m, count := newTestModelWithTrigger(t)
+		m.keys.handler.SetStatusLineActive(true)
+
+		{
+			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+			m = next.(Model)
+		}
+		*count = 0
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+		m = next.(Model)
+
+		if *count != 1 {
+			t.Errorf("Help→QuitConfirm (q): want 1 trigger, got %d", *count)
+		}
+		if m.keys.handler.Mode() != ModeQuitConfirm {
+			t.Errorf("expected ModeQuitConfirm after q from Help, got %v", m.keys.handler.Mode())
+		}
+	})
+
+	t.Run("QuitConfirmToNormalViaEsc_EnteredViaHelp", func(t *testing.T) {
+		m, count := newTestModelWithTrigger(t)
+		m.keys.handler.SetStatusLineActive(true)
+
+		{
+			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+			m = next.(Model)
+		}
+		{
+			next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+			m = next.(Model)
+		}
+		*count = 0
+
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+		m = next.(Model)
+
+		if *count != 1 {
+			t.Errorf("QuitConfirm→Normal (esc, via Help): want 1 trigger, got %d", *count)
+		}
+		if m.keys.handler.Mode() != ModeNormal {
+			t.Errorf("expected ModeNormal after esc from QuitConfirm via Help, got %v", m.keys.handler.Mode())
+		}
+	})
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder

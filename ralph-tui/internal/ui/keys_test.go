@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -566,6 +567,232 @@ func TestHandleHelp_UnrecognizedKey_NoOp(t *testing.T) {
 // corresponding modal constant, and vice versa. The only allowed modal-only
 // token is "?" in HelpModalNormal (it is conditional in the footer but always
 // present in the modal so users can read what it does).
+
+// TestHandleNonNormal_QuestionMark_NoOp_EvenWhenStatusLineActive verifies that ?
+// is a no-op in every non-Normal mode, even when StatusLineActive is true. This
+// pins the contract that ? only enters Help from ModeNormal.
+func TestHandleNonNormal_QuestionMark_NoOp_EvenWhenStatusLineActive(t *testing.T) {
+	modes := []struct {
+		mode Mode
+		name string
+	}{
+		{ModeError, "ModeError"},
+		{ModeDone, "ModeDone"},
+		{ModeSelect, "ModeSelect"},
+		{ModeQuitConfirm, "ModeQuitConfirm"},
+		{ModeNextConfirm, "ModeNextConfirm"},
+		{ModeQuitting, "ModeQuitting"},
+		{ModeHelp, "ModeHelp"},
+	}
+
+	for _, tc := range modes {
+		t.Run(tc.name, func(t *testing.T) {
+			h, actions := newKeysTestHandler(t, tc.mode)
+			h.SetStatusLineActive(true)
+			m := newKeysModel(h)
+
+			_, cmd := m.Update(keyMsg("?"))
+			if cmd != nil {
+				t.Errorf("expected nil cmd for ? in %s", tc.name)
+			}
+			if h.Mode() != tc.mode {
+				t.Errorf("mode changed unexpectedly in %s: got %v", tc.name, h.Mode())
+			}
+			h.mu.Lock()
+			prev := h.prevMode
+			h.mu.Unlock()
+			if prev != ModeNormal {
+				t.Errorf("prevMode changed in %s: got %v", tc.name, prev)
+			}
+			if len(actions) != 0 {
+				t.Errorf("unexpected actions in %s: got %d", tc.name, len(actions))
+			}
+		})
+	}
+}
+
+// TestHandleHelp_Esc_RestoresPrevModeShortcutLine verifies that escaping from
+// Help restores the shortcut line to the pre-Help mode's shortcuts.
+func TestHandleHelp_Esc_RestoresPrevModeShortcutLine(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // Normal → Help
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after esc, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after esc from Help, got %q", h.ShortcutLine())
+	}
+}
+
+// TestHandleHelp_Q_ShortcutLineShowsQuitConfirmPrompt verifies that pressing q
+// from Help transitions the shortcut line to QuitConfirmPrompt.
+func TestHandleHelp_Q_ShortcutLineShowsQuitConfirmPrompt(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // Normal → Help
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	m.Update(keyMsg("q"))
+
+	if h.Mode() != ModeQuitConfirm {
+		t.Errorf("expected ModeQuitConfirm after q from Help, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuitConfirmPrompt {
+		t.Errorf("expected QuitConfirmPrompt after q from Help, got %q", h.ShortcutLine())
+	}
+}
+
+// TestHandleHelp_StatusLineFlipsInactive_DoesNotEject verifies that calling
+// SetStatusLineActive(false) while already in ModeHelp does not force an exit.
+func TestHandleHelp_StatusLineFlipsInactive_DoesNotEject(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // Normal → Help
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	h.SetStatusLineActive(false)
+
+	if h.Mode() != ModeHelp {
+		t.Errorf("expected ModeHelp after SetStatusLineActive(false), got %v", h.Mode())
+	}
+	if h.ShortcutLine() != HelpModeShortcuts {
+		t.Errorf("expected HelpModeShortcuts after flip to inactive, got %q", h.ShortcutLine())
+	}
+
+	// Esc must still restore to prevMode normally.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after esc post-flip, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != NormalShortcuts {
+		t.Errorf("expected NormalShortcuts after esc from Help, got %q", h.ShortcutLine())
+	}
+}
+
+// TestKeyHandler_StatusLineActive_ConcurrentAccess verifies that SetStatusLineActive
+// and StatusLineActive are race-safe under concurrent access. Run with go test -race.
+func TestKeyHandler_StatusLineActive_ConcurrentAccess(t *testing.T) {
+	actions := make(chan StepAction, 2000)
+	h := NewKeyHandler(func() {}, actions)
+
+	var wg sync.WaitGroup
+
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 500 {
+				h.SetStatusLineActive(true)
+				h.SetStatusLineActive(false)
+			}
+		}()
+	}
+
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m := newKeysModel(h)
+			key := keyMsg("?")
+			for range 500 {
+				_ = h.StatusLineActive()
+				_, _ = m.Update(key)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestShortcutModalParity_NoUnapprovedModalExtras verifies that no shortcut key
+// tokens appear in the help modals beyond the approved allowlist. Catches
+// forward-drift where a key is added to a modal but not to the handler.
+func TestShortcutModalParity_NoUnapprovedModalExtras(t *testing.T) {
+	// knownMulticharKeys are recognized key sequences (not description words).
+	knownMulticharKeys := map[string]bool{
+		"hjkl": true,
+		"↑↓←→": true,
+		"esc":  true,
+	}
+
+	type pair struct {
+		name          string
+		modal         string
+		allowedSingle map[string]bool
+		allowedMulti  map[string]bool
+	}
+	pairs := []pair{
+		{
+			name:  "Normal",
+			modal: HelpModalNormal,
+			allowedSingle: map[string]bool{
+				"↑": true, "/": true, "k": true, "↓": true, "j": true,
+				"v": true, "n": true, "q": true, "?": true,
+			},
+			allowedMulti: map[string]bool{},
+		},
+		{
+			name:  "Select",
+			modal: HelpModalSelect,
+			allowedSingle: map[string]bool{
+				"/": true, "↑": true, "↓": true, "0": true, "$": true,
+				"⇧": true, "y": true, "q": true,
+			},
+			allowedMulti: map[string]bool{"hjkl": true, "↑↓←→": true, "esc": true},
+		},
+		{
+			name:  "Error",
+			modal: HelpModalError,
+			allowedSingle: map[string]bool{
+				"c": true, "r": true, "q": true,
+			},
+			allowedMulti: map[string]bool{},
+		},
+		{
+			name:  "Done",
+			modal: HelpModalDone,
+			allowedSingle: map[string]bool{
+				"↑": true, "/": true, "k": true, "↓": true, "j": true,
+				"v": true, "q": true,
+			},
+			allowedMulti: map[string]bool{},
+		},
+	}
+
+	for _, p := range pairs {
+		words := strings.Fields(p.modal)
+		for _, word := range words {
+			runes := []rune(word)
+			if len(runes) == 1 {
+				if !p.allowedSingle[word] {
+					t.Errorf("modal[%s]: unexpected single-char token %q", p.name, word)
+				}
+			} else if knownMulticharKeys[word] {
+				if !p.allowedMulti[word] {
+					t.Errorf("modal[%s]: unexpected multi-char key token %q", p.name, word)
+				}
+			}
+		}
+	}
+}
 
 func TestShortcutModalParity(t *testing.T) {
 	type pair struct {
