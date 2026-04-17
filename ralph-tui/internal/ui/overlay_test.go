@@ -106,6 +106,38 @@ func TestOverlay_ModalRowsPastBaseClipped(t *testing.T) {
 	}
 }
 
+// TestSpliceAt_InsertWiderThanRemainingBase_DoesNotPanic verifies that when the
+// insert extends past the right edge of base, spliceAt clips cleanly without
+// panicking. Pins TruncateLeft clipping to empty when left+width(insert) >
+// visible width of base.
+func TestSpliceAt_InsertWiderThanRemainingBase_DoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("spliceAt panicked: %v", r)
+		}
+	}()
+
+	result := spliceAt("ABC", "XXXXX", 2)
+	plain := stripANSI(result)
+	if !strings.Contains(plain, "X") {
+		t.Errorf("insert not visible in result: %q", plain)
+	}
+}
+
+// TestOverlay_EmptyBase_ReturnsWithoutPanic verifies that overlay("", ..., 0, 0)
+// does not panic. strings.Split("", "\n") yields [""], which is the path taken
+// when m.height==0 during WindowSizeMsg ordering edge cases.
+func TestOverlay_EmptyBase_ReturnsWithoutPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("overlay with empty base panicked: %v", r)
+		}
+	}()
+
+	result := overlay("", "anything", 0, 0)
+	_ = result // must not panic; content is undefined but harmless
+}
+
 // TestOverlay_NegativeTopLeft_ClippedGracefully verifies that negative top and
 // left offsets are handled without panicking and that valid modal lines are still
 // rendered.

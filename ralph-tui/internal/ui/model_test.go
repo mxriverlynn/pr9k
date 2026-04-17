@@ -1649,8 +1649,8 @@ type mockStatusReader struct {
 	output    string
 }
 
-func (r *mockStatusReader) Enabled() bool    { return r.enabled }
-func (r *mockStatusReader) HasOutput() bool  { return r.hasOutput }
+func (r *mockStatusReader) Enabled() bool      { return r.enabled }
+func (r *mockStatusReader) HasOutput() bool    { return r.hasOutput }
 func (r *mockStatusReader) LastOutput() string { return r.output }
 
 // newTestModelWithStatus returns a Model with a given StatusReader installed
@@ -1878,6 +1878,284 @@ func TestModel_ModeHelp_WheelEvent_ForwardedToViewport(t *testing.T) {
 
 	if m.keys.handler.Mode() != ModeHelp {
 		t.Errorf("wheel event changed mode away from ModeHelp: %v", m.keys.handler.Mode())
+	}
+}
+
+// --- ModeHelp modal visibility and content tests (issue #118) ---
+
+// newTestModelModeHelp returns a Model in ModeHelp with an 80-column terminal.
+// The viewport is set to 18 rows and m.height is set to 6+18=24 so that the
+// frame height equals m.height. This ensures the centering math in View() keeps
+// the full 22-row help modal inside the 24-row frame without clipping.
+// Calls t.Skip if ModeHelp could not be entered.
+func newTestModelModeHelp(t *testing.T) Model {
+	t.Helper()
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test")
+	m.width = 80
+	// Frame height = topBorder + headerRow + hrule + vpHeight + hrule + footer +
+	// bottomBorder = 6 + vpHeight. With vpHeight=18, frame height = 24.
+	// Setting m.height=24 aligns the centering math with the actual frame height.
+	m.height = 24
+	m.log.SetSize(76, 18)
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping test")
+	}
+	return m
+}
+
+// TestView_ModeHelp_ModalIsVisibleInRenderedFrame verifies that entering
+// ModeHelp causes the modal title "Help: Keyboard Shortcuts" to appear in the
+// rendered View() frame. This is the load-bearing user-visible contract of the
+// overlay-splice path.
+func TestView_ModeHelp_ModalIsVisibleInRenderedFrame(t *testing.T) {
+	m := newTestModelModeHelp(t)
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "Help: Keyboard Shortcuts") {
+		t.Errorf("modal title not found in rendered frame; plain:\n%s", plain)
+	}
+}
+
+// TestView_ModeHelp_ModalContainsAllFourSectionLabels verifies that the
+// rendered frame contains the section labels "Normal", "Select", "Error",
+// "Done" in that order, matching the renderHelpModal addSection contract.
+func TestView_ModeHelp_ModalContainsAllFourSectionLabels(t *testing.T) {
+	m := newTestModelModeHelp(t)
+	plain := stripANSI(m.View())
+
+	sections := []string{"Normal", "Select", "Error", "Done"}
+	prev := -1
+	for _, label := range sections {
+		idx := strings.Index(plain, label)
+		if idx < 0 {
+			t.Errorf("section label %q not found in rendered frame", label)
+			continue
+		}
+		if idx <= prev {
+			t.Errorf("section label %q does not appear after preceding section (pos %d <= %d)", label, idx, prev)
+		}
+		prev = idx
+	}
+}
+
+// TestView_ModeHelp_NilStatusRunner_DoesNotPanic verifies that
+// WithStatusRunner(nil) followed by a '?' keypress and View() does not panic
+// and still renders the modal. Nil is documented as a supported input.
+func TestView_ModeHelp_NilStatusRunner_DoesNotPanic(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test").WithStatusRunner(nil)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("View() panicked with nil status runner in ModeHelp: %v", r)
+		}
+	}()
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping nil runner test")
+	}
+
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "Help: Keyboard Shortcuts") {
+		t.Errorf("modal not shown with nil status runner; plain:\n%s", plain)
+	}
+}
+
+// TestView_StatusLine_FooterFrameRowWidthStable_ANSIPreserved verifies that
+// when the status-line footer path is taken with an SGR-carrying LastOutput(),
+// the footer row (after wrapLine) has visual width == m.width and both │
+// side-bar glyphs are at the correct visual columns.
+func TestView_StatusLine_FooterFrameRowWidthStable_ANSIPreserved(t *testing.T) {
+	colored := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render("status OK")
+	sr := &mockStatusReader{enabled: true, hasOutput: true, output: colored}
+	m := newTestModelWithStatus(t, sr)
+
+	out := m.View()
+	lines := strings.Split(out, "\n")
+
+	// Locate the footer: the line immediately before the bottom border (╰...╯).
+	var footerLine string
+	for i, l := range lines {
+		if strings.HasPrefix(stripANSI(l), "╰") && i > 0 {
+			footerLine = lines[i-1]
+			break
+		}
+	}
+	if footerLine == "" {
+		t.Fatal("footer line not found in View() output")
+	}
+
+	if got := lipgloss.Width(footerLine); got != m.width {
+		t.Errorf("footer row visual width = %d, want %d", got, m.width)
+	}
+	plain := stripANSI(footerLine)
+	if !strings.HasPrefix(plain, "│") {
+		t.Errorf("footer left border '│' missing: %q", plain)
+	}
+	if !strings.HasSuffix(plain, "│") {
+		t.Errorf("footer right border '│' missing: %q", plain)
+	}
+}
+
+// TestView_ModeHelp_SmallTerminal_ModalClampedTo20ColWidth verifies that on a
+// sub-24-column terminal (m.width=10, so m.width-4=6) the modal's content rows
+// are clamped to 20 columns by the floor at renderHelpModal lines 547–549.
+// The title row can overflow (the title string is wider than 18 inner columns),
+// so we check the blank row immediately after the title border, which must have
+// visual width == 20.
+func TestView_ModeHelp_SmallTerminal_ModalClampedTo20ColWidth(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	kh.SetStatusLineActive(true)
+	m := NewModel(header, kh, "v0.0.0-test")
+	m.width = 10
+	m.height = 40
+	m.log.SetSize(6, 10)
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+	if m.keys.handler.Mode() != ModeHelp {
+		t.Skip("ModeHelp not entered; skipping small terminal test")
+	}
+
+	modal := m.renderHelpModal()
+	lines := strings.Split(modal, "\n")
+	// lines[0] is the title border (can overflow); lines[1] is the first
+	// blank content row from wrapLine("") which must equal modalWidth=20.
+	if len(lines) < 2 {
+		t.Fatalf("modal has fewer than 2 lines: %d", len(lines))
+	}
+	if got := lipgloss.Width(lines[1]); got != 20 {
+		t.Errorf("modal content row visual width = %d, want 20 (clamped floor)", got)
+	}
+}
+
+// TestView_ModeHelp_ModalCentering_OffsetMatchesMath verifies that the modal
+// top border appears at the row computed by (height-modalH)/2 in the rendered
+// frame. Guards against numerator/denominator swap or missing <0 clip.
+func TestView_ModeHelp_ModalCentering_OffsetMatchesMath(t *testing.T) {
+	m := newTestModelModeHelp(t)
+
+	modal := m.renderHelpModal()
+	modalLines := strings.Split(modal, "\n")
+	modalH := len(modalLines)
+	expectedTop := (m.height - modalH) / 2
+	if expectedTop < 0 {
+		expectedTop = 0
+	}
+
+	frameLines := strings.Split(m.View(), "\n")
+	actualTop := -1
+	for i, l := range frameLines {
+		if strings.Contains(stripANSI(l), "Help: Keyboard Shortcuts") {
+			actualTop = i
+			break
+		}
+	}
+	if actualTop < 0 {
+		t.Fatal("modal top border not found in rendered frame")
+	}
+	if actualTop != expectedTop {
+		t.Errorf("modal top row = %d, want %d (height=%d, modalH=%d)", actualTop, expectedTop, m.height, modalH)
+	}
+}
+
+// TestModel_ModeHelp_RightAndMiddleClick_DoNotEnterModeSelect verifies that
+// right-click and middle-click while in ModeHelp do not change the mode.
+// Complements the shipped left-click test.
+func TestModel_ModeHelp_RightAndMiddleClick_DoNotEnterModeSelect(t *testing.T) {
+	m := newTestModelModeHelp(t)
+
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+
+	for _, btn := range []tea.MouseButton{tea.MouseButtonRight, tea.MouseButtonMiddle} {
+		next, _ := m.Update(tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: btn,
+			X:      2,
+			Y:      logTopRow,
+		})
+		got := next.(Model).keys.handler.Mode()
+		if got != ModeHelp {
+			t.Errorf("button %v: mode changed from ModeHelp to %v", btn, got)
+		}
+	}
+}
+
+// TestModel_ErrorMode_MousePress_StillSwallowed verifies that a left-click
+// while in ModeError does not trigger a mode transition. Regression guard for
+// the compound || chain at model.go:250.
+func TestModel_ErrorMode_MousePress_StillSwallowed(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// Fill log so a click in Normal mode would enter ModeSelect.
+	fill := make([]string, 10)
+	for i := range fill {
+		fill[i] = "content"
+	}
+	next, _ := m.Update(LogLinesMsg{Lines: fill})
+	m = next.(Model)
+
+	m.keys.handler.SetMode(ModeError)
+
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+	next2, _ := m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      2,
+		Y:      logTopRow,
+	})
+	m = next2.(Model)
+
+	if m.keys.handler.Mode() != ModeError {
+		t.Errorf("left-click in ModeError changed mode to %v; want ModeError", m.keys.handler.Mode())
+	}
+}
+
+// TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter verifies
+// that the footer reads StatusReader on every View() call rather than caching.
+// Covers the cold-start → populated transition that happens at runtime.
+func TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter(t *testing.T) {
+	sr := &mockStatusReader{enabled: false, hasOutput: false, output: ""}
+	m := newTestModelWithStatus(t, sr)
+
+	plain1 := stripANSI(m.View())
+	if strings.Contains(plain1, "? Help") {
+		t.Error("first View should not contain '? Help' when runner is disabled")
+	}
+
+	sr.enabled = true
+	sr.hasOutput = true
+	sr.output = "build passing"
+
+	plain2 := stripANSI(m.View())
+	if !strings.Contains(plain2, "? Help") {
+		t.Errorf("second View should contain '? Help' after runner flip; plain:\n%s", plain2)
+	}
+	if !strings.Contains(plain2, "build passing") {
+		t.Errorf("second View should contain status text after runner flip; plain:\n%s", plain2)
 	}
 }
 
