@@ -1,6 +1,7 @@
 package version
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -39,7 +40,11 @@ func TestVersion_PreviousWas0_4_1(t *testing.T) {
 	cmd.Dir = repoRoot(t)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Skipf("git show failed (git unavailable or commit not reachable): %v", err)
+		var execErr *exec.Error
+		if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
+			t.Skipf("git not available: %v", err)
+		}
+		t.Fatalf("git show failed (commit not reachable or other error): %v", err)
 	}
 	const want = "0.4.1"
 	if !strings.Contains(string(out), want) {
@@ -54,7 +59,11 @@ func TestVersion_PreviousWas0_5_0(t *testing.T) {
 	cmd.Dir = repoRoot(t)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Skipf("git show failed (git unavailable or commit not reachable): %v", err)
+		var execErr *exec.Error
+		if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
+			t.Skipf("git not available: %v", err)
+		}
+		t.Fatalf("git show failed (commit not reachable or other error): %v", err)
 	}
 	const want = "0.5.0"
 	if !strings.Contains(string(out), want) {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/version"
 )
 
 // --- BuildPayload tests ---
@@ -27,7 +29,7 @@ import (
 func TestBuildPayload_InitializePhase(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "sess-1",
-		Version:       "0.6.0",
+		Version:       version.Version,
 		Phase:         "initialize",
 		Iteration:     0,
 		MaxIterations: 3,
@@ -121,7 +123,7 @@ func TestBuildPayload_NilCapturesProducesEmptyObject(t *testing.T) {
 func TestBuildPayload_RoundTrip(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "20260417-093045-123",
-		Version:       "0.6.0",
+		Version:       version.Version,
 		Phase:         "iteration",
 		Iteration:     1,
 		MaxIterations: 5,
@@ -142,7 +144,7 @@ func TestBuildPayload_RoundTrip(t *testing.T) {
 	}
 	checks := map[string]any{
 		"sessionId":     "20260417-093045-123",
-		"version":       "0.6.0",
+		"version":       version.Version,
 		"phase":         "iteration",
 		"iteration":     float64(1),
 		"maxIterations": float64(5),
@@ -375,7 +377,7 @@ func TestSanitize_OSC88IsDropped(t *testing.T) {
 func TestBuildPayload_DeterministicSchemaKeys(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "sess-abc",
-		Version:       "0.6.0",
+		Version:       version.Version,
 		Phase:         "iteration",
 		Iteration:     1,
 		MaxIterations: 3,
@@ -1387,13 +1389,13 @@ func TestSampleScript_OutputLine(t *testing.T) {
 	root := workspaceRoot(t)
 	scriptPath := filepath.Join(root, "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
-		t.Skipf("scripts/statusline not found at %s: %v", scriptPath, err)
+		t.Fatalf("scripts/statusline not found at %s: %v", scriptPath, err)
 	}
 
 	cfg := &statusline.Config{Command: scriptPath}
 	r := statusline.New(cfg, root, root, nil)
 	if !r.Enabled() {
-		t.Skip("runner not enabled (script not executable or not found)")
+		t.Fatalf("runner not enabled — script not executable or not found: %s", scriptPath)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1403,7 +1405,7 @@ func TestSampleScript_OutputLine(t *testing.T) {
 
 	r.PushState(statusline.State{
 		SessionID: "smoke-test",
-		Version:   "0.6.0",
+		Version:   version.Version,
 		Phase:     "initialize",
 	})
 	r.Trigger()
@@ -1422,8 +1424,92 @@ func TestSampleScript_OutputLine(t *testing.T) {
 		t.Fatal("runner has no output after 5 s — script did not produce a line")
 	}
 	got := r.LastOutput()
-	const want = "testing status line"
-	if !strings.Contains(got, want) {
-		t.Errorf("LastOutput() = %q; want it to contain %q", got, want)
+	if strings.TrimSpace(got) == "" {
+		t.Errorf("LastOutput() = %q; want non-empty output from script", got)
+	}
+}
+
+// TP-008: scripts/statusline must have the executable bit set.
+// Without it, New() returns Enabled()==false and the Runner silently disables.
+func TestSampleScript_Executable(t *testing.T) {
+	root := workspaceRoot(t)
+	scriptPath := filepath.Join(root, "scripts", "statusline")
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		t.Fatalf("scripts/statusline not found: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("scripts/statusline is not executable (mode %04o)", info.Mode().Perm())
+	}
+}
+
+// TP-005: scripts/statusline drains stdin and produces non-empty output.
+// Runs the script directly (not through Runner) to pin the stdin-drain contract
+// independent of the Runner wrapper's Sanitize pipeline.
+func TestSampleScript_DirectExec_DrainAndOutput(t *testing.T) {
+	root := workspaceRoot(t)
+	scriptPath := filepath.Join(root, "scripts", "statusline")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("scripts/statusline not found: %v", err)
+	}
+
+	// Send valid JSON via stdin to exercise the drain guarantee.
+	// The script reads all of stdin before processing, so any-size input is drained.
+	payload := `{"model":{"display_name":"test"},"workspace":{"current_dir":"/tmp"}` +
+		`,"cost":{"total_cost_usd":0,"total_duration_ms":0}` +
+		`,"context_window":{"used_percentage":0}}`
+
+	var stdout bytes.Buffer
+	cmd := exec.Command(scriptPath)
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(payload)
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited with error: %v", err)
+	}
+	if strings.TrimSpace(stdout.String()) == "" {
+		t.Errorf("stdout was empty; expected non-empty output from script")
+	}
+}
+
+// TP-006: scripts/statusline must produce no stderr output.
+// Stderr leakage bypasses the Sanitize pipeline and would appear raw in logs.
+func TestSampleScript_DirectExec_StderrSilent(t *testing.T) {
+	root := workspaceRoot(t)
+	scriptPath := filepath.Join(root, "scripts", "statusline")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("scripts/statusline not found: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.Command(scriptPath)
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader("{}")
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("script exited with error: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("expected no stderr output; got %d bytes: %q", stderr.Len(), stderr.String())
+	}
+}
+
+// TP-007: scripts/statusline must exit 0.
+// A non-zero exit triggers the Runner's non-zero-exit code path and discards output.
+func TestSampleScript_DirectExec_ExitZero(t *testing.T) {
+	root := workspaceRoot(t)
+	scriptPath := filepath.Join(root, "scripts", "statusline")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Fatalf("scripts/statusline not found: %v", err)
+	}
+
+	cmd := exec.Command(scriptPath)
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader("{}")
+
+	if err := cmd.Run(); err != nil {
+		t.Errorf("expected exit 0; got: %v", err)
 	}
 }
