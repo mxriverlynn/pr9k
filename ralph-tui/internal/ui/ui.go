@@ -164,6 +164,15 @@ func (h *KeyHandler) SelectJustReleased() bool {
 	return h.selectJustReleased
 }
 
+// PrevMode returns the mode that will be restored when Esc is pressed from
+// ModeQuitConfirm. Set by the q key handler; not set by SetMode.
+// Safe to call from any goroutine.
+func (h *KeyHandler) PrevMode() Mode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.prevMode
+}
+
 // StatusLineActive reports whether a statusLine command is configured.
 // When false, the ? key in ModeNormal is a no-op and ModeHelp is unreachable.
 // Safe to call from any goroutine.

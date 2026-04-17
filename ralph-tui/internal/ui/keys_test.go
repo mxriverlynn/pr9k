@@ -832,10 +832,7 @@ func TestHandleHelp_NormalModeKeys_AreNoOps(t *testing.T) {
 			if h.Mode() != ModeHelp {
 				t.Errorf("key %q: mode changed unexpectedly: got %v", tc.name, h.Mode())
 			}
-			h.mu.Lock()
-			prev := h.prevMode
-			h.mu.Unlock()
-			if prev != ModeNormal {
+			if prev := h.PrevMode(); prev != ModeNormal {
 				t.Errorf("key %q: prevMode changed: got %v", tc.name, prev)
 			}
 			if len(actions) != 0 {
@@ -850,10 +847,10 @@ func TestHandleHelp_NormalModeKeys_AreNoOps(t *testing.T) {
 
 // --- TP-002: ForceQuit() from ModeHelp transitions to ModeQuitting ---
 
-// TestHandleHelp_ForceQuit_TransitionsToQuitting verifies that calling
+// TestForceQuit_FromModeHelp_TransitionsToQuitting verifies that calling
 // ForceQuit() while in ModeHelp (e.g. on SIGINT) still flips mode to
 // ModeQuitting and drains ActionQuit. Ctrl-C must always work.
-func TestHandleHelp_ForceQuit_TransitionsToQuitting(t *testing.T) {
+func TestForceQuit_FromModeHelp_TransitionsToQuitting(t *testing.T) {
 	h, actions := newKeysTestHandler(t, ModeNormal)
 	h.SetStatusLineActive(true)
 	m := newKeysModel(h)
@@ -900,20 +897,17 @@ func TestHandleNormal_QuestionMark_NoOp_AfterStatusLineToggleFalse(t *testing.T)
 	if h.Mode() != ModeNormal {
 		t.Errorf("expected ModeNormal, got %v", h.Mode())
 	}
-	h.mu.Lock()
-	prev := h.prevMode
-	h.mu.Unlock()
-	if prev != ModeNormal {
+	if prev := h.PrevMode(); prev != ModeNormal {
 		t.Errorf("prevMode changed unexpectedly after no-op ?: got %v", prev)
 	}
 }
 
-// --- TP-005: SetMode(ModeHelp) updates ShortcutLine and clears prevMode ---
+// --- TP-005: SetMode(ModeHelp) updates ShortcutLine; prevMode stays zero ---
 
-// TestSetMode_ModeHelp_UpdatesShortcutLine documents that SetMode does not
+// TestSetMode_ModeHelp_DoesNotSavePrevMode documents that SetMode does not
 // save prevMode. Esc from a SetMode-entered ModeHelp therefore restores the
 // zero-value mode (ModeNormal), not the mode active before SetMode was called.
-func TestSetMode_ModeHelp_UpdatesShortcutLine_ClearsPrevMode(t *testing.T) {
+func TestSetMode_ModeHelp_DoesNotSavePrevMode(t *testing.T) {
 	h, _ := newKeysTestHandler(t, ModeError)
 	m := newKeysModel(h)
 
