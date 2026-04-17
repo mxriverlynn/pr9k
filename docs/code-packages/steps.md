@@ -77,11 +77,12 @@ type StatusLineConfig struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Env        []string          `json:"env,omitempty"`
-    Initialize []Step            `json:"initialize"`
-    Iteration  []Step            `json:"iteration"`
-    Finalize   []Step            `json:"finalize"`
-    StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
+    Env          []string          `json:"env,omitempty"`
+    ContainerEnv map[string]string `json:"containerEnv,omitempty"`
+    Initialize   []Step            `json:"initialize"`
+    Iteration    []Step            `json:"iteration"`
+    Finalize     []Step            `json:"finalize"`
+    StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
 }
 ```
 
@@ -196,5 +197,6 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
+- [Passing Environment Variables](../how-to/passing-environment-variables.md) — How to forward host env vars via `env` and inject literal values via `containerEnv` in `ralph-steps.json`
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

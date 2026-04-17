@@ -54,6 +54,7 @@ func BuildRunArgs(
     uid, gid int,
     cidfile string,
     envAllowlist []string,
+    containerEnv map[string]string,
     model, prompt string,
 ) []string
 ```
@@ -68,6 +69,7 @@ Constructs the complete `docker run ...` argv. The returned slice begins with `"
 - **`--mount type=bind,...`** — bind mounts use key=value syntax (`--mount type=bind,source=...,target=...`) rather than the shorthand `-v dir:target`; this avoids argument injection via colons in path names.
 - **`CLAUDE_CONFIG_DIR`** — always set to `ContainerProfilePath`; callers must not include it in `envAllowlist`.
 - **Env passthrough** — each name in `envAllowlist` is deduplicated (first-seen order), then emitted as `-e NAME` only if `os.LookupEnv(name)` returns `ok=true`. Unset host vars are silently skipped. Names are passed as bare `-e NAME` (not `-e NAME=value`) so the secret never appears in the docker CLI invocation.
+- **containerEnv injection** — after the passthrough entries, each key in `containerEnv` is emitted as `-e KEY=VALUE` in sorted key order. This injects literal values into the container that are not present on the host (e.g., build cache paths like `GOCACHE=/home/agent/workspace/.ralph-cache/go`). Docker's last-wins rule means containerEnv beats any same-named host passthrough. `CLAUDE_CONFIG_DIR` is silently skipped even if present as a defense-in-depth guard (the validator already rejects it, but this prevents any future call path that bypasses validation from overwriting the sandbox mount point).
 - **`--permission-mode bypassPermissions`** — required for the unattended loop.
 - **`--output-format stream-json`** — instructs claude to emit NDJSON on stdout so the `claudestream` pipeline can parse typed events.
 - **`--verbose`** — includes all event types in the stream (assistant turns, tool calls, result); without this flag many event types are suppressed.

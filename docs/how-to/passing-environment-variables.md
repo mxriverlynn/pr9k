@@ -89,11 +89,49 @@ If a claude step fails because it can't find an expected variable:
 3. Check that the validator didn't reject it: validation errors appear on stderr before the TUI starts
 4. Check for typos — the name must match exactly (case-sensitive)
 
+## The `containerEnv` field
+
+`env` forwards values from the host at container start. Use `containerEnv` when the value does not exist on the host or when you want to pin a specific literal value regardless of the host environment — for example, redirecting build caches into the bind-mounted workspace so they persist across runs:
+
+```json
+{
+  "env": ["GH_TOKEN"],
+  "containerEnv": {
+    "GOCACHE": "/home/agent/workspace/.ralph-cache/go",
+    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomod",
+    "GOPATH": "/home/agent/workspace/.ralph-cache/gopath"
+  },
+  "initialize": [ ... ],
+  "iteration": [ ... ],
+  "finalize": [ ... ]
+}
+```
+
+Key differences from `env`:
+
+| | `env` | `containerEnv` |
+|--|-------|----------------|
+| Value source | Host environment at container start | Literal value in `ralph-steps.json` |
+| Stored in repo | Name only (safe) | Name **and value** (committed to repo) |
+| When to use | Secrets, per-machine config | Build paths, feature flags, fixed constants |
+| Precedence | Applied first | Applied after `env` — Docker last-wins, so containerEnv beats host passthrough for the same key |
+
+### Constraints
+
+- Keys must not be `CLAUDE_CONFIG_DIR` (reserved for the sandbox mount point) — the validator rejects this with a fatal error.
+- Keys must not contain `=`; values must not contain newlines or NUL — both are fatal errors.
+- `containerEnv` values are committed to `ralph-steps.json`. **Do not store secrets here.** The validator emits a warning when a key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY`.
+
+### The `.ralph-cache` directory
+
+Ralph-tui creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo.
+
 ## Related documentation
 
 - [Docker Sandbox](../features/docker-sandbox.md) — Mount layout, env allowlist behavior, and the full `docker run` command
 - [sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, and set-on-host filtering
 - [Config Validation](../code-packages/validator.md) — Category 10 env validation rules
 - [Building Custom Workflows](building-custom-workflows.md) — How to create custom step sequences
-- [Step Definitions & Prompt Building](../code-packages/steps.md) — The `StepFile.Env` field in the JSON schema
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — The `StepFile.Env` and `StepFile.ContainerEnv` fields in the JSON schema
+- [Preflight](../code-packages/preflight.md) — `Run` function that creates `.ralph-cache` before Claude steps start
 - [Setting Up Docker Sandbox](setting-up-docker-sandbox.md) — First-time Docker setup and authentication

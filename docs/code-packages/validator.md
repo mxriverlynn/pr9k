@@ -59,6 +59,20 @@ The optional top-level `env` array lists host environment variable names that ra
 
 Duplicates within the `env` array and overlap with built-in variable names are harmless and produce no errors. Env validation runs before the scope walk; errors here do not block phase validation.
 
+### containerEnv validation
+
+The optional top-level `containerEnv` object injects literal `KEY=VALUE` pairs into the container. Each entry is validated independently; all errors are collected before returning.
+
+| Rule | Severity | Condition |
+|------|----------|-----------|
+| `CLAUDE_CONFIG_DIR` key | fatal error | Key equals `CLAUDE_CONFIG_DIR` — reserved for the sandbox mount point |
+| Key contains `=` | fatal error | A `=` in a key would corrupt the `-e KEY=VALUE` docker argument |
+| Value contains `\n` or NUL | fatal error | Newline or NUL in a value cannot be safely embedded in a docker `-e` argument |
+| Secret-suffix key | warning | Key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY` — secret-like names should come from the host `env` passthrough, not be committed to the JSON file |
+| Env collision | info | Key also appears in the `env` allowlist — Docker last-wins means containerEnv wins; the info notice makes the precedence explicit |
+
+containerEnv validation runs in the same pass as env validation, before the scope walk.
+
 ### statusLine block (Category "statusline")
 
 The optional top-level `statusLine` object configures a status-line command displayed by the TUI. Validation runs before the phase walk; errors use `Category="statusline"`, `Phase="config"`, no `StepName`.
@@ -88,20 +102,47 @@ Even though dir tokens are valid in command argv (Rule B does not apply to shell
 `Error` is a structured type that implements the `error` interface:
 
 ```go
+const (
+    SeverityError   = "error"
+    SeverityWarning = "warning"
+    SeverityInfo    = "info"
+)
+
 type Error struct {
-    Category string  // e.g. "schema", "file", "variable", "phase-size", "parse"
+    Severity string  // "error", "warning", or "info"
+    Category string  // e.g. "schema", "file", "variable", "phase-size", "parse", "containerenv"
     Phase    string  // e.g. "initialize", "iteration", "finalize", "config"
     StepName string  // empty for file-level errors
     Problem  string  // human-readable description
 }
 ```
 
-Formatted output:
+### IsFatal
+
+```go
+func (e Error) IsFatal() bool
+```
+
+Returns `true` when `e.Severity == SeverityError`. Warnings and info notices are non-fatal.
+
+### FatalErrorCount
+
+```go
+func FatalErrorCount(errs []Error) int
+```
+
+Returns the count of `Error` entries where `IsFatal()` is true. Used by `main.go` to decide whether to abort startup.
+
+### Formatted output
+
+The `Error()` string method prefixes the message with the severity:
 
 ```
 config error: schema: iteration step "get-issue": isClaude is required
 config error: file: config: missing required top-level array "finalize"
 config error: variable: finalize step "push": unresolved variable reference {{ITER}}
+config warning: containerenv: config: containerEnv key "DEPLOY_TOKEN" looks like a secret; use env passthrough instead
+config info: containerenv: config: containerEnv key "GOCACHE" is also in env; containerEnv wins (Docker last-wins)
 ```
 
 ## Entry point
@@ -116,4 +157,7 @@ Scope walk is skipped if any of the three required top-level arrays are missing,
 
 ## Wiring
 
-Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Wired into `main.go` immediately after `steps.LoadSteps`. `FatalErrorCount` determines whether startup is blocked:
+
+- **Fatal errors** (`Severity == "error"`)  — all findings are printed to stderr and the process exits 1 before the TUI starts.
+- **Non-fatal findings** (`Severity == "warning"` or `"info"`) — printed to stderr but startup continues. The TUI launches normally.
