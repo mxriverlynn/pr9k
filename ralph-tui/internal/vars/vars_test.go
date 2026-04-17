@@ -340,3 +340,103 @@ func TestSetStep_visibleDuringFinalize(t *testing.T) {
 		t.Errorf("STEP_NAME should be visible in finalize phase; got %q ok=%v", v, ok)
 	}
 }
+
+// --- AllCaptures ---
+
+// TP-016: AllCaptures on a fresh table returns a non-nil empty map for all phases.
+func TestAllCaptures_FreshTable_NonNilEmptyMap(t *testing.T) {
+	for _, phase := range []vars.Phase{vars.Initialize, vars.Iteration, vars.Finalize} {
+		vt := vars.New("/wf", "/pj", 5)
+		got := vt.AllCaptures(phase)
+		if got == nil {
+			t.Errorf("phase %v: expected non-nil map, got nil", phase)
+		}
+		if len(got) != 0 {
+			t.Errorf("phase %v: expected empty map, got %v", phase, got)
+		}
+	}
+}
+
+// TP-002: AllCaptures for the Iteration phase returns only non-reserved captures
+// and excludes all built-in names.
+func TestAllCaptures_ReservedNamesFiltered(t *testing.T) {
+	vt := vars.New("/wf", "/pj", 10)
+	vt.SetIteration(3)
+	vt.SetStep(1, 2, "n")
+	vt.Bind(vars.Initialize, "FOO", "bar")
+
+	got := vt.AllCaptures(vars.Iteration)
+
+	if got["FOO"] != "bar" {
+		t.Errorf("expected FOO=bar in Iteration captures, got %v", got)
+	}
+
+	for _, reserved := range []string{"WORKFLOW_DIR", "PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"} {
+		if _, ok := got[reserved]; ok {
+			t.Errorf("reserved name %q must not appear in AllCaptures result", reserved)
+		}
+	}
+}
+
+// TP-003: AllCaptures respects iteration-shadows-persistent for Iteration phase
+// and returns only persistent for Initialize/Finalize.
+func TestAllCaptures_IterationShadowsPersistent(t *testing.T) {
+	vt := vars.New("/wf", "/pj", 1)
+	vt.Bind(vars.Initialize, "K", "p")
+	vt.Bind(vars.Iteration, "K", "i")
+
+	if got := vt.AllCaptures(vars.Iteration)["K"]; got != "i" {
+		t.Errorf("AllCaptures(Iteration)[K]: want %q, got %q", "i", got)
+	}
+	if got := vt.AllCaptures(vars.Initialize)["K"]; got != "p" {
+		t.Errorf("AllCaptures(Initialize)[K]: want %q, got %q", "p", got)
+	}
+	if got := vt.AllCaptures(vars.Finalize)["K"]; got != "p" {
+		t.Errorf("AllCaptures(Finalize)[K]: want %q, got %q", "p", got)
+	}
+}
+
+// TP-017: AllCaptures returns a defensive copy — mutating the returned map must
+// not affect the VarTable state or subsequent AllCaptures calls.
+func TestAllCaptures_DefensiveCopy(t *testing.T) {
+	vt := vars.New("/wf", "/pj", 1)
+	vt.Bind(vars.Iteration, "FOO", "original")
+
+	snap1 := vt.AllCaptures(vars.Iteration)
+
+	// Mutate the first snapshot.
+	snap1["FOO"] = "mutated"
+	snap1["EXTRA"] = "injected"
+
+	// Second snapshot must reflect the original VarTable state.
+	snap2 := vt.AllCaptures(vars.Iteration)
+	if snap2["FOO"] != "original" {
+		t.Errorf("second AllCaptures: FOO: want %q, got %q", "original", snap2["FOO"])
+	}
+	if _, ok := snap2["EXTRA"]; ok {
+		t.Error("second AllCaptures: EXTRA must not be present after mutating first snapshot")
+	}
+
+	// A Bind call after the first snapshot must not mutate it.
+	vt.Bind(vars.Iteration, "NEW", "v")
+	if _, ok := snap1["NEW"]; ok {
+		t.Error("snap1 must not contain NEW added after snapshot was taken")
+	}
+}
+
+// TP-030: reserved names are excluded from AllCaptures even when they exist in the
+// persistent table via SetIteration and SetStep.
+func TestAllCaptures_ReservedNamesExcludedAfterSetIterationSetStep(t *testing.T) {
+	vt := vars.New("/wf", "/pj", 3)
+	vt.SetIteration(9)
+	vt.SetStep(2, 4, "my-step")
+
+	for _, phase := range []vars.Phase{vars.Initialize, vars.Iteration, vars.Finalize} {
+		got := vt.AllCaptures(phase)
+		for _, reserved := range []string{"WORKFLOW_DIR", "PROJECT_DIR", "MAX_ITER", "ITER", "STEP_NUM", "STEP_COUNT", "STEP_NAME"} {
+			if _, ok := got[reserved]; ok {
+				t.Errorf("phase %v: reserved name %q must not appear in AllCaptures after SetIteration/SetStep", phase, reserved)
+			}
+		}
+	}
+}

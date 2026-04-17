@@ -1263,6 +1263,275 @@ func TestModel_ModeTrigger_ExactlyOnePerTransition(t *testing.T) {
 	}
 }
 
+// --- Mode-trigger passive-message non-triggering tests (issue #116) ---
+
+// TP-010: tea.WindowSizeMsg must not fire the mode trigger.
+func TestModel_ModeTrigger_WindowSizeMsg_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	if *count != 0 {
+		t.Errorf("WindowSizeMsg: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-011: HeartbeatTickMsg must not fire the mode trigger.
+func TestModel_ModeTrigger_HeartbeatTickMsg_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	_, _ = m.Update(HeartbeatTickMsg(time.Now()))
+
+	if *count != 0 {
+		t.Errorf("HeartbeatTickMsg: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-012: LogLinesMsg must not fire the mode trigger.
+func TestModel_ModeTrigger_LogLinesMsg_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	_, _ = m.Update(LogLinesMsg{Lines: []string{"a", "b"}})
+
+	if *count != 0 {
+		t.Errorf("LogLinesMsg: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-025: header messages must not fire the mode trigger.
+func TestModel_ModeTrigger_HeaderMessages_NoFire(t *testing.T) {
+	msgs := []tea.Msg{
+		headerStepStateMsg{idx: 0, state: StepDone},
+		headerIterationLineMsg{iter: 1, max: 3, issue: "42"},
+		headerInitializeLineMsg{stepNum: 1, stepCount: 2, stepName: "Setup"},
+		headerFinalizeLineMsg{stepNum: 1, stepCount: 1, stepName: "Push"},
+		headerPhaseStepsMsg{names: []string{"alpha", "beta"}},
+	}
+
+	for _, msg := range msgs {
+		m, count := newTestModelWithTrigger(t)
+		_, _ = m.Update(msg)
+		if *count != 0 {
+			t.Errorf("header message %T: want 0 triggers, got %d", msg, *count)
+		}
+	}
+}
+
+// TP-026: tea.QuitMsg must not fire the mode trigger.
+func TestModel_ModeTrigger_QuitMsg_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	// tea.QuitMsg returns early via `return m, tea.Quit` before reaching the
+	// trigger check, so no trigger should fire.
+	_, _ = m.Update(tea.QuitMsg{})
+
+	if *count != 0 {
+		t.Errorf("tea.QuitMsg: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-027: cold-start — prevObservedMode zero value equals the handler's initial
+// mode (ModeNormal = 0), so no trigger fires on the very first passive Update.
+func TestModel_ModeTrigger_ColdStart_NoSpuriousFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	if *count != 0 {
+		t.Errorf("cold-start passive Update: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-015: external SetMode path — the first passive Update after SetMode fires
+// the trigger exactly once; subsequent passive Updates do not re-fire.
+func TestModel_ModeTrigger_ExternalSetMode_FiresOnce(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+
+	// Simulate orchestrator goroutine setting mode to ModeError.
+	m.keys.handler.SetMode(ModeError)
+
+	// First passive Update: prevObservedMode==Normal != current==Error → trigger fires.
+	next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+	m = next.(Model)
+	if *count != 1 {
+		t.Errorf("first Update after SetMode: want 1 trigger, got %d", *count)
+	}
+
+	// Second passive Update: mode unchanged → no re-fire.
+	_, _ = m.Update(HeartbeatTickMsg(time.Now()))
+	if *count != 1 {
+		t.Errorf("second Update after SetMode (same mode): want still 1 trigger, got %d", *count)
+	}
+}
+
+// TP-013: in ModeSelect, a mouse release that commits the drag sets
+// selectJustReleased=true without firing a new mode trigger.
+func TestModel_ModeTrigger_SelectModeRelease_SetsJustReleasedNoTrigger(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// Seed content so we can enter select mode.
+	lines := make([]string, 10)
+	for i := range lines {
+		lines[i] = "content line"
+	}
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: lines})
+		m = next.(Model)
+	}
+
+	// Enter ModeSelect via left press.
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+	{
+		next, _ := m.Update(tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: tea.MouseButtonLeft,
+			X:      2,
+			Y:      logTopRow,
+		})
+		m = next.(Model)
+	}
+	// Only proceed if we actually entered ModeSelect.
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Skip("left press did not enter ModeSelect (viewport may be empty at that row)")
+	}
+	*count = 0 // reset after entering Select
+
+	// Dispatch Motion then Release.
+	{
+		next, _ := m.Update(tea.MouseMsg{
+			Action: tea.MouseActionMotion,
+			Button: tea.MouseButtonLeft,
+			X:      3,
+			Y:      logTopRow + 1,
+		})
+		m = next.(Model)
+	}
+	{
+		next, _ := m.Update(tea.MouseMsg{
+			Action: tea.MouseActionRelease,
+			Button: tea.MouseButtonLeft,
+			X:      3,
+			Y:      logTopRow + 1,
+		})
+		m = next.(Model)
+	}
+
+	if *count != 0 {
+		t.Errorf("ModeSelect release: want 0 new triggers, got %d", *count)
+	}
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Error("expected to stay in ModeSelect after release")
+	}
+	m.keys.handler.mu.Lock()
+	jreleased := m.keys.handler.selectJustReleased
+	m.keys.handler.mu.Unlock()
+	if !jreleased {
+		t.Error("expected selectJustReleased=true after mouse release in ModeSelect")
+	}
+}
+
+// TP-014: transient 'v' flip-flop with empty log — pressing 'v' in ModeNormal
+// when the log is empty reverts to ModeNormal and must not fire any trigger.
+func TestModel_ModeTrigger_TransientVFlipflop_EmptyLog_NoTrigger(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	// No log lines added — log is empty.
+
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+
+	if m.keys.handler.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after 'v' revert on empty log, got %v", m.keys.handler.Mode())
+	}
+	if *count != 0 {
+		t.Errorf("transient 'v' with empty log: want 0 triggers, got %d", *count)
+	}
+}
+
+// TP-028: mouse wheel in ModeSelect must not fire the mode trigger.
+func TestModel_ModeTrigger_WheelInModeSelect_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.log.SetSize(76, 10)
+
+	// Seed content and enter ModeSelect via 'v'.
+	{
+		next, _ := m.Update(LogLinesMsg{Lines: []string{"line one"}})
+		m = next.(Model)
+	}
+	{
+		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+		m = next.(Model)
+	}
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Skip("could not enter ModeSelect")
+	}
+	*count = 0
+
+	_, _ = m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+
+	if *count != 0 {
+		t.Errorf("wheel in ModeSelect: want 0 triggers, got %d", *count)
+	}
+	if m.keys.handler.Mode() != ModeSelect {
+		t.Error("expected to remain in ModeSelect after wheel")
+	}
+}
+
+// TP-029: left mouse press in error/confirm/quitting modes is ignored (mode guard
+// at lines 223-226) and must not fire the trigger.
+func TestModel_ModeTrigger_MousePressInErrorMode_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	m.width = 80
+	m.height = 24
+	m.log.SetSize(76, 10)
+
+	// SetMode to ModeError and flush the resulting trigger.
+	m.keys.handler.SetMode(ModeError)
+	{
+		next, _ := m.Update(HeartbeatTickMsg(time.Now()))
+		m = next.(Model)
+	}
+	*count = 0 // reset after flush
+
+	// Dispatch left press — should be ignored due to mode guard.
+	gridRows := len(m.header.header.Rows)
+	logTopRow := gridRows + 2
+	_, _ = m.Update(tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+		X:      2,
+		Y:      logTopRow,
+	})
+
+	if *count != 0 {
+		t.Errorf("left press in ModeError: want 0 new triggers, got %d", *count)
+	}
+}
+
+// TP-031: right and middle mouse buttons in ModeNormal must not fire the trigger.
+func TestModel_ModeTrigger_RightMiddleMouseInNormal_NoFire(t *testing.T) {
+	buttons := []tea.MouseButton{tea.MouseButtonRight, tea.MouseButtonMiddle}
+	for _, btn := range buttons {
+		m, count := newTestModelWithTrigger(t)
+		m.width = 80
+		m.height = 24
+		m.log.SetSize(76, 10)
+
+		_, _ = m.Update(tea.MouseMsg{
+			Action: tea.MouseActionPress,
+			Button: btn,
+			X:      2,
+			Y:      5,
+		})
+
+		if *count != 0 {
+			t.Errorf("button %v press in ModeNormal: want 0 triggers, got %d", btn, *count)
+		}
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
