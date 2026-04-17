@@ -553,8 +553,14 @@ func TestRunner_SingleFlight(t *testing.T) {
 		runner.Trigger()
 	}
 
-	// wait up to 1 s for some executions
-	time.Sleep(500 * time.Millisecond)
+	// Wait for at least one run to complete.
+	if !waitCondition(2*time.Second, 50*time.Millisecond, runner.HasOutput) {
+		t.Error("expected at least one invocation, got 0 after 2s")
+	}
+	// Pragmatic sleep to let any remaining queued triggers drain (each run
+	// takes ~50ms; channel cap 4 → at most ~200ms of remaining work).
+	// Replace if this becomes flaky under load.
+	time.Sleep(300 * time.Millisecond)
 
 	// read counter
 	data, _ := os.ReadFile(counterFile)
@@ -581,7 +587,8 @@ func TestRunner_Timeout(t *testing.T) {
 	runner.Start(ctx)
 	runner.Trigger()
 
-	// wait for timeout + grace + buffer
+	// Sleep measures elapsed time: 2s cmdCtx + 1s WaitDelay + 500ms buffer.
+	// Pragmatic shortcut; note explicitly per testing standard. Replace if flaky.
 	time.Sleep(3500 * time.Millisecond)
 
 	if runner.HasOutput() {
@@ -604,16 +611,19 @@ func TestRunner_TimeoutSIGTERMIgnored(t *testing.T) {
 	runner.Start(ctx)
 	runner.Trigger()
 
-	// allow 2s timeout + 1s WaitDelay + 1s buffer
+	// Sleep measures elapsed time: 2s cmdCtx + 1s WaitDelay + 1.5s buffer.
+	// The "trap" helper ignores SIGTERM so only SIGKILL (via WaitDelay) works.
+	// Pragmatic shortcut per testing standard; replace if flaky.
 	time.Sleep(4500 * time.Millisecond)
 
 	runner.Shutdown()
 
-	// allow goroutines to drain
+	// Brief drain window for Go-runtime goroutines to settle.
+	// NumGoroutine tolerance of +3 absorbs GC/finalizer/netpoller variance;
+	// this assertion style can flake on Go upgrades or under CI load.
 	time.Sleep(100 * time.Millisecond)
 	after := runtime.NumGoroutine()
 
-	// tolerance of 3 to account for Go runtime background goroutines
 	if after > before+3 {
 		t.Errorf("possible goroutine leak: before=%d after=%d", before, after)
 	}
@@ -668,6 +678,8 @@ func TestRunner_NonZeroExit(t *testing.T) {
 	// swap to exit-1 mode
 	t.Setenv("STATUSLINE_TEST_HELPER", "exit1")
 	runner.Trigger()
+	// Pragmatic sleep: a failing run leaves no observable state change to poll
+	// on (HasOutput stays true, LastOutput unchanged). Replace if flaky.
 	time.Sleep(200 * time.Millisecond)
 
 	if runner.LastOutput() != "good-value" {
@@ -689,6 +701,8 @@ func TestRunner_ColdStart(t *testing.T) {
 	defer cancel()
 	runner.Start(ctx)
 	runner.Trigger()
+	// Pragmatic sleep: a failing run leaves HasOutput false, so there is no
+	// observable transition to poll on. Replace if flaky.
 	time.Sleep(200 * time.Millisecond)
 
 	if runner.HasOutput() {
@@ -784,22 +798,36 @@ func TestRunner_PositiveInterval(t *testing.T) {
 // TestRunner_ShutdownSkipsSend verifies that after Shutdown, a completing
 // in-flight run does not invoke the sender.
 func TestRunner_ShutdownSkipsSend(t *testing.T) {
-	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "after-shutdown"}, intPtr(0))
+	// Use a sleeping helper so a run is in-flight when Shutdown is called.
+	// Shutdown cancels the parent context; cmdCtx (derived from it) is also
+	// cancelled, SIGTERM is sent, and the process is killed via WaitDelay.
+	// r.stopped is set to true by Shutdown before the kill, so the sender is
+	// skipped by the stopped.Load() guard even in the exit-0 race window.
+	runner := newRunner(t, "sleep",
+		map[string]string{"HELPER_SLEEP_SEC": "10"},
+		intPtr(0))
 
+	var mu sync.Mutex
 	var sends int
-	runner.SetSender(func(_ interface{}) { sends++ })
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		sends++
+		mu.Unlock()
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runner.Start(ctx)
 
-	// Shutdown before any trigger — no send should happen.
-	runner.Shutdown()
-	runner.Trigger() // dropped because worker is gone
-	time.Sleep(100 * time.Millisecond)
+	runner.Trigger()
+	time.Sleep(100 * time.Millisecond) // let the subprocess start
+	runner.Shutdown()                  // marks stopped, cancels ctx; subprocess killed
 
-	if sends != 0 {
-		t.Errorf("sender called %d times after Shutdown, want 0", sends)
+	mu.Lock()
+	got := sends
+	mu.Unlock()
+	if got != 0 {
+		t.Errorf("sender called %d times after Shutdown, want 0", got)
 	}
 }
 
@@ -844,8 +872,12 @@ func TestRunner_StderrForwarded(t *testing.T) {
 	runner.Start(ctx)
 	runner.Trigger()
 
-	// wait for the run to complete and logger to flush
-	time.Sleep(500 * time.Millisecond)
+	// "stderr" helper exits 0 with no stdout, so HasOutput becomes true when
+	// the run completes; close the logger only after the run finishes to avoid
+	// missing the log write.
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("runner did not complete within timeout")
+	}
 	_ = log.Close()
 
 	// read the log file and check for [statusline] + message
@@ -1088,6 +1120,8 @@ func TestRunner_SenderNotInvokedOnFailure(t *testing.T) {
 	defer cancel()
 	runner.Start(ctx)
 	runner.Trigger()
+	// Pragmatic sleep: a failing run never calls the sender, so there is no
+	// observable event to poll on. Replace if flaky.
 	time.Sleep(300 * time.Millisecond)
 
 	mu.Lock()
@@ -1140,7 +1174,10 @@ func TestRunner_BoundedStdoutLogsTruncation(t *testing.T) {
 	runner.Start(ctx)
 	runner.Trigger()
 
-	time.Sleep(500 * time.Millisecond)
+	// "bigout" helper exits 0, so HasOutput becomes true when the run completes.
+	if !waitCondition(3*time.Second, 50*time.Millisecond, runner.HasOutput) {
+		t.Fatal("runner did not complete within timeout")
+	}
 	_ = log.Close()
 
 	entries, err := readLogFiles(tmpDir)

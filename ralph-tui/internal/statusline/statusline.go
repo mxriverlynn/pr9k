@@ -40,12 +40,24 @@ type StatusLineUpdatedMsg struct{}
 // the TUI on updates. All exported methods are goroutine-safe. A no-op Runner
 // (Enabled() == false) ignores all method calls without panicking or starting
 // any goroutines.
+//
+// Environment: the script inherits the full host environment via os.Environ().
+// Status-line scripts are user-authored config (not third-party code), so they
+// see the same environment a shell invocation from the same session would see,
+// including secrets such as GITHUB_TOKEN or ANTHROPIC_API_KEY. This is an
+// explicit trust-model decision; review before advertising this feature for
+// scripts that execute untrusted content.
 type Runner struct {
 	enabled    bool
 	path       string
 	projectDir string
 	interval   time.Duration
 	log        *logger.Logger
+
+	// setterMu guards sender and modeGetter, which may be written by the
+	// caller goroutine (via SetSender/SetModeGetter) after Start has launched
+	// the worker goroutine.
+	setterMu   sync.RWMutex
 	sender     func(interface{})
 	modeGetter func() string
 
@@ -110,20 +122,26 @@ func (r *Runner) Enabled() bool { return r.enabled }
 
 // SetSender injects the callback that notifies the Bubble Tea program.
 // fn is called with a StatusLineUpdatedMsg after each successful cache update.
+// Safe to call before or after Start.
 func (r *Runner) SetSender(fn func(interface{})) {
 	if !r.enabled {
 		return
 	}
+	r.setterMu.Lock()
 	r.sender = fn
+	r.setterMu.Unlock()
 }
 
 // SetModeGetter injects the function the worker calls to read the current UI
 // mode string at invocation time. If unset, the payload mode field is "".
+// Safe to call before or after Start.
 func (r *Runner) SetModeGetter(fn func() string) {
 	if !r.enabled {
 		return
 	}
+	r.setterMu.Lock()
 	r.modeGetter = fn
+	r.setterMu.Unlock()
 }
 
 // PushState stores the latest workflow state snapshot. Call this on the
@@ -243,9 +261,14 @@ func (r *Runner) execScript(ctx context.Context) {
 	defer r.running.Store(false)
 
 	s := r.snapshotState()
+
+	r.setterMu.RLock()
+	modeGetter := r.modeGetter
+	r.setterMu.RUnlock()
+
 	mode := ""
-	if r.modeGetter != nil {
-		mode = r.modeGetter()
+	if modeGetter != nil {
+		mode = modeGetter()
 	}
 
 	payload, err := BuildPayload(s, mode)
@@ -281,6 +304,18 @@ func (r *Runner) execScript(ctx context.Context) {
 		return
 	}
 
+	// Drain stderr in a goroutine concurrent with the stdout read to prevent a
+	// pipe-buffer deadlock: if the script writes more than the OS pipe buffer
+	// (~64 KB on Linux) to stderr before stdout reaches EOF, a sequential read
+	// would block forever waiting for stdout EOF.
+	var stderrBytes []byte
+	var stderrWg sync.WaitGroup
+	stderrWg.Add(1)
+	go func() {
+		defer stderrWg.Done()
+		stderrBytes, _ = io.ReadAll(stderrPipe)
+	}()
+
 	// Read stdout up to 8 KB.
 	limited := io.LimitReader(stdoutPipe, stdoutLimit+1)
 	rawOut, readErr := io.ReadAll(limited)
@@ -289,9 +324,7 @@ func (r *Runner) execScript(ctx context.Context) {
 		rawOut = rawOut[:stdoutLimit]
 	}
 
-	// Read stderr concurrently with stdout drain.
-	stderrBytes, _ := io.ReadAll(stderrPipe)
-
+	stderrWg.Wait()
 	runErr := cmd.Wait()
 	dur := time.Since(start)
 
@@ -323,8 +356,12 @@ func (r *Runner) execScript(ctx context.Context) {
 	r.hasOutput = true
 	r.outputMu.Unlock()
 
-	if !r.stopped.Load() && r.sender != nil {
-		r.sender(StatusLineUpdatedMsg{})
+	r.setterMu.RLock()
+	sender := r.sender
+	r.setterMu.RUnlock()
+
+	if !r.stopped.Load() && sender != nil {
+		sender(StatusLineUpdatedMsg{})
 	}
 }
 
@@ -359,6 +396,11 @@ func firstNonEmptyLine(b []byte) string {
 // a path containing "/" is joined with workflowDir (or used as-is if
 // absolute); a bare name is looked up via exec.LookPath.
 // Returns "" when the path cannot be resolved.
+//
+// Note: for slash-containing paths, existence is not verified here (unlike
+// validateCommandPath, which calls os.Stat). In practice the config validator
+// runs before New() and rejects missing files; a script deleted between
+// validation and the first trigger will produce an exec error on first run.
 func resolvePath(workflowDir, cmd string) string {
 	if strings.Contains(cmd, "/") {
 		if filepath.IsAbs(cmd) {
