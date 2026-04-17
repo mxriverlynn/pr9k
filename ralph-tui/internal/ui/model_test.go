@@ -2203,6 +2203,60 @@ func TestView_StatusLine_EnabledFlipBetweenCalls_NextViewUpdatesFooter(t *testin
 	}
 }
 
+// --- StatusLineUpdatedMsg ---
+
+// TestModel_StatusLineUpdatedMsg_NoStateChange verifies that a StatusLineUpdatedMsg
+// is handled by Model.Update without panicking and without changing any
+// observable state (mode, log lines, etc.). The implicit re-render is
+// Bubble Tea's responsibility after Update returns.
+func TestModel_StatusLineUpdatedMsg_NoStateChange(t *testing.T) {
+	m := newTestModel(t)
+	modeBefore := m.keys.handler.Mode()
+
+	next, cmd := m.Update(StatusLineUpdatedMsg{})
+	if cmd != nil {
+		t.Errorf("expected nil cmd, got %v", cmd)
+	}
+
+	m2, ok := next.(Model)
+	if !ok {
+		t.Fatalf("Update did not return a Model")
+	}
+	if m2.keys.handler.Mode() != modeBefore {
+		t.Errorf("mode changed unexpectedly: got %v, want %v", m2.keys.handler.Mode(), modeBefore)
+	}
+	if len(m2.log.lines) != 0 {
+		t.Errorf("log lines changed unexpectedly: %d lines", len(m2.log.lines))
+	}
+}
+
+// TestModel_StatusLineActive_WiredFromRunnerEnabled verifies the SetStatusLineActive
+// plumbing: after constructing a model with an enabled StatusReader, calling
+// SetStatusLineActive(runner.Enabled()) on the KeyHandler makes
+// StatusLineActive() return true, enabling the ? key.
+func TestModel_StatusLineActive_WiredFromRunnerEnabled(t *testing.T) {
+	header := NewStatusHeader(1)
+	header.SetPhaseSteps([]string{"step-one"})
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+
+	// Simulate what main.go does after constructing the runner:
+	// keyHandler.SetStatusLineActive(statusRunner.Enabled())
+	enabledRunner := &mockStatusReader{enabled: true, hasOutput: false, output: ""}
+	kh.SetStatusLineActive(enabledRunner.Enabled())
+
+	if !kh.StatusLineActive() {
+		t.Error("expected StatusLineActive to be true after SetStatusLineActive(true)")
+	}
+
+	// Disabled runner → SetStatusLineActive(false) leaves it false.
+	disabledRunner := &mockStatusReader{enabled: false, hasOutput: false, output: ""}
+	kh.SetStatusLineActive(disabledRunner.Enabled())
+	if kh.StatusLineActive() {
+		t.Error("expected StatusLineActive to be false after SetStatusLineActive(false)")
+	}
+}
+
 // mockStatusReader is a test double for StatusReader that lets callers control
 // Enabled/HasOutput/LastOutput independently.
 type mockStatusReader struct {

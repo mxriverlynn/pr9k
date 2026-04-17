@@ -209,6 +209,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.log, lcmd = m.log.Update(msg)
 		cmds = append(cmds, lcmd)
 
+	case StatusLineUpdatedMsg:
+		// Pure re-render trigger: Bubble Tea re-renders automatically after
+		// Update returns. The fresh LastOutput() is read in View().
+
 	case tea.MouseMsg:
 		// On any mouse event while in ModeSelect, clear the "just released"
 		// committed-shortcut flag so that SelectShortcuts is restored before

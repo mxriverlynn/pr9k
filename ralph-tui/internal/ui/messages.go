@@ -60,5 +60,13 @@ type headerPhaseStepsMsg struct {
 	names []string
 }
 
+// StatusLineUpdatedMsg is sent by the statusline.Runner (via its injected
+// sender) after each successful cache update. Model.Update handles it as a
+// pure re-render signal; no state changes occur.
+type StatusLineUpdatedMsg struct{}
+
 // Ensure LogLinesMsg satisfies tea.Msg at compile time.
 var _ tea.Msg = LogLinesMsg{}
+
+// Ensure StatusLineUpdatedMsg satisfies tea.Msg at compile time.
+var _ tea.Msg = StatusLineUpdatedMsg{}

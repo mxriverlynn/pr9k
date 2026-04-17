@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
@@ -115,6 +117,19 @@ func main() {
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
+	// Build the statusline runner from config. New() returns a no-op runner
+	// when StatusLine is nil or its command cannot be resolved, so all method
+	// calls below are safe regardless of configuration.
+	var slCfg *statusline.Config
+	if stepFile.StatusLine != nil {
+		slCfg = &statusline.Config{
+			Command:                stepFile.StatusLine.Command,
+			RefreshIntervalSeconds: stepFile.StatusLine.RefreshIntervalSeconds,
+		}
+	}
+	statusRunner := statusline.New(slCfg, cfg.WorkflowDir, cfg.ProjectDir, log)
+	keyHandler.SetStatusLineActive(statusRunner.Enabled())
+
 	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
 	header := ui.NewStatusHeader(maxSteps)
 
@@ -141,13 +156,54 @@ func main() {
 	header.SetHeartbeatReader(runner)
 
 	versionLabel := "ralph-tui v" + version.Version
-	model := ui.NewModel(header, keyHandler, versionLabel)
+	model := ui.NewModel(header, keyHandler, versionLabel).
+		WithStatusRunner(statusRunner).
+		WithModeTrigger(statusRunner.Trigger)
 
 	program := tea.NewProgram(model,
 		tea.WithMouseCellMotion(),
 		tea.WithAltScreen(),
 		tea.WithoutSignalHandler(),
 	)
+
+	// Inject the Bubble Tea sender so the worker goroutine can notify the TUI
+	// when the status-line cache is updated. The sender wraps the ui-package
+	// message type so statusline does not import bubbletea.
+	statusRunner.SetSender(func(_ interface{}) {
+		program.Send(ui.StatusLineUpdatedMsg{})
+	})
+
+	// Inject the mode reader so the stdin payload reflects the current UI mode
+	// at the moment the script is invoked.
+	statusRunner.SetModeGetter(func() string {
+		switch keyHandler.Mode() {
+		case ui.ModeNormal:
+			return "normal"
+		case ui.ModeError:
+			return "error"
+		case ui.ModeQuitConfirm:
+			return "quitconfirm"
+		case ui.ModeNextConfirm:
+			return "nextconfirm"
+		case ui.ModeDone:
+			return "done"
+		case ui.ModeSelect:
+			return "select"
+		case ui.ModeQuitting:
+			return "quitting"
+		case ui.ModeHelp:
+			return "help"
+		default:
+			return "unknown"
+		}
+	})
+
+	// Start the status-line worker goroutine. The initial state push happens
+	// inside workflow.Run (issue #116); the runner fires on its timer and on
+	// mode-change triggers from the Model.
+	statusCtx, statusCancel := context.WithCancel(context.Background())
+	defer statusCancel()
+	statusRunner.Start(statusCtx)
 
 	proxy := ui.NewHeaderProxy(program.Send)
 
@@ -179,6 +235,7 @@ func main() {
 		FinalizeSteps:   stepFile.Finalize,
 		LogWidth:        logWidth,
 		RunStamp:        log.RunStamp(),
+		Runner:          statusRunner,
 	}
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are
@@ -251,6 +308,14 @@ func main() {
 
 	_, runErr := program.Run()
 	signal.Stop(sigChan)
+
+	// Shut down the status-line runner before waiting for the workflow goroutine.
+	// This blocks until the worker drains (bounded 2 s deadline), ensuring no
+	// program.Send calls happen after program.Run() has returned.
+	// Note: the SIGINT path (program.Kill() → os.Exit(1)) does not reach here;
+	// any in-flight script on that path is orphaned until the OS reaps the
+	// process tree (matches claude-step behavior on forced exit).
+	statusRunner.Shutdown()
 
 	// Wait for the workflow goroutine to finish cleanup (log flush, channel
 	// close). Needed because handleQuitConfirm's tea.QuitMsg can cause

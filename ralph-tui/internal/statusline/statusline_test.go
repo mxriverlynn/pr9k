@@ -1263,3 +1263,66 @@ func TestRunner_RelativePathResolution(t *testing.T) {
 		t.Errorf("LastOutput() = %q, want %q", got, "relative-ok")
 	}
 }
+
+// --- Shutdown ordering ---
+
+// TestRunner_ShutdownOrdering verifies that the injected sender is never called
+// after Shutdown returns. A fake runner records (in order) every "Send" and
+// "Shutdown" event; after Shutdown the sequence must not contain a Send.
+//
+// This tests the guarantee that main.go relies on: calling statusRunner.Shutdown()
+// after program.Run() returns ensures no program.Send happens after the Bubble
+// Tea program has stopped.
+func TestRunner_ShutdownOrdering(t *testing.T) {
+	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "ok"}, nil)
+
+	var mu sync.Mutex
+	var events []string
+
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		events = append(events, "Send")
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	// Wait for at least one successful Send so we know the sender path works.
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("runner never produced output")
+	}
+
+	runner.Shutdown()
+	mu.Lock()
+	events = append(events, "Shutdown")
+	mu.Unlock()
+
+	// Give the goroutine a moment to produce any spurious sends after Shutdown.
+	// pragmatic-sleep: no observable state to poll; we need the worker to
+	// exhaust any in-flight work it might have started before Shutdown returned.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	snap := make([]string, len(events))
+	copy(snap, events)
+	mu.Unlock()
+
+	shutdownIdx := -1
+	for i, e := range snap {
+		if e == "Shutdown" {
+			shutdownIdx = i
+			break
+		}
+	}
+	if shutdownIdx < 0 {
+		t.Fatal("Shutdown event not recorded")
+	}
+	for _, e := range snap[shutdownIdx+1:] {
+		if e == "Send" {
+			t.Errorf("sender called after Shutdown: events = %v", snap)
+		}
+	}
+}
