@@ -2,9 +2,20 @@ package statusline_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/signal"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
 )
 
@@ -411,4 +422,485 @@ func TestBuildPayload_DeterministicSchemaKeys(t *testing.T) {
 	if len(step) != len(wantStep) {
 		t.Errorf("step key count = %d, want %d", len(step), len(wantStep))
 	}
+}
+
+// =============================================================================
+// TestMain + subprocess helper for Runner tests
+// =============================================================================
+
+// TestMain intercepts when the test binary is re-executed as a script stub.
+// Set STATUSLINE_TEST_HELPER=<mode> in the subprocess environment.
+func TestMain(m *testing.M) {
+	if mode := os.Getenv("STATUSLINE_TEST_HELPER"); mode != "" {
+		runTestHelper(mode)
+	}
+	os.Exit(m.Run())
+}
+
+func runTestHelper(mode string) {
+	switch mode {
+	case "output":
+		fmt.Println(os.Getenv("HELPER_OUTPUT"))
+	case "empty":
+		// exit 0, no stdout
+	case "sleep":
+		secs, _ := strconv.Atoi(os.Getenv("HELPER_SLEEP_SEC"))
+		if secs <= 0 {
+			secs = 10
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
+	case "exit1":
+		os.Exit(1)
+	case "stderr":
+		fmt.Fprintln(os.Stderr, os.Getenv("HELPER_STDERR"))
+	case "bigout":
+		// emit just over 8 KB on one line
+		fmt.Print(strings.Repeat("B", 9*1024+100))
+		fmt.Println()
+	case "trap":
+		// ignore SIGTERM so SIGKILL (via WaitDelay) must fire
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGTERM)
+		time.Sleep(30 * time.Second)
+	case "counter":
+		// append one byte to HELPER_COUNTER_FILE, sleep 50 ms, then print
+		if f := os.Getenv("HELPER_COUNTER_FILE"); f != "" {
+			fp, _ := os.OpenFile(f, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			if fp != nil {
+				_, _ = fp.WriteString("x")
+				fp.Close()
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		fmt.Println("counted")
+	}
+	os.Exit(0)
+}
+
+// =============================================================================
+// Runner test helpers
+// =============================================================================
+
+// newRunner returns a Runner backed by the test binary in the given helper
+// mode with a temp projectDir and no logger. Extra env vars are set with
+// t.Setenv so they are restored after the test.
+func newRunner(t *testing.T, helperMode string, extraEnv map[string]string, refreshSecs *int) *statusline.Runner {
+	t.Helper()
+	t.Setenv("STATUSLINE_TEST_HELPER", helperMode)
+	for k, v := range extraEnv {
+		t.Setenv(k, v)
+	}
+	cfg := &statusline.Config{
+		Command:                os.Args[0],
+		RefreshIntervalSeconds: refreshSecs,
+	}
+	return statusline.New(cfg, "" /* workflowDir unused: abs path */, t.TempDir(), nil)
+}
+
+// waitCondition polls cond up to timeout, sleeping interval between checks.
+func waitCondition(timeout, interval time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return cond()
+}
+
+// int ptr helper
+func intPtr(n int) *int { return &n }
+
+// =============================================================================
+// Runner tests
+// =============================================================================
+
+// TestRunner_SingleFlight verifies that rapid triggers do not cause panics,
+// do not block, and do not overflow the channel. Invocation count is bounded.
+func TestRunner_SingleFlight(t *testing.T) {
+	counterFile := t.TempDir() + "/count"
+	runner := newRunner(t, "counter",
+		map[string]string{"HELPER_COUNTER_FILE": counterFile},
+		intPtr(0)) // no timer
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+
+	// flood 20 triggers; channel cap is 4 so many will be dropped
+	for i := 0; i < 20; i++ {
+		runner.Trigger()
+	}
+
+	// wait up to 1 s for some executions
+	time.Sleep(500 * time.Millisecond)
+
+	// read counter
+	data, _ := os.ReadFile(counterFile)
+	count := len(data) // each invocation writes one byte
+	if count == 0 {
+		t.Error("expected at least one invocation, got 0")
+	}
+	// at most channel-cap+1 queued initially; allow generous upper bound
+	if count > 10 {
+		t.Errorf("unexpectedly high invocation count %d — possible goroutine leak", count)
+	}
+}
+
+// TestRunner_Timeout verifies that a slow script is killed within ~3 s and
+// the cache is not updated.
+func TestRunner_Timeout(t *testing.T) {
+	runner := newRunner(t, "sleep",
+		map[string]string{"HELPER_SLEEP_SEC": "10"},
+		intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	// wait for timeout + grace + buffer
+	time.Sleep(3500 * time.Millisecond)
+
+	if runner.HasOutput() {
+		t.Error("HasOutput() should be false after timeout")
+	}
+	if runner.LastOutput() != "" {
+		t.Errorf("LastOutput() = %q, want empty after timeout", runner.LastOutput())
+	}
+}
+
+// TestRunner_TimeoutSIGTERMIgnored verifies that a script ignoring SIGTERM is
+// eventually killed via SIGKILL (cmd.WaitDelay) and that no goroutine leak
+// occurs.
+func TestRunner_TimeoutSIGTERMIgnored(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	runner := newRunner(t, "trap", nil, intPtr(0))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	// allow 2s timeout + 1s WaitDelay + 1s buffer
+	time.Sleep(4500 * time.Millisecond)
+
+	runner.Shutdown()
+
+	// allow goroutines to drain
+	time.Sleep(100 * time.Millisecond)
+	after := runtime.NumGoroutine()
+
+	// tolerance of 3 to account for Go runtime background goroutines
+	if after > before+3 {
+		t.Errorf("possible goroutine leak: before=%d after=%d", before, after)
+	}
+	if runner.HasOutput() {
+		t.Error("HasOutput() should be false after SIGKILL")
+	}
+}
+
+// TestRunner_EmptyStdout verifies that exit 0 with empty stdout sets
+// HasOutput() true and LastOutput() "".
+func TestRunner_EmptyStdout(t *testing.T) {
+	runner := newRunner(t, "empty", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	ok := waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput)
+	if !ok {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := runner.LastOutput(); got != "" {
+		t.Errorf("LastOutput() = %q, want empty", got)
+	}
+}
+
+// TestRunner_NonZeroExit verifies that a non-zero exit does not overwrite a
+// previously cached value.
+func TestRunner_NonZeroExit(t *testing.T) {
+	// first run succeeds and populates the cache
+	t.Setenv("STATUSLINE_TEST_HELPER", "output")
+	t.Setenv("HELPER_OUTPUT", "good-value")
+
+	cfg := &statusline.Config{Command: os.Args[0], RefreshIntervalSeconds: intPtr(0)}
+	runner := statusline.New(cfg, "", t.TempDir(), nil)
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("cache not populated by first run")
+	}
+	if runner.LastOutput() != "good-value" {
+		t.Fatalf("unexpected initial cache: %q", runner.LastOutput())
+	}
+
+	// swap to exit-1 mode
+	t.Setenv("STATUSLINE_TEST_HELPER", "exit1")
+	runner.Trigger()
+	time.Sleep(200 * time.Millisecond)
+
+	if runner.LastOutput() != "good-value" {
+		t.Errorf("cache corrupted by failing run: got %q, want %q", runner.LastOutput(), "good-value")
+	}
+}
+
+// TestRunner_ColdStart verifies HasOutput() is false until the first
+// successful run, and a failing first run keeps it false.
+func TestRunner_ColdStart(t *testing.T) {
+	runner := newRunner(t, "exit1", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	if runner.HasOutput() {
+		t.Error("HasOutput() should be false before any run")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+	time.Sleep(200 * time.Millisecond)
+
+	if runner.HasOutput() {
+		t.Error("HasOutput() should remain false after failing first run")
+	}
+
+	// now switch to a succeeding helper
+	t.Setenv("STATUSLINE_TEST_HELPER", "output")
+	t.Setenv("HELPER_OUTPUT", "live")
+	runner.Trigger()
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Error("HasOutput() should become true after first successful run")
+	}
+}
+
+// TestRunner_DefaultInterval verifies that a nil RefreshIntervalSeconds maps
+// to DefaultRefreshInterval (5 s) and that the timer goroutine is started.
+func TestRunner_DefaultInterval(t *testing.T) {
+	if statusline.DefaultRefreshInterval != 5*time.Second {
+		t.Errorf("DefaultRefreshInterval = %v, want 5s", statusline.DefaultRefreshInterval)
+	}
+
+	t.Setenv("STATUSLINE_TEST_HELPER", "output")
+	t.Setenv("HELPER_OUTPUT", "tick")
+
+	// nil RefreshIntervalSeconds → default 5s interval
+	cfg := &statusline.Config{Command: os.Args[0], RefreshIntervalSeconds: nil}
+	runner := statusline.New(cfg, "", t.TempDir(), nil)
+	t.Cleanup(runner.Shutdown)
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+	after := runtime.NumGoroutine()
+
+	// two goroutines started: worker + timer
+	delta := after - before
+	if delta < 2 {
+		t.Errorf("goroutine delta = %d, want >= 2 (worker + timer)", delta)
+	}
+}
+
+// TestRunner_DisabledTimer verifies that RefreshIntervalSeconds=0 starts only
+// the worker goroutine (no timer).
+func TestRunner_DisabledTimer(t *testing.T) {
+	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "x"}, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	before := runtime.NumGoroutine()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+	after := runtime.NumGoroutine()
+
+	delta := after - before
+	if delta != 1 {
+		t.Errorf("goroutine delta = %d, want 1 (worker only, no timer)", delta)
+	}
+}
+
+// TestRunner_PositiveInterval verifies that a 1-second interval causes the
+// timer to fire at least once within a generous window.
+func TestRunner_PositiveInterval(t *testing.T) {
+	var mu sync.Mutex
+	var received int
+	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "tick"}, intPtr(1))
+	t.Cleanup(runner.Shutdown)
+
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		received++
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+
+	// wait up to 3 s for at least one timer-driven trigger
+	ok := waitCondition(3*time.Second, 100*time.Millisecond, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return received > 0
+	})
+	if !ok {
+		t.Error("timer did not fire within 3 s")
+	}
+}
+
+// TestRunner_ShutdownSkipsSend verifies that after Shutdown, a completing
+// in-flight run does not invoke the sender.
+func TestRunner_ShutdownSkipsSend(t *testing.T) {
+	runner := newRunner(t, "output", map[string]string{"HELPER_OUTPUT": "after-shutdown"}, intPtr(0))
+
+	var sends int
+	runner.SetSender(func(_ interface{}) { sends++ })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+
+	// Shutdown before any trigger — no send should happen.
+	runner.Shutdown()
+	runner.Trigger() // dropped because worker is gone
+	time.Sleep(100 * time.Millisecond)
+
+	if sends != 0 {
+		t.Errorf("sender called %d times after Shutdown, want 0", sends)
+	}
+}
+
+// TestRunner_BoundedStdout verifies that script output > 8 KB is truncated
+// before caching.
+func TestRunner_BoundedStdout(t *testing.T) {
+	runner := newRunner(t, "bigout", nil, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(3*time.Second, 50*time.Millisecond, runner.HasOutput) {
+		t.Fatal("HasOutput() did not become true")
+	}
+	if got := len(runner.LastOutput()); got > 8*1024 {
+		t.Errorf("LastOutput() length = %d, want <= 8192 (8 KB)", got)
+	}
+}
+
+// TestRunner_StderrForwarded verifies that script stderr is captured and
+// written to the file logger with a [statusline] step prefix.
+func TestRunner_StderrForwarded(t *testing.T) {
+	t.Setenv("STATUSLINE_TEST_HELPER", "stderr")
+	t.Setenv("HELPER_STDERR", "test-stderr-message")
+
+	tmpDir := t.TempDir()
+	log, err := logger.NewLogger(tmpDir)
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	t.Cleanup(func() { _ = log.Close() })
+
+	cfg := &statusline.Config{Command: os.Args[0], RefreshIntervalSeconds: intPtr(0)}
+	runner := statusline.New(cfg, "", tmpDir, log)
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	// wait for the run to complete and logger to flush
+	time.Sleep(500 * time.Millisecond)
+	_ = log.Close()
+
+	// read the log file and check for [statusline] + message
+	entries, err := readLogFiles(tmpDir)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e, "[statusline]") && strings.Contains(e, "test-stderr-message") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("[statusline] stderr log entry not found; log lines: %v", entries)
+	}
+}
+
+// TestRunner_NoOpDisabled verifies that a no-op Runner is safe to call and
+// reports Enabled() == false.
+func TestRunner_NoOpDisabled(t *testing.T) {
+	r := statusline.NewNoOp()
+	if r.Enabled() {
+		t.Error("Enabled() should be false for no-op runner")
+	}
+	// all methods must be safe no-ops
+	r.PushState(statusline.State{})
+	r.Trigger()
+	r.SetSender(func(_ interface{}) {})
+	r.SetModeGetter(func() string { return "normal" })
+	if r.LastOutput() != "" {
+		t.Errorf("LastOutput() = %q, want empty", r.LastOutput())
+	}
+	if r.HasOutput() {
+		t.Error("HasOutput() should be false")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	before := runtime.NumGoroutine()
+	r.Start(ctx)
+	time.Sleep(20 * time.Millisecond)
+	after := runtime.NumGoroutine()
+	if after > before+1 {
+		t.Errorf("no-op Start started goroutines: before=%d after=%d", before, after)
+	}
+	r.Shutdown() // must not block or panic
+}
+
+// =============================================================================
+// file log helper for TestRunner_StderrForwarded
+// =============================================================================
+
+// readLogFiles reads all log lines from files in dir/logs/.
+func readLogFiles(dir string) ([]string, error) {
+	logsDir := dir + "/logs"
+	entries, err := os.ReadDir(logsDir)
+	if err != nil {
+		return nil, fmt.Errorf("ReadDir %s: %w", logsDir, err)
+	}
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(logsDir + "/" + e.Name())
+		if err != nil {
+			return nil, err
+		}
+		for _, l := range strings.Split(string(data), "\n") {
+			if l != "" {
+				lines = append(lines, l)
+			}
+		}
+	}
+	return lines, nil
 }
