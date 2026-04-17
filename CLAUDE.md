@@ -97,6 +97,7 @@ See [`docs/architecture.md`](docs/architecture.md) for detailed architectural do
 - [`docs/coding-standards/lint-and-tooling.md`](docs/coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited in any form (`//nolint`, `.golangci.yml` exclusions, disabled linters, etc.). Fix the root cause or escalate; never silence a finding. Apply to every commit and every PR review.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 - [`docs/coding-standards/versioning.md`](docs/coding-standards/versioning.md) — Semantic versioning standard: `version.Version` is the single source of truth, what counts as ralph-tui's public API (CLI flags, `ralph-steps.json` schema, `{{VAR}}` language, `--version` output), `0.y.z` rules, and how to bump. Apply when changing any user-visible surface or preparing a release.
+- [`docs/coding-standards/documentation.md`](docs/coding-standards/documentation.md) — Documentation standards: feature docs must ship with the feature (not as follow-ups), updating CLAUDE.md when adding new doc files, keeping doc code blocks consistent with production code, and documenting external tool dependencies. Apply to every PR that changes a user-visible surface.
 
 ## How-To Guides
 

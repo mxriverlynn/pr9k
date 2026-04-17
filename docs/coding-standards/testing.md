@@ -498,6 +498,89 @@ func TestVersion_FollowsSemver(t *testing.T) {
 
 If you need to assert a specific version (e.g., as a one-time audit in a doc-integrity test), express it as `version.Version == "0.5.0"` inside a conditional, not as the expected argument to `require.Equal` — and add a comment explaining that the test will need to be updated after the next version bump.
 
+## Add doc integrity tests when docs embed version strings
+
+When a doc file contains an embedded version string (e.g., a sample payload, an ASCII diagram, a CLI invocation example), add a test in `doc_integrity_test.go` that reads the doc file and asserts the version string matches `version.Version`. Without this pin, the doc drifts silently after every version bump.
+
+```go
+// doc_integrity_test.go
+func TestDocIntegrity_StatuslineMd_PayloadVersionMatchesCurrent(t *testing.T) {
+    root := projectRoot(t)
+    data, err := os.ReadFile(filepath.Join(root, "docs/features/statusline.md"))
+    require.NoError(t, err)
+    want := `"version": "` + version.Version + `"`
+    require.Contains(t, string(data), want,
+        "docs/features/statusline.md payload example must match current version")
+}
+```
+
+The test reads the raw file and checks for the exact string, so it fails immediately when:
+- A doc is updated to a future version without a corresponding code bump, or
+- A version bump forgets to update the doc.
+
+Add one test per doc file that embeds a version literal. Group them in `doc_integrity_test.go` under the same package that owns the version constant.
+
+## Use fixture validation helpers when test setup depends on implementation dimensions
+
+When a test helper constructs a fixture whose correctness depends on a count of rows, columns, or other implementation-defined dimensions (e.g., the number of rows in a rendered modal), add a validation helper that asserts the fixture is consistent with the current implementation. Without it, a future change to the implementation silently produces a broken fixture that causes misleading assertion failures elsewhere in the test.
+
+```go
+// Bad — magic height 24 = 6 frame rows + 18 modal rows; breaks silently
+// if modal gains or loses a row in the future
+func newTestModelModeHelp(t *testing.T) Model {
+    m := newTestModel(t)
+    m.height = 24 // magic number — will silently break if modal row count changes
+    return m
+}
+
+// Good — compute the required height and validate it fits
+func assertModalFits(t *testing.T, m Model) {
+    t.Helper()
+    modalH := strings.Count(renderHelpModal(m.width), "\n") + 1
+    frameH := m.height
+    if modalH > frameH {
+        t.Fatalf("test fixture is too short: modal height %d > frame height %d — "+
+            "update newTestModelModeHelp height when modal row count changes", modalH, frameH)
+    }
+}
+
+func newTestModelModeHelp(t *testing.T) Model {
+    m := newTestModel(t)
+    m.height = 30 // generous floor; assertModalFits will catch if it's still too short
+    assertModalFits(t, m)
+    return m
+}
+```
+
+When reviewing test helpers that hardcode a count tied to a rendered output size, add the validation helper so future modal/grid changes produce a clear fixture error instead of a confusing wrong-assertion failure.
+
+## Test that error-returning helpers propagate the error to callers
+
+When you extract a helper function that returns an `error`, add at least one test that seeds a non-nil error and verifies the helper propagates it to the caller. Without this test, a refactor that discards the error (e.g., replacing `return err` with `_ = err; return nil`) compiles cleanly and all other tests still pass.
+
+```go
+// wiring.go
+func runWithShutdown(prog teaProgram, sd shutdownable, done <-chan struct{}) error {
+    runErr := prog.Run()
+    sd.Shutdown()
+    select {
+    case <-done:
+    case <-time.After(workflowDoneTimeout):
+    }
+    return runErr // ← the return that must be pinned by a test
+}
+
+// wiring_test.go — pins that runErr is returned, not swallowed
+func TestRunWithShutdown_PropagatesRunError(t *testing.T) {
+    sentinel := errors.New("run failed")
+    prog := &fakeTeaProgram{runErr: sentinel}
+    err := runWithShutdown(prog, &fakeShutdownable{}, make(chan struct{}))
+    require.ErrorIs(t, err, sentinel)
+}
+```
+
+Apply whenever a helper wraps an operation that can fail and the caller is expected to act on the error. This is a specialized case of the general "assert that triggering conditions actually occurred" principle.
+
 ## Add a test to verify the async pattern when it is critical
 
 When correctness depends on a function being called asynchronously (inside a `tea.Cmd` closure) rather than synchronously in `Update()`, add a test that proves the synchronous path does not call the function. This guards against future refactors that accidentally move the call back into the synchronous path.
@@ -532,7 +615,9 @@ Apply this pattern any time a correctness property is "this must happen asynchro
 - [Config Validation](../features/config-validation.md) — Positive and negative scope-visibility tests for variable table phase propagation
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify; channel priming before blocking receives
-- [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests
+- [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests; public accessors over private field access from tests
 - [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage
+- [Documentation](documentation.md) — Doc integrity test patterns for files with embedded version strings
 - [File Logging](../features/file-logging.md) — `runStampRe` package-level variable as the canonical shared-regex example (issue #90)
 - [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)
+- [Status Line](../features/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)

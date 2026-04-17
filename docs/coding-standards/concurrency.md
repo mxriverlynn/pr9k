@@ -34,6 +34,74 @@ wg.Wait()
 cmd.Wait()
 ```
 
+## Read stdout and stderr concurrently
+
+When a subprocess produces output on both stdout and stderr, drain them in separate goroutines — never sequentially. A sequential drain (`io.ReadAll(stdout)` then `io.ReadAll(stderr)`) deadlocks if the subprocess writes more than the OS pipe buffer (typically 64 KB) to the unread pipe before the first pipe reaches EOF.
+
+```go
+// Bad — sequential drain deadlocks when stderr fills its pipe before stdout EOF
+stdoutBytes, _ := io.ReadAll(cmd.StdoutPipe())
+stderrBytes, _ := io.ReadAll(cmd.StderrPipe()) // blocked if stdout pipe is full
+
+// Good — concurrent drain with WaitGroup
+var (
+    stdoutBytes []byte
+    stderrBytes []byte
+    wg          sync.WaitGroup
+)
+wg.Add(2)
+go func() { defer wg.Done(); stdoutBytes, _ = io.ReadAll(stdout) }()
+go func() { defer wg.Done(); stderrBytes, _ = io.ReadAll(stderr) }()
+wg.Wait()
+cmd.Wait()
+```
+
+This applies equally when one stream is being forwarded to a logger and the other is being captured:
+
+```go
+var wg sync.WaitGroup
+wg.Add(2)
+go func() { defer wg.Done(); captured, _ = io.ReadAll(stdout) }()
+go func() { defer wg.Done(); forwardToLog(stderr) }()
+wg.Wait()
+```
+
+A code comment claiming "stderr is read after stdout" is a latent bug report — if you see that comment, the fix is to move to the concurrent pattern.
+
+## Document or synchronize setters on types with goroutines
+
+When a type starts goroutines (via `Start()`) and also has setter methods (`SetSender`, `SetModeGetter`), the setters are inherently racy if they can be called after `Start()` returns. Either:
+
+1. **Document** a clear precondition: "callers must invoke all setters before calling `Start()`." Add this to the godoc of both the setters and `Start()`.
+2. **Synchronize** with a dedicated mutex (`setterMu sync.RWMutex`): setters take a write lock; the goroutine that reads the value takes a read lock. This eliminates the ordering requirement at the cost of a small lock.
+
+Choose synchronization when callers are likely to be wired from different goroutines or after `Start()` is already running. Choose documentation when the precondition is enforced by a clear initialization sequence (e.g., the dependency is injected before the program event loop starts).
+
+```go
+// Good — synchronized setters; no ordering requirement on callers
+type Runner struct {
+    setterMu   sync.RWMutex
+    sender     func(interface{})
+    modeGetter func() string
+}
+
+func (r *Runner) SetSender(fn func(interface{})) {
+    r.setterMu.Lock()
+    defer r.setterMu.Unlock()
+    r.sender = fn
+}
+
+func (r *Runner) execScript() {
+    r.setterMu.RLock()
+    sender := r.sender
+    modeGetter := r.modeGetter
+    r.setterMu.RUnlock()
+    // use snapshot; mutex not held during slow operations
+    _ = sender
+    _ = modeGetter
+}
+```
+
 ## Protect all shared io.Writer writes with sync.Mutex
 
 When multiple goroutines write to a shared `io.Writer`, serialize every write under a mutex. Interleaved writes produce garbled output. The `Logger` is the canonical example: scanner goroutines call `log.Log` concurrently, and every write is serialized by the logger's internal mutex:

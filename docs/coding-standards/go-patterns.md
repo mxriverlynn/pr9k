@@ -444,6 +444,44 @@ Checklist when writing a doc comment for a function that processes text:
 
 The distinction matters because rune iteration and grapheme-cluster iteration produce different results for multi-codepoint characters (e.g., emoji with skin-tone modifiers, combined accent characters). A wrong label here creates a future ANSI/Unicode correctness bug.
 
+## Use exhaustive switches on internal enum types
+
+When a switch statement covers all known values of an internal enum (a set of `const` iota values), do not add a `default` case that returns a fallback like `"unknown"`. A catch-all default silently accepts new enum values that the switch has not been updated to handle — the omission compiles cleanly, ships to production, and produces wrong behavior at runtime with no compiler signal.
+
+```go
+// Bad — default "unknown" silently accepts new Mode values
+func modeString(m ui.Mode) string {
+    switch m {
+    case ui.ModeNormal:
+        return "normal"
+    case ui.ModeHelp:
+        return "help"
+    // ... other cases ...
+    default:
+        return "unknown" // new ModeQuitting silently becomes "unknown" in stdin JSON
+    }
+}
+
+// Good — no default; compiler reports unhandled cases when a new Mode is added
+func modeString(m ui.Mode) string {
+    switch m {
+    case ui.ModeNormal:
+        return "normal"
+    case ui.ModeHelp:
+        return "help"
+    case ui.ModeQuitting:
+        return "quitting"
+    // ... all cases explicit; adding ModeNewMode causes a compile error here
+    }
+    // unreachable — document why if the compiler does not catch it
+    panic(fmt.Sprintf("modeString: unhandled Mode %d", m))
+}
+```
+
+The panic at the end replaces the `default` branch. It is unreachable in correct code (every valid Mode value is covered), but it fires immediately if an uncovered value somehow reaches the function — which is preferable to silently shipping `"unknown"` in a JSON payload that a downstream script depends on.
+
+Apply to any switch that maps an internal iota-based type to a string, error category, or other derived value. Switches that branch on externally-supplied values (e.g., HTTP status codes) may legitimately need a default.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
