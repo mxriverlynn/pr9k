@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"sync"
 	"testing"
 )
@@ -335,4 +336,119 @@ func TestForceQuit_ConcurrentAccess_NoRace(t *testing.T) {
 
 	wg.Wait()
 	// Pass means: no panic and go test -race found no data races.
+}
+
+// TestKeyHandler_StatusLineActive_DefaultAndRoundTrip verifies the zero-value
+// contract (default false) and round-trip behavior of SetStatusLineActive.
+func TestKeyHandler_StatusLineActive_DefaultAndRoundTrip(t *testing.T) {
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(func() {}, actions)
+
+	if h.StatusLineActive() {
+		t.Error("expected StatusLineActive() == false by default")
+	}
+
+	h.SetStatusLineActive(true)
+	if !h.StatusLineActive() {
+		t.Error("expected StatusLineActive() == true after SetStatusLineActive(true)")
+	}
+
+	h.SetStatusLineActive(false)
+	if h.StatusLineActive() {
+		t.Error("expected StatusLineActive() == false after SetStatusLineActive(false)")
+	}
+}
+
+// TestHelpModeShortcuts_ConstantContents pins that HelpModeShortcuts is
+// non-empty and contains both "esc" and "close".
+func TestHelpModeShortcuts_ConstantContents(t *testing.T) {
+	if HelpModeShortcuts == "" {
+		t.Error("expected HelpModeShortcuts to be non-empty")
+	}
+	if !strings.Contains(HelpModeShortcuts, "esc") {
+		t.Errorf("expected HelpModeShortcuts to contain %q, got %q", "esc", HelpModeShortcuts)
+	}
+	if !strings.Contains(HelpModeShortcuts, "close") {
+		t.Errorf("expected HelpModeShortcuts to contain %q, got %q", "close", HelpModeShortcuts)
+	}
+}
+
+// TestHelpModalConstants_MaxLineWidthWithinBudget pins that every line in each
+// help modal constant is at most 70 rune columns wide, matching the ~67-column
+// interior budget from the design doc. The bound is 70 to allow minor future
+// edits without immediately tripping the test while still catching large overflows.
+func TestHelpModalConstants_MaxLineWidthWithinBudget(t *testing.T) {
+	const maxWidth = 70
+	modals := map[string]string{
+		"HelpModalNormal": HelpModalNormal,
+		"HelpModalSelect": HelpModalSelect,
+		"HelpModalError":  HelpModalError,
+		"HelpModalDone":   HelpModalDone,
+	}
+	for name, modal := range modals {
+		for i, line := range strings.Split(modal, "\n") {
+			w := len([]rune(line))
+			if w > maxWidth {
+				t.Errorf("%s line %d: width %d exceeds budget %d: %q", name, i, w, maxWidth, line)
+			}
+		}
+	}
+}
+
+// TestUpdateShortcutLineLocked_AllModesHaveExplicitCase verifies that every
+// enumerated Mode value has an explicit case in updateShortcutLineLocked so
+// the default branch is never silently reached for known modes.
+func TestUpdateShortcutLineLocked_AllModesHaveExplicitCase(t *testing.T) {
+	expected := map[Mode]string{
+		ModeNormal:      NormalShortcuts,
+		ModeError:       ErrorShortcuts,
+		ModeQuitConfirm: QuitConfirmPrompt,
+		ModeNextConfirm: NextConfirmPrompt,
+		ModeDone:        DoneShortcuts,
+		ModeSelect:      SelectShortcuts,
+		ModeQuitting:    QuittingLine,
+		ModeHelp:        HelpModeShortcuts,
+	}
+
+	for mode, want := range expected {
+		actions := make(chan StepAction, 1)
+		h := NewKeyHandler(func() {}, actions)
+		h.SetMode(mode)
+		got := h.ShortcutLine()
+		if got != want {
+			t.Errorf("SetMode(%v): ShortcutLine() = %q, want %q", mode, got, want)
+		}
+	}
+}
+
+// --- TP-004: HelpModal* constants are non-empty and contain \n ---
+
+// TestHelpModalConstants_NonEmptyAndContainNewline pins the lower bound for the
+// four modal body constants. If a refactor accidentally blanks one of them to
+// "", the max-width test still passes (width 0 ≤ 70) but this test catches it.
+func TestHelpModalConstants_NonEmptyAndContainNewline(t *testing.T) {
+	modals := map[string]string{
+		"HelpModalNormal": HelpModalNormal,
+		"HelpModalSelect": HelpModalSelect,
+		"HelpModalError":  HelpModalError,
+		"HelpModalDone":   HelpModalDone,
+	}
+	for name, modal := range modals {
+		if len(modal) == 0 {
+			t.Errorf("%s: expected non-empty constant", name)
+		}
+		if !strings.Contains(modal, "\n") {
+			t.Errorf("%s: expected at least one newline (two grid rows minimum), got %q", name, modal)
+		}
+	}
+}
+
+// --- TP-006: HelpModeShortcuts contains no tab/newline/CR ---
+
+// TestHelpModeShortcuts_NoTabNewlineCR guards against a future edit inserting
+// whitespace control characters that would break the single-line footer display.
+func TestHelpModeShortcuts_NoTabNewlineCR(t *testing.T) {
+	if strings.ContainsAny(HelpModeShortcuts, "\t\n\r") {
+		t.Errorf("HelpModeShortcuts must not contain tab, newline, or CR; got %q", HelpModeShortcuts)
+	}
 }

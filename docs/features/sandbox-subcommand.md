@@ -191,6 +191,6 @@ Differences from `BuildRunArgs`:
 ## Additional Information
 
 - [Architecture Overview](../architecture.md)
-- [Sandbox Package](sandbox.md) — `BuildRunArgs`, `BuildLoginArgs`, `HostUIDGID`, cidfile lifecycle, and `NewTerminator`
-- [Preflight Package](preflight.md) — `Prober` interface, `RealProber`, `CheckDocker`, `ResolveProfileDir`
+- [Sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuildLoginArgs`, `HostUIDGID`, cidfile lifecycle, and `NewTerminator`
+- [Preflight Package](../code-packages/preflight.md) — `Prober` interface, `RealProber`, `CheckDocker`, `ResolveProfileDir`
 - [API Design Coding Standard](../coding-standards/api-design.md) — bounds guards and dependency injection patterns used here

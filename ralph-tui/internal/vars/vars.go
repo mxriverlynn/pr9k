@@ -134,3 +134,25 @@ func (vt *VarTable) SetStep(num, count int, name string) {
 	vt.persistent["STEP_COUNT"] = strconv.Itoa(count)
 	vt.persistent["STEP_NAME"] = name
 }
+
+// AllCaptures returns a defensive copy of all non-built-in variables visible
+// in the given phase. During Iteration, both the iteration and persistent
+// tables contribute (iteration entries shadow persistent ones). During
+// Initialize or Finalize, only the persistent table is included. Reserved
+// built-in names are excluded from the result.
+func (vt *VarTable) AllCaptures(phase Phase) map[string]string {
+	result := make(map[string]string)
+	for k, v := range vt.persistent {
+		if !reservedNames[k] {
+			result[k] = v
+		}
+	}
+	if phase == Iteration {
+		for k, v := range vt.iteration {
+			if !reservedNames[k] {
+				result[k] = v
+			}
+		}
+	}
+	return result
+}

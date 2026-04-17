@@ -142,11 +142,11 @@ The log message should match the naming pattern of nearby I/O error messages (e.
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Scanner error checking, goroutine write error tracking, and package-prefixed error messages
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Package-prefixed errors and file paths in I/O errors for step/prompt loading
-- [File Logging](../features/file-logging.md) — bufio.Writer error surfacing on close and package-prefixed logger errors
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Package-prefixed errors and file paths in I/O errors for step/prompt loading
+- [File Logging](../code-packages/logger.md) — bufio.Writer error surfacing on close and package-prefixed logger errors
 - [CLI & Configuration](../features/cli-configuration.md) — Error messages for invalid arguments and workflow/project directory resolution failures
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Warning logs for discarded CaptureOutput failures (get_gh_user, get_next_issue)
 - [API Design](api-design.md) — Complementary standards for precondition validation
 - [Concurrency](concurrency.md) — Complementary standards for goroutine error handling
 - [Testing](testing.md) — Standards for testing all file I/O error paths
-- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `pipeline.WriteErr()` check after `pipeline.Close()` as the canonical accumulated-error accessor example (issue #91)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — `pipeline.WriteErr()` check after `pipeline.Close()` as the canonical accumulated-error accessor example (issue #91)

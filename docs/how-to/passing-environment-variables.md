@@ -92,8 +92,8 @@ If a claude step fails because it can't find an expected variable:
 ## Related documentation
 
 - [Docker Sandbox](../features/docker-sandbox.md) — Mount layout, env allowlist behavior, and the full `docker run` command
-- [sandbox Package](../features/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, and set-on-host filtering
-- [Config Validation](../features/config-validation.md) — Category 10 env validation rules
+- [sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, and set-on-host filtering
+- [Config Validation](../code-packages/validator.md) — Category 10 env validation rules
 - [Building Custom Workflows](building-custom-workflows.md) — How to create custom step sequences
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — The `StepFile.Env` field in the JSON schema
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — The `StepFile.Env` field in the JSON schema
 - [Setting Up Docker Sandbox](setting-up-docker-sandbox.md) — First-time Docker setup and authentication

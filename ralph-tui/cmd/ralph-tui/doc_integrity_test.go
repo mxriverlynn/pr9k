@@ -256,3 +256,46 @@ func TestDocIntegrity_ReadingTheTUI_AsciiDiagramVersionCurrent(t *testing.T) {
 	want := "ralph-tui v" + version.Version
 	assertContains(t, content, want, "reading-the-tui.md ASCII diagram version label")
 }
+
+// TP-002: docs/code-packages/statusline.md payload example contains current version.
+// Guards against the payload schema reference showing a stale version after a bump.
+func TestDocIntegrity_StatuslineMd_PayloadVersionMatchesCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/code-packages/statusline.md")
+
+	want := `"version": "` + version.Version + `"`
+	assertContains(t, content, want, "docs/code-packages/statusline.md payload example version")
+}
+
+// TP-003a: docs/features/status-line.md payload example contains current version.
+func TestDocIntegrity_StatusLineMd_PayloadVersionMatchesCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/features/status-line.md")
+
+	want := `"version": "` + version.Version + `"`
+	assertContains(t, content, want, "docs/features/status-line.md payload example version")
+}
+
+// TP-003b: docs/how-to/configuring-a-status-line.md version mentions are current.
+// Pins both the prerequisites prose ("ralph-tui 0.6.0 or later") and the
+// field-value table row (`"0.6.0"`).
+func TestDocIntegrity_ConfiguringStatusLine_VersionMentionsCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/configuring-a-status-line.md")
+
+	assertContains(t, content, "ralph-tui "+version.Version,
+		"docs/how-to/configuring-a-status-line.md prerequisites prose")
+	assertContains(t, content, `"`+version.Version+`"`,
+		"docs/how-to/configuring-a-status-line.md field-value table")
+}
+
+// TP-004: docs/features/tui-display.md ASCII diagram shows the current version label.
+// Parallel to TestDocIntegrity_ReadingTheTUI_AsciiDiagramVersionCurrent for the
+// adjacent feature doc touched in the same commit.
+func TestDocIntegrity_TUIDisplay_AsciiDiagramVersionCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/features/tui-display.md")
+
+	want := "ralph-tui v" + version.Version
+	assertContains(t, content, want, "docs/features/tui-display.md ASCII diagram version label")
+}

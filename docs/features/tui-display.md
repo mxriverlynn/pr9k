@@ -2,7 +2,7 @@
 
 Manages the visual status display for the ralph-tui terminal interface, showing iteration progress, step checkboxes, log panel rhythm, and the full-width phase banners / per-step headings written into the log body.
 
-- **Last Updated:** 2026-04-16
+- **Last Updated:** 2026-04-17
 - **Authors:**
   - River Bailey
 
@@ -60,7 +60,7 @@ Key files:
   │  │ [log panel — bubbles/viewport]            │ ││  ← scrollable log viewport (white text)
   │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
   │  │ ↑/k up  ↓/j down  n next  q quit          │ ││  ← shortcut footer (ShortcutLine)
-  │  │                     ralph-tui v0.5.0      │ ││  ← version label (right-aligned, white)
+  │  │                     ralph-tui v0.6.0      │ ││  ← version label (right-aligned, white)
   │  │╰─────────────────────────────────────────╯  ││  ← bottom border
   │  └──────────────────────────────────────────────┘│
   └──────────────────────────────────────────────────┘
@@ -205,6 +205,35 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
 // ... RenderIterationLine, SetPhaseSteps, etc. similarly
 ```
 
+### Mode-Change Status-Line Trigger (WithModeTrigger)
+
+`WithModeTrigger(fn func()) Model` installs a mode-transition callback on the `Model`. The callback fires exactly once per `Update` call whenever the mode changes — detected by comparing the current mode to `prevObservedMode`, which stores the mode observed at the end of the previous `Update`. This covers all three ways a mode can change: keyboard input, mouse input, and external `h.SetMode` calls from the orchestration goroutine.
+
+```go
+func (m Model) WithModeTrigger(fn func()) Model {
+    m.triggerFn = fn
+    return m
+}
+```
+
+The trigger fires at the end of `Update`, after all dispatch:
+
+```go
+newMode := m.keys.handler.Mode()
+if newMode != m.prevObservedMode && m.triggerFn != nil {
+    m.triggerFn()
+}
+m.prevObservedMode = newMode
+```
+
+`prevObservedMode` serves double duty: it also drives the ModeSelect external-mode-change guard (clearing `logModel.sel` when the orchestration goroutine sets a new mode while a selection is visible).
+
+**`tea.QuitMsg` exception:** `tea.QuitMsg` short-circuits before the trigger check (`model.go:326-327`). Any mode transition that emits `tea.Quit` is reflected by the preceding `Update`'s trigger, not by the `QuitMsg` handler.
+
+**Wiring:** `WithModeTrigger` follows the same returning-`Model` builder pattern as `WithHeartbeat`. `main.go` wires the status-line runner's `Trigger` method via `WithModeTrigger(statusRunner.Trigger)`. Both `fn == nil` and `cfg.Runner == nil` are safe.
+
+**Non-blocking requirement:** `fn` must not block. `Runner.Trigger()` satisfies this via a buffered channel (capacity 4) with drop-on-full semantics — a slow status-line script cannot back-pressure the Bubble Tea goroutine.
+
 ### Heartbeat Indicator (D23)
 
 During active claude steps, stream-json can be silent for 30+ seconds while claude thinks or waits on a slow tool. The heartbeat indicator shows `  ⋯ thinking (Ns)` in the top-border title after 15 seconds of silence, updating in place each second until the next event arrives.
@@ -284,7 +313,10 @@ func (r *Runner) HeartbeatSilence() (time.Duration, bool) {
 3. **HRule** — `gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")` uses T-junction glyphs so the rule visually connects to the `│` side borders at both ends.
 4. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model is split on `\n` and each resulting line is wrapped individually via `wrapLine`. The viewport content is set through `logContentStyle` (`White` foreground) so log body text pops against the gray chrome.
 5. **HRule** — same T-junction form as step 3.
-6. **Footer** — shortcut bar (left, from `m.keys.handler.ShortcutLine()`, passed through `colorShortcutLine` for per-key coloring) + spacer + version label (right, from `m.versionLabel`, rendered white), wrapped via `wrapLine`.
+6. **Footer** — two rendering paths, selected each `View()` call based on `m.statusRunner`:
+   - **Status-line path** (when `ModeNormal` and `statusRunner.Enabled() && statusRunner.HasOutput()`): status text from `statusRunner.LastOutput()` (left, truncated via `lipgloss.Width` so width budget is respected) + `"  "` gap + white `"?"` / gray `"Help"` hint + spacer + version label (right). Cold-start (`HasOutput() == false`) falls back to the shortcut-bar path below.
+   - **Shortcut-bar path** (all other modes including `ModeHelp`): shortcut bar from `m.keys.handler.ShortcutLine()`, passed through `colorShortcutLine` for per-key coloring + spacer + version label (right, from `m.versionLabel`, rendered white).
+   - Both paths are wrapped via `wrapLine`.
 7. **Bottom border** — `gray.Render("╰" + strings.Repeat("─", innerWidth) + "╯")`.
 
 There is **no** `lipgloss.Border` wrapper around the inner block. The previous approach (wrapping inner content in a `Border(RoundedBorder()).BorderTop(false)` style) was scrapped because it forced plain `─` on the hrule rows and left visual gaps at the side-border intersections; hand-building each row is what lets the hrules use the `├─┤` T-junction glyphs.
@@ -656,7 +688,7 @@ if len(stepFile.Initialize) > 0 {
 
 - `ralph-tui/internal/ui/header_test.go` — Tests for NewStatusHeader (row count computation, negative input), RenderInitializeLine/RenderIterationLine/RenderFinalizeLine (bounded and unbounded modes, with/without issueID, substitute template correctness), SetPhaseSteps (short/long phases, phase transition clearing, overflow panic, input immutability), SetStepState (state updates, failed steps, skipped steps, out-of-bounds no-op, grid arithmetic for multi-row layouts)
 - `ralph-tui/internal/ui/log_test.go` — Tests for every log-body helper: StepSeparator / RetryStepSeparator formatting, StepStartBanner (ASCII/empty/Unicode rune-count assertions), PhaseBanner (width matching, clamp on non-positive width, `═` fill), CaptureLog (simple/empty/multi-line-escaped/embedded-quotes), CompletionSummary (format exactness)
-- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds
+- `ralph-tui/internal/ui/model_test.go` — Smoke test for `View()` (non-empty output, contains version label, contains step name), panic-safety test (zero-dimension WindowSizeMsg), header message routing, title assembly, renderTopBorder edge cases, viewport clamping, checkbox grid even-spacing (`TestView_CheckboxGrid_EqualCellWidth` plus TP-001 through TP-005: multi-row global max, empty trailing cells, equal-width no-op padding, truncation interaction, single-step minimum), `colorShortcutLine` plain-text preservation for `NormalShortcuts` and `ErrorShortcuts`, `QuitConfirmPrompt` AppTitle embedding, `QuittingLine` pass-through, D23 heartbeat integration tests via `WithHeartbeat` delegation: `TestModel_Init_ReturnsNil` (Init always returns nil), `TestModel_HeartbeatTick_ReturnsNilCmd` (Update returns nil cmd — ticker owned by main.go), suffix shows at ≥15s, no suffix when inactive, no suffix below threshold, suffix cleared on transition to inactive, exact 15s boundary shows suffix, suffix suppressed when iteration line is empty, fractional seconds truncated to whole seconds; `WithModeTrigger` tests: `TestModel_ModeTrigger_NormalToQuitConfirm` (1 trigger on `q`), `TestModel_ModeTrigger_ErrorToQuitConfirm` (1 trigger after seeding error mode), `TestModel_ModeTrigger_NextConfirmToNormal` (1 trigger on cancel), `TestModel_ModeTrigger_SelectToNormal` (1 trigger on Esc), `TestModel_ModeTrigger_MousePressNormalToSelect` (1 trigger on left-press), `TestModel_ModeTrigger_NoFireOnSameMode` (0 triggers for no-op keys), `TestModel_ModeTrigger_NilTriggerFn_NoPanic` (nil fn safe), `TestModel_ModeTrigger_ExactlyOnePerTransition` (cumulative count correct across two transitions)
 - `ralph-tui/internal/ui/header_test.go` — D23 heartbeat unit tests on `StatusHeader` directly: `TestStatusHeader_HandleHeartbeatTick_NilReader` (clears suffix, no-op), `TestStatusHeader_HandleHeartbeatTick_ShowsSuffix` (≥15s silence → suffix set), `TestStatusHeader_HandleHeartbeatTick_NoSuffix_BelowThreshold` (<15s → no suffix), `TestStatusHeader_HandleHeartbeatTick_ClearsSuffix_Inactive` (inactive → suffix cleared), `TestStatusHeader_HandleHeartbeatTick_CallsReader` (reader call count incremented), `TestStatusHeader_SetHeartbeatReader_ExplicitNil_Disables` (nil after non-nil → suffix cleared on next tick)
 - `ralph-tui/internal/ui/header_proxy_test.go` — Tests for each `HeaderProxy` method (correct message type and fields)
 - `ralph-tui/internal/ui/selection_test.go` — 39 tests across 8 categories: `normalized()` edge cases (same-position, rawIdx ordering priority), `extractText` edge cases (three-or-more lines, full raw line, empty middle line, boundary offsets), `extractText` bounds guards (negative rawIdx, out-of-range rawIdx/rawOffset, reversed same-line offsets — 7 guard paths), `mouseToViewport` edge cases (exact top/bottom boundary, negative col no-panic), `visualColToRawOffset` edge cases (col=0 returns segmentStart, empty rawLine, segmentStart at end, multi-byte grapheme "é"), `contains()` edge cases (empty selection, reversed anchor/cursor, single-row col=0 included), `visible()` edge cases (active+committed simultaneously, committed reversed anchor/cursor), input immutability (lines slice not mutated after `extractText`), zero-value struct safety (`pos{}` and `selection{}` don't panic in any function)
@@ -669,11 +701,36 @@ if len(stepFile.Initialize) > 0 {
 - `ralph-tui/internal/ui/mouse_selection_test.go` — 16 integration tests covering all mouse selection acceptance criteria: left-drag selects text with live reverse-video feedback, release commits and shows `SelectCommittedShortcuts`, dragging past top/bottom edge auto-scrolls one line per motion, bare click re-anchors selection, shift-click extends committed selection's cursor, left-press in Error/QuitConfirm/NextConfirm/Quitting is a no-op, wheel scrolls in every mode, mid-drag resize force-commits without losing raw coords, `y` copies committed selection and exits ModeSelect
 - `ralph-tui/internal/ui/mouse_selection_extra_test.go` — 24 additional tests across 7 categories: `resolveVisualPos` (negative row false, row past end false, col clamped to row width, col clamped to 0 for negative), `HandleMouse` unit tests (empty visualLines no-op, motion guard `!active`, release guard `!active`, shift-press on no committed selection clears-and-re-anchors, negative row clamped to 0), model.go mouse routing (press above viewport `ok=false` no-op, press below content no-op, stray motion no-op when not active, stray release no-op), `selectJustReleased` lifecycle (cleared by wheel event, cleared by second press, NOT set by keyboard `v`), auto-scroll clamping (multi-event scrolls accumulate, stops at top boundary, stops at bottom boundary), shift-click edge cases (same cell as cursor is no-op, click before anchor moves cursor left, click during active drag ignored), `SelectCommittedShortcuts` constant and `updateShortcutLineLocked` path
 
+## Overlay Primitive and Help Modal
+
+### overlay.go
+
+Two-function ANSI-aware splice primitive in `ralph-tui/internal/ui/overlay.go`:
+
+- **`overlay(base, modal string, top, left int) string`** — splices a multi-line modal string over a base frame row-by-row. `top`/`left` are 0-indexed terminal coordinates of the modal's top-left corner. Modal rows that fall outside the base frame are silently clipped; negative offsets are clamped to zero. The base frame's ANSI state outside the replaced region is fully preserved.
+- **`spliceAt(base, insert string, left int) string`** — column-splices a single line: replaces the visual column range `[left, left+width(insert))` in `base` with `insert`. Uses `charmbracelet/x/ansi.Truncate` / `TruncateLeft` for ANSI-aware column arithmetic — wide runes straddling a boundary are replaced with a space, and ANSI state outside the replaced region is preserved.
+
+### renderHelpModal / ModeHelp overlay path
+
+`Model.renderHelpModal()` builds a centered help modal string sized to `min(termWidth-4, 70)` columns, with a floor of 29 columns so the title string `" Help: Keyboard Shortcuts "` (26 visible characters + 1 lead dash = 27 inner columns) always fits within the top border without overflowing. The modal contains four sections (Normal, Select, Error, Done) rendered from the `HelpModal*` constants via `colorShortcutLine`, an `esc  close` footer row right-aligned in the inner width, and a bottom border.
+
+When in `ModeHelp`, `Model.View()`:
+1. Builds the full base frame (shortcut-bar footer, because `footerMode == ModeHelp` takes the else branch and renders `HelpModeShortcuts`).
+2. Calls `renderHelpModal()`, computes centering offsets `top = (height-modalH)/2`, `left = (width-modalW)/2`, each clamped to 0.
+3. **Height-clipping guard:** if `modalH > m.height` (terminal is shorter than the modal), the last two modal rows (bottom border + esc-hint footer row) are pinned to the last two visible frame rows so the dismissal cue is always on screen.
+4. Calls `overlay(frame, modal, top, left)` to splice the modal over the frame.
+
+Key files:
+- `ralph-tui/internal/ui/overlay.go` — `overlay` and `spliceAt` primitives
+- `ralph-tui/internal/ui/overlay_test.go` — 5 tests: ANSI preservation outside modal, ANSI colors inside insert survive, wide-rune boundary handling, modal rows past base clipped without panic, empty base no-panic, negative top/left clipped gracefully
+- `ralph-tui/internal/ui/model_test.go` — ModeHelp modal tests: visibility, all four section labels in order, nil status runner no-panic, footer width stable with ANSI, 29-column floor clamp, short-frame esc hint always visible, centering math, right/middle click guard; `assertModalFits` fixture helper fails fast if modal height exceeds frame height
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how the header fits into the TUI
 - [Workflow Orchestration](workflow-orchestration.md) — How step state transitions are triggered during orchestration
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How the shortcut bar text changes with keyboard modes
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How WriteToLog injects separator lines into the log stream
-- [Step Definitions & Prompt Building](step-definitions.md) — Where step names displayed in the header originate
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Where step names displayed in the header originate
 - [API Design](../coding-standards/api-design.md) — Coding standards for bounds guards on array indexers (used by SetStepState)
+- [Status Line](../code-packages/statusline.md) — StatusReader interface, footer switch, and `? Help` trigger that activate the overlay path

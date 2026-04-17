@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/cli"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/statusline"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
@@ -115,6 +117,12 @@ func main() {
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
 
+	// Build the statusline runner from config. New() returns a no-op runner
+	// when StatusLine is nil or its command cannot be resolved, so all method
+	// calls below are safe regardless of configuration.
+	statusRunner := statusline.New(buildStatusLineConfig(stepFile.StatusLine), cfg.WorkflowDir, cfg.ProjectDir, log)
+	keyHandler.SetStatusLineActive(statusRunner.Enabled())
+
 	maxSteps := max(len(stepFile.Initialize), len(stepFile.Iteration), len(stepFile.Finalize))
 	header := ui.NewStatusHeader(maxSteps)
 
@@ -141,13 +149,34 @@ func main() {
 	header.SetHeartbeatReader(runner)
 
 	versionLabel := "ralph-tui v" + version.Version
-	model := ui.NewModel(header, keyHandler, versionLabel)
+	model := ui.NewModel(header, keyHandler, versionLabel).
+		WithStatusRunner(statusRunner).
+		WithModeTrigger(statusRunner.Trigger)
 
 	program := tea.NewProgram(model,
 		tea.WithMouseCellMotion(),
 		tea.WithAltScreen(),
 		tea.WithoutSignalHandler(),
 	)
+
+	// Inject the Bubble Tea sender so the worker goroutine can notify the TUI
+	// when the status-line cache is updated. The sender wraps the ui-package
+	// message type so statusline does not import bubbletea.
+	statusRunner.SetSender(newStatusLineSender(program.Send))
+
+	// Inject the mode reader so the stdin payload reflects the current UI mode
+	// at the moment the script is invoked.
+	statusRunner.SetModeGetter(newModeGetter(keyHandler))
+
+	// Start the status-line worker goroutine. The initial state push happens
+	// inside workflow.Run (issue #116); the runner fires on its timer and on
+	// mode-change triggers from the Model.
+	statusCtx, statusCancel := context.WithCancel(context.Background())
+	// Belt-and-suspenders: runWithShutdown calls runner.Shutdown() first,
+	// which cancels the runner's internal context. This defer is a safety net
+	// for early-return paths that bypass runWithShutdown.
+	defer statusCancel()
+	statusRunner.Start(statusCtx)
 
 	proxy := ui.NewHeaderProxy(program.Send)
 
@@ -170,16 +199,7 @@ func main() {
 		logWidth = ui.DefaultTerminalWidth
 	}
 
-	runCfg := workflow.RunConfig{
-		WorkflowDir:     cfg.WorkflowDir,
-		Iterations:      cfg.Iterations,
-		Env:             stepFile.Env,
-		InitializeSteps: stepFile.Initialize,
-		Steps:           stepFile.Iteration,
-		FinalizeSteps:   stepFile.Finalize,
-		LogWidth:        logWidth,
-		RunStamp:        log.RunStamp(),
-	}
+	runCfg := buildRunConfig(cfg, stepFile, statusRunner, logWidth, log.RunStamp())
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are
 	// written non-blockingly; drops are acceptable since the file logger still
@@ -249,18 +269,15 @@ func main() {
 		keyHandler.SetMode(ui.ModeDone)
 	}()
 
-	_, runErr := program.Run()
+	// Shut down the status-line runner before waiting for the workflow goroutine.
+	// runWithShutdown: blocks until the worker drains (bounded 2 s deadline in
+	// Shutdown, plus 4 s for workflowDone), ensuring no program.Send calls
+	// happen after program.Run() has returned.
+	// Note: the SIGINT path (program.Kill() → os.Exit(1)) does not reach here;
+	// any in-flight script on that path is orphaned until the OS reaps the
+	// process tree (matches claude-step behavior on forced exit).
+	runErr := runWithShutdown(program, statusRunner, workflowDone)
 	signal.Stop(sigChan)
-
-	// Wait for the workflow goroutine to finish cleanup (log flush, channel
-	// close). Needed because handleQuitConfirm's tea.QuitMsg can cause
-	// program.Run() to return before the workflow goroutine finishes — the
-	// mid-workflow quit path sends tea.QuitMsg immediately after ForceQuit,
-	// racing with the goroutine's log.Close() and close(lineCh).
-	select {
-	case <-workflowDone:
-	case <-time.After(4 * time.Second):
-	}
 
 	// program.Kill() (signal-path forced shutdown after 2s grace) causes Run
 	// to return tea.ErrProgramKilled. That is a normal forced-exit path, not

@@ -127,18 +127,19 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
                   │ v ──────────┼──▶ ModeSelect
                   │ n ──────────┼──────────────────────┐
                   │ q ──────────┼──────┐               │
-                  └──────┬──────┘      │               │
-                         │             │               │
-                   step fails          │               │
-                         │             │               ▼
-                         ▼             ▼       ┌────────────────────┐
-                  ┌─────────────┐  ┌──────────────────┐│ ModeNextConfirm  │
-                  │ ModeError   │  │ ModeQuitConfirm  ││                  │
-                  │             │  │                  ││ y → cancel step  │
-                  │ c → continue│  │ y → ModeQuitting ││     + prevMode   │
-                  │ r → retry   │  │     + ForceQuit  ││ n, Esc → prevMode│
-                  │ q ──────────┼─▶│ n, Esc → prevMode│└────────────────────┘
-                  └─────────────┘  └────────┬─────────┘
+                  │ ? (active)  ├──────┼───────────────┼──▶ ModeHelp
+                  └──────┬──────┘      │               │      │ Esc → prevMode
+                         │             │               │      │ q → QuitConfirm
+                   step fails          │               │      └──────────────┐
+                         │             │               │                     │
+                         ▼             ▼               ▼                     │
+                  ┌─────────────┐  ┌──────────────────┐ ┌─────────────────┐  │
+                  │ ModeError   │  │ ModeQuitConfirm  │ │ ModeNextConfirm │  │
+                  │             │  │                  │ │                 │◄─┘
+                  │ c → continue│  │ y → ModeQuitting │ │ y → cancel step │
+                  │ r → retry   │  │     + ForceQuit  │ │     + prevMode  │
+                  │ q ──────────┼─▶│ n, Esc → prevMode│ │ n, Esc → prevMode│
+                  └─────────────┘  └────────┬─────────┘ └─────────────────┘
                                             │ y
                                             ▼
                                    ┌─────────────────┐
@@ -176,16 +177,22 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
     → Esc clears selection and returns to prevMode
     → q enters ModeQuitConfirm
 
+  ModeHelp (entered via ? from ModeNormal when StatusLineActive == true):
+    → footer shows "esc  close"; modal body shows per-mode shortcut grid
+    → Esc → restores prevMode
+    → q → ModeQuitConfirm (prevMode preserved so Esc-from-quit restores idle)
+    → ? is a no-op in all other modes; unreachable when StatusLineActive == false
+
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
     (unified with the QuitConfirm 'y' path;
-     active in all modes including ModeDone)
+     active in all modes including ModeDone and ModeHelp)
 ```
 
 ## Features
 
-Each feature is documented in detail in its own file under [`docs/features/`](features/).
+Each feature is documented in detail under [`docs/features/`](features/) (user-facing behavior) or [`docs/code-packages/`](code-packages/) (per-Go-package API reference).
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
@@ -193,7 +200,7 @@ Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir
 
 **Packages:** `internal/cli/`, `internal/version/`
 
-### [Step Definitions & Prompt Building](features/step-definitions.md)
+### [Step Definitions & Prompt Building](code-packages/steps.md)
 
 Loads workflow step definitions from `ralph-steps.json`, which contains initialize, iteration, and finalization step groups. Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and applies `{{VAR}}` substitution using the active `VarTable` and phase.
 
@@ -215,11 +222,11 @@ The top-level `Run` function drives the entire workflow in three config-defined 
 
 A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built rounded frame (no `lipgloss.Border` wrapper, so the two internal horizontal rules can use `├─┤` T-junction glyphs that visually connect to the `│` side borders). The current iteration/issue is embedded into the top-border title — `Power-Ralph.9000 — Iteration N/M — Issue #<id>` in bounded mode, or `Power-Ralph.9000 — Iteration N — Issue #<id>` when running unbounded (`--iterations 0`); the same string is set as the OS window title via `tea.SetWindowTitle`. The app name `Power-Ralph.9000` (from the `AppTitle` constant) renders green and the iteration detail after the ` — ` separator renders white. Step progress displays as a dynamic grid of rows, each holding `HeaderCols` (4) checkboxes, sized at startup to fit the largest phase. Each step shows as `[ ]` (pending), `[▸]` (active), `[✓]` (done), `[✗]` (failed), or `[-]` (skipped). `SetPhaseSteps` swaps the header to a new phase's step names at the start of each phase (initialize, iteration, finalize). State updates are sent as typed messages via `HeaderProxy` (which calls `program.Send`) so header mutations never race with the Bubble Tea Update goroutine. The log body is rendered in white and is also structured: `log.go` helpers produce full-width `PhaseBanner` headings, per-iteration `StepSeparator` lines, per-step `StepStartBanner` headings, `CaptureLog` lines for `captureAs` bindings, and the final `CompletionSummary` — all sized via `ui.TerminalWidth()` with an 80-column fallback. D23 heartbeat: when no stream-json event arrives for ≥15 s during an active claude step, the iteration title appends `  ⋯ thinking (Ns)`; the suffix updates in-place each second and is cleared as soon as the next event arrives. The heartbeat reader is installed via `StatusHeader.SetHeartbeatReader(runner)` in `main.go` before the model is constructed; a separate 1-second ticker goroutine in `main.go` dispatches `HeartbeatTickMsg` via `program.Send` — `Model.Init()` returns nil and the ticker is not owned by the Bubble Tea event loop. `Model.Update()` delegates `HeartbeatTickMsg` to `StatusHeader.HandleHeartbeatTick()`. The `Runner` in `workflow.go` implements `HeartbeatReader` by exposing `HeartbeatSilence() (time.Duration, bool)` under `processMu`.
 
-**Package:** `internal/ui/` (`header.go`, `keys.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `selection.go`, `terminal.go`)
+**Package:** `internal/ui/` (`header.go`, `keys.go`, `log.go`, `log_panel.go`, `messages.go`, `model.go`, `orchestrate.go`, `overlay.go`, `selection.go`, `statusreader.go`, `terminal.go`)
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A seven-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeSelect`, `ModeQuitting`) that routes keypresses and mouse events and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`) and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` so the user can review output; `v` or a left-click in the log viewport enters `ModeSelect` (log text selection) and `q` → `y` exits. In `ModeSelect`, a reverse-video cursor cell is shown in the log panel; keyboard cursor movement, left-drag selection, shift-click extend, and `y`/`Enter` clipboard copy are all supported; `Esc` returns to the prior mode and `q` enters quit confirmation. Each mode displays its own shortcut bar text; after a mouse drag release, the footer briefly shows `SelectCommittedShortcuts` until the next event.
+An eight-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeSelect`, `ModeQuitting`, `ModeHelp`) that routes keypresses and mouse events and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`), `q` enters quit confirmation, and `?` (when a `statusLine` command is configured) opens the `ModeHelp` modal. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` so the user can review output; `v` or a left-click in the log viewport enters `ModeSelect` (log text selection) and `q` → `y` exits. In `ModeSelect`, a reverse-video cursor cell is shown in the log panel; keyboard cursor movement, left-drag selection, shift-click extend, and `y`/`Enter` clipboard copy are all supported; `Esc` returns to the prior mode and `q` enters quit confirmation. In `ModeHelp`, the footer shows `"esc  close"` and a two-column shortcut grid is shown as a modal; `Esc` closes the modal and `q` enters quit confirmation. Each mode displays its own shortcut bar text; after a mouse drag release, the footer briefly shows `SelectCommittedShortcuts` until the next event.
 
 **Package:** `internal/ui/` (`ui.go`, `keys.go`)
 
@@ -229,37 +236,43 @@ Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHan
 
 **Package:** `cmd/ralph-tui/` (`main.go`)
 
-### [File Logging](features/file-logging.md)
+### [File Logging](code-packages/logger.md)
 
 A concurrent-safe file logger that writes timestamped, context-prefixed lines to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (millisecond precision). Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close. Exposes `RunStamp()` — the log basename without `.log` — which `main.go` passes into `RunConfig.RunStamp` for artifact directory naming by `claudestream.Pipeline`.
 
 **Package:** `internal/logger/`
 
-### [Variable State Management](features/variable-state.md)
+### [Variable State Management](code-packages/vars.md)
 
 `VarTable` owns all runtime variable state for a single run. It maintains two scoped tables — persistent (survives the whole run) and iteration (cleared at the start of each iteration) — plus seven built-in variables seeded from CLI flags and updated by the orchestrator (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`). Resolution order during an iteration step is iteration table → persistent table; during initialize or finalize, only the persistent table is consulted. `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase.
 
 **Package:** `internal/vars/`
 
-### [Config Validation](features/config-validation.md)
+### [Config Validation](code-packages/validator.md)
 
-Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Validates the optional top-level `statusLine` block (command resolvability, `refreshIntervalSeconds` range, unknown-field rejection). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
-### [Docker Sandbox](features/sandbox.md)
+### [Status Line](code-packages/statusline.md)
+
+A user-configured command that runs on a schedule and displays its first non-empty output line in the TUI footer. `Runner` manages a background worker goroutine that executes the command as a subprocess, delivers workflow state as JSON on stdin via `BuildPayload`, sanitizes stdout with `Sanitize` (strips dangerous control sequences, preserves SGR colors and OSC 8 hyperlinks), and caches the result. Refreshes are triggered by the workflow goroutine at phase/iteration/step boundaries and by an optional timer (default 5 s, configurable via `refreshIntervalSeconds`, disabled with `0`). A `StatusLineUpdatedMsg` is sent to the Bubble Tea program after each exit-0 run. All exported methods are goroutine-safe. The command inherits the full host environment (explicit trust-model decision for user-authored scripts). `New` returns a no-op `Runner` if the config is nil or the command is unresolvable. Shutdown must be called after `program.Run()` returns to avoid sending to a killed Bubble Tea program.
+
+**Package:** `internal/statusline/`
+
+### [Docker Sandbox](code-packages/sandbox.md)
 
 The `internal/sandbox` package constructs the `docker run` argv that wraps every Claude step, manages the container ID file (cidfile) lifecycle, and provides a terminator closure that signals the running container on shutdown. `BuildRunArgs` is a pure function (uid/gid as parameters) that emits `--mount type=bind,...` mounts for the target repo and Claude profile directory, an env passthrough with deduplication and set-on-host filtering, and the claude invocation flags. `BuiltinEnvAllowlist` names five env vars always included in the passthrough. `Path()`/`Cleanup()` reserve and clean up the cidfile path. `NewTerminator` returns a closure that polls the cidfile for the container ID, delivers `docker kill --signal` to the container, and falls back to signaling the docker CLI process if the container never started.
 
 **Package:** `internal/sandbox/`
 
-### [Preflight Checks](features/preflight.md)
+### [Preflight Checks](code-packages/preflight.md)
 
 Startup validation that runs before the main orchestration loop. Resolves and validates the Claude profile directory (`ResolveProfileDir` / `CheckProfileDir`), checks for Docker binary availability, daemon reachability, and sandbox image presence via the injectable `Prober` interface, and verifies the credentials file is non-empty (`CheckCredentials`). All checks are collected before returning (collect-all-errors via `Run`) so the caller sees the full list of failures in one pass. `RealProber` uses `exec.CommandContext` with a 10-second timeout for each Docker probe to guard against a frozen daemon.
 
 **Package:** `internal/preflight/`
 
-### [Stream JSON Pipeline](features/stream-json-pipeline.md)
+### [Stream JSON Pipeline](code-packages/claudestream.md)
 
 Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. `Parser` dispatches raw lines to typed event structs (`SystemEvent`, `AssistantEvent`, `UserEvent`, `ResultEvent`, `RateLimitEvent`); malformed lines return a `*MalformedLineError` carrying the raw bytes. `Renderer` converts events to human-readable display lines for the TUI (assistant text split on newlines, tool_use as `→ Name summary` indicators, nothing for thinking/user/result events) and produces a per-step closing summary via `Finalize`. `Aggregator` folds events into `StepStats` (token counts, cost, duration, session ID) and exposes `Result()` for `captureAs` binding and `Err()` for `is_error` detection. `RawWriter` persists verbatim bytes to a per-step `.jsonl` file (`O_TRUNC` on open so retries overwrite). `Slug` converts step names to kebab-case identifiers for filenames. `Pipeline` composes all four behind a single `Observe(line []byte) []string` entry point, tracks the first write error via `WriteErr()`, stamps `LastEventAt` atomically for the heartbeat goroutine, and appends a sentinel line after the result event for crash-resilience.
 
@@ -275,6 +288,8 @@ cmd/ralph-tui/main.go
     ├── internal/preflight     (startup validation)
     │       └── internal/sandbox
     ├── internal/sandbox       (docker run argv, cidfile, terminator)
+    ├── internal/statusline    (status-line runner, state, payload, sanitizer)
+    │       └── internal/logger
     ├── internal/steps         (step loading)
     ├── internal/ui            (key handling, header, orchestration)
     ├── internal/validator     (config validation)
@@ -292,6 +307,9 @@ cmd/ralph-tui/main.go
 
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)
+
+internal/statusline            (status-line runner, state, payload, sanitizer)
+    └── internal/logger
 ```
 
 ## Key Design Principles

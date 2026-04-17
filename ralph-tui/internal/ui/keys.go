@@ -37,6 +37,8 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
 		return m.handleDone(key)
 	case ModeSelect:
 		return m.handleSelect(key)
+	case ModeHelp:
+		return m.handleHelp(key)
 	case ModeQuitting:
 		// All keys silently ignored so a user mashing keys during shutdown
 		// can't inject a second ActionQuit or retrigger the cancel hook.
@@ -72,6 +74,16 @@ func (m keysModel) handleNormal(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		m.handler.mu.Lock()
 		m.handler.prevMode = m.handler.mode
 		m.handler.mode = ModeSelect
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+		return m, nil
+	case "?":
+		if !m.handler.StatusLineActive() {
+			return m, nil
+		}
+		m.handler.mu.Lock()
+		m.handler.prevMode = m.handler.mode
+		m.handler.mode = ModeHelp
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 		return m, nil
@@ -174,6 +186,28 @@ func (m keysModel) handleSelect(key tea.KeyMsg) (keysModel, tea.Cmd) {
 		// clearing also happens there via the post-dispatch guard.
 		m.handler.mu.Lock()
 		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	}
+	return m, nil
+}
+
+// handleHelp handles key events in ModeHelp. Esc restores the saved prevMode;
+// q opens ModeQuitConfirm without overwriting prevMode so that QuitConfirm's
+// Esc can still restore the original idle mode.
+func (m keysModel) handleHelp(key tea.KeyMsg) (keysModel, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.handler.mu.Lock()
+		m.handler.mode = m.handler.prevMode
+		m.handler.updateShortcutLineLocked()
+		m.handler.mu.Unlock()
+	case "q":
+		// prevMode is already set to the pre-Help idle mode by handleNormal's
+		// ? case. Do not overwrite — QuitConfirm.Esc must restore the idle
+		// mode, not ModeHelp itself.
+		m.handler.mu.Lock()
+		m.handler.mode = ModeQuitConfirm
 		m.handler.updateShortcutLineLocked()
 		m.handler.mu.Unlock()
 	}

@@ -26,11 +26,12 @@ Key files:
 │  initialize: [...]   │     │  feature-work.md      │
 │  iteration: [...]    │     │  test-planning.md     │
 │  finalize:  [...]    │     │  test-writing.md      │
-└─────────┬───────────┘     │  code-review-*.md     │
-          │                  │  update-docs.md       │
-          ▼                  │  deferred-work.md     │
-   ┌──────────────┐         │  lessons-learned.md   │
-   │ LoadSteps()  │         └──────────┬────────────┘
+│  statusLine: {...}   │     │  code-review-*.md     │
+└─────────┬───────────┘     │  update-docs.md       │
+          │                  │  deferred-work.md     │
+          ▼                  │  lessons-learned.md   │
+   ┌──────────────┐         └──────────┬────────────┘
+   │ LoadSteps()  │                    │
    └──────┬───────┘                    │
           │                            │
           ▼                            ▼
@@ -39,8 +40,8 @@ Key files:
    │  .Initialize │         │  read file       │
    │  .Iteration  │         └──────┬───────────┘
    │  .Finalize   │                │
-   └──────────────┘                ▼
-                            prompt string
+   │  .StatusLine │                ▼
+   └──────────────┘         prompt string
                             (passed to claude -p)
 ```
 
@@ -66,12 +67,21 @@ type Step struct {
     BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"` // exit iteration loop when captured output is empty
 }
 
+// StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
+// Consumed by the statusline package to construct a Runner.
+type StatusLineConfig struct {
+    Type                   string `json:"type,omitempty"`
+    Command                string `json:"command"`
+    RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
+}
+
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Env        []string `json:"env,omitempty"`
-    Initialize []Step   `json:"initialize"`
-    Iteration  []Step   `json:"iteration"`
-    Finalize   []Step   `json:"finalize"`
+    Env        []string          `json:"env,omitempty"`
+    Initialize []Step            `json:"initialize"`
+    Iteration  []Step            `json:"iteration"`
+    Finalize   []Step            `json:"finalize"`
+    StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
 }
 ```
 
@@ -182,9 +192,9 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 - [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix step types
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
-- [CLI & Configuration](cli-configuration.md) — How ProjectDir is resolved and passed to step loading
-- [Workflow Orchestration](workflow-orchestration.md) — How loaded steps are resolved and executed
-- [Subprocess Execution & Streaming](subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
+- [CLI & Configuration](../features/cli-configuration.md) — How ProjectDir is resolved and passed to step loading
+- [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

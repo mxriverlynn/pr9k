@@ -31,10 +31,10 @@ When you are about to make a change, ask: "does this break one of the four items
 
 ## `0.y.z` — initial development
 
-The current release is `0.5.0`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
+The current release is `0.6.0`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
-- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.5.0` → `0.6.0`), not the major.
-- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.5.0` → `0.5.1`).
+- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.6.0` → `0.7.0`), not the major.
+- Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.6.0` → `0.6.1`).
 - The first `1.0.0` release is the commitment that the four "public API" items above are stable and will be governed by the full semver rules going forward. Do not bump to `1.0.0` casually — it should be a deliberate decision with a corresponding entry in the repo's plans or ADRs.
 
 ## How to bump the version
@@ -56,5 +56,5 @@ If a pre-release suffix is ever needed (release candidates, betas, nightly build
 
 - [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) — The full spec. This standard does not restate it; if a question is not answered above, the answer is in the spec.
 - [`ralph-tui/internal/version/version.go`](../../ralph-tui/internal/version/version.go) — The single source of truth for the current version.
-- [Step Definitions](../features/step-definitions.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
+- [Step Definitions](../code-packages/steps.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
 - [CLI Configuration](../features/cli-configuration.md) — The CLI flag surface, another public-API surface governed by this standard.

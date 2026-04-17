@@ -501,11 +501,11 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How `ResolveCommand` and `LastCapture` fit into the variable injection system
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How shell command steps use `ResolveCommand` for path resolution
 - [Workflow Orchestration](workflow-orchestration.md) — How `RunStep` and `LastCapture` are called by the orchestration loop
-- [Variable State Management](variable-state.md) — How `CaptureAs` bindings use `LastCapture` to populate the `VarTable`
-- [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built before execution
+- [Variable State Management](../code-packages/vars.md) — How `CaptureAs` bindings use `LastCapture` to populate the `VarTable`
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — How steps are loaded and prompts are built before execution
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How `Terminate` is triggered by keyboard input
 - [Signal Handling & Shutdown](signal-handling.md) — How `Terminate` is triggered by OS signals
-- [File Logging](file-logging.md) — The logger that receives forwarded subprocess output
+- [File Logging](../code-packages/logger.md) — The logger that receives forwarded subprocess output
 - [CLI & Configuration](cli-configuration.md) — How `ProjectDir` sets the working directory for all subprocesses
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected writes, WaitGroup drain, and sendLine callback patterns
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for scanner error checking and goroutine write error tracking

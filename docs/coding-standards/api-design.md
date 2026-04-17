@@ -221,7 +221,7 @@ Apply this pattern whenever a subcommand:
 
 The sentinel must be unexported. Only the parent's error gate and the subcommand itself need to reference it.
 
-## Install compile-time interface satisfaction assertions
+## Install compile-time interface satisfaction assertions in non-test files
 
 When a concrete type must satisfy an interface and the connection between them is made elsewhere (e.g., in `main.go` or at a distant call site), add a compile-time assertion at the type's declaration site. This catches satisfaction failures immediately — at the package where the type lives — rather than at the distant wiring point.
 
@@ -235,12 +235,56 @@ type Runner struct { ... }
 
 The pattern `var _ Interface = (*Type)(nil)` is zero-cost at runtime (the variable is discarded). The compiler rejects the package if `*Type` is missing any method required by `Interface`, reporting the error in the correct package instead of a file far from the type definition.
 
+**Place these assertions in production (non-test) files.** An assertion in a `_test.go` file is only verified when the test binary is built — `go build` and the IDE's type checker never see it, so interface drift silently ships to production. The assertion belongs in the same file as the type declaration or in a small `iface.go` / `statusreader.go` companion file in the same package.
+
+```go
+// Bad — placed in a _test.go file; only go test catches drift
+// run_iface_test.go:
+var _ StatusRunner = (*statusline.Runner)(nil) // invisible to go build
+
+// Good — placed in a production file; go build catches drift immediately
+// statusreader.go:
+var _ StatusReader = (*Runner)(nil) // caught by go build, go vet, and the IDE
+```
+
 Apply any time:
 - A concrete type is passed as an interface argument anywhere outside its own package.
 - The concrete type implements an interface that is tested via a fake, making it easy for the real type to drift.
 - The interface is defined in another package (which is the common case in this codebase — `workflow.Runner` satisfying `ui.HeartbeatReader`).
 
 Consistency note: this codebase also uses `var _ tea.Msg = LogLinesMsg{}` for message types — the same pattern, applied to a struct value rather than a pointer.
+
+## Add public accessors when tests need to observe internal state
+
+When a test needs to verify the value of an unexported field, add a public accessor method rather than reaching through a mutex or accessing the field directly from the test. Direct access from a test file is a form of interface coupling — the test binds to the lock layout and field name, so any refactoring of the mutex structure silently breaks the test.
+
+```go
+// Bad — test reaches through h.mu to read private h.prevMode
+// keys_test.go:
+h.mu.Lock()
+got := h.prevMode
+h.mu.Unlock()
+require.Equal(t, ModeNormal, got)
+
+// Good — add a public accessor with the same mutex protection
+// ui.go:
+func (h *KeyHandler) PrevMode() Mode {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    return h.prevMode
+}
+
+// keys_test.go:
+require.Equal(t, ModeNormal, h.PrevMode())
+```
+
+The accessor approach:
+- Is safe for concurrent tests (mutex is held correctly).
+- Survives field renames and lock-layout refactors.
+- Makes the intent explicit — the test reads "observable previous mode", not "internal struct field".
+- Follows the same pattern as `SelectJustReleased()`, `ShortcutLine()`, and `StatusLineActive()` in this codebase.
+
+Apply any time a test would otherwise need to access a field that is protected by a mutex or intentionally unexported.
 
 ## Unexport when all callers are package-internal
 
@@ -342,11 +386,11 @@ When creating a new helper, ask: "which file would a maintainer look in first fo
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Adapter types (trackingOffsetIterHeader/noopHeader) applying the interface narrowing pattern; CaptureOutput removal from StepExecutor interface as an example of unused-method cleanup; RunHeader phase-specific render methods as the canonical phase-splitting example
 - [TUI Status Header](../features/tui-display.md) — Bounds guards on SetStepState; SetPhaseSteps panic-on-overflow as the appropriate choice for programming errors
-- [Step Definitions & Prompt Building](../features/step-definitions.md) — Precondition validation on empty PromptFile
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — Precondition validation on empty PromptFile
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — Platform-scoped path separator assumption in ResolveCommand; panicking sentinel in NewRunner for missing SetSender
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `updateShortcutLineLocked` as the canonical `Locked`-suffix example
 - [Error Handling](error-handling.md) — Complementary standards for error message formatting
 - [Concurrency](concurrency.md) — Complementary standards for mutex-protected getters (unexported fields)
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
-- [Stream JSON Pipeline](../features/stream-json-pipeline.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)

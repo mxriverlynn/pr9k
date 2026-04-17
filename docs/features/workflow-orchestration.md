@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-15
+- **Last Updated:** 2026-04-17
 - **Authors:**
   - River Bailey
 
@@ -85,6 +85,14 @@ const (
     CaptureResult                        // Aggregator.Result() from the claudestream pipeline (claude steps)
 )
 
+// StatusRunner is the interface for driving status-line refreshes from the
+// workflow goroutine. *statusline.Runner satisfies this interface.
+// A nil StatusRunner is safe: all push/trigger calls check for nil first.
+type StatusRunner interface {
+    PushState(statusline.State)
+    Trigger()
+}
+
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
     WorkflowDir     string
@@ -106,6 +114,9 @@ type RunConfig struct {
     // main.go. When empty, JSONL artifact paths are not populated for claude
     // steps (persistence is skipped).
     RunStamp        string
+    // Runner is the optional status-line runner. When nil, all PushState and
+    // Trigger calls are skipped.
+    Runner          StatusRunner
 }
 
 // RunResult holds the outcome of a completed Run call.
@@ -165,7 +176,45 @@ type ResolvedStep struct {
 
 Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
-See [Config Validation](config-validation.md) for the full list of validation rules.
+See [Config Validation](../code-packages/validator.md) for the full list of validation rules.
+
+### Status-Line State Pushing
+
+`buildState(vt, phase, sessionID, ver)` snapshots the current workflow state into a `statusline.State` value. It reads all seven built-in variables from `vt` using `GetInPhase` (phase-pure: does not consult `vt`'s internal phase field) and copies non-built-in user-defined captures via `vt.AllCaptures(phase)`. The returned `State` is a value type — the caller owns it and there are no shared references.
+
+Inside `Run`, a local `push(phase)` closure wraps the two-step PushState+Trigger pattern:
+
+```go
+push := func(phase vars.Phase) {
+    if cfg.Runner == nil { return }
+    cfg.Runner.PushState(buildState(vt, phase, cfg.RunStamp, version.Version))
+    cfg.Runner.Trigger()
+}
+```
+
+Before the first `vt.SetPhase` call, one initial `PushState` (without a `Trigger`) is emitted so the timer goroutine never fires against a zero-value `State`:
+
+```go
+if cfg.Runner != nil {
+    cfg.Runner.PushState(buildState(vt, vars.Initialize, cfg.RunStamp, version.Version))
+}
+```
+
+`push` is then called after every `vt` mutation:
+
+| Call site | Phase passed |
+|-----------|-------------|
+| After `vt.SetPhase(vars.Initialize)` | `vars.Initialize` |
+| After `vt.SetPhase(vars.Iteration)` | `vars.Iteration` |
+| After `vt.ResetIteration()` | `vars.Iteration` |
+| After `vt.SetIteration(i)` | `vars.Iteration` |
+| After `vt.SetStep(num, count, name)` | current phase |
+| After `vt.Bind(phase, name, value)` | current phase |
+| After `vt.SetPhase(vars.Finalize)` | `vars.Finalize` |
+
+The invariant is: `triggers == len(pushes) − 1` (the initial seed push has no trigger). `cfg.Runner == nil` is safe on all paths.
+
+A second trigger source exists outside the workflow goroutine: `ui.Model.Update` detects UI mode transitions and calls `cfg.Runner.Trigger()` once per mode change via `WithModeTrigger`. See [TUI Display: Mode-Change Status-Line Trigger](tui-display.md) for the implementation.
 
 ### The Run Loop
 
@@ -551,6 +600,14 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps
   - `TestRun_ClaudeStep_CaptureModeIsResult` — verifies `CaptureMode=CaptureResult` is set in `SandboxOptions` for claude steps
   - `TestRun_NonClaudeStep_CaptureModeDefaultsToLastLine` — verifies non-claude steps never reach `RunSandboxedStep`; `CaptureLastLine` (zero value) is preserved by default
+  - `TestBuildState_PopulatesAllFields` — all `State` fields correct from a seeded VarTable
+  - `TestBuildState_PhaseStrings` — `Initialize`/`Iteration`/`Finalize` map to `"initialize"`/`"iteration"`/`"finalize"` strings
+  - `TestBuildState_CapturesIsDefensiveCopy` — mutating the returned `Captures` map does not affect the VarTable
+  - `TestBuildState_IterationPhaseIncludesIterCaptures` — iteration-scoped captures shadow persistent ones; finalize excludes them
+  - `TestRun_StatusRunner_InitialPushNoTrigger` — initial `PushState` fires with no `Trigger`; all subsequent pushes include a trigger
+  - `TestRun_StatusRunner_PushAtEveryMutationSite` — 11 `PushState` calls, 10 `Trigger` calls; correct phase sequence across a full bounded run
+  - `TestRun_StatusRunner_NilRunnerNoPanic` — `cfg.Runner == nil` does not panic
+  - `TestRun_StatusRunner_CaptureReflectedInNextPush` — a `Bind` value is visible in the next push's `Captures`
   - `TestRun_RunSummary_EmittedForClaudeSteps` — verifies the run-level cumulative summary line appears before `CompletionSummary`, contains expected token/cost fragments, and that `writeRunSummaryCalls == 1`
   - `TestRun_RunSummary_NotEmittedForNonClaudeSteps` — verifies no summary line is written when no claude steps ran (FinalizeRun returns nil for zero invocations)
   - `TestRun_RunSummary_MultipleClaudeStepsAccumulate` — verifies stats from two claude step invocations are accumulated (total cost and invocation count both reflected in the summary line)
@@ -562,17 +619,19 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 
 ## Additional Information
 
+- [Status Line Feature](status-line.md) — Configuration, script contract, refresh trigger matrix, and lifecycle
+- [Status Line Package](../code-packages/statusline.md) — Runner API, State, BuildPayload, Sanitize, and concurrency model
 - [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create and modify workflow step sequences
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How iteration variables are captured and injected into steps
-- [Step Definitions & Prompt Building](step-definitions.md) — How steps are loaded and prompts are built
+- [Step Definitions & Prompt Building](../code-packages/steps.md) — How steps are loaded and prompts are built
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How RunStep executes subprocesses; how LastCapture returns stdout output
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig
 - [Keyboard Input & Error Recovery](keyboard-input.md) — How user decisions flow through the Actions channel
 - [Signal Handling & Shutdown](signal-handling.md) — How ForceQuit injects ActionQuit for clean shutdown
 - [TUI Status Header](tui-display.md) — How step state updates are rendered
-- [File Logging](file-logging.md) — How step separator lines are written to the log file
-- [Variable State Management](variable-state.md) — VarTable scopes, phase transitions, and CaptureAs binding
+- [File Logging](../code-packages/logger.md) — How step separator lines are written to the log file
+- [Variable State Management](../code-packages/vars.md) — VarTable scopes, phase transitions, and CaptureAs binding
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
 - [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters

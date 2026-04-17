@@ -24,12 +24,21 @@ type Step struct {
 	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
 }
 
+// StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
+// Populated by LoadSteps; not yet consumed by the TUI (wiring is a follow-up).
+type StatusLineConfig struct {
+	Type                   string `json:"type,omitempty"`
+	Command                string `json:"command"`
+	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
+}
+
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-	Env        []string `json:"env,omitempty"`
-	Initialize []Step   `json:"initialize"`
-	Iteration  []Step   `json:"iteration"`
-	Finalize   []Step   `json:"finalize"`
+	Env        []string          `json:"env,omitempty"`
+	Initialize []Step            `json:"initialize"`
+	Iteration  []Step            `json:"iteration"`
+	Finalize   []Step            `json:"finalize"`
+	StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,

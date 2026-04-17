@@ -1616,3 +1616,160 @@ func TestValidate_PromptPathTraversalIsError(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireError(t, errs, "escapes prompts directory")
 }
+
+// ----------------------------------------------------------------------------
+// statusLine validation
+// ----------------------------------------------------------------------------
+
+func minimalWithStatusLine(extra string) string {
+	return fmt.Sprintf(`{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": [],
+		%s
+	}`, extra)
+}
+
+func TestValidate_StatusLine_Absent(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","isClaude":false,"command":["echo"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+func TestValidate_StatusLine_ValidFull(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"command","command":"scripts/status.sh","refreshIntervalSeconds":5}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+func TestValidate_StatusLine_CommandMissing(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, "command must not be empty")
+}
+
+func TestValidate_StatusLine_CommandEmpty(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":""}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, "command must not be empty")
+}
+
+func TestValidate_StatusLine_CommandNotFound(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/nonexistent.sh"}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not found")
+}
+
+func TestValidate_StatusLine_RefreshIntervalAbsent(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh"}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+func TestValidate_StatusLine_RefreshIntervalZero(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshIntervalSeconds":0}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+func TestValidate_StatusLine_RefreshIntervalNegative(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","refreshIntervalSeconds":-1}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, "refreshIntervalSeconds must be >= 0")
+}
+
+func TestValidate_StatusLine_TypeCommand(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"command","command":"scripts/status.sh"}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+func TestValidate_StatusLine_TypeBogus(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"bogus","command":"scripts/status.sh"}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, `type must be "command" (or omitted)`)
+}
+
+func TestValidate_StatusLine_UnknownField(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"scripts/status.sh","unknownField":"oops"}`))
+	errs := validator.Validate(dir)
+	requireError(t, errs, "unknown field")
+}
+
+// ----------------------------------------------------------------------------
+// T4: Validator emits statusLine errors with Category="statusline", Phase="config", no StepName
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_StructuredErrorLabels(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"bogus","command":"scripts/status.sh"}`))
+	errs := validator.Validate(dir)
+
+	for _, e := range errs {
+		if e.Category == "statusline" {
+			if e.Phase != "config" {
+				t.Errorf("expected Phase %q, got %q", "config", e.Phase)
+			}
+			if e.StepName != "" {
+				t.Errorf("expected empty StepName, got %q", e.StepName)
+			}
+			return
+		}
+	}
+	t.Errorf("expected a statusline error, got: %v", errs)
+}
+
+// ----------------------------------------------------------------------------
+// T5: Validator collects statusLine errors alongside phase errors
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_ErrorsCollectedAlongsidePhaseErrors(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","command":["echo"]}],
+		"finalize": [],
+		"statusLine": {"type":"bogus","command":"echo"}
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, `type must be`) {
+		t.Error("expected a statusLine type error")
+	}
+	if !hasError(errs, "isClaude is required") {
+		t.Error("expected an isClaude schema error")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// T6: Validator resolves statusLine command via exec.LookPath when bare-named
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_BareCommandInPath(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"echo"}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
