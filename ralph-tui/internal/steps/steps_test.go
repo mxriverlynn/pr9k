@@ -547,3 +547,100 @@ func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
 		t.Errorf("got %q, want %q", result, want)
 	}
 }
+
+// ----------------------------------------------------------------------------
+// T1: LoadSteps populates StatusLine fields from JSON
+// ----------------------------------------------------------------------------
+
+func TestLoadSteps_StatusLineDeserializes(t *testing.T) {
+	dir := t.TempDir()
+	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"type":"command","command":"scripts/status.sh","refreshInterval":5}}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.StatusLine == nil {
+		t.Fatal("expected StatusLine to be non-nil")
+	}
+	if got.StatusLine.Type != "command" {
+		t.Errorf("expected Type %q, got %q", "command", got.StatusLine.Type)
+	}
+	if got.StatusLine.Command != "scripts/status.sh" {
+		t.Errorf("expected Command %q, got %q", "scripts/status.sh", got.StatusLine.Command)
+	}
+	if got.StatusLine.RefreshInterval == nil {
+		t.Fatal("expected RefreshInterval to be non-nil")
+	}
+	if *got.StatusLine.RefreshInterval != 5 {
+		t.Errorf("expected RefreshInterval 5, got %d", *got.StatusLine.RefreshInterval)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// T2: LoadSteps leaves StatusLine nil when the key is absent
+// ----------------------------------------------------------------------------
+
+func TestLoadSteps_StatusLineAbsentIsNil(t *testing.T) {
+	dir := t.TempDir()
+	jsonContent := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.StatusLine != nil {
+		t.Errorf("expected StatusLine to be nil when absent from JSON, got %+v", got.StatusLine)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// T3: LoadSteps preserves RefreshInterval pointer semantics for zero vs absent
+// ----------------------------------------------------------------------------
+
+func TestLoadSteps_StatusLineRefreshIntervalZeroIsNonNilPointer(t *testing.T) {
+	dir := t.TempDir()
+	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"command":"echo","refreshInterval":0}}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.StatusLine == nil {
+		t.Fatal("expected StatusLine to be non-nil")
+	}
+	if got.StatusLine.RefreshInterval == nil {
+		t.Fatal("expected RefreshInterval to be non-nil pointer when set to 0")
+	}
+	if *got.StatusLine.RefreshInterval != 0 {
+		t.Errorf("expected RefreshInterval 0, got %d", *got.StatusLine.RefreshInterval)
+	}
+}
+
+func TestLoadSteps_StatusLineRefreshIntervalAbsentIsNilPointer(t *testing.T) {
+	dir := t.TempDir()
+	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"command":"echo"}}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if got.StatusLine == nil {
+		t.Fatal("expected StatusLine to be non-nil")
+	}
+	if got.StatusLine.RefreshInterval != nil {
+		t.Errorf("expected RefreshInterval to be nil when absent, got %d", *got.StatusLine.RefreshInterval)
+	}
+}

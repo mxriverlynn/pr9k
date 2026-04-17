@@ -1717,3 +1717,59 @@ func TestValidate_StatusLine_UnknownField(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireError(t, errs, "unknown field")
 }
+
+// ----------------------------------------------------------------------------
+// T4: Validator emits statusLine errors with Category="statusline", Phase="config", no StepName
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_StructuredErrorLabels(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "status.sh")
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"type":"bogus","command":"scripts/status.sh"}`))
+	errs := validator.Validate(dir)
+
+	for _, e := range errs {
+		if e.Category == "statusline" {
+			if e.Phase != "config" {
+				t.Errorf("expected Phase %q, got %q", "config", e.Phase)
+			}
+			if e.StepName != "" {
+				t.Errorf("expected empty StepName, got %q", e.StepName)
+			}
+			return
+		}
+	}
+	t.Errorf("expected a statusline error, got: %v", errs)
+}
+
+// ----------------------------------------------------------------------------
+// T5: Validator collects statusLine errors alongside phase errors
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_ErrorsCollectedAlongsidePhaseErrors(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"Work","command":["echo"]}],
+		"finalize": [],
+		"statusLine": {"type":"bogus","command":"echo"}
+	}`)
+	errs := validator.Validate(dir)
+	if !hasError(errs, `type must be`) {
+		t.Error("expected a statusLine type error")
+	}
+	if !hasError(errs, "isClaude is required") {
+		t.Error("expected an isClaude schema error")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// T6: Validator resolves statusLine command via exec.LookPath when bare-named
+// ----------------------------------------------------------------------------
+
+func TestValidate_StatusLine_BareCommandInPath(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"echo"}`))
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
