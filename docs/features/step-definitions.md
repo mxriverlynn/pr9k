@@ -26,11 +26,12 @@ Key files:
 │  initialize: [...]   │     │  feature-work.md      │
 │  iteration: [...]    │     │  test-planning.md     │
 │  finalize:  [...]    │     │  test-writing.md      │
-└─────────┬───────────┘     │  code-review-*.md     │
-          │                  │  update-docs.md       │
-          ▼                  │  deferred-work.md     │
-   ┌──────────────┐         │  lessons-learned.md   │
-   │ LoadSteps()  │         └──────────┬────────────┘
+│  statusLine: {...}   │     │  code-review-*.md     │
+└─────────┬───────────┘     │  update-docs.md       │
+          │                  │  deferred-work.md     │
+          ▼                  │  lessons-learned.md   │
+   ┌──────────────┐         └──────────┬────────────┘
+   │ LoadSteps()  │                    │
    └──────┬───────┘                    │
           │                            │
           ▼                            ▼
@@ -39,8 +40,8 @@ Key files:
    │  .Initialize │         │  read file       │
    │  .Iteration  │         └──────┬───────────┘
    │  .Finalize   │                │
-   └──────────────┘                ▼
-                            prompt string
+   │  .StatusLine │                ▼
+   └──────────────┘         prompt string
                             (passed to claude -p)
 ```
 
@@ -66,12 +67,21 @@ type Step struct {
     BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"` // exit iteration loop when captured output is empty
 }
 
+// StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
+// Populated by LoadSteps; not yet consumed by the TUI (wiring is a follow-up).
+type StatusLineConfig struct {
+    Type                   string `json:"type,omitempty"`
+    Command                string `json:"command"`
+    RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
+}
+
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Env        []string `json:"env,omitempty"`
-    Initialize []Step   `json:"initialize"`
-    Iteration  []Step   `json:"iteration"`
-    Finalize   []Step   `json:"finalize"`
+    Env        []string          `json:"env,omitempty"`
+    Initialize []Step            `json:"initialize"`
+    Iteration  []Step            `json:"iteration"`
+    Finalize   []Step            `json:"finalize"`
+    StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
 }
 ```
 
