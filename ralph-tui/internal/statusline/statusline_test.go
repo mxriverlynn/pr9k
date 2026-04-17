@@ -1,6 +1,7 @@
 package statusline_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -248,5 +249,152 @@ func TestSanitize_TrimsTrailingWhitespace(t *testing.T) {
 	got := statusline.Sanitize([]byte("hello   \t "))
 	if got != "hello" {
 		t.Errorf("got %q, want %q", got, "hello")
+	}
+}
+
+// T1 — OSC 8 hyperlink terminated by ST (\x1b\) must be preserved.
+func TestSanitize_PreservesOSC8HyperlinkSTTerminator(t *testing.T) {
+	link := "\x1b]8;;https://example.com\x1b\\text\x1b]8;;\x1b\\"
+	got := statusline.Sanitize([]byte(link))
+	if got != link {
+		t.Errorf("got %q, want %q", got, link)
+	}
+}
+
+// T2 — Unterminated OSC sequences must not panic and must be dropped.
+func TestSanitize_UnterminatedOSCDropped(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("panicked: %v", r)
+		}
+	}()
+	got := statusline.Sanitize([]byte("pre\x1b]0;title-never-ends"))
+	if got != "pre" {
+		t.Errorf("non-OSC-8 unterminated: got %q, want %q", got, "pre")
+	}
+	got = statusline.Sanitize([]byte("\x1b]8;;https://example.com"))
+	if got != "" {
+		t.Errorf("OSC-8 unterminated: got %q, want %q", got, "")
+	}
+}
+
+// T3 — Multi-parameter SGR sequences (256-color, compound) must round-trip.
+func TestSanitize_PreservesMultiParamSGR(t *testing.T) {
+	cases := []string{
+		"\x1b[38;5;196mred\x1b[0m",
+		"\x1b[1;31;4mx\x1b[0m",
+	}
+	for _, input := range cases {
+		got := statusline.Sanitize([]byte(input))
+		if got != input {
+			t.Errorf("got %q, want %q", got, input)
+		}
+	}
+}
+
+// T4 — Bare ESC followed by an unrecognized byte: ESC dropped, byte kept.
+func TestSanitize_BareESCDroppedNextByteKept(t *testing.T) {
+	got := statusline.Sanitize([]byte("a\x1bXb"))
+	if got != "aXb" {
+		t.Errorf("got %q, want %q", got, "aXb")
+	}
+}
+
+// T5 — Sanitize must not mutate the caller's input slice.
+func TestSanitize_DoesNotMutateInput(t *testing.T) {
+	in := []byte("pre\x1b[2Jpost\r ")
+	snapshot := make([]byte, len(in))
+	copy(snapshot, in)
+	statusline.Sanitize(in)
+	if !bytes.Equal(in, snapshot) {
+		t.Error("Sanitize mutated the input slice")
+	}
+}
+
+// T6 — Nil, empty, and all-whitespace inputs must all return "".
+func TestSanitize_EmptyAndWhitespaceInput(t *testing.T) {
+	if got := statusline.Sanitize(nil); got != "" {
+		t.Errorf("nil: got %q, want %q", got, "")
+	}
+	if got := statusline.Sanitize([]byte("")); got != "" {
+		t.Errorf("empty: got %q, want %q", got, "")
+	}
+	if got := statusline.Sanitize([]byte("   \t\t")); got != "" {
+		t.Errorf("whitespace-only: got %q, want %q", got, "")
+	}
+}
+
+// T7 — BuildPayload reads Captures by reference; caller owns the snapshot.
+func TestBuildPayload_CapturesNotDeepCopied(t *testing.T) {
+	s := statusline.State{
+		Captures: map[string]string{"key": "val1"},
+	}
+	b1, err := statusline.BuildPayload(s, "normal")
+	if err != nil {
+		t.Fatalf("BuildPayload error: %v", err)
+	}
+	s.Captures["key"] = "val2"
+	b2, err := statusline.BuildPayload(s, "normal")
+	if err != nil {
+		t.Fatalf("BuildPayload error: %v", err)
+	}
+	if bytes.Equal(b1, b2) {
+		t.Error("outputs identical after mutating Captures — expected to differ (no deep copy)")
+	}
+}
+
+// T8 — BuildPayload output is deterministic and contains exactly the schema keys.
+func TestBuildPayload_DeterministicSchemaKeys(t *testing.T) {
+	s := statusline.State{
+		SessionID:     "sess-abc",
+		Version:       "0.5.0",
+		Phase:         "iteration",
+		Iteration:     1,
+		MaxIterations: 3,
+		StepNum:       2,
+		StepCount:     5,
+		StepName:      "Feature work",
+		WorkflowDir:   "/wf",
+		ProjectDir:    "/proj",
+		Captures:      map[string]string{"A": "1"},
+	}
+	b1, err := statusline.BuildPayload(s, "normal")
+	if err != nil {
+		t.Fatalf("BuildPayload error: %v", err)
+	}
+	b2, err := statusline.BuildPayload(s, "normal")
+	if err != nil {
+		t.Fatalf("BuildPayload error: %v", err)
+	}
+	if !bytes.Equal(b1, b2) {
+		t.Error("BuildPayload is not deterministic for identical inputs")
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(b1, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	wantTop := []string{"sessionId", "version", "phase", "iteration", "maxIterations", "step", "mode", "workflowDir", "projectDir", "captures"}
+	for _, k := range wantTop {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing top-level key %q", k)
+		}
+	}
+	if len(m) != len(wantTop) {
+		t.Errorf("top-level key count = %d, want %d", len(m), len(wantTop))
+	}
+
+	step, ok := m["step"].(map[string]any)
+	if !ok {
+		t.Fatal("step is not an object")
+	}
+	wantStep := []string{"num", "count", "name"}
+	for _, k := range wantStep {
+		if _, ok := step[k]; !ok {
+			t.Errorf("missing step key %q", k)
+		}
+	}
+	if len(step) != len(wantStep) {
+		t.Errorf("step key count = %d, want %d", len(step), len(wantStep))
 	}
 }

@@ -76,23 +76,26 @@ func consumeOSC(b []byte, start int, out []byte) (int, []byte) {
 
 	// Find the terminator: BEL (\x07) or ST (\x1b\x5c)
 	body := i
+	terminated := false
 	for i < len(b) {
 		if b[i] == '\x07' {
 			i++ // consume BEL
+			terminated = true
 			break
 		}
 		if b[i] == '\x1b' && i+1 < len(b) && b[i+1] == '\\' {
 			i += 2 // consume ST
+			terminated = true
 			break
 		}
 		i++
 	}
 
-	if oscNum == "8" {
-		// OSC 8 hyperlink — preserve entire sequence
+	if oscNum == "8" && terminated {
+		// OSC 8 hyperlink — preserve entire well-formed sequence
 		out = append(out, b[start:i]...)
 	}
-	// all other OSC — drop (body was already skipped)
+	// all other OSC, or any unterminated OSC — drop
 	_ = body
 	return i, out
 }
