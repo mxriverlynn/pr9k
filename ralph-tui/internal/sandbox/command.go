@@ -66,6 +66,9 @@ func BuildRunArgs(
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
+			if k == "CLAUDE_CONFIG_DIR" {
+				continue
+			}
 			args = append(args, "-e", k+"="+containerEnv[k])
 		}
 	}

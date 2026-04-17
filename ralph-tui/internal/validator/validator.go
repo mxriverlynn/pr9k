@@ -228,7 +228,9 @@ func Validate(workflowDir string) []Error {
 				continue
 			}
 			// Warn when the key looks like a secret committed to the repo.
-			if strings.HasSuffix(key, "_TOKEN") || strings.HasSuffix(key, "_KEY") || strings.HasSuffix(key, "_SECRET") {
+			if strings.HasSuffix(key, "_TOKEN") || strings.HasSuffix(key, "_KEY") || strings.HasSuffix(key, "_SECRET") ||
+				strings.HasSuffix(key, "_PASSWORD") || strings.HasSuffix(key, "_PASSPHRASE") ||
+				strings.HasSuffix(key, "_CREDENTIAL") || strings.HasSuffix(key, "_APIKEY") {
 				errs = append(errs, Error{
 					Severity: SeverityWarning,
 					Category: "containerEnv",

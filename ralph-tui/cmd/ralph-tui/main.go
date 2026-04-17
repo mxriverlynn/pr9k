@@ -56,6 +56,7 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 	preflightResult := preflight.Run(projectDir, profileDir, prober)
 
 	fatalCount := validator.FatalErrorCount(validationErrs)
+	// fatal path: print all validation findings (fatal + non-fatal) so no finding is swallowed.
 	if fatalCount > 0 || len(preflightResult.Errors) > 0 {
 		for _, ve := range validationErrs {
 			_, _ = fmt.Fprintln(stderr, ve.Error())

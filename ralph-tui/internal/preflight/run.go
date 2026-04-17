@@ -29,7 +29,7 @@ func Run(projectDir, profileDir string, p Prober) Result {
 	var result Result
 
 	// Create .ralph-cache inside the project dir so the Docker bind-mount
-	// subpath exists on the host before any claude step runs. Without this,
+	// subpath exists on the host before any Claude step runs. Without this,
 	// the container cannot write cache files even when the parent mount is rw.
 	cacheDir := filepath.Join(projectDir, ".ralph-cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
