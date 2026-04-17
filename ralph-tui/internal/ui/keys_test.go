@@ -794,6 +794,186 @@ func TestShortcutModalParity_NoUnapprovedModalExtras(t *testing.T) {
 	}
 }
 
+// --- TP-001: handleHelp ignores Normal-mode command keys ---
+
+// TestHandleHelp_NormalModeKeys_AreNoOps verifies that keys with Normal-mode
+// meanings (n, v, y, enter, c, r) are silent no-ops in ModeHelp. A future
+// refactor that flattens dispatch must not let these keys fire their Normal
+// actions while the Help modal is open.
+func TestHandleHelp_NormalModeKeys_AreNoOps(t *testing.T) {
+	keys := []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{"n", keyMsg("n")},
+		{"v", keyMsg("v")},
+		{"y", keyMsg("y")},
+		{"enter", tea.KeyMsg{Type: tea.KeyEnter}},
+		{"c", keyMsg("c")},
+		{"r", keyMsg("r")},
+	}
+	for _, tc := range keys {
+		t.Run(tc.name, func(t *testing.T) {
+			cancelCalled := false
+			actions := make(chan StepAction, 10)
+			h := NewKeyHandler(func() { cancelCalled = true }, actions)
+			h.SetStatusLineActive(true)
+			m := newKeysModel(h)
+
+			m.Update(keyMsg("?")) // enter ModeHelp
+			if h.Mode() != ModeHelp {
+				t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+			}
+
+			_, cmd := m.Update(tc.msg)
+			if cmd != nil {
+				t.Errorf("key %q: expected nil cmd in ModeHelp, got non-nil", tc.name)
+			}
+			if h.Mode() != ModeHelp {
+				t.Errorf("key %q: mode changed unexpectedly: got %v", tc.name, h.Mode())
+			}
+			h.mu.Lock()
+			prev := h.prevMode
+			h.mu.Unlock()
+			if prev != ModeNormal {
+				t.Errorf("key %q: prevMode changed: got %v", tc.name, prev)
+			}
+			if len(actions) != 0 {
+				t.Errorf("key %q: unexpected actions: got %d", tc.name, len(actions))
+			}
+			if cancelCalled {
+				t.Errorf("key %q: cancel was invoked unexpectedly", tc.name)
+			}
+		})
+	}
+}
+
+// --- TP-002: ForceQuit() from ModeHelp transitions to ModeQuitting ---
+
+// TestHandleHelp_ForceQuit_TransitionsToQuitting verifies that calling
+// ForceQuit() while in ModeHelp (e.g. on SIGINT) still flips mode to
+// ModeQuitting and drains ActionQuit. Ctrl-C must always work.
+func TestHandleHelp_ForceQuit_TransitionsToQuitting(t *testing.T) {
+	h, actions := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // enter ModeHelp
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	h.ForceQuit()
+
+	if h.Mode() != ModeQuitting {
+		t.Errorf("expected ModeQuitting after ForceQuit from ModeHelp, got %v", h.Mode())
+	}
+	if h.ShortcutLine() != QuittingLine {
+		t.Errorf("expected QuittingLine shortcut, got %q", h.ShortcutLine())
+	}
+	select {
+	case action := <-actions:
+		if action != ActionQuit {
+			t.Errorf("expected ActionQuit, got %v", action)
+		}
+	default:
+		t.Error("expected ActionQuit on actions channel, got nothing")
+	}
+}
+
+// --- TP-003: ? is no-op after SetStatusLineActive toggles true→false ---
+
+// TestHandleNormal_QuestionMark_NoOp_AfterStatusLineToggleFalse verifies that
+// a ? press is a no-op when StatusLineActive was set true then immediately
+// toggled back to false before the keypress.
+func TestHandleNormal_QuestionMark_NoOp_AfterStatusLineToggleFalse(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeNormal)
+	m := newKeysModel(h)
+
+	h.SetStatusLineActive(true)
+	h.SetStatusLineActive(false)
+
+	_, cmd := m.Update(keyMsg("?"))
+	if cmd != nil {
+		t.Error("expected nil cmd for ? after StatusLineActive toggled to false")
+	}
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal, got %v", h.Mode())
+	}
+	h.mu.Lock()
+	prev := h.prevMode
+	h.mu.Unlock()
+	if prev != ModeNormal {
+		t.Errorf("prevMode changed unexpectedly after no-op ?: got %v", prev)
+	}
+}
+
+// --- TP-005: SetMode(ModeHelp) updates ShortcutLine and clears prevMode ---
+
+// TestSetMode_ModeHelp_UpdatesShortcutLine documents that SetMode does not
+// save prevMode. Esc from a SetMode-entered ModeHelp therefore restores the
+// zero-value mode (ModeNormal), not the mode active before SetMode was called.
+func TestSetMode_ModeHelp_UpdatesShortcutLine_ClearsPrevMode(t *testing.T) {
+	h, _ := newKeysTestHandler(t, ModeError)
+	m := newKeysModel(h)
+
+	h.SetMode(ModeHelp)
+
+	if h.ShortcutLine() != HelpModeShortcuts {
+		t.Errorf("expected HelpModeShortcuts after SetMode(ModeHelp), got %q", h.ShortcutLine())
+	}
+
+	// prevMode was not saved by SetMode, so it retains its zero value (ModeNormal).
+	// Esc from ModeHelp restores prevMode — which is ModeNormal here.
+	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if h.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after esc from SetMode-entered Help, got %v", h.Mode())
+	}
+}
+
+// --- TP-007: ? in ModeNormal does not invoke cancel ---
+
+// TestHandleNormal_QuestionMark_DoesNotInvokeCancel verifies that pressing ?
+// in ModeNormal (with StatusLineActive) does not call the cancel callback. A
+// future refactor that folds key handlers must not accidentally wire ? to cancel.
+func TestHandleNormal_QuestionMark_DoesNotInvokeCancel(t *testing.T) {
+	cancelCalled := false
+	actions := make(chan StepAction, 10)
+	h := NewKeyHandler(func() { cancelCalled = true }, actions)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?"))
+
+	if cancelCalled {
+		t.Error("? in ModeNormal must not invoke cancel")
+	}
+}
+
+// --- TP-008: handleHelp does not send on h.Actions channel ---
+
+// TestHandleHelp_CAndR_DoNotSendOnActions verifies that c and r in ModeHelp
+// do not produce any StepAction sends. If handleHelp ever accidentally falls
+// through to handleError, ghost actions would reach the dispatcher.
+func TestHandleHelp_CAndR_DoNotSendOnActions(t *testing.T) {
+	h, actions := newKeysTestHandler(t, ModeNormal)
+	h.SetStatusLineActive(true)
+	m := newKeysModel(h)
+
+	m.Update(keyMsg("?")) // enter ModeHelp
+	if h.Mode() != ModeHelp {
+		t.Fatalf("precondition: expected ModeHelp, got %v", h.Mode())
+	}
+
+	m.Update(keyMsg("c"))
+	m.Update(keyMsg("r"))
+
+	if len(actions) != 0 {
+		t.Errorf("expected no actions for c/r in ModeHelp, got %d", len(actions))
+	}
+}
+
 func TestShortcutModalParity(t *testing.T) {
 	type pair struct {
 		name       string

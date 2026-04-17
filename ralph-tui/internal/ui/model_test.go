@@ -1618,6 +1618,26 @@ func TestModel_ModeTrigger_Help_FiresOnEachEdge(t *testing.T) {
 	})
 }
 
+// --- TP-009: ? no-op does not fire mode-change trigger ---
+
+// TestModel_ModeTrigger_QuestionMark_NoOp_NoFire verifies that a ? press when
+// StatusLineActive is false (the default) is a silent no-op that must not
+// spuriously fire the mode-change trigger, since mode did not change.
+func TestModel_ModeTrigger_QuestionMark_NoOp_NoFire(t *testing.T) {
+	m, count := newTestModelWithTrigger(t)
+	// StatusLineActive defaults to false — ? is a no-op.
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = next.(Model)
+
+	if *count != 0 {
+		t.Errorf("? no-op (StatusLineActive=false): want 0 triggers, got %d", *count)
+	}
+	if m.keys.handler.Mode() != ModeNormal {
+		t.Errorf("expected ModeNormal after no-op ?, got %v", m.keys.handler.Mode())
+	}
+}
+
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {
 	var out strings.Builder
