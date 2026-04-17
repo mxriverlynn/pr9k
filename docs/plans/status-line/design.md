@@ -131,19 +131,23 @@ convention as `scripts/get_next_issue`, `scripts/close_gh_issue`, etc.
 - The D13 validator uses `DisallowUnknownFields` on the strict top-level
   struct (`validator.vFile`), so we get future-schema safety for free.
 
-### Why we drop Claude Code's `"type": "command"` discriminator
+### `"type": "command"` accepted but optional (Claude Code copy-paste)
 
-Claude Code keeps `type` because there is a hypothetical future where the
-value could be a different kind of status-line source. ralph-tui has no such
-plan. Dropping `type` is the YAGNI move and shortens the config. If we ever
-add a second type, `type` can be added as an optional string defaulting to
-`"command"` — still additive and non-breaking.
+ralph-tui has no other status-line source type and does not plan one.
+But `DisallowUnknownFields` would reject a `type` key pasted in from a
+Claude Code config, producing a cryptic `json: unknown field "type"`
+error that gives the user no hint about compatibility.
+
+Accept `type` as an optional string; validate that, when present, it is
+literally `"command"`. Any other value produces a clear error like
+`statusline: type must be "command" (or omitted)`. This is additive,
+zero future cost, and makes copy-paste from Claude Code work without
+surprise.
 
 ### Deferred fields (explicitly out of scope for MVP)
 
 - `padding` (horizontal indent).
 - `subagentStatusLine` (Claude Code has one; ralph-tui has no subagents).
-- `type`: see above.
 
 ---
 
@@ -217,17 +221,76 @@ convention — it simplifies script authoring (`jq -r '.iteration'` always
 works) at the cost of losing the "was this unset or zero" distinction, which
 ralph-tui's state doesn't need.
 
+### Snapshotting the VarTable across goroutines
+
+`vars.VarTable` (in `ralph-tui/internal/vars/vars.go`) has **no mutex**: it
+is written only by the workflow goroutine (`SetPhase`, `SetStep`,
+`SetIteration`, `ResetIteration`, `Bind`) and read by the same goroutine
+when a step is being prepared. The status-line worker runs in a separate
+goroutine and cannot call `vt.Get` / `vt.GetInPhase` directly without a
+race.
+
+Resolution: take the snapshot on the workflow goroutine and push it into
+the status-line package along with the trigger. Concretely:
+
+- Add a `statusline.State` struct (copy by value, immutable) containing
+  every field listed in the payload table (phase, iteration, max, step num/
+  count/name, workflowDir, projectDir, and a `map[string]string`
+  copy of the visible VarTable). Mode is read separately from
+  `KeyHandler.Mode()` at invocation time (see "Refresh triggers").
+- The workflow goroutine builds the `State` immediately before each event
+  trigger (via a helper `buildState(vt, phase, header)`), then calls
+  `runner.PushState(State)` followed by `runner.Trigger()`.
+- The workflow goroutine must publish an initial `State` via
+  `runner.PushState` **before** `runner.Start(ctx)` returns, so the timer
+  goroutine never fires against a zero-value State. A simple
+  `buildState(vt, vars.Initialize, header)` call right after `vars.New`
+  in `workflow.Run` suffices.
+- In `workflow.Run`, an explicit `runner.PushState` + `runner.Trigger`
+  must follow:
+  - `vt.SetPhase` (all 3 call sites at run.go:216, 252, 313)
+  - `vt.SetIteration` + `vt.ResetIteration` at run.go:250-252
+  - after each `vt.SetStep` (before `Orchestrate`) and after each
+    `vt.Bind` (so captured values propagate)
+  This is more trigger sites than the original "phase/iteration/step
+  boundary" wording implied — the explicit list prevents stale captures.
+- The timer goroutine cannot snapshot the VarTable (it does not own it);
+  its trigger carries no data, and the worker reuses the most recently
+  pushed State via `runner.snapshotState()` (mutex-guarded).
+
+This keeps all `VarTable` reads on the workflow goroutine and eliminates
+the race.
+
 ### Stdout contract
 
 - **One line.** ralph-tui takes only the first non-empty line of stdout. The
   footer is one row; multi-line output is truncated. (See "Out of scope" for
   the multi-line follow-up.)
-- **ANSI colors pass through.** We use `lipgloss.Width`-based truncation, which
-  is ANSI-aware. Scripts can emit `\033[32m` et al.
+- **Bounded read.** Stdout is read with an 8 KB cap using
+  `io.LimitReader(stdoutPipe, 8*1024)` so a runaway script cannot flood
+  ralph-tui's memory. Anything beyond 8 KB is discarded; the truncation
+  point is logged once at `[statusline]` but not surfaced to the footer.
+- **Sanitized control characters.** Before caching, strip:
+  - `\r` (carriage return) — would overwrite prior content on the same
+    row and can corrupt rows above on some terminals.
+  - CSI cursor-movement, erase-line, erase-display sequences (every
+    `\x1b[…<letter>` that isn't the SGR `m` set).
+  - OSC sequences other than OSC 8 hyperlinks (terminated by `BEL` /
+    `ST`).
+  - Any bare `\x1b` not followed by a recognized escape introducer.
+  - Trailing whitespace.
+
+  What remains: SGR color escapes (`\x1b[…m`) and OSC 8 hyperlinks.
+  Implementation sketch lives in a new `statusline.Sanitize(b []byte)
+  string` helper with direct test coverage for `\r`, CSI `\x1b[2J`,
+  CSI `\x1b[2K`, mid-CSI truncation (unterminated `\x1b[3` at EOF),
+  and bare BEL/ST.
+- **ANSI colors pass through.** After sanitization, surviving SGR
+  escapes render via `lipgloss.Width`-aware truncation. Scripts can
+  emit `\033[32m` et al.
 - **OSC 8 hyperlinks** — best-effort. Lip Gloss does not specifically parse
   them, but they are bytes like any other; if the user's terminal supports
   them, they should render. Not tested in MVP.
-- **Trailing whitespace stripped.**
 
 ### Stderr
 
@@ -245,10 +308,36 @@ only to stderr produces an empty footer and is treated as a soft failure
   output. If no previous success exists, show a literal `statusline error —
   see log` message (styled gray) so the user knows something broke without
   being spammed every refresh.
-- **Timeout** (2 seconds, non-configurable in MVP) → SIGTERM the process;
-  treat as non-zero exit. 2s is aggressive enough to keep the footer live and
-  loose enough to accommodate `git` invocations on a non-huge repo. Tune
-  later if needed.
+- **Timeout** (2 seconds, non-configurable in MVP) → SIGTERM the process.
+  If it does not exit within an additional 1 s grace, send SIGKILL.
+  Both outcomes are treated as non-zero exit for cache / fallback purposes.
+  2s is aggressive enough to keep the footer live and loose enough to
+  accommodate `git` invocations on a non-huge repo. Tune later if needed.
+
+  **Implementation:** use Go 1.20+ `exec.Cmd.Cancel` +
+  `exec.Cmd.WaitDelay` (the project targets Go 1.26.2, so these are
+  available):
+
+  ```go
+  ctx, cancel := context.WithTimeout(runnerCtx, 2*time.Second)
+  defer cancel()
+  cmd := exec.CommandContext(ctx, path, args...)
+  cmd.Cancel = func() error {
+      // SIGTERM first when the context fires.
+      return cmd.Process.Signal(syscall.SIGTERM)
+  }
+  cmd.WaitDelay = 1 * time.Second // stdlib escalates to SIGKILL if still alive
+  ```
+
+  This replaces the "small helper" wording and avoids hand-rolling the
+  escalation timer.
+- **Stdin-pipe handling**: use `cmd.Stdin = bytes.NewReader(payload)`
+  so the stdlib owns the write pump. `bytes.Reader` returns EOF when
+  drained, so the child's `stdin` closes cleanly without a separate
+  writer goroutine — this eliminates the goroutine-leak risk on a
+  script that ignores SIGTERM. (If a future payload grows large
+  enough to warrant streaming, switch to `io.Pipe` with
+  `WriteCloser.CloseWithError` on timeout.)
 - **Missing binary / startup failure** (detected at `exec.Cmd.Start`) →
   surfaced by the validator at startup (see "Validation" below); a runtime
   `Start` failure logs once and uses the same "statusline error" fallback.
@@ -275,6 +364,17 @@ MVP triggers:
 
 1. **Startup** — one run immediately after the first frame paints, so the
    footer isn't empty on the first render.
+
+   **Cold-start fallback:** Until the first successful script run
+   populates the cache, `Model.View()` renders the ordinary
+   `NormalShortcuts` footer (the same bar users see without a status
+   line). This preserves keyboard-shortcut discoverability during the
+   cold-start window (first ~100 ms up to several seconds on a slow
+   script) and avoids a panicked "statusline error — see log"
+   appearing before the user realises anything is wrong. The cache
+   flips to status-line output only after the first **successful**
+   (exit 0) invocation. A failing first run keeps the cold-start
+   fallback until success; the error is logged at `[statusline]`.
 2. **Phase boundary** — on `vars.SetPhase` transitions (initialize →
    iteration → finalize).
 3. **Iteration boundary** — on `vars.ResetIteration` at the top of each
@@ -284,6 +384,23 @@ MVP triggers:
    user transitions `ModeNormal ↔ anything else`. The status line is only
    rendered in `ModeNormal`, but re-running on transition keeps it fresh when
    the user returns.
+
+   Implementation note: there are **many** sites that mutate
+   `KeyHandler.mode` — `SetMode` on the workflow goroutine, and *every*
+   key handler in `keys.go` (Normal, Error, NextConfirm, QuitConfirm,
+   Select, Help), plus two mouse-triggered transitions in
+   `model.go:127-129` (empty-log revert) and `model.go:233-237` (left-
+   press Normal/Done → Select). Scattering trigger calls across all
+   these sites guarantees future drift.
+   Instead, dispatch the mode-change trigger from the **single choke
+   point** that already exists at `model.go:325`:
+   `m.prevObservedMode = m.keys.handler.Mode()` at the end of
+   `Model.Update`. Change that block to compare the post-dispatch mode
+   against the saved `prevObservedMode` and, when they differ, call
+   `statusRunner.Trigger()`. This captures *every* mutation path —
+   keyboard, mouse, and external `SetMode` — in one spot. The runner
+   reads the current mode via `KeyHandler.Mode()` at script invocation
+   time, so the trigger carries no payload.
 6. **Timer** — every `refreshInterval` seconds (default `5`). This covers
    wall-clock data (elapsed time, idle-while-claude-thinks) and keeps the
    footer current when ralph-tui is blocked on a long-running claude step.
@@ -327,6 +444,93 @@ workflow / keys goroutine ──► statusline.TriggerCh (buffered, cap 4, drop-
 `Model.View()` reads the cached string via `statusline.LastOutput()` under
 the status-line package's own mutex — it never blocks on exec.
 
+### Modal-mode edge cases
+
+- **Mouse events in `ModeHelp`.** Wheel events still forward to the
+  viewport (log scrolls under the modal) — acceptable because the modal
+  is a true overlay. Left-click events that would otherwise enter
+  `ModeSelect` are **ignored** when `mode == ModeHelp`; otherwise a
+  stray click would flip into a select mode hidden behind the modal.
+  Add a guard in `model.go` Mouse handling: `if currentMode == ModeHelp
+  { break }` in the non-wheel branch.
+- **Help modal reachable from non-Normal modes (deferred).** Today `?`
+  is accepted only in `ModeNormal`. Users who lose their keyboard
+  shortcut bar (status line active) but are in `ModeDone` have no
+  discoverability path to the modal. Acceptable because `ModeDone` still
+  renders `DoneShortcuts` in the footer. If user feedback asks for it,
+  adding `?` to `handleDone` is a one-line follow-up.
+- **Signal-path shutdown short-circuit.** The SIGINT handler in
+  `main.go` may `program.Kill()` after a 2 s wait if `workflowDone`
+  does not close in time, then `os.Exit(1)`. In that path, deferred
+  cleanup does not run — any in-flight status-line subprocess is
+  orphaned briefly until the OS reaps the ralph-tui process tree. This
+  matches the existing claude-step behaviour and is acceptable for MVP.
+
+### Lifecycle, shutdown, and logger ordering
+
+The status-line runner is a long-lived goroutine (worker) plus an optional
+long-lived timer goroutine. Both must stop cleanly when the workflow ends
+so they do not outlive the file logger or the Bubble Tea program.
+
+- `statusline.Runner` exposes `Start(ctx context.Context)` and `Shutdown()`.
+- `Start` launches the worker loop (reading from `TriggerCh`) and, if
+  `refreshInterval > 0`, the timer goroutine.
+- `Shutdown` cancels the context and waits (bounded by a 2 s deadline,
+  matching the `terminateGracePeriod` in `workflow.Runner`) for the worker
+  goroutine to return. If a script is in-flight, the worker signals
+  SIGTERM and drains the process before exiting.
+- **Shutdown must NOT run inside the workflow goroutine's defer stack.**
+  `handleQuitConfirm`'s `y` path returns `tea.QuitMsg`, which causes
+  `program.Run()` in `main.go:252` to return **before** the workflow
+  goroutine finishes — if Shutdown lived inside that goroutine, the
+  worker could still be mid-script and would call `program.Send(...)`
+  after `program.Kill()` had already fired. `program.Send` on a killed
+  program is a no-op in recent bubbletea but has been observed to panic
+  in older versions, so we must not rely on it.
+
+  Concretely:
+  1. The worker's `program.Send(StatusLineUpdatedMsg{})` path guards on
+     an `atomic.Bool stopped` flag set by Shutdown. If stopped, it
+     skips the Send entirely — the cached `LastOutput` is still updated
+     under mutex, but the program is not notified.
+  2. Shutdown is called from `main.go` **after** `program.Run` returns,
+     before the `workflowDone`/`signaled` select:
+
+  ```go
+  _, runErr := program.Run()
+  signal.Stop(sigChan)
+  statusRunner.Shutdown()          // new — block further Sends, stop worker
+  // ... existing workflowDone wait, error handling, exit
+  ```
+
+  3. The workflow goroutine's inner shutdown order is unchanged from
+     today — `log.Close` happens after `workflow.Run` returns normally
+     but is independent of the status-line runner:
+
+  ```go
+  _ = workflow.Run(runner, proxy, keyHandler, runCfg)
+  _ = log.Close()
+  close(lineCh)
+  keyHandler.SetMode(ui.ModeDone)
+  ```
+
+  Because Shutdown blocks until the worker drains (bounded deadline),
+  any final `[statusline]` log lines are written before the workflow
+  goroutine reaches `log.Close`.
+
+  *Caveat*: the SIGINT path at `main.go:240` calls `program.Kill()`
+  and then `os.Exit(1)` — Shutdown is not invoked in that path. Any
+  in-flight script is orphaned until the OS reaps the process tree.
+  This matches the existing claude-step behaviour on forced exit and
+  is acceptable for MVP.
+
+- `refreshInterval: 0` → the timer goroutine is not started at all
+  (Start inspects the parsed interval and skips the timer when zero).
+- If `statusLine` is absent from `ralph-steps.json`, `statusRunner` is a
+  nil-safe no-op runner (`Start`, `Shutdown`, `Trigger`, `LastOutput`,
+  `Enabled` all safe to call). This avoids a sprinkle of nil checks at
+  every call site.
+
 ---
 
 ## Validation (D13)
@@ -336,6 +540,7 @@ Add a new category `statusline` to `internal/validator/validator.go`. Extend
 
 ```go
 type vStatusLine struct {
+    Type            string `json:"type,omitempty"`    // accepted; must be "" or "command"
     Command         string `json:"command"`
     // Pointer so we can distinguish absent (default applies) from
     // explicit 0 (timer disabled).
@@ -353,17 +558,40 @@ type vFile struct {
 
 Validation rules when `vf.StatusLine != nil`:
 
-1. **`command` non-empty.** Empty string → `statusline: command must not be empty`.
-2. **Resolvable binary.** Reuse `validateCommandPath(workflowDir,
+1. **`type` (optional).** Must be `""` (absent) or literally
+   `"command"`. Any other value → `statusline: type must be "command"
+   (or omitted)`.
+2. **`command` non-empty.** Empty string → `statusline: command must not be empty`.
+3. **Resolvable binary.** Reuse `validateCommandPath(workflowDir,
    vf.StatusLine.Command)`. Same messages as existing step-command
-   validation — this is deliberate for consistency.
-3. **`refreshInterval` bounds.** If set, must be `>= 0`. Negative values →
+   validation — this is deliberate for consistency. (Note: the
+   runtime `ResolveCommand` in `workflow/run.go` does not re-check
+   existence; startup validation is the sole gate.)
+4. **`refreshInterval` bounds.** If set, must be `>= 0`. Negative values →
    `statusline: refreshInterval must be >= 0 (0 disables the timer)`.
    Fractional JSON numbers fail parse because the field decodes to `*int`.
    Absent → default `5`. Explicit `0` → timer disabled.
-4. **Unknown fields rejected** — `DisallowUnknownFields()` on the parent
+5. **Unknown fields rejected** — `DisallowUnknownFields()` on the parent
    decoder already handles this since `vStatusLine` has no unexported
    embedded types.
+
+**Default hand-off.** The validator stores `RefreshInterval` as a
+`*int` (nil when absent). `statusline.Runner.Start` is responsible for
+applying the default:
+
+```go
+const DefaultRefreshInterval = 5 // seconds
+switch {
+case cfg.RefreshInterval == nil:
+    interval = DefaultRefreshInterval * time.Second
+case *cfg.RefreshInterval == 0:
+    interval = 0 // no timer goroutine
+default:
+    interval = time.Duration(*cfg.RefreshInterval) * time.Second
+}
+```
+
+Unit tests must cover all three branches (nil, zero, positive).
 
 No new variable-scope rules: status-line scripts receive their data via
 stdin JSON, not via `{{VAR}}` expansion. The `command` string is *not*
@@ -417,15 +645,22 @@ footer := shortcutTrunc + spacer + versionLabel
 The new rule:
 
 ```
-if mode == ModeNormal && statusLine.Enabled() {
+if mode == ModeNormal && statusLine.Enabled() && statusLine.HasOutput() {
     footer := statusLineText + "  " + "? Help" + spacer + versionLabel
-} else if mode == ModeHelp {
-    footer := HelpModeShortcuts + spacer + versionLabel
 } else {
-    // unchanged — existing shortcut rendering path
+    // unchanged — existing shortcut rendering path, including ModeHelp
+    // (which updateShortcutLineLocked sets to HelpModeShortcuts).
     footer := shortcutTrunc + spacer + versionLabel
 }
 ```
+
+Notes:
+- `HasOutput()` returns true only after the first **successful** run
+  has populated the cache; before that, ModeNormal still shows
+  `NormalShortcuts` (the cold-start fallback from Refresh Triggers #1).
+- ModeHelp is rendered by the `else` branch so it goes through
+  `colorShortcutLine` with the same white-key / gray-description
+  styling as every other mode. No dedicated branch is needed.
 
 The `? Help` segment is styled the same way
 `colorShortcutLine("?")` would style a key/description group: white `?`,
@@ -433,8 +668,16 @@ gray `Help`, single space between them. Two-space gap between the status
 line text and `? Help` matches the existing `"  "` separator convention.
 
 Status-line text truncation: reuse the same `lipgloss.NewStyle().MaxWidth()`
-pattern that truncates the shortcut line. Compute
-`statusWidth = innerWidth - len("? Help") - 2 /*gap*/ - versionWidth - 1 /*final gap*/`.
+pattern that truncates the shortcut line. Compute width with `lipgloss.Width`
+(ANSI-aware) — not `len()` — because the "? Help" hint is coloured
+(white `?`, gray `Help`), so its byte length exceeds its visible width.
+Concretely:
+
+```go
+helpHint := colorShortcutLine("? Help") // white "?", gray "Help"
+helpWidth := lipgloss.Width(helpHint)   // = 6 regardless of ANSI bytes
+statusWidth := innerWidth - helpWidth - 2 /*gap before Help*/ - versionWidth - 1 /*final gap*/
+```
 
 ### Key dispatch
 
@@ -462,9 +705,13 @@ func (m keysModel) handleHelp(key tea.KeyMsg) (keysModel, tea.Cmd) {
         m.handler.updateShortcutLineLocked()
         m.handler.mu.Unlock()
     case "q":
+        // Preserve the mode the user was in before pressing `?` so that
+        // Esc from the QuitConfirm prompt returns to it (today that is
+        // always ModeNormal, but a future follow-up allowing `?` from
+        // ModeDone needs this to work without editing this handler).
         m.handler.mu.Lock()
-        m.handler.prevMode = ModeNormal  // Esc from QuitConfirm should land
-                                         // on Normal, not back to Help
+        // prevMode is already the pre-Help mode (set by handleNormal's
+        // `?` case). Do not overwrite — QuitConfirm.Esc must restore it.
         m.handler.mode = ModeQuitConfirm
         m.handler.updateShortcutLineLocked()
         m.handler.mu.Unlock()
@@ -531,24 +778,44 @@ Modal layout:
 ╰─────────────────────────────────────────────────╯
 ```
 
-The mode sections are built from the existing shortcut constants
-(`NormalShortcuts`, `SelectShortcuts`, `ErrorShortcuts`, `DoneShortcuts`)
-*plus* the new `? show help` line for Normal mode. To avoid divergence,
-the modal body is built by the same `colorShortcutLine` helper that colors
-the footer.
+The mode sections are **separate constants** from the footer shortcut
+constants, because the modal uses more descriptive phrasings ("scroll up"
+vs. the footer's "up", "enter select mode" vs. "select"). The MVP
+approach is:
+
+- Introduce `HelpModalNormal`, `HelpModalSelect`, `HelpModalError`,
+  `HelpModalDone` as separate string constants, each formatted as a
+  two-column grid suited to the modal width.
+- Render them with `colorShortcutLine` for consistent white-key / gray-
+  description coloring.
+- Because the modal text and the footer text are maintained separately,
+  **add a unit test** that asserts every key token ( `↑`, `k`, `v`, `n`,
+  `q`, `c`, `r`, `y`, `esc`, `hjkl`, etc.) that appears in any footer
+  constant also appears in the corresponding modal constant and vice
+  versa. Adding a new shortcut then requires two edits — but the test
+  prevents silent divergence.
+- The `?` → `show this help` row is added only to `HelpModalNormal`
+  (the only mode where `?` is active).
+
+If a future refactor unifies footer + modal wording, the modal can
+re-use the footer constants and drop the duplicate.
 
 ### Sample script
 
 `scripts/statusline` (new, `chmod +x`):
 
 ```bash
-#!/bin/bash
+#!/usr/bin/env bash
 # ralph-tui status line.
 # Claude Code-compatible: reads a single JSON object from stdin.
 # For MVP this script ignores the input and prints a static line.
 cat >/dev/null
 echo "testing status line"
 ```
+
+Uses `#!/usr/bin/env bash` rather than a hardcoded `/bin/bash` to match
+the portability pattern used elsewhere and to support non-POSIX layouts
+like NixOS where `/bin/bash` may not exist.
 
 The `cat >/dev/null` drain is important: if ralph-tui's pipe fills because
 the script exits without reading, the parent goroutine blocks on its
@@ -596,16 +863,40 @@ The sample is there for users who opt in.
 - `statusline/payload` — JSON shape matches expected schema for all three
   phases (initialize produces `iteration: 0`, finalize produces `iteration:
   0`).
-- `statusline.Runner` — single-flight drops overlapping triggers, not
-  overlaps them; timeout kills process and produces fallback; empty stdout
-  returns empty; non-zero exit returns last-good; `refreshInterval: 0`
-  disables the timer; default `5` fires at the expected cadence.
+- `statusline.Runner`
+  - single-flight drops overlapping triggers, not overlaps them
+  - timeout kills process and produces fallback
+  - timeout path with a script that ignores SIGTERM → SIGKILL lands
+    via `cmd.WaitDelay`; no goroutine leak
+  - empty stdout returns empty
+  - non-zero exit returns last-good (only after first successful run)
+  - `refreshInterval` absent → default 5 s
+  - `refreshInterval: 0` → no timer goroutine started
+  - `refreshInterval: 7` → fires every ~7 s
+  - cold-start window: `HasOutput()` is false until first exit-0 run;
+    failing first run keeps `HasOutput()` false
+  - `program.Send` is skipped after `Shutdown()`
+- `statusline.Sanitize` — strips `\r`, `\x1b[2J`, `\x1b[2K`, CSI
+  cursor-movement, unterminated `\x1b[3`, bare OSC-ST/BEL; preserves
+  SGR `\x1b[32m`; preserves OSC 8 hyperlink round-trip.
 - `validator` — `statusLine` missing command, bad command path, negative
   `refreshInterval`, explicit zero, absent (default applies), unknown extra
-  field, valid config.
+  field, `type: "command"` accepted, `type: "bogus"` rejected, valid config.
 - `ui.overlay` — ANSI-aware splice preserves escape codes in the base lines
   not covered by the modal; modal colors survive; no grapheme splitting
-  artifacts with wide runes.
+  artifacts with wide runes; emoji at a narrow-terminal splice boundary
+  does not mid-cell slice.
+- `ui.keys.handleHelp` — `?` enters Help from Normal, Esc returns to
+  Normal, `q` enters QuitConfirm with prevMode preserved, Esc from
+  QuitConfirm returns to the pre-Help mode (not Help itself).
+- `ui` mode-trigger choke point — every one of the seven pre-existing
+  mode transitions (keyboard Normal→QuitConfirm, Error→QuitConfirm,
+  NextConfirm→Normal, Select→Normal, mouse-press Normal→Select, mouse-
+  press Done→Select, empty-log Select→Normal) drives exactly one
+  `statusRunner.Trigger` call.
+- `ui` footer — narrow terminal (innerWidth=30) truncates status-line
+  text to the computed budget; emoji-at-boundary does not produce a
+  half-cell.
 
 ### Integration
 
@@ -683,4 +974,61 @@ follow-up if user demand arises.
    and script contract that a user can reuse a simple Claude Code
    status-line script with minor edits. We do *not* promise full
    compatibility — our JSON field set is narrower and our refresh cadence
-   is different.
+   is different. We do accept an optional `type: "command"` field so
+   direct copy-paste of the config produces a helpful error rather than
+   a cryptic unknown-field decode failure.
+
+---
+
+## Review summary
+
+This plan has been through three structured review passes plus full
+agent validation (evidence-based-investigator + adversarial-validator).
+
+**Iterations completed:** 3
+
+**Assumptions challenged:**
+- Plan claim that `validateCommandPath` and the runtime `ResolveCommand`
+  are equivalent (minor — validator gates existence, runtime does not;
+  noted inline under Validation).
+- Plan claim that the VarTable is safe to read from any goroutine —
+  *refuted*; VarTable has no mutex, so snapshots must be produced on
+  the workflow goroutine and pushed to the runner.
+- Plan claim that mode-change refresh can be driven from a "helper
+  invoked in keys.go handlers" — *refuted*; `handleError`,
+  `handleNextConfirm`, and mouse-driven mode transitions in `model.go`
+  make that approach brittle. Moved to a single choke point at
+  `Model.Update`'s `prevObservedMode` comparison.
+- Plan claim that `exec.CommandContext` alone covers the
+  SIGTERM-then-SIGKILL timeout — *refuted*; must use `cmd.Cancel` +
+  `cmd.WaitDelay`.
+- Plan claim that stripping "trailing whitespace" was sufficient
+  sanitization — *refuted*; a script emitting `\r` or a CSI erase
+  sequence could corrupt the whole TUI. Added explicit sanitizer.
+
+**Consolidations made:**
+- Removed a dead `else if mode == ModeHelp` branch in the footer
+  rendering rule; `updateShortcutLineLocked` already sets the
+  ModeHelp string so the shared `else` branch suffices.
+- Removed the "two-well-named spots" scattering approach in favour of
+  one choke point (see above).
+
+**Ambiguities resolved:**
+- Cold-start behaviour: render `NormalShortcuts` until the first
+  **successful** script run, not an empty segment.
+- `refreshInterval` default hand-off: validator stores `*int`; runner
+  applies the default 5 s on nil, disables timer on 0, passes through
+  on > 0.
+- `type` discriminator: accept as optional `"command"` string for
+  Claude Code copy-paste compatibility.
+- Shutdown ordering: `statusRunner.Shutdown()` is called from
+  `main.go` after `program.Run()` returns, not from the workflow
+  goroutine's defer stack.
+
+**Agent validation:**
+- Evidence-based investigator confirmed 7/10 codebase claims outright,
+  with a minor divergence on ResolveCommand semantics (documented) and
+  a line-number imprecision (harmless).
+- Adversarial validator surfaced 12 findings; 10 of 12 produced
+  concrete plan changes above. The remaining two (F5 dead branch
+  styling and F12 bash shebang) were addressed as small direct fixes.
