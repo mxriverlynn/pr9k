@@ -60,7 +60,7 @@ Key files:
   │  │ [log panel — bubbles/viewport]            │ ││  ← scrollable log viewport (white text)
   │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
   │  │ ↑/k up  ↓/j down  n next  q quit          │ ││  ← shortcut footer (ShortcutLine)
-  │  │                     ralph-tui v0.5.0      │ ││  ← version label (right-aligned, white)
+  │  │                     ralph-tui v0.6.0      │ ││  ← version label (right-aligned, white)
   │  │╰─────────────────────────────────────────╯  ││  ← bottom border
   │  └──────────────────────────────────────────────┘│
   └──────────────────────────────────────────────────┘
@@ -313,7 +313,10 @@ func (r *Runner) HeartbeatSilence() (time.Duration, bool) {
 3. **HRule** — `gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")` uses T-junction glyphs so the rule visually connects to the `│` side borders at both ends.
 4. **Log viewport** — `m.log.View()` from the `bubbles/viewport` sub-model is split on `\n` and each resulting line is wrapped individually via `wrapLine`. The viewport content is set through `logContentStyle` (`White` foreground) so log body text pops against the gray chrome.
 5. **HRule** — same T-junction form as step 3.
-6. **Footer** — shortcut bar (left, from `m.keys.handler.ShortcutLine()`, passed through `colorShortcutLine` for per-key coloring) + spacer + version label (right, from `m.versionLabel`, rendered white), wrapped via `wrapLine`.
+6. **Footer** — two rendering paths, selected each `View()` call based on `m.statusRunner`:
+   - **Status-line path** (when `ModeNormal` and `statusRunner.Enabled() && statusRunner.HasOutput()`): status text from `statusRunner.LastOutput()` (left, truncated via `lipgloss.Width` so width budget is respected) + `"  "` gap + white `"?"` / gray `"Help"` hint + spacer + version label (right). Cold-start (`HasOutput() == false`) falls back to the shortcut-bar path below.
+   - **Shortcut-bar path** (all other modes including `ModeHelp`): shortcut bar from `m.keys.handler.ShortcutLine()`, passed through `colorShortcutLine` for per-key coloring + spacer + version label (right, from `m.versionLabel`, rendered white).
+   - Both paths are wrapped via `wrapLine`.
 7. **Bottom border** — `gray.Render("╰" + strings.Repeat("─", innerWidth) + "╯")`.
 
 There is **no** `lipgloss.Border` wrapper around the inner block. The previous approach (wrapping inner content in a `Border(RoundedBorder()).BorderTop(false)` style) was scrapped because it forced plain `─` on the hrule rows and left visual gaps at the side-border intersections; hand-building each row is what lets the hrules use the `├─┤` T-junction glyphs.

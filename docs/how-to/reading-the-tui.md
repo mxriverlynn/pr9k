@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.5.0 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.6.0 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -185,7 +185,7 @@ The footer uses a two-tone color scheme: the version label on the right renders 
 When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
-[status text…]  ? Help  ralph-tui v0.5.0
+[status text…]  ? Help  ralph-tui v0.6.0
 ```
 
 The status text is the sanitized first non-empty line of the most recent command run. It is left-truncated to protect the `? Help` hint and version label. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.

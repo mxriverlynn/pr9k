@@ -4015,13 +4015,13 @@ func TestBuildState_PopulatesAllFields(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	vt.Bind(vars.Initialize, "FOO", "bar")
 
-	state := buildState(vt, vars.Iteration, "sess-123", "0.5.0")
+	state := buildState(vt, vars.Iteration, "sess-123", "0.6.0")
 
 	if state.SessionID != "sess-123" {
 		t.Errorf("SessionID: want %q, got %q", "sess-123", state.SessionID)
 	}
-	if state.Version != "0.5.0" {
-		t.Errorf("Version: want %q, got %q", "0.5.0", state.Version)
+	if state.Version != "0.6.0" {
+		t.Errorf("Version: want %q, got %q", "0.6.0", state.Version)
 	}
 	if state.Phase != "iteration" {
 		t.Errorf("Phase: want %q, got %q", "iteration", state.Phase)

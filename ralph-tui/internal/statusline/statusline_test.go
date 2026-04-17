@@ -27,7 +27,7 @@ import (
 func TestBuildPayload_InitializePhase(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "sess-1",
-		Version:       "0.5.0",
+		Version:       "0.6.0",
 		Phase:         "initialize",
 		Iteration:     0,
 		MaxIterations: 3,
@@ -121,7 +121,7 @@ func TestBuildPayload_NilCapturesProducesEmptyObject(t *testing.T) {
 func TestBuildPayload_RoundTrip(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "20260417-093045-123",
-		Version:       "0.5.0",
+		Version:       "0.6.0",
 		Phase:         "iteration",
 		Iteration:     1,
 		MaxIterations: 5,
@@ -142,7 +142,7 @@ func TestBuildPayload_RoundTrip(t *testing.T) {
 	}
 	checks := map[string]any{
 		"sessionId":     "20260417-093045-123",
-		"version":       "0.5.0",
+		"version":       "0.6.0",
 		"phase":         "iteration",
 		"iteration":     float64(1),
 		"maxIterations": float64(5),
@@ -375,7 +375,7 @@ func TestSanitize_OSC88IsDropped(t *testing.T) {
 func TestBuildPayload_DeterministicSchemaKeys(t *testing.T) {
 	s := statusline.State{
 		SessionID:     "sess-abc",
-		Version:       "0.5.0",
+		Version:       "0.6.0",
 		Phase:         "iteration",
 		Iteration:     1,
 		MaxIterations: 3,
@@ -1363,5 +1363,67 @@ func TestNew_Enabled_NonExistentCommand(t *testing.T) {
 	r := statusline.New(cfg, t.TempDir(), t.TempDir(), nil)
 	if r.Enabled() {
 		t.Error("expected Enabled() == false for non-existent command")
+	}
+}
+
+// --- Sample script smoke test ---
+
+// workspaceRoot returns the repository root resolved from this test file's path.
+func workspaceRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	// file is .../ralph-tui/internal/statusline/statusline_test.go
+	// three levels up reaches the workspace root
+	return filepath.Join(filepath.Dir(file), "..", "..", "..")
+}
+
+// TestSampleScript_OutputLine spawns scripts/statusline from the workspace root,
+// feeds a minimal JSON blob, and asserts "testing status line" appears in the
+// Runner's cached output. This pins the sample script's end-to-end contract.
+func TestSampleScript_OutputLine(t *testing.T) {
+	root := workspaceRoot(t)
+	scriptPath := filepath.Join(root, "scripts", "statusline")
+	if _, err := os.Stat(scriptPath); err != nil {
+		t.Skipf("scripts/statusline not found at %s: %v", scriptPath, err)
+	}
+
+	cfg := &statusline.Config{Command: scriptPath}
+	r := statusline.New(cfg, root, root, nil)
+	if !r.Enabled() {
+		t.Skip("runner not enabled (script not executable or not found)")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	r.Start(ctx)
+	defer r.Shutdown()
+
+	r.PushState(statusline.State{
+		SessionID: "smoke-test",
+		Version:   "0.6.0",
+		Phase:     "initialize",
+	})
+	r.Trigger()
+
+	// waitCondition polls until the predicate returns true or the timeout fires.
+	const pollInterval = 10 * time.Millisecond
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r.HasOutput() {
+			break
+		}
+		time.Sleep(pollInterval)
+	}
+
+	if !r.HasOutput() {
+		t.Fatal("runner has no output after 5 s — script did not produce a line")
+	}
+	got := r.LastOutput()
+	const want = "testing status line"
+	if !strings.Contains(got, want) {
+		t.Errorf("LastOutput() = %q; want it to contain %q", got, want)
 	}
 }

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# ralph-tui status line.
+# Claude Code-compatible: reads a single JSON object from stdin.
+# For MVP this script ignores the input and prints a static line.
+cat >/dev/null
+echo "testing status line"

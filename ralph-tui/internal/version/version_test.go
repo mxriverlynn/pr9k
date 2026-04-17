@@ -47,9 +47,24 @@ func TestVersion_PreviousWas0_4_1(t *testing.T) {
 	}
 }
 
-// TP-109-23: Minor version bumped (not patch) — major=0, minor=5, patch=0.
-// Confirms the v key binding and ModeSelect extension warranted a minor bump
-// per docs/coding-standards/versioning.md for 0.y.z projects.
+// TestVersion_PreviousWas0_5_0 checks git history to confirm the version bump
+// came from the correct 0.5.0 base (commit 2e60e9c set 0.5.0).
+func TestVersion_PreviousWas0_5_0(t *testing.T) {
+	cmd := exec.Command("git", "show", "2e60e9c:ralph-tui/internal/version/version.go")
+	cmd.Dir = repoRoot(t)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("git show failed (git unavailable or commit not reachable): %v", err)
+	}
+	const want = "0.5.0"
+	if !strings.Contains(string(out), want) {
+		t.Errorf("expected version.go at 2e60e9c to contain %q; got:\n%s", want, out)
+	}
+}
+
+// TP-109-23: Minor version bumped (not patch) — major=0, minor=6, patch=0.
+// Confirms the status-line feature, ModeHelp mode, and new schema key warranted
+// a minor bump per docs/coding-standards/versioning.md for 0.y.z projects.
 func TestVersion_MajorMinorPatch(t *testing.T) {
 	parts := strings.SplitN(Version, ".", 3)
 	if len(parts) != 3 {
@@ -61,7 +76,7 @@ func TestVersion_MajorMinorPatch(t *testing.T) {
 		want string
 	}{
 		{"major", parts[0], "0"},
-		{"minor", parts[1], "5"},
+		{"minor", parts[1], "6"},
 		{"patch", parts[2], "0"},
 	}
 	for _, c := range checks {
