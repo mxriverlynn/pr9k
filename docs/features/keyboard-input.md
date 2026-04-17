@@ -8,7 +8,7 @@ A seven-mode state machine that routes keypresses and communicates user decision
 
 ## Overview
 
-- `KeyHandler` operates in seven modes: Normal, Error, QuitConfirm, NextConfirm, Done, Select, and Quitting — each with its own keypress bindings and shortcut bar text
+- `KeyHandler` operates in eight modes: Normal, Error, QuitConfirm, NextConfirm, Done, Select, Quitting, and Help — each with its own keypress bindings and shortcut bar text
 - User decisions are sent to the orchestration goroutine via a buffered `Actions` channel carrying `StepAction` values (Retry, Continue, Quit)
 - In Normal mode, `n` enters the skip confirmation prompt (NextConfirm) and `q` enters quit confirmation
 - In NextConfirm mode (entered when the user presses `n` during a running step), `y` terminates the current subprocess (skip step), `n` or `<Escape>` cancel and restore the previous mode
@@ -17,6 +17,7 @@ A seven-mode state machine that routes keypresses and communicates user decision
 - In Done mode (entered when the workflow completes), the TUI stays alive so the user can review output; `q` enters quit confirmation; `v` enters `ModeSelect`
 - In Select mode (entered when `v` is pressed from Normal or Done, or via a left mouse click on the log viewport), the cursor is shown as a reverse-video cell in the log panel; `Esc` clears the selection and returns to the prior mode; all cursor movement keys (hjkl/arrows, 0/$, J/K, PgUp/PgDn) are implemented; left-drag extends; release commits and shows `SelectCommittedShortcuts`; `y` or `Enter` copies the selected text to the clipboard (with OSC 52 fallback) and exits ModeSelect
 - In Quitting mode the footer shows `Quitting...` as visible confirmation that the user's quit was accepted while the orchestration goroutine unwinds
+- In Help mode (entered via `?` from Normal mode, only when `StatusLineActive()` is true), the footer shows `"esc  close"`; `<Escape>` restores the previous mode and `q` enters quit confirmation without overwriting the saved previous mode
 - `ForceQuit()` is a signal-safe method that terminates the subprocess and injects `ActionQuit` via non-blocking send — it is called both by the OS signal handler (SIGINT/SIGTERM) and by the QuitConfirm `y` path, so both paths produce identical shutdown behavior
 
 Key files:
@@ -106,6 +107,19 @@ Key files:
   │  y/Enter → copy to clipboard, exit Select   │
   │  Cursor movement and clipboard copy impl.   │
   └─────────────────────────────────────────────┘
+
+  ModeHelp (entered via ? from ModeNormal when StatusLineActive() == true):
+    → footer shows HelpModeShortcuts ("esc  close")
+    → modal body shows per-mode shortcut grid (HelpModalNormal etc.)
+    → Esc → restores prevMode
+    → q → ModeQuitConfirm (prevMode unchanged, so Esc-from-quit restores idle mode)
+    → all other keys are no-ops
+    → ? is a no-op in all other modes even when StatusLineActive
+
+  StatusLineActive:
+    Set via SetStatusLineActive(true) from main.go when a statusLine command is
+    configured. When false (default), ? is a no-op in every mode and ModeHelp
+    is unreachable from the public API.
 ```
 
 ## Key Files
@@ -133,19 +147,21 @@ const (
     ModeNormal      Mode = iota
     ModeError
     ModeQuitConfirm
-    ModeNextConfirm // entered after n; shows "Skip current step?" prompt
-    ModeDone        // entered after workflow completes; shows "v select  q quit" footer
-    ModeSelect      // entered by v from Normal/Done; shows selection cursor overlay
-    ModeQuitting    // confirmed quit; footer shows "Quitting..." during shutdown
+    ModeNextConfirm    // entered after n; shows "Skip current step?" prompt
+    ModeDone           // entered after workflow completes; shows "v select  q quit" footer
+    ModeSelect         // entered by v from Normal/Done; shows selection cursor overlay
+    ModeQuitting       // confirmed quit; footer shows "Quitting..." during shutdown
+    ModeHelp           // entered via ? from Normal (when StatusLineActive); esc/q exit
 )
 
 type KeyHandler struct {
-    mode         Mode
-    prevMode     Mode           // restored when quit confirm is cancelled
-    cancel       func()         // terminates the current subprocess
-    Actions      chan StepAction // communicates decisions to orchestration
-    mu           sync.Mutex     // protects mode, prevMode, and shortcutLine
-    shortcutLine string         // protected by mu; use ShortcutLine() to access
+    mode               Mode
+    prevMode           Mode           // restored when quit confirm is cancelled
+    cancel             func()         // terminates the current subprocess
+    Actions            chan StepAction // communicates decisions to orchestration
+    mu                 sync.Mutex     // protects mode, prevMode, and shortcutLine
+    shortcutLine       string         // protected by mu; use ShortcutLine() to access
+    statusLineActive   bool           // protected by mu; gates the ? → ModeHelp transition
 }
 ```
 
@@ -162,6 +178,11 @@ type KeyHandler struct {
 | `SelectShortcuts` | `"hjkl/↑↓←→ extend  0/$ line  ⇧↑↓ line-ext  y copy  esc cancel  q quit"` | Shortcut bar in select mode (while selection is in progress) |
 | `SelectCommittedShortcuts` | `"y copy  esc cancel  drag for new selection"` | Shortcut bar shown immediately after a mouse drag release; cleared on next key or mouse event |
 | `QuittingLine` | `"Quitting..."` | Shortcut bar in quitting mode (visible while shutdown unwinds) |
+| `HelpModeShortcuts` | `"esc  close"` | Shortcut bar while the Help modal is open |
+| `HelpModalNormal` | *(multiline grid)* | Two-column shortcut grid shown in the Help modal for Normal mode |
+| `HelpModalSelect` | *(multiline grid)* | Two-column shortcut grid shown in the Help modal for Select mode |
+| `HelpModalError` | *(multiline grid)* | Two-column shortcut grid shown in the Help modal for Error mode |
+| `HelpModalDone` | *(multiline grid)* | Two-column shortcut grid shown in the Help modal for Done mode |
 
 ## Implementation Details
 
@@ -181,6 +202,8 @@ func (m keysModel) Update(msg tea.Msg) (keysModel, tea.Cmd) {
     case ModeQuitConfirm: return m.handleQuitConfirm(key)
     case ModeNextConfirm: return m.handleNextConfirm(key)
     case ModeDone:        return m.handleDone(key)
+    case ModeSelect:      return m.handleSelect(key)
+    case ModeHelp:        return m.handleHelp(key)
     case ModeQuitting:
         // All keys silently ignored so a user mashing keys during shutdown
         // can't inject a second ActionQuit or retrigger the cancel hook.
@@ -198,6 +221,8 @@ The Bubble Tea program delivers all keypresses as `tea.KeyMsg` to `Model.Update`
 
 - `n` — if a cancel function is available (subprocess running), saves the current mode as `prevMode` and switches to `ModeNextConfirm`; if no cancel function (no subprocess), no-op
 - `q` — saves the current mode as `prevMode` and switches to `ModeQuitConfirm` (direct field write under `handler.mu`)
+- `v` — saves the current mode as `prevMode` and switches to `ModeSelect` (log emptiness guard and selection initialization happen in `model.go`)
+- `?` — if `StatusLineActive()` is true, saves the current mode as `prevMode` and switches to `ModeHelp`; if false, no-op
 - All other keys are ignored
 
 ### NextConfirm Mode
@@ -237,6 +262,28 @@ When the workflow finishes all iterations and finalize steps successfully, `Run`
 - `v` — enters `ModeSelect` (same behavior as in Normal mode; see Select Mode below)
 - `q` — saves `ModeDone` as `prevMode` and enters `ModeQuitConfirm`
 - All other keys are ignored
+
+### Help Mode
+
+Entered by pressing `?` from `ModeNormal`, but only when `StatusLineActive()` returns true (i.e., a `statusLine` command is configured in `ralph-steps.json`). When `StatusLineActive()` is false, `?` is a no-op in every mode and `ModeHelp` is unreachable. The footer shows `HelpModeShortcuts` (`"esc  close"`).
+
+The modal body is drawn by `Model.View()` using one of the four `HelpModal*` constants, each a two-column grid of shortcuts targeting ~67 columns of interior space:
+
+| Constant | Modal content |
+|----------|---------------|
+| `HelpModalNormal` | Normal-mode keys: scroll, select, skip, quit, and `?` |
+| `HelpModalSelect` | Select-mode keys: cursor movement, copy, cancel, quit |
+| `HelpModalError` | Error-mode keys: continue, retry, quit |
+| `HelpModalDone` | Done-mode keys: scroll, select, quit |
+
+The modal section shown is chosen based on the `prevMode` stored when `?` was pressed (i.e., the mode the user was in before entering Help).
+
+Key bindings in Help mode:
+- `<Escape>` — restores `prevMode` (the idle mode active before `?` was pressed)
+- `q` — transitions to `ModeQuitConfirm` without overwriting `prevMode`; pressing `<Escape>` from `ModeQuitConfirm` restores the original idle mode, not `ModeHelp`
+- All other keys are no-ops
+
+`?` is only handled in `handleNormal`; all other mode handlers (`handleError`, `handleDone`, `handleSelect`, etc.) do not process `?`, so Help is only reachable from `ModeNormal`.
 
 ### Select Mode
 
@@ -341,6 +388,23 @@ func (h *KeyHandler) SelectJustReleased() bool
 
 A mutex-protected getter that reports whether a mouse drag selection was just committed (the mouse was released, producing a `SelectCommittedShortcuts` footer). The flag is set inside `updateShortcutLineLocked` when the mode is `ModeSelect` and a release event committed the drag, and is cleared on the next key or mouse event via `clearJustReleasedLocked()`. Used by tests to assert the committed-shortcut path without reaching through unexported fields.
 
+### PrevMode
+
+```go
+func (h *KeyHandler) PrevMode() Mode
+```
+
+A mutex-protected getter that returns the mode that will be restored when `<Escape>` is pressed from `ModeQuitConfirm`. Set by the `q` key handler (and the `?` key handler for the Help path); not set by `SetMode`. Used by tests to assert the saved idle mode without reaching through unexported fields.
+
+### StatusLineActive / SetStatusLineActive
+
+```go
+func (h *KeyHandler) StatusLineActive() bool
+func (h *KeyHandler) SetStatusLineActive(active bool)
+```
+
+Mutex-protected getter/setter for whether a `statusLine` command is configured. `SetStatusLineActive(true)` must be called from `main.go` after constructing the `statusline.Runner` if the config contains a `statusLine` block. When false (the default), `?` is a no-op in `ModeNormal` and `ModeHelp` is unreachable. When true, `?` in `ModeNormal` transitions to `ModeHelp` and the Help modal is shown.
+
 ### Dual-Routing of tea.KeyMsg
 
 When a `tea.KeyMsg` arrives, `Model.Update` routes it to the key handler and, unless in `ModeSelect`, also to the viewport:
@@ -360,13 +424,15 @@ This means scroll keys (`↑`/`k`/`↓`/`j`) work during Normal mode — the vie
 
 ## Testing
 
-- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all seven modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`), ShortcutLine thread safety with all seven modes
+- `ralph-tui/internal/ui/ui_test.go` — Tests for all key handlers in each mode, mode transitions, quit confirm with cancel (`n` and `<Escape>` from Normal, Error, and Done), `y` flipping to `ModeQuitting` with `QuittingLine` footer and returning `tea.QuitMsg`, `SetMode` for all eight modes, ForceQuit (cancel fires, ActionQuit sent, idempotent, nil-cancel-no-panic, full-channel-no-panic, `TestForceQuit_SetsModeQuitting_FromNormal`, `TestForceQuit_SetsModeQuitting_FromError`, `TestForceQuit_SetsModeQuitting_FromNextConfirm`, `TestForceQuit_SetsModeQuitting_FromDone`, `TestForceQuit_FromModeHelp_TransitionsToQuitting`), ShortcutLine thread safety with all eight modes; `TestKeyHandler_StatusLineActive_DefaultAndRoundTrip`, `TestKeyHandler_StatusLineActive_ConcurrentAccess`, `TestHelpModeShortcuts_ConstantContents`, `TestHelpModalConstants_MaxLineWidthWithinBudget`, `TestUpdateShortcutLineLocked_AllModesHaveExplicitCase`, `TestSetMode_ModeHelp_DoesNotSavePrevMode`
 - `ralph-tui/internal/ui/select_mode_test.go` — 16 integration tests for `ModeSelect`: `v` enters select from Normal/Done (parameterized), `v` ignored in Error/QuitConfirm/NextConfirm/Quitting, `v` no-op with empty log, cursor starts at last visible row col 0, `Esc` returns to prevMode and clears selection immediately, `Esc` clears immediately (not next update), prevObservedMode double-guard idempotency, `LogLinesMsg` in select does not clear selection, external `SetMode` clears selection on next Update, unknown key no-op, `home`/`end` not forwarded; `j` in ModeSelect does not scroll viewport (routing guard), `SelectShortcuts` shown in footer, `v select` in Normal/Done shortcuts but not Error, `v` from Done restores Done on Esc
 - `ralph-tui/internal/ui/keys_select_movement_test.go` — 16 tests covering all cursor movement acceptance criteria: h/j/k/l single-cell move, arrow keys move cursor, anchor fixed during movement, 0/Home → line start, $/End → line end, K/J/Shift+↑↓ extend by row, PgUp/PgDn by viewport.Height-1, virtual column preserved across shorter lines, cursor clamps to line end on narrow rows, viewport autoscrolls to cursor, q from ModeSelect enters QuitConfirm with pre-Select prevMode, q clears selection before entering QuitConfirm, Esc from QuitConfirm restores idle mode, SelectedText updated after cursor moves
 - `ralph-tui/internal/ui/clipboard_copy_test.go` — 9 tests for the clipboard copy action: y/Enter copies and exits ModeSelect, OSC 52 fallback when clipboard daemon unavailable, `[copied N chars]` feedback on success, `[copy failed: ...]` on failure, empty selection is a silent no-op, clipboard payload uses raw coordinates (no wrap-induced newlines), `github.com/atotto/clipboard` is a direct dep, copyFn and stderrWriter test seam isolation, resetClipboardFns restores defaults
 - `ralph-tui/internal/ui/clipboard_additional_test.go` — 21 additional tests across 7 categories: `copyToClipboard` unit tests (empty string, multi-byte UTF-8 OSC 52 encoding, no stderr leak on success, large payload), `copySelectedText` helper isolated (empty returns nil cmd, success produces LogLinesMsg, failure produces error LogLinesMsg), model.go routing (multi-line selection payload, double-y second is no-op, Enter from Done restores Done, single-char feedback), `handleSelect` separation of concerns (y does not call copyFn directly, Enter restores prevMode, shortcut footer updates on exit), test seam safety (resetClipboardFns, stderrWriter restore, no-parallel audit), LogLinesMsg integration (copied/failed lines appear in viewport, byte-vs-rune count documented), go mod tidy produces no diff
 - `ralph-tui/internal/ui/mouse_selection_test.go` — 16 integration tests covering all mouse selection acceptance criteria: left-drag selects with live reverse-video feedback, release commits and shows `SelectCommittedShortcuts`, dragging past top/bottom edge auto-scrolls one line per motion, bare click re-anchors, shift-click extends committed cursor, left-press in Error/QuitConfirm/NextConfirm/Quitting is a no-op, wheel scrolls in every mode, mid-drag resize force-commits without losing raw coords, `y` copies committed selection
 - `ralph-tui/internal/ui/mouse_selection_extra_test.go` — 24 additional tests across 7 categories: `resolveVisualPos` edge cases (negative row, row past end, col clamped to row width, negative col clamped), `HandleMouse` unit tests (empty visualLines, motion/release guards, shift-press without committed selection, negative row clamping), model.go routing (press above/below viewport, stray motion/release), `selectJustReleased` lifecycle (cleared by wheel, by second press, not set by keyboard `v`), auto-scroll clamping (multi-event accumulation, top/bottom boundary stops), shift-click edge cases (same cell no-op, before anchor, during active drag ignored), `SelectCommittedShortcuts` constant and `updateShortcutLineLocked` path
+- `ralph-tui/internal/ui/keys_test.go` (ModeHelp additions) — `?` enters ModeHelp when StatusLineActive, `?` no-op when StatusLineActive false, `?` no-op in all non-Normal modes even when StatusLineActive (`TestHandleNonNormal_QuestionMark_NoOp_EvenWhenStatusLineActive`), esc from ModeHelp restores prevMode, q from ModeHelp enters QuitConfirm, esc from QuitConfirm-via-Help restores idle mode (not ModeHelp), shortcut line set to `HelpModeShortcuts` on entry, unrecognized key is no-op; `TestShortcutModalParity` and `TestShortcutModalParity_NoUnapprovedModalExtras` (bidirectional token parity between footer and modal constants); `TestHandleHelp_Esc_RestoresPrevModeShortcutLine`, `TestHandleHelp_Q_ShortcutLineShowsQuitConfirmPrompt`, `TestHandleHelp_StatusLineFlipsInactive_DoesNotEject`, `TestHandleHelp_IgnoresNormalModeKeys`, `TestKeyHandler_StatusLineActive_ConcurrentAccess`, `TestForceQuit_FromModeHelp_TransitionsToQuitting`
+- `ralph-tui/internal/ui/model_test.go` (ModeHelp additions) — `TestModel_ModeTrigger_Help_FiresOnEachEdge` (4 sub-tests: Normal→Help, Help→Normal, Help→QuitConfirm, QuitConfirm→Normal-via-Help-path); `TestModel_ModeTrigger_NoFireOn_QuestionMarkNoOp` (? no-op does not fire the mode-change trigger)
 
 ## Additional Information
 

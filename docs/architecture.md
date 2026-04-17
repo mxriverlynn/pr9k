@@ -176,11 +176,17 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
     → Esc clears selection and returns to prevMode
     → q enters ModeQuitConfirm
 
+  ModeHelp (entered via ? from ModeNormal when StatusLineActive == true):
+    → footer shows "esc  close"; modal body shows per-mode shortcut grid
+    → Esc → restores prevMode
+    → q → ModeQuitConfirm (prevMode preserved so Esc-from-quit restores idle)
+    → ? is a no-op in all other modes; unreachable when StatusLineActive == false
+
   OS Signal (SIGINT/SIGTERM):
     → KeyHandler.ForceQuit()
     → cancel subprocess + inject ActionQuit
     (unified with the QuitConfirm 'y' path;
-     active in all modes including ModeDone)
+     active in all modes including ModeDone and ModeHelp)
 ```
 
 ## Features
@@ -219,7 +225,7 @@ A Bubble Tea `Model` assembled row-by-row in `Model.View()` as a hand-built roun
 
 ### [Keyboard Input & Error Recovery](features/keyboard-input.md)
 
-A seven-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeSelect`, `ModeQuitting`) that routes keypresses and mouse events and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`) and `q` enters quit confirmation. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` so the user can review output; `v` or a left-click in the log viewport enters `ModeSelect` (log text selection) and `q` → `y` exits. In `ModeSelect`, a reverse-video cursor cell is shown in the log panel; keyboard cursor movement, left-drag selection, shift-click extend, and `y`/`Enter` clipboard copy are all supported; `Esc` returns to the prior mode and `q` enters quit confirmation. Each mode displays its own shortcut bar text; after a mouse drag release, the footer briefly shows `SelectCommittedShortcuts` until the next event.
+An eight-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `ModeNextConfirm`, `ModeDone`, `ModeSelect`, `ModeQuitting`, `ModeHelp`) that routes keypresses and mouse events and communicates user decisions to the orchestration goroutine via a buffered `Actions` channel. In normal mode, `n` enters a skip-confirmation prompt (`ModeNextConfirm`), `q` enters quit confirmation, and `?` (when a `statusLine` command is configured) opens the `ModeHelp` modal. In error mode (entered when a step fails), `c` continues, `r` retries, and `q` enters quit confirmation. In quit-confirm mode, `y` flips to `ModeQuitting` (footer shows `Quitting...`) and calls `ForceQuit`; `n` or `<Escape>` cancel. In next-confirm mode, `y` cancels the subprocess and returns to the previous mode; `n` or `<Escape>` cancel the skip. When the workflow finishes normally, the TUI enters `ModeDone` so the user can review output; `v` or a left-click in the log viewport enters `ModeSelect` (log text selection) and `q` → `y` exits. In `ModeSelect`, a reverse-video cursor cell is shown in the log panel; keyboard cursor movement, left-drag selection, shift-click extend, and `y`/`Enter` clipboard copy are all supported; `Esc` returns to the prior mode and `q` enters quit confirmation. In `ModeHelp`, the footer shows `"esc  close"` and a two-column shortcut grid is shown as a modal; `Esc` closes the modal and `q` enters quit confirmation. Each mode displays its own shortcut bar text; after a mouse drag release, the footer briefly shows `SelectCommittedShortcuts` until the next event.
 
 **Package:** `internal/ui/` (`ui.go`, `keys.go`)
 
