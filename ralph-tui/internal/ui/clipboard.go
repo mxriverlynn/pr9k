@@ -51,7 +51,9 @@ func copyToClipboard(text string) error {
 		// Terminals that support OSC 52 will inject the payload into the
 		// clipboard on the client side, even over SSH.
 		encoded := base64.StdEncoding.EncodeToString([]byte(text))
-		fmt.Fprintf(stderrWriter, "\x1b]52;c;%s\x07", encoded)
+		if _, werr := fmt.Fprintf(stderrWriter, "\x1b]52;c;%s\x07", encoded); werr != nil {
+			return werr
+		}
 		return nil
 	}
 	return err

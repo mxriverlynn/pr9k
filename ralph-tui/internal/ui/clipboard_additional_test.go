@@ -534,7 +534,9 @@ func TestResetClipboardFns_RestoresStderrWriter(t *testing.T) {
 		inner.Cleanup(func() { stderrWriter = origStderr })
 
 		// Verify the redirect is in effect inside the sub-test.
-		fmt.Fprint(stderrWriter, "probe")
+		if _, err := fmt.Fprint(stderrWriter, "probe"); err != nil {
+			inner.Fatalf("failed to write to redirected stderr: %v", err)
+		}
 		if buf.String() != "probe" {
 			inner.Error("stderr redirect not working inside sub-test")
 		}
