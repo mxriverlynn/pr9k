@@ -51,6 +51,13 @@ type vStep struct {
 	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
 }
 
+// vStatusLine is the strict struct used when validating the optional statusLine block.
+type vStatusLine struct {
+	Type            string `json:"type,omitempty"`
+	Command         string `json:"command"`
+	RefreshInterval *int   `json:"refreshInterval,omitempty"`
+}
+
 // vFile is the strict top-level struct.
 // Each phase field uses *[]vStep so that a missing key (nil) is distinguished
 // from an explicitly empty array (non-nil, len 0).
@@ -58,10 +65,11 @@ type vStep struct {
 // value (e.g. "env": "FOO") or a non-string element (e.g. [123]) will fail
 // JSON decode and be reported as a "malformed JSON" parse error.
 type vFile struct {
-	Env        *[]string `json:"env"`
-	Initialize *[]vStep  `json:"initialize"`
-	Iteration  *[]vStep  `json:"iteration"`
-	Finalize   *[]vStep  `json:"finalize"`
+	Env        *[]string    `json:"env"`
+	Initialize *[]vStep     `json:"initialize"`
+	Iteration  *[]vStep     `json:"iteration"`
+	Finalize   *[]vStep     `json:"finalize"`
+	StatusLine *vStatusLine `json:"statusLine,omitempty"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -155,6 +163,24 @@ func Validate(workflowDir string) []Error {
 				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
 				continue
 			}
+		}
+	}
+
+	// statusLine validation.
+	if vf.StatusLine != nil {
+		sl := vf.StatusLine
+		if sl.Type != "" && sl.Type != "command" {
+			errs = append(errs, cfgErr("statusline", "config", "", `type must be "command" (or omitted)`))
+		}
+		if sl.Command == "" {
+			errs = append(errs, cfgErr("statusline", "config", "", "command must not be empty"))
+		} else {
+			if msg := validateCommandPath(workflowDir, sl.Command); msg != "" {
+				errs = append(errs, cfgErr("statusline", "config", "", msg))
+			}
+		}
+		if sl.RefreshInterval != nil && *sl.RefreshInterval < 0 {
+			errs = append(errs, cfgErr("statusline", "config", "", "refreshInterval must be >= 0 (0 disables the timer)"))
 		}
 	}
 
