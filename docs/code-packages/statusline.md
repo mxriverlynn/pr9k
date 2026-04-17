@@ -246,7 +246,7 @@ type StatusReader interface {
 
 `Model.View()` selects one of two footer rendering paths each frame:
 
-1. **Status-line path** — active when `footerMode == ModeNormal && runner.Enabled() && runner.HasOutput()`. Renders: `[truncated status text]  [? Help]  [version]` (status budget computed to preserve the `? Help` and version labels). On very narrow terminals the version label may be silently truncated first; the `? Help` hint is always protected.
+1. **Status-line path** — active when `footerMode == ModeNormal && runner.Enabled() && runner.HasOutput()`. Renders: `[truncated status text]<spacer>[? Help | <version>]` with the `? Help | <version>` cluster flush-right against the border so the help hint does not shift as the status text width changes. Status budget is computed to preserve the full right-aligned cluster. On very narrow terminals the version label may be silently truncated first; the `? Help` hint is always protected.
 2. **Shortcut-bar path** — all other modes and conditions, including ModeHelp itself (which shows `HelpModeShortcuts`). Cold-start (HasOutput=false) always takes this path.
 
 ### `? Help` trigger and help modal

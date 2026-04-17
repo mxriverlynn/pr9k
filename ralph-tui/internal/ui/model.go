@@ -90,8 +90,9 @@ func (m Model) WithHeartbeat(h HeartbeatReader) Model {
 
 // WithStatusRunner installs a StatusReader on the Model. When the runner is
 // enabled and has output, Model.View() switches the footer from the shortcut
-// bar to the status-line display path (status text + "? Help" + version).
-// Pass nil to disable the status-line footer path.
+// bar to the status-line display path (status text on the left and a
+// right-aligned "? Help | <version>" cluster). Pass nil to disable the
+// status-line footer path.
 func (m Model) WithStatusRunner(r StatusReader) Model {
 	m.statusRunner = r
 	return m
@@ -470,8 +471,9 @@ func (m Model) View() string {
 
 	// Shortcut footer — two rendering paths:
 	// (1) ModeNormal with a status runner configured, enabled, and populated:
-	//     show the status-line text on the left, then "? Help" and the version
-	//     label flush-right so the user can still see the version.
+	//     show the status-line text on the left and a right-aligned cluster
+	//     of "? Help | <version>" so the help hint and version label stay
+	//     pinned to the right edge regardless of the status text width.
 	// (2) All other modes (including ModeHelp itself): show the mode's shortcut
 	//     string. updateShortcutLineLocked already set HelpModeShortcuts for
 	//     ModeHelp, so no dedicated path is needed here.
@@ -485,17 +487,21 @@ func (m Model) View() string {
 		statusText := m.statusRunner.LastOutput()
 		helpHint := colorShortcutLine("? Help")
 		helpWidth := lipgloss.Width(helpHint)
-		// Reserve: 2-space gap before helpHint, helpHint itself, 1+ space before version.
-		statusBudget := innerWidth - helpWidth - 2 - versionWidth - 1
+		sep := lipgloss.NewStyle().Foreground(LightGray).Render(" | ")
+		sepWidth := lipgloss.Width(sep)
+		rightCluster := helpHint + sep + whiteVer
+		rightWidth := helpWidth + sepWidth + versionWidth
+		// Reserve: 2-space gap before the right-aligned cluster.
+		statusBudget := innerWidth - rightWidth - 2
 		if statusBudget < 0 {
 			statusBudget = 0
 		}
 		statusTrunc := lipgloss.NewStyle().MaxWidth(statusBudget).Render(statusText)
-		spacerW := innerWidth - lipgloss.Width(statusTrunc) - 2 - helpWidth - versionWidth
+		spacerW := innerWidth - lipgloss.Width(statusTrunc) - rightWidth
 		if spacerW < 0 {
 			spacerW = 0
 		}
-		footer = statusTrunc + "  " + helpHint + strings.Repeat(" ", spacerW) + whiteVer
+		footer = statusTrunc + strings.Repeat(" ", spacerW) + rightCluster
 	} else {
 		shortcut := m.keys.handler.ShortcutLine()
 		footerWidth := innerWidth

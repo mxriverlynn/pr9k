@@ -185,10 +185,10 @@ The footer uses a two-tone color scheme: the version label on the right renders 
 When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
-[status text…]  ? Help  ralph-tui v0.6.0
+[status text…]                    ? Help | ralph-tui v0.6.0
 ```
 
-The status text is the sanitized first non-empty line of the most recent command run. It is left-truncated to protect the `? Help` hint and version label. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.
+The status text sits on the left and the `? Help | <version>` cluster is right-aligned, so the help hint and version label stay pinned to the right edge regardless of how wide the status text grows or shrinks between refreshes. The status text is the sanitized first non-empty line of the most recent command run; it is right-truncated to protect the `? Help | <version>` cluster. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.
 
 ### `? Help` and the help modal
 
@@ -204,7 +204,7 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 
 | Footer text | Mode |
 |-------------|------|
-| `[status text]  ? Help  [version]` | Normal with status-line active and populated |
+| `[status text]                    ? Help | [version]` | Normal with status-line active and populated (right cluster flush-right) |
 | `↑/k up  ↓/j down  v select  n next step  q quit` | Normal — standard shortcut bar (status-line disabled or cold-start) |
 | `c continue  r retry  q quit` | Error — a step failed; you need to decide what to do |
 | `Skip current step? (y/n, esc to cancel)` | NextConfirm — you pressed `n`, waiting for skip confirmation |
