@@ -18,23 +18,57 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
-// Error represents a single config validation failure.
+// Severity constants for Error entries.
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+	SeverityInfo    = "info"
+)
+
+// Error represents a single config validation finding.
+// Severity is "error" (fatal, default), "warning", or "info" (non-fatal).
 // Category, Phase, and StepName identify where the problem was found;
 // Problem is a human-readable description of what is wrong.
 type Error struct {
+	Severity string // "" or SeverityError = fatal; SeverityWarning/SeverityInfo = non-fatal
 	Category string
 	Phase    string
 	StepName string
 	Problem  string
 }
 
-// Error implements the error interface. Step-level errors include the step name;
-// file-level errors (no step name) omit it.
-func (e Error) Error() string {
-	if e.StepName == "" {
-		return fmt.Sprintf("config error: %s: %s: %s", e.Category, e.Phase, e.Problem)
+// IsFatal reports whether this entry represents a fatal error that should
+// block startup. Entries with empty or SeverityError severity are fatal.
+func (e Error) IsFatal() bool {
+	return e.Severity == "" || e.Severity == SeverityError
+}
+
+// FatalErrorCount returns the number of fatal errors in errs.
+func FatalErrorCount(errs []Error) int {
+	n := 0
+	for _, e := range errs {
+		if e.IsFatal() {
+			n++
+		}
 	}
-	return fmt.Sprintf("config error: %s: %s step %q: %s", e.Category, e.Phase, e.StepName, e.Problem)
+	return n
+}
+
+// Error implements the error interface. Non-error entries use "config warning:"
+// or "config info:" as the prefix so callers can distinguish them in output.
+// Step-level entries include the step name; file-level entries omit it.
+func (e Error) Error() string {
+	prefix := "config error"
+	switch e.Severity {
+	case SeverityWarning:
+		prefix = "config warning"
+	case SeverityInfo:
+		prefix = "config info"
+	}
+	if e.StepName == "" {
+		return fmt.Sprintf("%s: %s: %s: %s", prefix, e.Category, e.Phase, e.Problem)
+	}
+	return fmt.Sprintf("%s: %s: %s step %q: %s", prefix, e.Category, e.Phase, e.StepName, e.Problem)
 }
 
 // vStep is the strict per-step struct used during validation.
@@ -64,12 +98,14 @@ type vStatusLine struct {
 // Env uses *[]string; absent key (nil) is treated as empty list. A non-array
 // value (e.g. "env": "FOO") or a non-string element (e.g. [123]) will fail
 // JSON decode and be reported as a "malformed JSON" parse error.
+// ContainerEnv uses *map[string]string so that absent (nil) is treated as empty.
 type vFile struct {
-	Env        *[]string    `json:"env"`
-	Initialize *[]vStep     `json:"initialize"`
-	Iteration  *[]vStep     `json:"iteration"`
-	Finalize   *[]vStep     `json:"finalize"`
-	StatusLine *vStatusLine `json:"statusLine,omitempty"`
+	Env          *[]string          `json:"env"`
+	ContainerEnv *map[string]string `json:"containerEnv,omitempty"`
+	Initialize   *[]vStep           `json:"initialize"`
+	Iteration    *[]vStep           `json:"iteration"`
+	Finalize     *[]vStep           `json:"finalize"`
+	StatusLine   *vStatusLine       `json:"statusLine,omitempty"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -162,6 +198,52 @@ func Validate(workflowDir string) []Error {
 			if reason, ok := envDenylist[name]; ok {
 				errs = append(errs, cfgErr("env", "config", "", fmt.Sprintf("env name %q is %s", name, reason)))
 				continue
+			}
+		}
+	}
+
+	// containerEnv validation.
+	if vf.ContainerEnv != nil {
+		// Build a set of names already in the env allowlist for collision detection.
+		envSet := make(map[string]bool)
+		if vf.Env != nil {
+			for _, name := range *vf.Env {
+				envSet[name] = true
+			}
+		}
+		for key, val := range *vf.ContainerEnv {
+			// Reject reserved sandbox key.
+			if key == "CLAUDE_CONFIG_DIR" {
+				errs = append(errs, cfgErr("containerEnv", "config", "", `containerEnv key "CLAUDE_CONFIG_DIR" is reserved by the sandbox`))
+				continue
+			}
+			// Reject keys containing "=" (would be parsed as key=val by the shell).
+			if strings.Contains(key, "=") {
+				errs = append(errs, cfgErr("containerEnv", "config", "", fmt.Sprintf("containerEnv key %q must not contain '='", key)))
+				continue
+			}
+			// Reject values containing newline or NUL.
+			if strings.ContainsAny(val, "\n\x00") {
+				errs = append(errs, cfgErr("containerEnv", "config", "", fmt.Sprintf("containerEnv value for key %q must not contain newline or NUL characters", key)))
+				continue
+			}
+			// Warn when the key looks like a secret committed to the repo.
+			if strings.HasSuffix(key, "_TOKEN") || strings.HasSuffix(key, "_KEY") || strings.HasSuffix(key, "_SECRET") {
+				errs = append(errs, Error{
+					Severity: SeverityWarning,
+					Category: "containerEnv",
+					Phase:    "config",
+					Problem:  fmt.Sprintf("containerEnv key %q looks like a secret; literal values in ralph-steps.json are committed to the repo — consider using the env allowlist to pass it from the host instead", key),
+				})
+			}
+			// INFO notice when key also appears in the env allowlist (containerEnv wins).
+			if envSet[key] {
+				errs = append(errs, Error{
+					Severity: SeverityInfo,
+					Category: "containerEnv",
+					Phase:    "config",
+					Problem:  fmt.Sprintf("containerEnv key %q also appears in env allowlist; the literal containerEnv value wins (Docker last-wins)", key),
+				})
 			}
 		}
 	}

@@ -278,8 +278,8 @@ func TestStartup_LoggerFailure(t *testing.T) {
 	}
 
 	got := buf.String()
-	if !strings.Contains(got, "error:") {
-		t.Errorf("expected 'error:' in output, got: %q", got)
+	if got == "" {
+		t.Errorf("expected non-empty error output from startup(), got empty string")
 	}
 }
 

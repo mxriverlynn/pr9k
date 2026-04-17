@@ -1773,3 +1773,176 @@ func TestValidate_StatusLine_BareCommandInPath(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireNoErrors(t, errs)
 }
+
+// ----------------------------------------------------------------------------
+// containerEnv validation
+// ----------------------------------------------------------------------------
+
+func minimalWithContainerEnv(t *testing.T) string {
+	t.Helper()
+	return `{
+		"initialize": [],
+		"iteration": [{"name":"Step 1","isClaude":false,"command":["echo","hi"]}],
+		"finalize": []
+	}`
+}
+
+// TestValidate_ContainerEnv_Valid verifies that a well-formed containerEnv block
+// produces no errors.
+func TestValidate_ContainerEnv_Valid(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GOPATH": "/tmp/go", "GOCACHE": "/tmp/gocache"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_ContainerEnv_RejectsCLAUDE_CONFIG_DIR verifies that using the
+// sandbox-reserved key "CLAUDE_CONFIG_DIR" is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsCLAUDE_CONFIG_DIR(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"CLAUDE_CONFIG_DIR": "/foo"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, `"CLAUDE_CONFIG_DIR" is reserved by the sandbox`)
+	for _, e := range errs {
+		if !e.IsFatal() {
+			continue
+		}
+		if strings.Contains(e.Error(), "CLAUDE_CONFIG_DIR") {
+			return
+		}
+	}
+	t.Error("expected CLAUDE_CONFIG_DIR rejection to be a fatal error")
+}
+
+// TestValidate_ContainerEnv_RejectsKeyWithEquals verifies that a key containing
+// "=" is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsKeyWithEquals(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"BAD=KEY": "value"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "must not contain '='")
+}
+
+// TestValidate_ContainerEnv_RejectsValueWithNewline verifies that a value
+// containing a newline character is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsValueWithNewline(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"MYVAR": "line1\nline2"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "newline or NUL")
+}
+
+// TestValidate_ContainerEnv_RejectsValueWithNUL verifies that a value
+// containing a NUL character is rejected as a fatal error. A NUL byte in a
+// JSON string is invalid JSON, so the rejection may come from the JSON parser
+// ("malformed JSON") or from the containerEnv validator ("newline or NUL").
+// Either is an acceptable fatal rejection.
+func TestValidate_ContainerEnv_RejectsValueWithNUL(t *testing.T) {
+	dir := tempProject(t)
+	content := "{\"containerEnv\":{\"MYVAR\":\"val\x00ue\"},\"initialize\":[],\"iteration\":[{\"name\":\"S\",\"isClaude\":false,\"command\":[\"echo\",\"ok\"]}],\"finalize\":[]}"
+	writeStepsJSON(t, dir, content)
+	errs := validator.Validate(dir)
+	// The NUL byte is either rejected by the JSON parser or the containerEnv validator.
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "newline or NUL") || strings.Contains(e.Error(), "malformed JSON") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'newline or NUL' or 'malformed JSON' error; got: %v", errs)
+	}
+	if validator.FatalErrorCount(errs) == 0 {
+		t.Errorf("expected at least one fatal error for NUL in value; got: %v", errs)
+	}
+}
+
+// TestValidate_ContainerEnv_EnvCollisionEmitsInfo verifies that a containerEnv
+// key that also appears in the env allowlist emits an INFO notice, not a fatal error.
+func TestValidate_ContainerEnv_EnvCollisionEmitsInfo(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["MY_TOKEN"],
+		"containerEnv": {"MY_TOKEN": "forced-value"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	// Must not produce a fatal error.
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("env+containerEnv collision must not produce a fatal error; got %d fatal error(s): %v", validator.FatalErrorCount(errs), errs)
+	}
+	// Must produce an info notice.
+	found := false
+	for _, e := range errs {
+		if e.Severity == validator.SeverityInfo && strings.Contains(e.Error(), "MY_TOKEN") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an INFO notice for env+containerEnv collision on MY_TOKEN; got: %v", errs)
+	}
+}
+
+// TestValidate_ContainerEnv_SecretLookingNameEmitsWarning verifies that a
+// containerEnv key ending in _TOKEN, _KEY, or _SECRET emits a warning (non-fatal).
+func TestValidate_ContainerEnv_SecretLookingNameEmitsWarning(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GITHUB_TOKEN": "ghp_literal", "DB_KEY": "abc", "SIGNING_SECRET": "xyz"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	// Must not produce any fatal errors.
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("secret-looking names must not produce fatal errors; got: %v", errs)
+	}
+	// Must produce exactly 3 warnings (one per secret-looking key).
+	warnCount := 0
+	for _, e := range errs {
+		if e.Severity == validator.SeverityWarning {
+			warnCount++
+		}
+	}
+	if warnCount != 3 {
+		t.Errorf("expected 3 warnings for secret-looking keys, got %d: %v", warnCount, errs)
+	}
+}
+
+// TestValidate_ContainerEnv_UnknownFieldRejected verifies that an unknown top-level
+// field adjacent to containerEnv is rejected by the strict decoder.
+func TestValidate_ContainerEnv_UnknownFieldRejected(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GOPATH": "/tmp"},
+		"unknownField": "bad",
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "malformed JSON")
+}

@@ -34,11 +34,12 @@ type StatusLineConfig struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-	Env        []string          `json:"env,omitempty"`
-	Initialize []Step            `json:"initialize"`
-	Iteration  []Step            `json:"iteration"`
-	Finalize   []Step            `json:"finalize"`
-	StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
+	Env          []string          `json:"env,omitempty"`
+	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
+	Initialize   []Step            `json:"initialize"`
+	Iteration    []Step            `json:"iteration"`
+	Finalize     []Step            `json:"finalize"`
+	StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
 }
 
 // LoadSteps loads the step definitions from ralph-steps.json,

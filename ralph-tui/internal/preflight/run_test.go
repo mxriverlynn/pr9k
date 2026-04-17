@@ -20,7 +20,7 @@ var allGreenProber = fakeProber{
 var missingBinaryProber = fakeProber{binaryAvailable: false}
 
 func TestRun_ProfileDirMissing(t *testing.T) {
-	result := Run("/tmp/ralph-run-test-nonexistent-xyzzy", allGreenProber)
+	result := Run(t.TempDir(), "/tmp/ralph-run-test-nonexistent-xyzzy", allGreenProber)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors for missing profile dir, got none")
@@ -48,7 +48,7 @@ func TestRun_ProfileDirIsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Run(f.Name(), allGreenProber)
+	result := Run(t.TempDir(), f.Name(), allGreenProber)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors for file-as-profile-dir, got none")
@@ -70,7 +70,7 @@ func TestRun_ProfileDirIsFile(t *testing.T) {
 func TestRun_DockerBinaryMissing(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-iso")
 	dir := t.TempDir()
-	result := Run(dir, missingBinaryProber)
+	result := Run(t.TempDir(), dir, missingBinaryProber)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors for missing docker binary, got none")
@@ -94,7 +94,7 @@ func TestRun_DockerDaemonUnreachable(t *testing.T) {
 		daemonErr:       errors.New("connection refused"),
 	}
 
-	result := Run(dir, p)
+	result := Run(t.TempDir(), dir, p)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors for unreachable daemon, got none")
@@ -119,7 +119,7 @@ func TestRun_ImageNotPresent(t *testing.T) {
 		imagePresent:    false,
 	}
 
-	result := Run(dir, p)
+	result := Run(t.TempDir(), dir, p)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected errors for missing image, got none")
@@ -143,7 +143,7 @@ func TestRun_ZeroByteCredentials_WarningNotFatal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Run(dir, allGreenProber)
+	result := Run(t.TempDir(), dir, allGreenProber)
 
 	if len(result.Errors) != 0 {
 		t.Errorf("expected no errors for zero-byte credentials, got: %v", result.Errors)
@@ -180,7 +180,7 @@ func TestRun_CredentialsPermissionError_CollectedAsError(t *testing.T) {
 		_ = os.Chmod(dir, 0700)
 	})
 
-	result := Run(dir, allGreenProber)
+	result := Run(t.TempDir(), dir, allGreenProber)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected at least 1 error for permission-denied credentials, got none")
@@ -207,7 +207,7 @@ func TestRun_AllGreen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := Run(dir, allGreenProber)
+	result := Run(t.TempDir(), dir, allGreenProber)
 
 	if len(result.Errors) != 0 {
 		t.Errorf("expected no errors, got: %v", result.Errors)
@@ -221,7 +221,7 @@ func TestRun_MissingCredentials_EmitsWarning(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	dir := t.TempDir()
 
-	result := Run(dir, allGreenProber)
+	result := Run(t.TempDir(), dir, allGreenProber)
 
 	if len(result.Errors) != 0 {
 		t.Errorf("expected no errors, got: %v", result.Errors)
@@ -239,7 +239,7 @@ func TestRun_MissingCredentials_EmitsWarning(t *testing.T) {
 func TestRun_MissingProfileDir_NoCredentialsWarning(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 
-	result := Run("/tmp/ralph-run-test-nonexistent-credgate-xyzzy", allGreenProber)
+	result := Run(t.TempDir(), "/tmp/ralph-run-test-nonexistent-credgate-xyzzy", allGreenProber)
 
 	hasProfileErr := false
 	for _, e := range result.Errors {
@@ -257,7 +257,7 @@ func TestRun_MissingProfileDir_NoCredentialsWarning(t *testing.T) {
 
 func TestRun_CollectsAllErrors_ProfileAndDocker(t *testing.T) {
 	// Profile dir missing AND docker binary missing → 2 errors.
-	result := Run("/tmp/ralph-run-test-nonexistent-xyzzy2", missingBinaryProber)
+	result := Run(t.TempDir(), "/tmp/ralph-run-test-nonexistent-xyzzy2", missingBinaryProber)
 
 	if len(result.Errors) < 2 {
 		t.Errorf("expected at least 2 errors (profile + docker), got %d: %v", len(result.Errors), result.Errors)
@@ -278,5 +278,71 @@ func TestRun_CollectsAllErrors_ProfileAndDocker(t *testing.T) {
 	}
 	if !hasDocker {
 		t.Errorf("missing docker error in: %v", result.Errors)
+	}
+}
+
+// TestRun_RalphCache_CreatedOnFirstRun verifies that Run creates .ralph-cache/
+// inside projectDir if it does not already exist.
+func TestRun_RalphCache_CreatedOnFirstRun(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	_ = Run(projectDir, profileDir, allGreenProber)
+
+	cacheDir := filepath.Join(projectDir, ".ralph-cache")
+	info, err := os.Stat(cacheDir)
+	if err != nil {
+		t.Fatalf(".ralph-cache was not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf(".ralph-cache is not a directory")
+	}
+}
+
+// TestRun_RalphCache_IdempotentOnRepeatRun verifies that calling Run twice does
+// not return an error if .ralph-cache already exists.
+func TestRun_RalphCache_IdempotentOnRepeatRun(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	r1 := Run(projectDir, profileDir, allGreenProber)
+	r2 := Run(projectDir, profileDir, allGreenProber)
+
+	for _, result := range []Result{r1, r2} {
+		for _, e := range result.Errors {
+			if strings.Contains(e.Error(), ".ralph-cache") {
+				t.Errorf("unexpected .ralph-cache error on repeat run: %v", e)
+			}
+		}
+	}
+}
+
+// TestRun_RalphCache_ReadOnlyProjectDirSurfacesError verifies that a projectDir
+// that cannot be written to surfaces a preflight error for .ralph-cache creation.
+func TestRun_RalphCache_ReadOnlyProjectDirSurfacesError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	projectDir := filepath.Join(parent, "readonly-project")
+	if err := os.Mkdir(projectDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(projectDir, 0o755) })
+
+	profileDir := t.TempDir()
+	result := Run(projectDir, profileDir, allGreenProber)
+
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), ".ralph-cache") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a .ralph-cache error for read-only projectDir; got: %v", result.Errors)
 	}
 }

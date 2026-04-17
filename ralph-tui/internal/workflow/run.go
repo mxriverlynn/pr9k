@@ -155,7 +155,12 @@ type RunConfig struct {
 	// Env is the per-workflow env allowlist loaded from the "env" field of
 	// ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
 	// when building docker run args for claude steps.
-	Env             []string
+	Env []string
+	// ContainerEnv is the per-workflow literal env map from the "containerEnv"
+	// field of ralph-steps.json. Each entry is injected as -e KEY=VALUE into
+	// the Docker command. Emitted after Env allowlist entries so containerEnv
+	// wins on collision (Docker last-wins).
+	ContainerEnv    map[string]string
 	InitializeSteps []steps.Step
 	Steps           []steps.Step
 	FinalizeSteps   []steps.Step
@@ -291,7 +296,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
 		push(vars.Initialize)
-		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, executor)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, cfg.ContainerEnv, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
 			continue
@@ -341,7 +346,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
 			push(vars.Iteration)
-			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, executor)
+			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, cfg.ContainerEnv, executor)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
 				breakOuter = true
@@ -396,7 +401,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
 		push(vars.Finalize)
-		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, executor)
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, cfg.ContainerEnv, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			continue
@@ -433,8 +438,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 // buildStep resolves a single step into a runnable ResolvedStep using vt for
 // {{VAR}} substitution in the given phase. env is the per-workflow env
 // allowlist (StepFile.Env) appended to sandbox.BuiltinEnvAllowlist for claude
-// steps. executor provides ProjectDir for the docker bind-mount.
-func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
+// steps. containerEnv is passed as literal key=value pairs (StepFile.ContainerEnv).
+// executor provides ProjectDir for the docker bind-mount.
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, containerEnv map[string]string, executor StepExecutor) (ui.ResolvedStep, error) {
 	if s.IsClaude {
 		prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
 		if err != nil {
@@ -449,7 +455,7 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		projectDir := executor.ProjectDir()
 		envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
 		envAllowlist = append(envAllowlist, env...)
-		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
+		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, s.Model, prompt)
 		return ui.ResolvedStep{
 			Name:        s.Name,
 			Command:     argv,

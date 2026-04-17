@@ -889,7 +889,7 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -945,7 +945,7 @@ func TestBuildStep_ClaudeStepWithVarSubstitution(t *testing.T) {
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -975,7 +975,7 @@ func TestBuildStep_ClaudeStepMissingPromptFile(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
-	_, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	_, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1005,7 +1005,7 @@ func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Finalize)
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Finalize, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Finalize, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1042,7 +1042,7 @@ func TestBuildStep_ClaudeStep_SandboxBindMount(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: projectDir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1077,7 +1077,7 @@ func TestBuildStep_ClaudeStep_SandboxOptionsCidfile(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1116,7 +1116,7 @@ func TestBuildStep_ClaudeStep_EnvPassthrough(t *testing.T) {
 
 	// With GITHUB_TOKEN set: expect -e GITHUB_TOKEN in command.
 	t.Setenv("GITHUB_TOKEN", "tok123")
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1129,7 +1129,7 @@ func TestBuildStep_ClaudeStep_EnvPassthrough(t *testing.T) {
 	if err := os.Unsetenv("GITHUB_TOKEN"); err != nil {
 		t.Fatalf("os.Unsetenv: %v", err)
 	}
-	resolved2, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	resolved2, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2682,7 +2682,7 @@ func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR"}, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR"}, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2709,7 +2709,7 @@ func TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2835,7 +2835,7 @@ func TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	if _, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR", "ANOTHER_VAR"}, exec); err != nil {
+	if _, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR", "ANOTHER_VAR"}, nil, exec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -3331,7 +3331,7 @@ func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
