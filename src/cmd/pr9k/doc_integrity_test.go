@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -432,6 +433,251 @@ func TestGitignore_Pr9kDirIsActuallyIgnoredByGit(t *testing.T) {
 			t.Fatalf("git check-ignore failed unexpectedly: %v", err)
 		}
 	}
+}
+
+// forEachLiveDocFile calls fn(relative-path, content) for every Markdown file in the
+// live doc surface: docs/ (excluding docs/plans/ and docs/adr/) plus README.md and CLAUDE.md.
+// docs/plans/ and docs/adr/ are frozen historical records and are never visited.
+func forEachLiveDocFile(t *testing.T, root string, fn func(rel, content string)) {
+	t.Helper()
+	for _, f := range []string{"README.md", "CLAUDE.md"} {
+		fn(f, readFile(t, root, f))
+	}
+	docsDir := filepath.Join(root, "docs")
+	err := filepath.WalkDir(docsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == "plans" || name == "adr" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(d.Name()) != ".md" {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		fn(rel, string(data))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("forEachLiveDocFile WalkDir: %v", err)
+	}
+}
+
+// TP-001 (HIGH): No legacy tool name in live docs outside allowed exemptions.
+// Exemptions: the screenshot filename (workflow-identity artifact) and the
+// frozen historical plan link are stripped before the check.
+func TestDocSweep_NoLegacyToolNameInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	exempt := []string{legacyName + "-screenshot.png", "docs/plans/" + legacyName + ".md"}
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		s := content
+		for _, e := range exempt {
+			s = strings.ReplaceAll(s, e, "")
+		}
+		if strings.Contains(s, legacyName) {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-001: live docs contain %q outside allowed exemptions:\n  %s",
+			legacyName, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-002 (HIGH): No legacy config filename in live docs.
+func TestDocSweep_NoLegacyConfigNameInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, legacyConfigName) {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-002: live docs contain %q — update to config.json:\n  %s",
+			legacyConfigName, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-003 (HIGH): No legacy log paths in live docs.
+// Checks that <projectDir>/logs/ and logs/ralph- (without .pr9k/ prefix) are absent.
+func TestDocSweep_NoLegacyLogPathsInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		for _, pat := range []string{"<projectDir>/logs/", "<project-dir>/logs/"} {
+			if strings.Contains(content, pat) {
+				offenders = append(offenders, rel+": contains "+pat)
+			}
+		}
+		// logs/ralph- is only valid when preceded by .pr9k/
+		stripped := strings.ReplaceAll(content, ".pr9k/logs/ralph-", "")
+		if strings.Contains(stripped, "logs/ralph-") {
+			offenders = append(offenders, rel+": contains logs/ralph- without .pr9k/ prefix")
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-003: live docs contain legacy log paths:\n  %s", strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-004 (HIGH): No legacy iteration log path in live docs.
+func TestDocSweep_NoLegacyIterationJsonlInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, legacyIterationPath) {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-004: live docs contain %q — update to .pr9k/iteration.jsonl:\n  %s",
+			legacyIterationPath, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-005 (HIGH): building-custom-workflows.md has the Per-Repo Workflow Override section
+// with both resolution candidates documented.
+func TestDocSweep_BuildingCustomWorkflows_PerRepoOverrideSection(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/building-custom-workflows.md")
+	assertContains(t, content, "## Per-Repo Workflow Override",
+		"building-custom-workflows.md: Per-Repo Workflow Override section header")
+	assertContains(t, content, "<projectDir>/.pr9k/workflow/",
+		"building-custom-workflows.md: in-repo override candidate path")
+	assertContains(t, content, "<executableDir>/.pr9k/workflow/",
+		"building-custom-workflows.md: shipped bundle candidate path")
+}
+
+// TP-006 (MED): README.md quickstart references the current binary name and not the legacy one.
+func TestDocSweep_README_QuickstartReferencesSrc(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "README.md")
+	assertContains(t, content, "bin/pr9k", "README.md: bin/pr9k binary reference")
+	assertNotContains(t, content, "bin/"+legacyName, "README.md: stale legacy binary reference")
+}
+
+// TP-007 (MED): CLAUDE.md has no stale legacy cd commands and references src/.
+func TestDocSweep_CLAUDEmd_NoStaleLegacyCdCommands(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "CLAUDE.md")
+	if strings.Contains(content, "cd "+legacyName) {
+		t.Errorf("CLAUDE.md: contains \"cd %s\" — update to \"cd src\"", legacyName)
+	}
+	assertContains(t, content, "cd src", "CLAUDE.md: cd src invocation")
+	assertNotContains(t, content, "bin/"+legacyName, "CLAUDE.md: stale legacy binary reference")
+}
+
+// TP-008 (MED): The frozen historical plan link in README.md and CLAUDE.md is annotated
+// with a "historical" or "original" qualifier so readers know the filename is intentionally frozen.
+func TestDocSweep_FrozenPlanLinkAnnotated(t *testing.T) {
+	root := docTestRepoRoot(t)
+	plan := "docs/plans/" + legacyName + ".md"
+	for _, f := range []string{"README.md", "CLAUDE.md"} {
+		content := readFile(t, root, f)
+		if !strings.Contains(content, plan) {
+			t.Errorf("%s: does not reference %s", f, plan)
+			continue
+		}
+		idx := strings.Index(content, plan)
+		start := idx - 200
+		if start < 0 {
+			start = 0
+		}
+		end := idx + len(plan) + 200
+		if end > len(content) {
+			end = len(content)
+		}
+		lower := strings.ToLower(content[start:end])
+		if !strings.Contains(lower, "historical") && !strings.Contains(lower, "original") {
+			t.Errorf("%s: link to %s lacks a historical/original annotation in surrounding text", f, plan)
+		}
+	}
+}
+
+// TP-009 (MED): The screenshot image file still exists (exempted from rename per non-goals).
+func TestDocSweep_ScreenshotFileExists(t *testing.T) {
+	root := docTestRepoRoot(t)
+	assertFileExists(t, filepath.Join(root, "images", legacyName+"-screenshot.png"))
+}
+
+// TP-010 (MED): caching-build-artifacts.md .gitignore block lists both .pr9k/ and .ralph-cache/.
+func TestDocSweep_CachingBuildArtifacts_DualDirGitignoreBlock(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/caching-build-artifacts.md")
+	assertContains(t, content, "# pr9k runtime state",
+		"caching-build-artifacts.md: runtime state comment")
+	assertContains(t, content, ".pr9k/",
+		"caching-build-artifacts.md: .pr9k/ gitignore entry")
+	assertContains(t, content, ".ralph-cache/",
+		"caching-build-artifacts.md: .ralph-cache/ gitignore entry")
+}
+
+// TP-011 (MED): passing-environment-variables.md mentions both .pr9k/ and .ralph-cache/.
+func TestDocSweep_PassingEnvVars_MentionsBothDirs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/passing-environment-variables.md")
+	assertContains(t, content, ".pr9k/",
+		"passing-environment-variables.md: .pr9k/ directory reference")
+	assertContains(t, content, ".ralph-cache/",
+		"passing-environment-variables.md: .ralph-cache/ directory reference")
+}
+
+// TP-012 (MED): workflow-organization/design.md Status line is "Implemented" and
+// lists all issues #135–#141.
+func TestDocSweep_WorkflowOrgDesign_StatusImplemented(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/plans/workflow-organization/design.md")
+	assertContains(t, content, "Implemented",
+		"workflow-organization/design.md: Status is Implemented")
+	for _, issue := range []string{"#135", "#136", "#137", "#138", "#139", "#140", "#141"} {
+		assertContains(t, content, issue,
+			"workflow-organization/design.md: Status lists "+issue)
+	}
+}
+
+// TP-013 (LOW): docs/architecture.md has no logs/ralph- without .pr9k/ prefix.
+// Focused follow-up to TP-003 for the known violation found during planning.
+func TestDocSweep_Architecture_LogPathHasPr9kPrefix(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/architecture.md")
+	stripped := strings.ReplaceAll(content, ".pr9k/logs/ralph-", "")
+	if strings.Contains(stripped, "logs/ralph-") {
+		t.Error("docs/architecture.md: contains logs/ralph- without .pr9k/ prefix")
+	}
+}
+
+// TP-014 (LOW): No legacy cd commands in live docs (regression guard).
+func TestDocSweep_NoStaleLegacyCdCommandsInDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	cdLegacy := "cd " + legacyName
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, cdLegacy) {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-014: live docs contain %q — update to \"cd src\":\n  %s",
+			cdLegacy, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-015 (LOW): workflow-organization/design.md non-goals document the screenshot filename exemption.
+func TestDocSweep_WorkflowOrgDesign_ScreenshotExemptionDocumented(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/plans/workflow-organization/design.md")
+	assertContains(t, content, legacyName+"-screenshot.png",
+		"workflow-organization/design.md: screenshot filename exemption in non-goals")
 }
 
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
