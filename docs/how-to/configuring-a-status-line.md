@@ -4,7 +4,7 @@ pr9k can display live workflow state in the TUI footer by running a custom scrip
 
 ## Prerequisites
 
-- pr9k 0.6.1 or later
+- pr9k 0.7.0 or later
 - A `config.json` in your workflow directory
 - [`jq`](https://jqlang.github.io/jq/) — required by the sample script to parse stdin JSON
 - `git` (optional) — used by the sample script to display the current branch
@@ -87,7 +87,7 @@ Available fields from stdin:
 | `.step.num` | `4` |
 | `.mode` | `"normal"` |
 | `.captures.ISSUE_ID` | `"42"` |
-| `.version` | `"0.6.1"` |
+| `.version` | `"0.7.0"` |
 | `.workflowDir` | `"/home/user/.local/bin"` |
 | `.projectDir` | `"/home/user/myrepo"` |
 
