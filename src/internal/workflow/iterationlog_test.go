@@ -24,7 +24,7 @@ func makeRecord(stepName, status string, iterNum int) IterationRecord {
 // produces exactly one JSON line in the file.
 func TestAppendIterationRecord_OneRecord(t *testing.T) {
 	dir := t.TempDir()
-	cacheDir := filepath.Join(dir, ".ralph-cache")
+	cacheDir := filepath.Join(dir, ".pr9k")
 	if err := os.Mkdir(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestAppendIterationRecord_OneRecord(t *testing.T) {
 // TestAppendIterationRecord_TwoRecords verifies two records appear in order.
 func TestAppendIterationRecord_TwoRecords(t *testing.T) {
 	dir := t.TempDir()
-	cacheDir := filepath.Join(dir, ".ralph-cache")
+	cacheDir := filepath.Join(dir, ".pr9k")
 	if err := os.Mkdir(cacheDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestAppendIterationRecord_TwoRecords(t *testing.T) {
 // and parseable after concurrent writes (tests the O_APPEND atomicity contract).
 func TestAppendIterationRecord_ConcurrentAppends(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, ".pr9k"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +111,7 @@ func TestAppendIterationRecord_ConcurrentAppends(t *testing.T) {
 		}
 	}
 
-	lines := readLines(t, filepath.Join(dir, ".ralph-cache", "iteration.jsonl"))
+	lines := readLines(t, filepath.Join(dir, ".pr9k", "iteration.jsonl"))
 	if len(lines) != n {
 		t.Fatalf("want %d lines, got %d", n, len(lines))
 	}
@@ -124,10 +124,10 @@ func TestAppendIterationRecord_ConcurrentAppends(t *testing.T) {
 }
 
 // TestAppendIterationRecord_PathUsesFilepathJoin verifies the file is written
-// to <projectDir>/.ralph-cache/iteration.jsonl without double-slash artifacts.
+// to <projectDir>/.pr9k/iteration.jsonl without double-slash artifacts.
 func TestAppendIterationRecord_PathUsesFilepathJoin(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, ".pr9k"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,21 +135,21 @@ func TestAppendIterationRecord_PathUsesFilepathJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := filepath.Join(dir, ".ralph-cache", "iteration.jsonl")
+	want := filepath.Join(dir, ".pr9k", "iteration.jsonl")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("expected file at %s: %v", want, err)
 	}
 }
 
 // TestAppendIterationRecord_MissingCacheDir verifies a clear error when
-// .ralph-cache does not exist (precondition violated — preflight must run first).
+// .pr9k does not exist (precondition violated — preflight must run first).
 func TestAppendIterationRecord_MissingCacheDir(t *testing.T) {
 	dir := t.TempDir()
-	// intentionally do NOT create .ralph-cache
+	// intentionally do NOT create .pr9k
 
 	err := AppendIterationRecord(dir, makeRecord("step", "done", 1))
 	if err == nil {
-		t.Fatal("expected error when .ralph-cache/ is missing, got nil")
+		t.Fatal("expected error when .pr9k/ is missing, got nil")
 	}
 }
 

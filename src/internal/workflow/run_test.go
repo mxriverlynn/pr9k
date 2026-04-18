@@ -5018,20 +5018,20 @@ func findConsecutivePrefix(args []string, flag, prefix string) int {
 
 // --- Iteration log integration tests ---
 
-// makeCacheDir creates a .ralph-cache subdirectory inside dir and returns dir.
+// makeCacheDir creates a .pr9k subdirectory inside dir and returns dir.
 func makeCacheDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".pr9k"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir
 }
 
-// readIterationLog reads all IterationRecords from <dir>/.ralph-cache/iteration.jsonl.
+// readIterationLog reads all IterationRecords from <dir>/.pr9k/iteration.jsonl.
 func readIterationLog(t *testing.T, dir string) []IterationRecord {
 	t.Helper()
-	path := filepath.Join(dir, ".ralph-cache", "iteration.jsonl")
+	path := filepath.Join(dir, ".pr9k", "iteration.jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read iteration log: %v", err)

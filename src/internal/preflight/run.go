@@ -18,10 +18,16 @@ type Result struct {
 //
 // Sequence:
 //  1. os.MkdirAll(projectDir+"/.ralph-cache") — creates the cache dir on the host
-//     so Docker bind-mount subpaths exist before the container starts.
-//  2. CheckProfileDir(profileDir)
-//  3. CheckDocker(p)
-//  4. CheckCredentials(profileDir) — warnings only, not fatal; only run
+//     so Docker bind-mount subpaths exist before the container starts. Must be
+//     pre-created under the host UID before the container runs, to avoid a
+//     chmod fight when the container writes its first cache file via the sandbox's
+//     UID mapping.
+//  2. os.MkdirAll(projectDir+"/.pr9k") — creates the umbrella dir for
+//     iteration.jsonl and .pr9k/logs/ on first run. Pre-created under the host
+//     UID for the same reason as .ralph-cache.
+//  3. CheckProfileDir(profileDir)
+//  4. CheckDocker(p)
+//  5. CheckCredentials(profileDir) — warnings only, not fatal; only run
 //     when CheckProfileDir succeeds, so that a missing profile directory
 //     produces a single clear error rather than both an error and a
 //     redundant "credentials file missing" warning.
@@ -34,6 +40,13 @@ func Run(projectDir, profileDir string, p Prober) Result {
 	cacheDir := filepath.Join(projectDir, ".ralph-cache")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		result.Errors = append(result.Errors, fmt.Errorf("preflight: could not create .ralph-cache in %s: %w", projectDir, err))
+	}
+
+	// Create .pr9k umbrella dir so iteration.jsonl and .pr9k/logs/ have a
+	// writable parent on first run (same UID pre-creation rationale as above).
+	pr9kDir := filepath.Join(projectDir, ".pr9k")
+	if err := os.MkdirAll(pr9kDir, 0o755); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("preflight: could not create .pr9k in %s: %w", projectDir, err))
 	}
 
 	profileErr := CheckProfileDir(profileDir)

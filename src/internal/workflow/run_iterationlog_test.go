@@ -143,7 +143,7 @@ func TestRun_IterationLog_IssueIDOrderingAfterCaptureAs(t *testing.T) {
 // steps must complete even when the log write returns an error, and a warning
 // must appear in the executor's log output.
 func TestRun_IterationLog_WriteFailureNonFatal(t *testing.T) {
-	// projectDir has no .ralph-cache/ — AppendIterationRecord returns an error.
+	// projectDir has no .pr9k/ — AppendIterationRecord returns an error.
 	projectDir := t.TempDir()
 	executor := &fakeExecutor{projectDir: projectDir}
 	header := &fakeRunHeader{}
@@ -771,7 +771,7 @@ func TestRun_SkipIfCaptureEmpty_LogMessage(t *testing.T) {
 func TestRun_SkipIfCaptureEmpty_SkipPathLogWriteFailure(t *testing.T) {
 	projectDir := t.TempDir()
 	// Make iteration.jsonl a directory so os.OpenFile fails.
-	jsonlDir := filepath.Join(projectDir, ".ralph-cache", "iteration.jsonl")
+	jsonlDir := filepath.Join(projectDir, ".pr9k", "iteration.jsonl")
 	if err := os.MkdirAll(jsonlDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

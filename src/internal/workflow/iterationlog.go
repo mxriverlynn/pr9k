@@ -9,7 +9,7 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/steps"
 )
 
-// IterationRecord is one JSONL line written to .ralph-cache/iteration.jsonl
+// IterationRecord is one JSONL line written to .pr9k/iteration.jsonl
 // after each workflow step completes. SchemaVersion starts at 1; bump on
 // incompatible field changes.
 type IterationRecord struct {
@@ -41,11 +41,11 @@ func newIterationRecord(issueID string, iterNum int, s steps.Step, status string
 }
 
 // AppendIterationRecord appends one JSON line to
-// <projectDir>/.ralph-cache/iteration.jsonl. Safe for concurrent callers:
+// <projectDir>/.pr9k/iteration.jsonl. Safe for concurrent callers:
 // O_APPEND writes smaller than PIPE_BUF are atomic on POSIX. The caller is
-// responsible for ensuring .ralph-cache/ exists (preflight.Run guarantees this).
+// responsible for ensuring .pr9k/ exists (preflight.Run guarantees this).
 func AppendIterationRecord(projectDir string, rec IterationRecord) (err error) {
-	path := filepath.Join(projectDir, ".ralph-cache", "iteration.jsonl")
+	path := filepath.Join(projectDir, ".pr9k", "iteration.jsonl")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("workflow: iteration log: open %s: %w", path, err)

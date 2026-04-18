@@ -376,6 +376,73 @@ func TestRun_RalphCache_FileClashSurfacesError(t *testing.T) {
 	}
 }
 
+// TestRun_Pr9kDir_CreatedOnFirstRun verifies that Run creates .pr9k/ inside
+// projectDir if it does not already exist.
+func TestRun_Pr9kDir_CreatedOnFirstRun(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	_ = Run(projectDir, profileDir, allGreenProber)
+
+	pr9kDir := filepath.Join(projectDir, ".pr9k")
+	info, err := os.Stat(pr9kDir)
+	if err != nil {
+		t.Fatalf(".pr9k was not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf(".pr9k is not a directory")
+	}
+}
+
+// TestRun_Pr9kDir_IdempotentOnRepeatRun verifies that calling Run twice does
+// not return an error if .pr9k already exists.
+func TestRun_Pr9kDir_IdempotentOnRepeatRun(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	r1 := Run(projectDir, profileDir, allGreenProber)
+	r2 := Run(projectDir, profileDir, allGreenProber)
+
+	for _, result := range []Result{r1, r2} {
+		for _, e := range result.Errors {
+			if strings.Contains(e.Error(), ".pr9k") {
+				t.Errorf("unexpected .pr9k error on repeat run: %v", e)
+			}
+		}
+	}
+}
+
+// TestRun_Pr9kDir_FileClashSurfacesError verifies that when a regular file
+// already exists at .pr9k (e.g. a git-tracked placeholder), Run surfaces an
+// error with the expected prefix and .pr9k in the message.
+func TestRun_Pr9kDir_FileClashSurfacesError(t *testing.T) {
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+
+	pr9kPath := filepath.Join(projectDir, ".pr9k")
+	if err := os.WriteFile(pr9kPath, []byte("placeholder"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := Run(projectDir, profileDir, allGreenProber)
+
+	var pr9kErr error
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), ".pr9k") {
+			pr9kErr = e
+			break
+		}
+	}
+	if pr9kErr == nil {
+		t.Fatalf("expected a .pr9k error when it exists as a regular file; got: %v", result.Errors)
+	}
+	if !strings.Contains(pr9kErr.Error(), "preflight: could not create .pr9k in") {
+		t.Errorf("error message has wrong format: %q", pr9kErr.Error())
+	}
+}
+
 // TestRun_CollectsAllErrors_CacheProfileDocker (TP-011) documents the collect-all
 // design: a .ralph-cache creation failure does not short-circuit the profile or
 // docker checks — all three errors surface before Run returns.
