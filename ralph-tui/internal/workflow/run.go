@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
@@ -116,6 +117,10 @@ type stepDispatcher struct {
 	// prevFailed tracks whether the last RunSandboxedStep call ended in error
 	// so we know whether the next call is a retry (for runStats.retries).
 	prevFailed bool
+	// capturedStats holds the StepStats from the most recent RunSandboxedStep
+	// call. Captured here (rather than calling LastStats again later) so that
+	// Run can read per-step stats for IterationRecord without a second call.
+	capturedStats claudestream.StepStats
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
@@ -125,9 +130,11 @@ func (d *stepDispatcher) RunStep(name string, command []string) error {
 			ArtifactPath: d.current.ArtifactPath,
 			CaptureMode:  d.current.CaptureMode,
 		})
-		// Fold stats regardless of outcome — D21: the spend was real.
+		// Capture stats once — both for D21 accounting and for IterationRecord.
+		s := d.exec.LastStats()
+		d.capturedStats = s
 		if d.stats != nil {
-			d.stats.add(d.exec.LastStats(), d.prevFailed)
+			d.stats.add(s, d.prevFailed)
 		}
 		d.prevFailed = err != nil
 		return err
@@ -183,6 +190,29 @@ type RunConfig struct {
 // noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
 // initialize) that do not update the TUI step-checkbox display.
 type noopHeader struct{}
+
+// stateTracker is a ui.StepHeader that records the last StepState set without
+// any visible TUI output. Used by the initialize phase so AppendIterationRecord
+// can determine step success or failure after Orchestrate returns.
+type stateTracker struct {
+	lastState ui.StepState
+}
+
+func (s *stateTracker) SetStepState(_ int, state ui.StepState) {
+	s.lastState = state
+}
+
+// stepStatus converts a ui.StepState to the IterationRecord Status string.
+func stepStatus(state ui.StepState) string {
+	switch state {
+	case ui.StepFailed:
+		return "failed"
+	case ui.StepSkipped:
+		return "skipped"
+	default:
+		return "done"
+	}
+}
 
 func (noopHeader) SetStepState(int, ui.StepState) {}
 
@@ -308,7 +338,24 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
+		st := &stateTracker{}
+		disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+		stepStart := time.Now()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, st, keyHandler)
+		rec := IterationRecord{
+			SchemaVersion: 1,
+			IterationNum:  0,
+			StepName:      s.Name,
+			Model:         s.Model,
+			Status:        stepStatus(st.lastState),
+			DurationS:     time.Since(stepStart).Seconds(),
+			InputTokens:   disp.capturedStats.InputTokens,
+			OutputTokens:  disp.capturedStats.OutputTokens,
+			SessionID:     disp.capturedStats.SessionID,
+		}
+		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+			executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+		}
 		if action == ui.ActionQuit {
 			return RunResult{}
 		}
@@ -359,7 +406,25 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			}
 			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
-			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
+			disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+			stepStart := time.Now()
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
+			issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+			rec := IterationRecord{
+				SchemaVersion: 1,
+				IssueID:       issueID,
+				IterationNum:  i,
+				StepName:      s.Name,
+				Model:         s.Model,
+				Status:        stepStatus(th.lastState),
+				DurationS:     time.Since(stepStart).Seconds(),
+				InputTokens:   disp.capturedStats.InputTokens,
+				OutputTokens:  disp.capturedStats.OutputTokens,
+				SessionID:     disp.capturedStats.SessionID,
+			}
+			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+			}
 			if action == ui.ActionQuit {
 				return RunResult{IterationsRun: iterationsRun}
 			}
@@ -367,8 +432,10 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			if s.CaptureAs != "" {
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
 				push(vars.Iteration)
-				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-				header.RenderIterationLine(i, cfg.Iterations, issueID)
+				// Re-read issueID after the bind so that if this step captured
+				// ISSUE_ID, the header shows the freshly bound value.
+				updatedIssueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				header.RenderIterationLine(i, cfg.Iterations, updatedIssueID)
 				writeCaptureLog(s.CaptureAs, captured)
 			}
 			// BreakLoopIfEmpty fires only on successful completion (StepDone).
@@ -413,7 +480,26 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+		th := &trackingOffsetIterHeader{h: header, idx: j}
+		disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+		stepStart := time.Now()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
+		issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+		rec := IterationRecord{
+			SchemaVersion: 1,
+			IssueID:       issueID,
+			IterationNum:  0,
+			StepName:      s.Name,
+			Model:         s.Model,
+			Status:        stepStatus(th.lastState),
+			DurationS:     time.Since(stepStart).Seconds(),
+			InputTokens:   disp.capturedStats.InputTokens,
+			OutputTokens:  disp.capturedStats.OutputTokens,
+			SessionID:     disp.capturedStats.SessionID,
+		}
+		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+			executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+		}
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
 		}

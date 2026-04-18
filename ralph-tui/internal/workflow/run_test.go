@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -5005,4 +5006,126 @@ func findConsecutivePrefix(args []string, flag, prefix string) int {
 		}
 	}
 	return -1
+}
+
+// --- Iteration log integration tests ---
+
+// makeCacheDir creates a .ralph-cache subdirectory inside dir and returns dir.
+func makeCacheDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// readIterationLog reads all IterationRecords from <dir>/.ralph-cache/iteration.jsonl.
+func readIterationLog(t *testing.T, dir string) []IterationRecord {
+	t.Helper()
+	path := filepath.Join(dir, ".ralph-cache", "iteration.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read iteration log: %v", err)
+	}
+	var recs []IterationRecord
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var r IterationRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("unmarshal line %q: %v", line, err)
+		}
+		recs = append(recs, r)
+	}
+	return recs
+}
+
+// TestRun_IterationLog_SuccessfulStep verifies that after a successful
+// iteration step the log contains a record with status "done".
+func TestRun_IterationLog_SuccessfulStep(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("my-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	r := recs[0]
+	if r.StepName != "my-step" {
+		t.Errorf("step_name: want %q, got %q", "my-step", r.StepName)
+	}
+	if r.Status != "done" {
+		t.Errorf("status: want %q, got %q", "done", r.Status)
+	}
+	if r.IterationNum != 1 {
+		t.Errorf("iteration_num: want 1, got %d", r.IterationNum)
+	}
+	if r.SchemaVersion != 1 {
+		t.Errorf("schema_version: want 1, got %d", r.SchemaVersion)
+	}
+}
+
+// TestRun_IterationLog_FailedStep verifies that after a failed iteration
+// step the log contains a record with status "failed".
+func TestRun_IterationLog_FailedStep(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		projectDir:    projectDir,
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("my-step"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Send ActionContinue to unblock the error-mode wait in Orchestrate.
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionContinue")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) == 0 {
+		t.Fatal("want at least 1 record in iteration log, got 0")
+	}
+	var found bool
+	for _, r := range recs {
+		if r.StepName == "my-step" {
+			found = true
+			if r.Status != "failed" {
+				t.Errorf("status: want %q, got %q", "failed", r.Status)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for my-step")
+	}
 }
