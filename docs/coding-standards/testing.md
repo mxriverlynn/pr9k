@@ -700,6 +700,112 @@ func TestDocIntegrity_ADR_ExistingADRsUnmodified(t *testing.T) {
 }
 ```
 
+## Write a rename guard test after any significant rename
+
+When a type, binary, directory, or config file is renamed, add a tree-walk test that asserts the old name no longer appears anywhere in the source tree. Without this guard, stale references accumulate silently — documentation, scripts, and embedded strings can all lag behind the rename.
+
+Two rules make the guard reliable:
+
+**Assemble the old name at runtime** so the guard test file itself does not appear as a match:
+
+```go
+// Assembled at runtime so this file is not flagged by its own scan.
+var legacyToolName = "ralph" + "-tui"
+```
+
+**Collect all offenders before failing** so the report shows every file that still needs updating, not just the first one:
+
+```go
+func checkNoLegacyNameInTree(t *testing.T, root string) {
+    t.Helper()
+    var offenders []string
+    _ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+        // ... skip binary/hidden files and dirs ...
+        if strings.Contains(string(data), legacyToolName) {
+            rel, _ := filepath.Rel(root, path)
+            offenders = append(offenders, rel)
+        }
+        return nil
+    })
+    if len(offenders) > 0 {
+        t.Errorf("files still contain %q:\n  %s", legacyToolName, strings.Join(offenders, "\n  "))
+    }
+}
+```
+
+Skip files that should not be scanned: binary extensions (`.sum`, `.png`, etc.), hidden files/dirs, and ephemeral working files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) that are never committed and may contain historical references. Skip the `bin/` and `.git/` directories.
+
+Apply one call per renamed artifact. A single rename guard for the binary name and a separate one for any renamed config file (e.g., `ralph-steps.json` → `config.json`) keeps failure messages specific.
+
+## Gate slow build-system tests with `//go:build integration`
+
+When a test must invoke the full build pipeline (e.g., `make build`) to verify that the binary or bundle is assembled correctly, gate it with the `integration` build tag:
+
+```go
+//go:build integration
+
+package main
+```
+
+This keeps `go test ./...` fast — the default CI run excludes the build step — while preserving the safety net for explicit invocations:
+
+```bash
+go test -tags=integration ./...   # runs integration tests too
+```
+
+Integration tests of this kind should:
+- Use `t.Skip` if the required tool (`make`, `docker`) is not on `$PATH`.
+- Verify the complete output structure: every expected file exists, every script has executable bits, no required file is empty.
+- Use `docTestRepoRoot(t)` (via `runtime.Caller(0)`) to locate the repo root rather than assuming a working directory.
+
+```go
+//go:build integration
+
+func TestBundleLayout_MakeBuildProducesWorkflowBundle(t *testing.T) {
+    if _, err := exec.LookPath("make"); err != nil {
+        t.Skip("make not on $PATH")
+    }
+    root := docTestRepoRoot(t)
+    if out, err := exec.Command("make", "build").CombinedOutput(); err != nil {
+        t.Fatalf("make build: %v\n%s", err, out)
+    }
+    // Assert bundle layout: config.json, prompts/*.md, scripts/* (executable), ralph-art.txt.
+}
+```
+
+## Extend doc integrity tests to validate cross-file references
+
+When a doc file contains a relative link to another doc file, add two assertions to `doc_integrity_test.go`:
+
+1. The link text or filename appears in the referencing file's body.
+2. The linked file exists on disk.
+
+This catches doc reorganizations that move or rename a file without updating every file that references it.
+
+```go
+func TestDocIntegrity_HowTo_RelatedLinksValid(t *testing.T) {
+    root := docTestRepoRoot(t)
+    content := readFile(t, root, "docs/how-to/copying-log-text.md")
+
+    relatedLinks := []struct {
+        ref  string
+        path string
+    }{
+        {"reading-the-tui.md", "docs/how-to/reading-the-tui.md"},
+        {"keyboard-input.md", "docs/features/keyboard-input.md"},
+        {"tui-display.md", "docs/features/tui-display.md"},
+    }
+    for _, l := range relatedLinks {
+        assertContains(t, content, l.ref, "copying-log-text.md Related documentation")
+        assertFileExists(t, filepath.Join(root, l.path))
+    }
+}
+```
+
+Apply this whenever a doc file gains a Related documentation section or an explicit cross-reference. The file-existence assertion is the critical part — the text assertion alone does not verify the link is valid after a rename.
+
+When a doc file refers to another doc as a source of further reading, also add the inverse: verify the referenced file links back to the referencing one (e.g., `TestDocIntegrity_ReadingTheTUI_LinksToHowTo`). Cross-links that are asserted in both directions cannot drift independently.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
