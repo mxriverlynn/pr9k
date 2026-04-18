@@ -1,6 +1,6 @@
 # Recovering from Step Failures
 
-Steps fail. A `git push` conflicts, a Claude step hits a rate limit, a test script returns 1 because of a flake. Ralph-tui pauses when this happens and hands control back to you: **continue**, **retry**, or **quit**. This guide walks through the error-mode flow so you can make the right call when a step fails.
+Steps fail. A `git push` conflicts, a Claude step hits a rate limit, a test script returns 1 because of a flake. pr9k pauses when this happens and hands control back to you: **continue**, **retry**, or **quit**. This guide walks through the error-mode flow so you can make the right call when a step fails.
 
 ## What counts as a failure
 

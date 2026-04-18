@@ -1,8 +1,8 @@
-# ralph-tui Architecture
+# pr9k Architecture
 
-ralph-tui is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
+pr9k is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, ralph-tui streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, pr9k streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
 
 ## System Block Diagram
 
@@ -196,13 +196,13 @@ Each feature is documented in detail under [`docs/features/`](features/) (user-f
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `ralph-steps.json`, `prompts/`, and `scripts/` live) from the executable path via `os.Executable()` + `filepath.EvalSymlinks` when not given explicitly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
+Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `config.json`, `prompts/`, and `scripts/` live) via a two-candidate search when not given explicitly: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The executable path is dereferenced via `os.Executable()` + `filepath.EvalSymlinks` to follow symlinks correctly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
 **Packages:** `internal/cli/`, `internal/version/`
 
 ### [Step Definitions & Prompt Building](code-packages/steps.md)
 
-Loads workflow step definitions from `ralph-steps.json`, which contains initialize, iteration, and finalization step groups. Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and applies `{{VAR}}` substitution using the active `VarTable` and phase.
+Loads workflow step definitions from `config.json`, which contains initialize, iteration, and finalization step groups. Each step defines a name, model, prompt file, and whether it's a Claude step or a shell command. `BuildPrompt` reads prompt files and applies `{{VAR}}` substitution using the active `VarTable` and phase.
 
 **Package:** `internal/steps/`
 
@@ -234,11 +234,11 @@ An eight-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `Mode
 
 Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHandler.ForceQuit()` which first flips mode to `ModeQuitting` and updates the shortcut bar (so the footer shows `"Quitting..."` immediately), then terminates the current subprocess and injects `ActionQuit` into the actions channel using a non-blocking send. The orchestration loop picks up the quit action before the next step starts, enabling clean shutdown. The main goroutine tracks whether a signal was received to choose the exit code (0 for normal, 1 for signaled).
 
-**Package:** `cmd/ralph-tui/` (`main.go`)
+**Package:** `cmd/src/` (`main.go`)
 
 ### [File Logging](code-packages/logger.md)
 
-A concurrent-safe file logger that writes timestamped, context-prefixed lines to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (millisecond precision). Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close. Exposes `RunStamp()` — the log basename without `.log` — which `main.go` passes into `RunConfig.RunStamp` for artifact directory naming by `claudestream.Pipeline`.
+A concurrent-safe file logger that writes timestamped, context-prefixed lines to `.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (millisecond precision). Each line includes a timestamp, optional iteration context (e.g., "Iteration 1/3"), and step name. Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines. Uses `bufio.Writer` with explicit flush on close. Exposes `RunStamp()` — the log basename without `.log` — which `main.go` passes into `RunConfig.RunStamp` for artifact directory naming by `claudestream.Pipeline`.
 
 **Package:** `internal/logger/`
 
@@ -250,7 +250,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ### [Config Validation](code-packages/validator.md)
 
-Validates `ralph-steps.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Validates the optional top-level `statusLine` block (command resolvability, `refreshIntervalSeconds` range, unknown-field rejection). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Validates `config.json` against all ten D13 categories in a single pass, collecting every error before returning. Checks file presence and parseability, per-step schema shape (including `isClaude`, `captureAs`, `breakLoopIfEmpty`), phase size, referenced file existence, and variable scope resolution. Also validates the top-level `env` array (Category 10) and enforces sandbox isolation rules B and C (host-path tokens in prompts, and captureAs+host-path in commands; Rule A was removed in issue #91 — captureAs on claude steps is now valid and binds via the Aggregator). Validates the optional top-level `statusLine` block (command resolvability, `refreshIntervalSeconds` range, unknown-field rejection). Returns a slice of structured `Error` values; an empty slice means valid. Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
 
 **Package:** `internal/validator/`
 
@@ -281,7 +281,7 @@ Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -
 ## Package Dependency Graph
 
 ```
-cmd/ralph-tui/main.go
+cmd/src/main.go
     ├── internal/cli           (argument parsing)
     │       └── internal/version
     ├── internal/logger        (file logging)
@@ -314,7 +314,7 @@ internal/statusline            (status-line runner, state, payload, sanitizer)
 
 ## Key Design Principles
 
-- **Narrow-reading principle**: Ralph-tui facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
+- **Narrow-reading principle**: pr9k facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `config.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
 - **Streaming over buffering**: Subprocess output is forwarded line-by-line via the `sendLine` callback into a buffered channel; the drain goroutine coalesces lines before sending `LogLinesMsg` to the Bubble Tea program — no bulk buffering and dump.
 - **Message-passing state**: `StatusHeader` mutations are never applied directly by the orchestration goroutine. They are wrapped as typed messages by `HeaderProxy` and sent via `program.Send`, received on the Bubble Tea Update goroutine, and applied there — eliminating header data races. The completion summary is *not* a header method — it is written to the log body via `ui.CompletionSummary` so it scrolls with the rest of the run transcript.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
@@ -327,13 +327,13 @@ internal/statusline            (status-line runner, state, payload, sanitizer)
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
   - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
-- [ralph-tui Plan](plans/ralph-tui.md) — Original specification with acceptance criteria, verification checklist, and design rationale
+- [pr9k Plan](plans/pr9k.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration
-- **Coding Standards** — Conventions that govern ralph-tui implementation:
+- **Coding Standards** — Conventions that govern pr9k implementation:
   - [Concurrency](coding-standards/concurrency.md) — Mutex patterns, WaitGroup drain, channel dispatch, non-blocking sends
   - [Error Handling](coding-standards/error-handling.md) — Package-prefixed errors, file paths in I/O errors, scanner error checking
   - [API Design](coding-standards/api-design.md) — Bounds guards, precondition validation, adapter types, platform assumptions
   - [Go Patterns](coding-standards/go-patterns.md) — Symlink-safe paths, slice immutability, scanner buffers
   - [Testing](coding-standards/testing.md) — Race detector, idempotent close, bounds testing, test doubles with mutexes
   - [Lint and Tooling](coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited; fix the root cause or escalate
-  - [Versioning](coding-standards/versioning.md) — Semver rules specific to ralph-tui, the `version.Version` single source of truth, and what counts as the app's public API
+  - [Versioning](coding-standards/versioning.md) — Semver rules specific to pr9k, the `version.Version` single source of truth, and what counts as the app's public API

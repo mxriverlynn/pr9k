@@ -253,7 +253,7 @@ Non-pipeline invocations (`CaptureMode != CaptureResult`) take the existing
 `artifactPath` computes the per-step `.jsonl` path as:
 
 ```
-<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+<projectDir>/.pr9k/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
 ```
 
 Phase prefixes: `initialize-`, `iter<NN>-` (1-indexed), `finalize-`. Returns `""`
@@ -288,10 +288,10 @@ operator. No summary is emitted when `rs.invocations == 0`.
 `workflow.RunConfig.RunStamp`. Millisecond precision prevents two rapid
 successive runs from sharing an artifact directory.
 
-### cmd/ralph-tui/main.go
+### cmd/src/main.go
 
 `startup()` creates the per-run artifact directory
-(`<projectDir>/logs/<runStamp>/`) via `os.MkdirAll(0o700)` immediately after
+(`<projectDir>/.pr9k/logs/<runStamp>/`) via `os.MkdirAll(0o700)` immediately after
 `NewLogger` succeeds. Directory creation failure logs to stderr and aborts
 startup, consistent with the existing logger-failure path.
 

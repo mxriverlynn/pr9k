@@ -1,6 +1,6 @@
 # Reading the TUI
 
-Ralph-tui streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
+pr9k streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
 
 ## The three inner regions
 
@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.6.0 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  pr9k v0.7.0 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -65,7 +65,7 @@ After the finalize phase ends, the title keeps its last finalize value — **the
 
 ### Heartbeat indicator
 
-When ralph-tui is waiting on a `claude` step and no stream-json event arrives for ≥15 seconds, the iteration title appends a `  ⋯ thinking (Ns)` suffix showing how many seconds have elapsed since the last event. The suffix updates in-place every second and disappears as soon as the next event arrives. It is pure view state — never written to the log panel or persisted to disk.
+When pr9k is waiting on a `claude` step and no stream-json event arrives for ≥15 seconds, the iteration title appends a `  ⋯ thinking (Ns)` suffix showing how many seconds have elapsed since the last event. The suffix updates in-place every second and disappears as soon as the next event arrives. It is pure view state — never written to the log panel or persisted to disk.
 
 ## Region 2 — the log panel
 
@@ -153,11 +153,11 @@ When you resize the terminal, content re-wraps to the new width and the viewport
 
 ### Scrolling
 
-The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — ralph-tui enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
+The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — pr9k enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
 
 ### Selecting log text to copy
 
-ralph-tui handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
+pr9k handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
 
 **In-app mouse selection (recommended):**
 - **Left-click and drag** in the log viewport to select text. As you drag, the selected region is highlighted in reverse-video. Dragging past the top or bottom edge auto-scrolls one line per event.
@@ -176,16 +176,16 @@ The modifier key bypass is a standard feature of every mainstream terminal that 
 
 ## Region 3 — the shortcut footer
 
-A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`pr9k v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `pr9k --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
 
 The footer uses a two-tone color scheme: the version label on the right renders in **white**. On the left, for the key-mapping lines (Normal and Error modes), each mapped key token (e.g. `↑/k`, `n`, `q`, `c`, `r`) renders in **white** and its trailing description (e.g. `up`, `next step`, `quit`) renders in **light gray**. For the status-message lines the whole line renders in **white** — with one exception: in the quit-confirm prompt, the embedded `Power-Ralph.9000` substring renders in **green** to match the top-border title's brand color, so the confirmation footer and the title line read as the same app.
 
 ### Status-line footer path
 
-When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
+When a `statusLine` command is configured in `config.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
-[status text…]                    ? Help | ralph-tui v0.6.0
+[status text…]                    ? Help | pr9k v0.7.0
 ```
 
 The status text sits on the left and the `? Help | <version>` cluster is right-aligned, so the help hint and version label stay pinned to the right edge regardless of how wide the status text grows or shrinks between refreshes. The status text is the sanitized first non-empty line of the most recent command run; it is right-truncated to protect the `? Help | <version>` cluster. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.

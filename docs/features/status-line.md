@@ -8,7 +8,7 @@ The status-line feature lets users replace the TUI's default shortcut bar with t
 
 ## Overview
 
-- When a `statusLine` block is present in `ralph-steps.json`, ralph-tui launches a background `Runner` that executes the configured command on a schedule and after key workflow events
+- When a `statusLine` block is present in `config.json`, pr9k launches a background `Runner` that executes the configured command on a schedule and after key workflow events
 - The command's first non-empty stdout line is sanitized and displayed in the TUI footer, replacing the shortcut bar in Normal mode
 - A `? Help` shortcut appears next to the status text so users can still access the keyboard shortcut modal
 - When no `statusLine` block is configured, the TUI footer shows the default shortcut bar (unchanged behavior)
@@ -16,18 +16,18 @@ The status-line feature lets users replace the TUI's default shortcut bar with t
 
 Key implementation files:
 
-- `ralph-tui/internal/statusline/` — `Runner`, `State`, `BuildPayload`, `Sanitize`
-- `ralph-tui/internal/ui/model.go` — footer rendering switch, help-modal overlay
-- `ralph-tui/internal/ui/ui.go` — `ModeHelp`, `HelpModeShortcuts`, `StatusLineActive`
-- `ralph-tui/internal/ui/keys.go` — `?` handler, `handleHelp`
-- `ralph-tui/cmd/ralph-tui/main.go` — wiring (construct Runner, wire sender, set mode getter)
-- `ralph-tui/internal/workflow/run.go` — push closure at every VarTable mutation site
+- `src/internal/statusline/` — `Runner`, `State`, `BuildPayload`, `Sanitize`
+- `src/internal/ui/model.go` — footer rendering switch, help-modal overlay
+- `src/internal/ui/ui.go` — `ModeHelp`, `HelpModeShortcuts`, `StatusLineActive`
+- `src/internal/ui/keys.go` — `?` handler, `handleHelp`
+- `src/cmd/src/main.go` — wiring (construct Runner, wire sender, set mode getter)
+- `src/internal/workflow/run.go` — push closure at every VarTable mutation site
 
 See [`docs/code-packages/statusline.md`](../code-packages/statusline.md) for the package-level reference (Runner API, State, BuildPayload, Sanitize).
 
 ## Configuration
 
-Add an optional `statusLine` block to `ralph-steps.json`:
+Add an optional `statusLine` block to `config.json`:
 
 ```json
 {
@@ -68,7 +68,7 @@ The script receives a single JSON object on stdin:
 ```json
 {
   "sessionId": "20260417-093045-123",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "phase": "iteration",
   "iteration": 1,
   "maxIterations": 3,
@@ -83,13 +83,13 @@ The script receives a single JSON object on stdin:
 | Field | Type | Description |
 |-------|------|-------------|
 | `sessionId` | string | Timestamp-based session identifier |
-| `version` | string | ralph-tui version (`version.Version`) |
+| `version` | string | pr9k version (`version.Version`) |
 | `phase` | string | `"initialize"`, `"iteration"`, or `"finalize"` |
 | `iteration` | int | Current iteration number; `0` outside iteration phase |
 | `maxIterations` | int | Maximum iterations (`0` = unbounded) |
 | `step.num` | int | Current step number within phase (1-based) |
 | `step.count` | int | Total step count in phase |
-| `step.name` | string | Step name from `ralph-steps.json` |
+| `step.name` | string | Step name from `config.json` |
 | `mode` | string | Current UI mode: `"normal"`, `"error"`, `"quitconfirm"`, `"nextconfirm"`, `"done"`, `"select"`, `"quitting"`, or `"help"` |
 | `workflowDir` | string | Workflow bundle directory |
 | `projectDir` | string | Target repository directory |
@@ -97,7 +97,7 @@ The script receives a single JSON object on stdin:
 
 All fields are always present. `captures` is always a JSON object (never null).
 
-**The script must drain stdin before exiting.** If the script exits without reading, ralph-tui's stdin write blocks until the pipe closes, which triggers the 2-second command timeout. The sample `scripts/statusline` uses `input=$(cat)` to drain and capture stdin for processing.
+**The script must drain stdin before exiting.** If the script exits without reading, pr9k's stdin write blocks until the pipe closes, which triggers the 2-second command timeout. The sample `scripts/statusline` uses `input=$(cat)` to drain and capture stdin for processing.
 
 ### Stdout
 
@@ -107,7 +107,7 @@ All fields are always present. `captures` is always a JSON object (never null).
 
 ### Stderr
 
-Stderr is drained concurrently and forwarded to the ralph-tui log file with the `[statusline]` step prefix.
+Stderr is drained concurrently and forwarded to the pr9k log file with the `[statusline]` step prefix.
 
 ### Exit code and timeout
 
@@ -191,7 +191,7 @@ Log lines from the status-line runner are prefixed with `[statusline]`:
 The following are not provided by this feature:
 
 - **Sandboxing** — the script runs on the host with the full environment. Isolation (if desired) must be implemented in the script itself.
-- **Live config reload** — `SetStatusLineActive` is called once at startup; changes to `ralph-steps.json` require a restart.
+- **Live config reload** — `SetStatusLineActive` is called once at startup; changes to `config.json` require a restart.
 - **Multiple status-line commands** — only one `statusLine` block is supported.
 - **Windows** — SIGTERM/SIGKILL semantics and path resolution assume Unix.
 - **Scrollable / multi-line output** — only the first non-empty line is displayed.

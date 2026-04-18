@@ -1,10 +1,10 @@
 # Passing Environment Variables to the Sandbox
 
-Claude steps run inside a Docker container with a scrubbed environment. By default, only five sandbox-plumbing variables are forwarded from the host. If your workflow needs additional host environment variables inside the container — API tokens, proxy settings, feature flags — you declare them in `ralph-steps.json`.
+Claude steps run inside a Docker container with a scrubbed environment. By default, only five sandbox-plumbing variables are forwarded from the host. If your workflow needs additional host environment variables inside the container — API tokens, proxy settings, feature flags — you declare them in `config.json`.
 
 ## The `env` field
 
-Add a top-level `env` array to your `ralph-steps.json`:
+Add a top-level `env` array to your `config.json`:
 
 ```json
 {
@@ -37,10 +37,10 @@ Additionally, `CLAUDE_CONFIG_DIR=/home/agent/.claude` is always set inside the c
 
 ## How merging works
 
-At build time, ralph-tui merges the builtin allowlist with your `env` entries:
+At build time, pr9k merges the builtin allowlist with your `env` entries:
 
 ```
-final allowlist = BuiltinEnvAllowlist + env (from ralph-steps.json)
+final allowlist = BuiltinEnvAllowlist + env (from config.json)
 ```
 
 Duplicates are de-duplicated by name (first-seen wins). Each name is passed to Docker as `-e NAME` (no `=VALUE`), so Docker reads the value from the host. If `os.LookupEnv(name)` returns false on the host, the `-e` flag is still added — Docker itself silently omits unset variables.
@@ -71,11 +71,11 @@ The default workflow forwards `GH_TOKEN` so that Claude can use the GitHub CLI i
 }
 ```
 
-Before running ralph-tui, set the variable on the host:
+Before running pr9k, set the variable on the host:
 
 ```bash
 export GH_TOKEN=$(gh auth token)
-/path/to/bin/ralph-tui
+/path/to/bin/pr9k
 ```
 
 Inside the container, `echo $GH_TOKEN` will print the token value.
@@ -85,7 +85,7 @@ Inside the container, `echo $GH_TOKEN` will print the token value.
 If a claude step fails because it can't find an expected variable:
 
 1. Verify the variable is set on the host: `echo $MY_VAR`
-2. Verify it's listed in `ralph-steps.json`'s `env` array
+2. Verify it's listed in `config.json`'s `env` array
 3. Check that the validator didn't reject it: validation errors appear on stderr before the TUI starts
 4. Check for typos — the name must match exactly (case-sensitive)
 
@@ -111,7 +111,7 @@ Key differences from `env`:
 
 | | `env` | `containerEnv` |
 |--|-------|----------------|
-| Value source | Host environment at container start | Literal value in `ralph-steps.json` |
+| Value source | Host environment at container start | Literal value in `config.json` |
 | Stored in repo | Name only (safe) | Name **and value** (committed to repo) |
 | When to use | Secrets, per-machine config | Build paths, feature flags, fixed constants |
 | Precedence | Applied first | Applied after `env` — Docker last-wins, so containerEnv beats host passthrough for the same key |
@@ -120,11 +120,11 @@ Key differences from `env`:
 
 - Keys must not be `CLAUDE_CONFIG_DIR` (reserved for the sandbox mount point) — the validator rejects this with a fatal error.
 - Keys must not contain `=`; values must not contain newlines or NUL — both are fatal errors.
-- `containerEnv` values are committed to `ralph-steps.json`. **Do not store secrets here.** The validator emits a warning when a key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY`.
+- `containerEnv` values are committed to `config.json`. **Do not store secrets here.** The validator emits a warning when a key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY`.
 
 ### The `.ralph-cache` directory
 
-Ralph-tui creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo.
+pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add both `.pr9k/` and `.ralph-cache/` to `.gitignore` in your target repo — `.pr9k/` covers session logs and runtime state, while `.ralph-cache/` covers the build artifact cache (see [Caching Build Artifacts](caching-build-artifacts.md#target-project-gitignore)).
 
 ## Related documentation
 

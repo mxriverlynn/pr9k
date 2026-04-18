@@ -1,6 +1,6 @@
 # Signal Handling & Shutdown
 
-Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the ralph-tui workflow, terminating the active subprocess and exiting with the appropriate status code.
+Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the pr9k workflow, terminating the active subprocess and exiting with the appropriate status code.
 
 - **Last Updated:** 2026-04-11
 - **Authors:**
@@ -14,7 +14,7 @@ Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the ralph-tui w
 - The main goroutine tracks whether a signal was received to select the exit code: 0 for normal completion, 1 for signal-initiated shutdown
 
 Key files:
-- `ralph-tui/cmd/ralph-tui/main.go` — Signal setup, signal handler goroutine, exit code selection
+- `src/cmd/src/main.go` — Signal setup, signal handler goroutine, exit code selection
 
 ## Architecture
 
@@ -182,8 +182,8 @@ if runErr != nil && !errors.Is(runErr, tea.ErrProgramKilled) {
 ## Testing
 
 Signal handling is tested indirectly through:
-- `ralph-tui/internal/ui/ui_test.go` — Tests for `ForceQuit` behavior (cancel called, ActionQuit sent)
-- `ralph-tui/internal/ui/orchestrate_test.go` — Tests for pre-step quit drain (ActionQuit injected before step starts)
+- `src/internal/ui/ui_test.go` — Tests for `ForceQuit` behavior (cancel called, ActionQuit sent)
+- `src/internal/ui/orchestrate_test.go` — Tests for pre-step quit drain (ActionQuit injected before step starts)
 
 ## Additional Information
 

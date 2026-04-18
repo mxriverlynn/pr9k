@@ -139,7 +139,7 @@ prevIterState = th.lastState         // ui.StepState recorded by trackingOffsetI
 
 When a claude step times out, `RunSandboxedStep` adds its captured `SessionID` to `Runner`'s session blacklist. On the next iteration (or the next step in the same phase), `evaluateResumeGates` calls `executor.SessionBlacklisted(prevStats.SessionID)` — gate G5 fires and the resume is suppressed. This prevents resuming a session whose server-side state is unknown due to the forced kill.
 
-The feature is **shipped engine-off**: the default `ralph-steps.json` omits `resumePrevious` on all steps. Engine support is fully implemented; activation requires setting `"resumePrevious": true` on the desired claude steps in `ralph-steps.json` and A/B validation.
+The feature is **shipped engine-off**: the default `config.json` omits `resumePrevious` on all steps. Engine support is fully implemented; activation requires setting `"resumePrevious": true` on the desired claude steps in `config.json` and A/B validation.
 
 See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious) in the feature doc for the user-facing gate table and skip-chain behavior. See [Resuming Sessions](../how-to/resuming-sessions.md) for usage guidance.
 
@@ -153,7 +153,7 @@ When a step times out and the user chooses to retry, `stepDispatcher.RunStep` de
 
 `Run` (in `run.go`) drives three phases — initialize, iteration, finalize — calling `buildStep` for each step to produce a `ui.ResolvedStep`, then wrapping it in a `stepDispatcher` and handing it to `ui.Orchestrate`. Captured values are bound to the VarTable after each `captureAs` step via `executor.LastCapture()`.
 
-After every step (including prep failures), `Run` appends one `IterationRecord` to `.ralph-cache/iteration.jsonl`. See [Iteration log](#iteration-log) below.
+After every step (including prep failures), `Run` appends one `IterationRecord` to `.pr9k/iteration.jsonl`. See [Iteration log](#iteration-log) below.
 
 ## Iteration log
 
@@ -191,9 +191,9 @@ type IterationRecord struct {
 func AppendIterationRecord(projectDir string, rec IterationRecord) error
 ```
 
-Appends one JSON line to `<projectDir>/.ralph-cache/iteration.jsonl`. Safe for concurrent callers: O_APPEND writes under PIPE_BUF are atomic on POSIX. The caller is responsible for ensuring `.ralph-cache/` exists (preflight.Run guarantees this at startup). Write failures are non-fatal — `Run` logs a `warning:` line and continues.
+Appends one JSON line to `<projectDir>/.pr9k/iteration.jsonl`. Safe for concurrent callers: O_APPEND writes under PIPE_BUF are atomic on POSIX. The caller is responsible for ensuring `.pr9k/` exists (preflight.Run guarantees this at startup). Write failures are non-fatal — `Run` logs a `warning:` line and continues.
 
-**File location:** `<projectDir>/.ralph-cache/iteration.jsonl`
+**File location:** `<projectDir>/.pr9k/iteration.jsonl`
 **Schema version:** `1` (in the `schema_version` field of every record)
 **Lifecycle:** the file accumulates records for the entire run. The finalize step `lessons-learned.md` truncates it at the end of each run.
 

@@ -9,7 +9,7 @@
 
 ## Context
 
-The ralph-tui Go application currently uses Go's stdlib `flag` package for CLI argument parsing (`ralph-tui/internal/cli/args.go`). This works for the current minimal interface (one positional `iterations` argument and an optional `--workflow-dir` flag — historically named `-project-dir` before the split recorded in [the workflow/project dir split ADR](20260413162428-workflow-project-dir-split.md)), but requires a custom `reorderArgs()` function to work around `flag`'s limitation of stopping at the first non-flag argument.
+The pr9k Go application currently uses Go's stdlib `flag` package for CLI argument parsing (`src/internal/cli/args.go`). This works for the current minimal interface (one positional `iterations` argument and an optional `--workflow-dir` flag — historically named `-project-dir` before the split recorded in [the workflow/project dir split ADR](20260413162428-workflow-project-dir-split.md)), but requires a custom `reorderArgs()` function to work around `flag`'s limitation of stopping at the first non-flag argument.
 
 The project needs to add POSIX-style flags (`--long-flag`) and subcommand support, neither of which stdlib `flag` provides. A third-party CLI framework is needed.
 
@@ -17,7 +17,7 @@ The project needs to add POSIX-style flags (`--long-flag`) and subcommand suppor
 
 - **Long-term ecosystem support** — the chosen library must be actively maintained with a large community to avoid future migration headaches
 - **POSIX-style flags** — support for `--long-flag` and `-s` short flags
-- **Subcommand support** — ability to define subcommands (e.g., `ralph-tui run`, `ralph-tui config`)
+- **Subcommand support** — ability to define subcommands (e.g., `pr9k run`, `pr9k config`)
 - **Help generation** — automatic, well-formatted help output
 
 ## Considered Options
@@ -69,10 +69,10 @@ Migration effort from stdlib `flag` to the chosen framework was explicitly not a
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/cli/args.go` | CLI parsing via cobra: `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir` (see [split ADR](20260413162428-workflow-project-dir-split.md)) |
-| `ralph-tui/internal/cli/args_test.go` | 16 test cases covering all cobra parsing branches |
-| `ralph-tui/cmd/ralph-tui/main.go` | Entry point that calls `cli.Execute()` and wires config into the app |
-| `ralph-tui/internal/workflow/run.go` | Downstream consumer of `cli.Config` via `workflow.RunConfig` |
+| `src/internal/cli/args.go` | CLI parsing via cobra: `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir` (see [split ADR](20260413162428-workflow-project-dir-split.md)) |
+| `src/internal/cli/args_test.go` | 16 test cases covering all cobra parsing branches |
+| `src/cmd/src/main.go` | Entry point that calls `cli.Execute()` and wires config into the app |
+| `src/internal/workflow/run.go` | Downstream consumer of `cli.Config` via `workflow.RunConfig` |
 
 ### Related Docs
 

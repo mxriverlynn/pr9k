@@ -1,6 +1,6 @@
 # Setting Step Timeouts
 
-The `timeoutSeconds` field caps the wall-clock time a single step may run. When the deadline expires, ralph-tui sends `SIGTERM` to the Docker container (for claude steps) or the host process (for non-claude steps). If the process has not exited within 10 seconds, `SIGKILL` is sent.
+The `timeoutSeconds` field caps the wall-clock time a single step may run. When the deadline expires, pr9k sends `SIGTERM` to the Docker container (for claude steps) or the host process (for non-claude steps). If the process has not exited within 10 seconds, `SIGKILL` is sent.
 
 ## When to use it
 
@@ -13,7 +13,7 @@ A timeout is not a substitute for writing efficient prompts; it is a last-resort
 
 ## Configuration
 
-Add `timeoutSeconds` to any step in `ralph-steps.json`:
+Add `timeoutSeconds` to any step in `config.json`:
 
 ```json
 {
@@ -35,14 +35,14 @@ Add `timeoutSeconds` to any step in `ralph-steps.json`:
    - **Claude steps** — delivered via `docker kill --signal=SIGTERM` to the container.
    - **Non-claude steps** — delivered via `syscall.Kill(-pid, SIGTERM)` to the process group (the host child is started with `Setpgid: true`, so grandchildren are included).
 2. If the process has not exited within 10 seconds, `SIGKILL` is sent to the same target.
-3. The step's exit code is non-zero → the step is recorded as `status: "failed"` in `.ralph-cache/iteration.jsonl` with `notes: "timed out after Ns"`.
+3. The step's exit code is non-zero → the step is recorded as `status: "failed"` in `.pr9k/iteration.jsonl` with `notes: "timed out after Ns"`.
 4. The workflow enters error mode (same as any other non-zero exit), and the user can choose to continue, retry, or quit.
 
 ## Partial session-ID blacklist
 
 When a Claude step times out and the `claudestream` pipeline has already received a `session_id` from the model, that session ID is added to an in-memory blacklist (accessible via `Runner.SessionBlacklisted` / `Runner.BlacklistedSessions`). A future issue will wire a session-resume gate that consults this list to prevent resuming a timed-out session.
 
-Session IDs are also written to `.ralph-cache/iteration.jsonl`. If session IDs are sensitive in your environment, add `.ralph-cache/` to `.gitignore` in the target repository.
+Session IDs are also written to `.pr9k/iteration.jsonl`. If session IDs are sensitive in your environment, add `.pr9k/` to `.gitignore` in the target repository.
 
 ## Advisory prompt budget
 
@@ -54,4 +54,4 @@ fix them in batch rather than one at a time. Do not exceed 8 minutes of
 wall-clock test execution.
 ```
 
-The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 900` (15 minutes) is the separate, enforced wall-clock cap that ralph-tui applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.
+The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 900` (15 minutes) is the separate, enforced wall-clock cap that pr9k applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.

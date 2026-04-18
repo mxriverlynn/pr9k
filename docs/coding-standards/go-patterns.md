@@ -2,9 +2,9 @@
 
 ## Resolve directories with os.Executable / os.Getwd + filepath.EvalSymlinks
 
-ralph-tui resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
+pr9k resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
 
-**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/ralph-tui` → `pr9k/bin/ralph-tui`).
+**Workflow directory** (install dir — where `config.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/pr9k` → `pr9k/bin/pr9k`).
 
 ```go
 exe, err := os.Executable()
@@ -31,7 +31,43 @@ if err != nil {
 }
 ```
 
-This is why `go run` does not work for ralph-tui: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
+This is why `go run` does not work for pr9k: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
+
+## Extract OS-dependent calls into injectable inner functions
+
+Functions that rely on `os.Executable()`, `os.Getwd()`, or other OS state cannot be unit-tested without running a real binary or changing the process working directory. Extract a testable inner function that accepts the already-resolved values; the public function performs the OS call and delegates.
+
+```go
+// Public entry point — performs the OS call, then delegates.
+func resolveWorkflowDir(projectDir string) (string, error) {
+    exe, err := os.Executable()
+    if err != nil {
+        return "", err
+    }
+    exe, err = filepath.EvalSymlinks(exe)
+    if err != nil {
+        return "", err
+    }
+    return resolveWorkflowDirWith(projectDir, filepath.Dir(exe))
+}
+
+// Testable inner function — no OS calls; tests inject arbitrary directories.
+func resolveWorkflowDirWith(projectDir, execDir string) (string, error) {
+    candidate := filepath.Join(projectDir, ".pr9k", "workflow")
+    if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+        return candidate, nil
+    }
+    candidate = filepath.Join(execDir, ".pr9k", "workflow")
+    if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+        return candidate, nil
+    }
+    return "", fmt.Errorf("could not locate workflow bundle")
+}
+```
+
+Apply this split any time the public function's first action is an OS or environment call (`os.Executable`, `os.Getwd`, `os.Hostname`, `time.Now`, etc.) whose result is then threaded through pure logic. The inner function gets the `...With` suffix by convention and is package-private.
+
+Tests call `resolveWorkflowDirWith` with `t.TempDir()`-rooted paths and never need to build or locate a real binary.
 
 ## Use runtime.Caller(0) in test helpers for path resolution
 
@@ -140,7 +176,7 @@ func Execute() (*Config, error) {
 // In main:
 cfg, err := cli.Execute()
 if err != nil {
-    fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+    fmt.Fprintf(os.Stderr, "error: %v\nRun 'pr9k --help' for usage.\n", err)
     os.Exit(1)
 }
 if cfg == nil {
@@ -170,7 +206,7 @@ if len(stepFile.Initialize) > 0 {
     }
 }
 
-versionLabel := "ralph-tui v" + version.Version
+versionLabel := "pr9k v" + version.Version
 model := ui.NewModel(header, keyHandler, versionLabel)
 program := tea.NewProgram(model, ...)
 program.Run() // first frame renders from already-populated state
@@ -570,7 +606,7 @@ Apply any time a string is sliced at a byte index rather than a rune index — l
 
 When spawning a host (non-Docker) subprocess that may itself spawn children, set `SysProcAttr.Setpgid = true` so the child runs in its own process group. When sending a signal (SIGTERM, SIGKILL), use `syscall.Kill(-pid, sig)` to deliver it to the entire process group — not just the direct child.
 
-Without `Setpgid`, `syscall.Kill(-pid, sig)` kills the parent process's own process group, potentially delivering signals to the ralph-tui process itself.
+Without `Setpgid`, `syscall.Kill(-pid, sig)` kills the parent process's own process group, potentially delivering signals to the pr9k process itself.
 
 ```go
 cmd := exec.Command(args[0], args[1:]...)
@@ -606,7 +642,7 @@ The threshold is one: even a single use of a non-obvious number warrants a const
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
-- [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`
+- [CLI & Configuration](../features/cli-configuration.md) — Symlink-safe project directory resolution in `resolveProjectDir`; cobra Execute nil guard in `main.go`; `resolveWorkflowDirWith` as the canonical OS-call injection seam
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Phase-specific render methods using `substitute` for conditional format strings
 - [TUI Display](../features/tui-display.md) — Pre-populate TUI model state before program.Run(); two-pass global maxCellWidth layout for the checkbox grid; write-only `iterationLine` field removed from `headerModel` (issue #75)
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — 256KB scanner buffer and ResolveCommand slice immutability

@@ -1,8 +1,8 @@
 # Resuming Sessions
 
-Ralph-tui can pass `--resume <session_id>` to a Claude step so it picks up directly from where the previous step left off — sharing the same conversation context rather than starting fresh. This is the `resumePrevious` pattern.
+pr9k can pass `--resume <session_id>` to a Claude step so it picks up directly from where the previous step left off — sharing the same conversation context rather than starting fresh. This is the `resumePrevious` pattern.
 
-> **Note:** The engine is fully implemented but the **default workflow ships with this feature off** on all steps. Enabling it requires a field change in `ralph-steps.json` and validation that it improves results for your workflow.
+> **Note:** The engine is fully implemented but the **default workflow ships with this feature off** on all steps. Enabling it requires a field change in `config.json` and validation that it improves results for your workflow.
 
 ## When you want it
 
@@ -37,7 +37,7 @@ Mark a Claude step with `resumePrevious: true`:
 }
 ```
 
-At runtime, before "Test writing" starts, ralph-tui evaluates five gates. All five must pass for `--resume` to be injected; any single failure falls through to a fresh session without aborting the workflow:
+At runtime, before "Test writing" starts, pr9k evaluates five gates. All five must pass for `--resume` to be injected; any single failure falls through to a fresh session without aborting the workflow:
 
 | Gate | Condition | What triggers a fresh session |
 |------|-----------|-------------------------------|
@@ -47,7 +47,7 @@ At runtime, before "Test writing" starts, ralph-tui evaluates five gates. All fi
 | G4 | Previous step used fewer than 200 000 input tokens | Context window too large to resume safely |
 | G5 | Previous step's session was not timed out | Timed-out sessions have unknown server-side state |
 
-When a gate blocks, ralph-tui logs a message like:
+When a gate blocks, pr9k logs a message like:
 
 ```
 resume gate blocked (G4: previous step context too large (217340 input tokens >= 200,000)) -- starting fresh session for step "Test writing"
@@ -91,11 +91,11 @@ When all gates pass, the log body shows no resume message — the step simply st
 
 ## Checking iteration.jsonl
 
-The `.ralph-cache/iteration.jsonl` log records `session_id` for each Claude step. You can confirm a resume occurred by checking that the `session_id` of the resuming step matches the preceding step:
+The `.pr9k/iteration.jsonl` log records `session_id` for each Claude step. You can confirm a resume occurred by checking that the `session_id` of the resuming step matches the preceding step:
 
 ```bash
 # Show step name and session_id for each claude step
-jq -r 'select(.session_id != null) | "\(.step_name): \(.session_id)"' .ralph-cache/iteration.jsonl
+jq -r 'select(.session_id != null) | "\(.step_name): \(.session_id)"' .pr9k/iteration.jsonl
 ```
 
 If both steps show the same session ID, the resume worked. Different session IDs mean a gate blocked and a fresh session was started.

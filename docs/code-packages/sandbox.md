@@ -4,7 +4,7 @@ The `internal/sandbox` package constructs the `docker run` invocation that wraps
 
 ## Overview
 
-Ralph-tui invokes `claude` inside an ephemeral Docker container built from the `docker/sandbox-templates:claude-code` image. The sandbox bind-mounts only the target repo and the Claude profile directory, keeping everything else on the host — other repos, `~/.ssh`, `~/.aws`, arbitrary env vars — invisible to claude.
+pr9k invokes `claude` inside an ephemeral Docker container built from the `docker/sandbox-templates:claude-code` image. The sandbox bind-mounts only the target repo and the Claude profile directory, keeping everything else on the host — other repos, `~/.ssh`, `~/.aws`, arbitrary env vars — invisible to claude.
 
 Non-claude steps (shell scripts, `git push`, `gh` calls) continue to run directly on the host; they need host credentials and are a different threat class.
 
@@ -36,7 +36,7 @@ var BuiltinEnvAllowlist = []string{
 }
 ```
 
-These five names are always included when building the env passthrough. The caller passes the union of `BuiltinEnvAllowlist` and the per-workflow `env` array from `ralph-steps.json` to `BuildRunArgs`.
+These five names are always included when building the env passthrough. The caller passes the union of `BuiltinEnvAllowlist` and the per-workflow `env` array from `config.json` to `BuildRunArgs`.
 
 ## HostUIDGID
 
@@ -87,7 +87,7 @@ func Path() (string, error)
 
 Reserves a unique, non-existent path for `--cidfile`. Creates a temp file under the system temp dir (pattern `ralph-*.cid`), then removes it — reserving the name without leaving the file present (`docker run --cidfile` requires the target path to not exist on entry).
 
-There is a small TOCTOU race between `os.Remove` and docker's `O_CREAT|O_EXCL`, but ralph-tui does not run multiple concurrent loops (design §2), so the accepted failure mode is a loud "container ID file found" error from docker on the rare collision.
+There is a small TOCTOU race between `os.Remove` and docker's `O_CREAT|O_EXCL`, but pr9k does not run multiple concurrent loops (design §2), so the accepted failure mode is a loud "container ID file found" error from docker on the rare collision.
 
 ### Cleanup
 
@@ -124,7 +124,7 @@ The closure captures `*exec.Cmd` (not bare `*os.Process`) so `cmd.ProcessState` 
 func BuildLoginArgs(profileDir string, uid, gid int) []string
 ```
 
-Constructs the `docker run -it ...` argv for an interactive `claude` REPL used by `ralph-tui sandbox login`. The user runs `/login` inside the REPL to write `.credentials.json` to the bind-mounted profile directory. Key differences from `BuildRunArgs`:
+Constructs the `docker run -it ...` argv for an interactive `claude` REPL used by `pr9k sandbox login`. The user runs `/login` inside the REPL to write `.credentials.json` to the bind-mounted profile directory. Key differences from `BuildRunArgs`:
 
 - `-it` instead of `-i` — allocates a TTY for interactive use.
 - Only the profile directory is bind-mounted (no project dir, no `-w`) — login is auth-only and host project files are accidental attack surface.

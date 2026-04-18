@@ -1,22 +1,22 @@
 # Debugging a Run
 
-When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places ralph-tui leaves evidence, and how to use them together.
+When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places pr9k leaves evidence, and how to use them together.
 
 ## The four sources of evidence
 
 | Source | Location | What it tells you |
 |--------|----------|-------------------|
-| **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
-| **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when ralph-tui exits |
-| **JSONL artifacts** | `<project-dir>/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
-| **Iteration log** | `<project-dir>/.ralph-cache/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
+| **Log file** | `<project-dir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
+| **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when pr9k exits |
+| **JSONL artifacts** | `<project-dir>/.pr9k/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
+| **Iteration log** | `<project-dir>/.pr9k/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
-If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
+If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
 
-> **Tip:** Logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> **Tip:** Logs land under `<project-dir>/.pr9k/logs/` — that is, inside your **target repo's working directory**. Add `.pr9k/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
 > ```
-> echo 'logs/' >> .gitignore
+> echo '.pr9k/' >> .gitignore
 > ```
 
 ## Reading the log file
@@ -41,7 +41,7 @@ For details on the logger format, see [File Logging](../code-packages/logger.md)
 Every `isClaude: true` step writes a per-step `.jsonl` file containing the verbatim NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. These files live in a per-run subdirectory alongside the `.log` file:
 
 ```
-logs/
+.pr9k/logs/
   ralph-2026-04-14-173022.123.log        # human-readable log (unchanged)
   ralph-2026-04-14-173022.123/           # JSONL artifacts for this run
     initialize-02-get-gh-user.jsonl
@@ -62,32 +62,32 @@ Each line in a `.jsonl` file is one JSON object. The relevant types:
 | `assistant` | One complete turn: text blocks, tool-use indicators, token counts |
 | `user` | Tool results fed back to the model |
 | `result` | Final answer: `result` text, `is_error` flag, session ID, total cost, token counts |
-| `ralph_end` | Sentinel written by ralph-tui after the `result` event — its absence means the run was truncated |
+| `ralph_end` | Sentinel written by pr9k after the `result` event — its absence means the run was truncated |
 
 ### Useful queries
 
 **Find the final captured value for a step:**
 
 ```bash
-jq 'select(.type == "result") | .result' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | .result' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Check whether a step ended in error:**
 
 ```bash
-jq 'select(.type == "result") | {is_error, result}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | {is_error, result}' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Check token spend for a step:**
 
 ```bash
-jq 'select(.type == "result") | {total_cost_usd, usage, num_turns}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | {total_cost_usd, usage, num_turns}' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Verify the step's artifact was written completely (sentinel present):**
 
 ```bash
-tail -1 logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
+tail -1 .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
 # "ralph_end" → complete; any other output or an empty tail → truncated
 ```
 
@@ -95,14 +95,14 @@ tail -1 logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
 
 ```bash
 jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text") | .text' \
-  logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+  .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 > **Retry behavior:** When you press `r` (retry) in error mode, the next attempt overwrites the `.jsonl` file from the beginning. The prior attempt's raw events are lost from the artifact (but the rendered lines remain in the `.log` file, separated by a `(retry)` separator). Token spend from discarded retry attempts is still included in the per-step and run-level summary lines.
 
-## Iteration log (.ralph-cache/iteration.jsonl)
+## Iteration log (.pr9k/iteration.jsonl)
 
-ralph-tui writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
+pr9k writes one JSON record to `<project-dir>/.pr9k/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
 
 ```json
 {"schema_version":1,"issue_id":"42","iteration_num":1,"step_name":"feature-work","status":"done","duration_s":12.34,"input_tokens":1500,"output_tokens":800,"session_id":"abc-123"}
@@ -115,7 +115,7 @@ ralph-tui writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl`
 | `schema_version` | Always `1`. Third-party parsers should reject unknown versions. |
 | `issue_id` | The value of `ISSUE_ID` at the time the record was written (empty in initialize/finalize phases). |
 | `iteration_num` | Loop iteration index (1-based). `0` for initialize and finalize phases. |
-| `step_name` | Step name from `ralph-steps.json`. |
+| `step_name` | Step name from `config.json`. |
 | `status` | `"done"`, `"failed"`, `"skipped"`, or `"unknown"` (step never started). |
 | `duration_s` | Wall-clock seconds from step start to finish. For steps that enter error mode, this includes user idle time. |
 | `notes` | Only present on prep failures — contains the `buildStep` error string. |
@@ -126,21 +126,21 @@ ralph-tui writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl`
 
 ```bash
 # Show all step names and statuses for the last run:
-jq -r '"- \(.step_name) [\(.status)]"' .ralph-cache/iteration.jsonl
+jq -r '"- \(.step_name) [\(.status)]"' .pr9k/iteration.jsonl
 
 # Find any failed steps:
-jq 'select(.status == "failed")' .ralph-cache/iteration.jsonl
+jq 'select(.status == "failed")' .pr9k/iteration.jsonl
 
 # Show prep failures with their error details:
-jq 'select(.status == "failed" and .notes != null) | {step_name, notes}' .ralph-cache/iteration.jsonl
+jq 'select(.status == "failed" and .notes != null) | {step_name, notes}' .pr9k/iteration.jsonl
 
 # Total token spend across all claude steps:
-jq -s '[.[].input_tokens // 0] | add' .ralph-cache/iteration.jsonl
+jq -s '[.[].input_tokens // 0] | add' .pr9k/iteration.jsonl
 ```
 
 ### Prerequisites
 
-The iteration log queries above require `jq`. Install it before running ralph-tui if you intend to query `.ralph-cache/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
+The iteration log queries above require `jq`. Install it before running pr9k if you intend to query `.pr9k/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
 
 Install on macOS: `brew install jq`. Install on Debian/Ubuntu: `apt-get install jq`.
 
@@ -164,13 +164,13 @@ For example, to see everything that happened in iteration 3:
 
 ```bash
 # Range from the "Iteration 3" separator to the next Iteration separator or Finalizing
-awk '/── Iteration 3 ─/,/── Iteration 4 ─|^Finalizing$/' logs/ralph-2026-04-10-221950.log
+awk '/── Iteration 3 ─/,/── Iteration 4 ─|^Finalizing$/' .pr9k/logs/ralph-2026-04-10-221950.log
 ```
 
 Or to find every captured `ISSUE_ID`:
 
 ```bash
-grep 'Captured ISSUE_ID' logs/ralph-2026-04-10-221950.log
+grep 'Captured ISSUE_ID' .pr9k/logs/ralph-2026-04-10-221950.log
 ```
 
 For the full log-body rhythm (what all the chrome looks like interleaved with real output), see [Reading the TUI](reading-the-tui.md#the-chrome-rhythm).
@@ -220,15 +220,15 @@ If you want to reproduce a bug without running the whole workflow, narrow the sc
 
 ```bash
 # Cap at 1 iteration so you only hit the bug once
-ralph-tui -n 1
+pr9k -n 1
 ```
 
-Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
+Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `config.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where pr9k looks for `config.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
 
 If the bug is inside a specific step's prompt or script, you can also run that step directly:
 
 ```bash
-# Run a helper script exactly the way ralph-tui would:
+# Run a helper script exactly the way pr9k would:
 GITHUB_USER=$(scripts/get_gh_user)
 scripts/get_next_issue "$GITHUB_USER"
 ```
@@ -256,9 +256,9 @@ For the full file-passing model, see [Variable Output & Injection](variable-outp
 
 ## Validator errors before a run
 
-If ralph-tui refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
+If pr9k refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
 
-- `ralph-steps.json` exists and parses
+- `config.json` exists and parses
 - Every step has valid schema (`name`, `isClaude`, required fields per type)
 - Every referenced `promptFile` exists in `prompts/`
 - Every referenced script path exists in `scripts/` or on `PATH`
@@ -267,8 +267,8 @@ If ralph-tui refuses to start, it's the validator. `validator.Validate(workflowD
 Validation failures print structured errors to stderr before the TUI starts:
 
 ```
-ralph-steps.json: step "Feature work": promptFile not found: prompts/feature-work.md
-ralph-steps.json: step "Close issue": command[1] references unresolved variable {{ISSUE_ID}} in finalize phase
+config.json: step "Feature work": promptFile not found: prompts/feature-work.md
+config.json: step "Close issue": command[1] references unresolved variable {{ISSUE_ID}} in finalize phase
 ```
 
 Fix the underlying config issue and re-run. See [Config Validation](../code-packages/validator.md) for the full validation rules.

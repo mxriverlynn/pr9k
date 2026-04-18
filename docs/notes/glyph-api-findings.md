@@ -3,7 +3,7 @@
 # Glyph API Findings — Issue #46
 
 **Module:** `github.com/kungfusheep/glyph v0.0.0-20260405220257-50a1ab7d0a9b`
-**Verified via:** `go doc`, source inspection, and scratch app compilation (`ralph-tui/scratch/main.go`)
+**Verified via:** `go doc`, source inspection, and scratch app compilation (scratch app, since removed)
 
 ---
 

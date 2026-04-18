@@ -1,6 +1,6 @@
 # Quitting Gracefully
 
-Ralph-tui always shuts down through the same path — whether you press `q`, hit `Ctrl+C`, or `kill` the process — so the running subprocess gets a chance to clean up before the TUI tears down. This guide explains the three quit entry points, what you see during shutdown, and what the exit code tells you.
+pr9k always shuts down through the same path — whether you press `q`, hit `Ctrl+C`, or `kill` the process — so the running subprocess gets a chance to clean up before the TUI tears down. This guide explains the three quit entry points, what you see during shutdown, and what the exit code tells you.
 
 ## The three ways to quit
 
@@ -45,7 +45,7 @@ This is non-destructive: if you were paused in error mode deciding whether to re
 
 Pressing `y` does two things in order:
 
-1. **Flips the mode to `ModeQuitting`** — the footer immediately repaints to `Quitting...`. This is visible feedback that ralph-tui accepted your confirmation and is now shutting down. Without this transition, you'd hit `y` and then sit there wondering whether the keypress registered.
+1. **Flips the mode to `ModeQuitting`** — the footer immediately repaints to `Quitting...`. This is visible feedback that pr9k accepted your confirmation and is now shutting down. Without this transition, you'd hit `y` and then sit there wondering whether the keypress registered.
 
 2. **Calls `ForceQuit()`** — which:
    - Calls the cancel function (`Runner.Terminate`), sending SIGTERM to the currently running subprocess. If the subprocess doesn't exit within 3 seconds, it's sent SIGKILL.
@@ -82,7 +82,7 @@ When `Run` finishes all iterations and finalize steps, it writes the completion 
 | Validator errors before the TUI starts | `1` |
 | Bubble Tea `program.Run()` returned an unexpected error | `1` |
 
-If you're scripting ralph-tui, only `0` means "ran to completion". Any non-zero means "something interrupted us or broke before we started". The workflow goroutine checks the `signaled` channel before deciding between `os.Exit(0)` and `os.Exit(1)` so a signal that arrives while the workflow is already finishing still produces the correct exit code.
+If you're scripting pr9k, only `0` means "ran to completion". Any non-zero means "something interrupted us or broke before we started". The workflow goroutine checks the `signaled` channel before deciding between `os.Exit(0)` and `os.Exit(1)` so a signal that arrives while the workflow is already finishing still produces the correct exit code.
 
 ## What you see during the `Quitting...` window
 

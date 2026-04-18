@@ -40,10 +40,15 @@ deferred.txt
 test-plan.md
 code-review.md
 
-# Runtime logs
+# Runtime logs and runtime state
+# logs/ is legacy (pre-0.7.0) — kept until users migrate
 logs/
 
-# Build artifact cache (populated by containerEnv Go cache vars)
+# .pr9k/ holds session logs, iteration.jsonl, optional in-repo workflow override
+.pr9k/logs/
+.pr9k/iteration.jsonl
+
+# Build artifact cache (populated by containerEnv Go cache vars via the sandbox bind mount)
 .ralph-cache/
 
 # Local Go module cache

@@ -1,10 +1,10 @@
 # Building Custom Workflows
 
-This guide explains how to create and modify workflow step sequences in ralph-tui. Steps are defined in JSON configuration files and can mix Claude CLI invocations with shell commands.
+This guide explains how to create and modify workflow step sequences in pr9k. Steps are defined in JSON configuration files and can mix Claude CLI invocations with shell commands.
 
 ## Step Configuration Files
 
-Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the workflow directory). This file contains three groups:
+pr9k loads step definitions from `config.json` (resolved relative to the workflow directory). This file contains three groups:
 
 - **`initialize`** — Steps run once before the iteration loop begins
 - **`iteration`** — Steps run once per issue
@@ -67,11 +67,11 @@ Relative paths containing a `/` separator are resolved against the workflow dire
 
 ## Initialize, Iteration, and Finalization Steps
 
-**Initialize steps** (the `"initialize"` array in `ralph-steps.json`) run once before the iteration loop begins. Use them for setup tasks that must complete before any issue is processed.
+**Initialize steps** (the `"initialize"` array in `config.json`) run once before the iteration loop begins. Use them for setup tasks that must complete before any issue is processed.
 
-**Iteration steps** (the `"iteration"` array in `ralph-steps.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
+**Iteration steps** (the `"iteration"` array in `config.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
 
-**Finalization steps** (the `"finalize"` array in `ralph-steps.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
+**Finalization steps** (the `"finalize"` array in `config.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
 
 ## The Default Workflow
 
@@ -106,7 +106,7 @@ Add markdown files to the `prompts/` directory. Each file contains the instructi
 
 ### 2. Define your steps in JSON
 
-Create or modify `ralph-steps.json`. For example, a minimal workflow:
+Create or modify `config.json`. For example, a minimal workflow:
 
 ```json
 {
@@ -136,6 +136,56 @@ The orchestrator resolves `scripts/deploy` to `{workflowDir}/scripts/deploy` bef
 
 After modifying configs or prompts, rebuild with `make build` to copy everything into `bin/`. Or run directly if building with `go build`.
 
+## Per-Repo Workflow Override
+
+pr9k supports an in-repo workflow override: if `<projectDir>/.pr9k/workflow/` exists and is a directory, pr9k uses it as the workflow directory instead of the shipped bundle inside `bin/.pr9k/workflow/`. This lets individual repos ship their own `config.json`, `prompts/`, and `scripts/` without touching the pr9k install.
+
+### Setup
+
+1. Create the override directory in your target repo:
+
+   ```bash
+   mkdir -p .pr9k/workflow/prompts
+   mkdir -p .pr9k/workflow/scripts
+   ```
+
+2. Add your `config.json` to `.pr9k/workflow/`:
+
+   ```json
+   {
+     "initialize": [],
+     "iteration": [
+       {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true},
+       {"name": "Push", "isClaude": false, "command": ["git", "push"]}
+     ],
+     "finalize": []
+   }
+   ```
+
+3. Add prompt files to `.pr9k/workflow/prompts/` and scripts to `.pr9k/workflow/scripts/`.
+
+4. Add `.pr9k/` to your `.gitignore` — or commit the override if you want it version-controlled:
+
+   ```bash
+   echo '.pr9k/' >> .gitignore
+   ```
+
+### Resolution order
+
+When pr9k starts, it checks two candidates in order:
+
+1. `<projectDir>/.pr9k/workflow/` — used if it exists and is a directory (in-repo override)
+2. `<executableDir>/.pr9k/workflow/` — the shipped bundle (fallback)
+
+If neither exists, pr9k exits with an error listing both paths. Pass `--workflow-dir <path>` to override both candidates.
+
+### When to use
+
+The in-repo override is useful when:
+- Your project needs workflow steps or prompts tailored to its tech stack
+- You want to version-control your workflow alongside your code
+- You're developing a custom workflow and want quick iteration without rebuilding the pr9k bundle
+
 ## TUI Display Constraints
 
 The TUI status header displays steps as a dynamic grid of 4 columns per row, sized at startup to fit the largest phase (initialize, iteration, or finalize). If your iteration phase has 6 steps, the grid has 2 rows; 9 steps gives 3 rows; and so on. Each row's cells are padded to a uniform width so the step list is distributed evenly across the header. If any phase has more steps than the grid was sized to hold (which cannot happen with a correct config — the grid is sized to the maximum across all phases), extra steps will execute but won't appear in the header.
@@ -159,7 +209,7 @@ User-initiated skips (pressing **n** during a step) are not treated as failures 
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
 - [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures
-- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `ralph-steps.json`, not Go code; includes documented exceptions
+- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `config.json`, not Go code; includes documented exceptions
 - [Step Definitions & Prompt Building](../code-packages/steps.md) — Implementation details of step loading and prompt construction
 - [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
 - [Subprocess Execution](../features/subprocess-execution.md) — How steps are executed as subprocesses

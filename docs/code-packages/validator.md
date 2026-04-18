@@ -1,6 +1,6 @@
 # Config Validation
 
-The `internal/validator` package validates `ralph-steps.json` against all ten D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
+The `internal/validator` package validates `config.json` against all ten D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
 
 **Package:** `internal/validator/`
 
@@ -8,7 +8,7 @@ The `internal/validator` package validates `ralph-steps.json` against all ten D1
 
 ### Category 1 — File presence and parseability
 
-- `ralph-steps.json` must be readable from the workflow directory.
+- `config.json` must be readable from the workflow directory.
 - The JSON must parse without error.
 - Unknown fields (e.g., stale `prependVars`) are rejected via `json.Decoder.DisallowUnknownFields`.
 - All three top-level array keys — `initialize`, `iteration`, `finalize` — must be present.
@@ -54,7 +54,7 @@ Any `{{VAR}}` reference in a prompt file or command argument that is not in scop
 
 ### Category 10 — env passthrough names
 
-The optional top-level `env` array lists host environment variable names that ralph-tui passes through into the sandbox. Each name is validated:
+The optional top-level `env` array lists host environment variable names that pr9k passes through into the sandbox. Each name is validated:
 
 - Must not be empty.
 - Must match `^[A-Za-z_][A-Za-z0-9_]*$` (standard POSIX identifier format — no spaces, dots, or hyphens).

@@ -1,7 +1,7 @@
 # Ralph Workflow Optimization — Design
 
 Evidence-based plan to cut per-iteration wall-clock time and token burn by
-restructuring both the workflow definition (`ralph-steps.json`, `prompts/`) and
+restructuring both the workflow definition (`config.json`, `prompts/`) and
 the `ralph-tui/` Go code that drives it.
 
 ## Iterative review summary
@@ -211,7 +211,7 @@ view` body in production logs; low enough to bound cumulative amplification
 per V1). When a capture exceeds 32 KiB, keep the first 30 KiB verbatim and
 append `"\n\n[…truncated, full body at github.com/<repo>/issues/{{ISSUE_ID}}]"`.
 
-#### 3.1.c Workflow change — `ralph-tui/ralph-steps.json`
+#### 3.1.c Workflow change — `src/config.json`
 
 Per V2: the branch-diff capture has a temporal scope problem. Capturing once
 at iteration start means feature-work sees an empty diff (no commits yet)
@@ -303,7 +303,7 @@ wants `CARGO_HOME`, `CARGO_TARGET_DIR`. None of these belong in ralph-tui.
 
 **The right split:**
 - `ralph-tui` exposes a mechanism — "set arbitrary env vars inside the sandbox".
-- Each *workflow* (`ralph-steps.json`) decides *which* env vars to set for
+- Each *workflow* (`config.json`) decides *which* env vars to set for
   *its* projects.
 - Language-specific caches are thus a per-workflow optimization, documented
   in a how-to guide, not wired into the Go code.
@@ -370,7 +370,7 @@ just forwards whatever the workflow declared.
 - Reject values containing newlines **or NUL bytes** (docker arg hygiene).
 - Reject keys containing `=` (malformed).
 - Warn if a key looks like a secret (`*_TOKEN`, `*_KEY`, `*_SECRET`) — literal
-  values in `ralph-steps.json` will get committed; that's the user's call but
+  values in `config.json` will get committed; that's the user's call but
   worth a lint warning.
 
 **`internal/workflow/workflow.go`** — thread `StepFile.ContainerEnv` from
@@ -385,7 +385,7 @@ None of the above mentions Go.
 
 #### 3.2.c Workflow-level usage — the default Ralph workflow
 
-The bundled `ralph-steps.json` drives Go-heavy projects today (pr9k itself,
+The bundled `config.json` drives Go-heavy projects today (pr9k itself,
 gearjot-v2, gearjot-v2-events). Add the Go-cache entries shown above to
 *that file* — it's a workflow config, not runner code. Users pointing
 `--workflow-dir` at their own bundle can replace them with Python, Node, or
@@ -478,7 +478,7 @@ only whitespace/the string `NOTHING-TO-FIX`, print nothing (empty capture);
 otherwise print `"yes"`. This mirrors the existing `get_next_issue` pattern
 of "empty stdout = false".
 
-**Workflow change — `ralph-tui/ralph-steps.json`:** add `skipIfCaptureEmpty`
+**Workflow change — `src/config.json`:** add `skipIfCaptureEmpty`
 to the `Fix review items` step, naming the capture it reads:
 
 ```json
@@ -564,7 +564,7 @@ Steps that can chain by model:
 So the *current* workflow doesn't benefit much from naïve chaining. But a
 small reorder helps:
 
-**Workflow reorder — `ralph-tui/ralph-steps.json`:**
+**Workflow reorder — `src/config.json`:**
 
 ```json
 { "name": "Feature work",    "model": "sonnet", ... },
@@ -653,7 +653,7 @@ improves.
 
 Keep only a new step that posts one combined summary after `Update docs`:
 
-**Workflow change — `ralph-tui/ralph-steps.json`:** add a non-Claude step
+**Workflow change — `src/config.json`:** add a non-Claude step
 right before `Close issue`:
 
 ```json
@@ -807,7 +807,7 @@ file), it must not — record timed-out session IDs in an in-memory
 blacklist for the remainder of the run and skip `--resume` for any step
 attempting to chain from one.
 
-**Config — `ralph-steps.json`:**
+**Config — `config.json`:**
 
 ```json
 { "name": "Test writing", "model": "sonnet", "promptFile": "test-writing.md",
@@ -849,7 +849,7 @@ other language-specific) knowledge. Language-specific wins come from the
 
 | File                                                   | Change |
 | ------------------------------------------------------ | ------ |
-| `ralph-steps.json`                                     | Add top-level `containerEnv` block with the Go cache vars (this workflow targets Go repos today); add `Get issue body`, `Get branch diff`, `Get project card` capture steps; reorder iteration to allow session-resume chaining; add `skipIfCapture` on `Fix review items`; add `Summarize to issue` before `Close issue`; add `timeoutSeconds: 900` on `Test writing`. |
+| `config.json`                                     | Add top-level `containerEnv` block with the Go cache vars (this workflow targets Go repos today); add `Get issue body`, `Get branch diff`, `Get project card` capture steps; reorder iteration to allow session-resume chaining; add `skipIfCapture` on `Fix review items`; add `Summarize to issue` before `Close issue`; add `timeoutSeconds: 900` on `Test writing`. |
 | `prompts/*.md`                                         | Insert `# Context` preamble with precomputed vars; remove per-step "Update the github issue" lines; add ToolSearch preload hint; tighten `test-writing.md` budget. |
 | `prompts/lessons-learned.md`, `prompts/deferred-work.md` | Consume `.ralph-iteration.jsonl` instead of `progress.txt`/`deferred.txt`. |
 | `scripts/project_card` (new)                           | One-shot project-metadata emitter (reads Makefile/package.json/pyproject.toml/Cargo.toml as found — no hard-coded language assumption). |
@@ -861,7 +861,7 @@ Whenever the question arises *"should ralph-tui know about language X?"*, the
 answer is **no** unless the feature is truly universal. The right path is
 almost always:
 
-1. Give `ralph-steps.json` a generic knob (`containerEnv`, `captureAs`, etc.).
+1. Give `config.json` a generic knob (`containerEnv`, `captureAs`, etc.).
 2. Put the language-specific value in the bundled workflow config.
 3. Document the pattern in `docs/how-to/` so other workflows can copy it.
 
@@ -873,7 +873,7 @@ that project's opinions.
 
 Phase A originally claimed "zero schema changes". That was wrong (per V5):
 §3.1 adds `captureMode` and §3.2 adds `containerEnv` — both are new JSON
-keys on the `ralph-steps.json` schema. Both are backward-compatible
+keys on the `config.json` schema. Both are backward-compatible
 additive changes (optional fields, defaults preserve current behaviour),
 but both require a minor version bump per
 `docs/coding-standards/versioning.md`. Relabeled accordingly.
@@ -881,7 +881,7 @@ but both require a minor version bump per
 **Phase A — minimal additive schema + prompt edits:**
 1. §3.2 `containerEnv` in `BuildRunArgs`. New optional top-level key on
    `StepFile`. Preflight `mkdir -p .ralph-cache` (per V8). Language-specific
-   cache vars go in the default workflow's `ralph-steps.json`, not the runner.
+   cache vars go in the default workflow's `config.json`, not the runner.
 2. §3.1 precomputed context vars. Adds `captureMode` optional field on
    `Step`. Adds `scripts/project_card` (bash, per Q3). Prompt updates per
    the pre-commit / post-commit split in §3.1.c (per V2).
@@ -1066,7 +1066,7 @@ explicitly in §6.
 §3.2 adds `containerEnv`. Both are backward-compatible (new optional
 fields, defaults preserve existing behaviour), but they *are* schema
 additions — the `docs/coding-standards/versioning.md` definition of
-ralph-tui's public surface includes `ralph-steps.json`. Rewrite §6
+ralph-tui's public surface includes `config.json`. Rewrite §6
 Phase A label accordingly.
 
 **V6 — session resume with empty SessionID:** confirmed failure mode.
@@ -1123,7 +1123,7 @@ state (to reject `StepFailed`).
 ### 7.4 Additional findings from evidence-based investigator
 
 **F1 — `DisallowUnknownFields` coupling (validator.go:125):** the validator
-uses a strict JSON decoder, meaning any new `ralph-steps.json` key will be
+uses a strict JSON decoder, meaning any new `config.json` key will be
 rejected at parse time unless `validator/validator.go`'s `vStep`/`vFile`
 structs are extended in the *same* commit as `internal/steps/steps.go`.
 §4's file list already includes both, but add a note: *"These files must

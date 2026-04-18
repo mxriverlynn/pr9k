@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# pr9k status line — demo script, adapt for your needs.
+# Reads pr9k's JSON payload from stdin and prints a single status line.
+# Requires: bash 3.1+, jq; git is used when available for branch display.
+
+command -v jq >/dev/null || { printf 'statusline: jq is required\n' >&2; exit 1; }
+
+input=$(cat)
+
+PHASE=$(echo "$input" | jq -r '.phase // "unknown"')
+ITER=$(echo "$input" | jq -r '.iteration // 0')
+MAX=$(echo "$input" | jq -r '.maxIterations // 0')
+STEP=$(echo "$input" | jq -r '.step.name // ""')
+ISSUE=$(echo "$input" | jq -r '.captures.ISSUE_ID // ""')
+
+CYAN='\033[36m'; YELLOW='\033[33m'; RESET='\033[0m'
+
+BRANCH=""
+git rev-parse --git-dir > /dev/null 2>&1 && BRANCH=" | 🌿 $(git branch --show-current 2>/dev/null)"
+
+ITER_LABEL=""
+if [ "$MAX" -gt 0 ] 2>/dev/null; then ITER_LABEL=" ${ITER}/${MAX}"
+elif [ "$ITER" -gt 0 ] 2>/dev/null; then ITER_LABEL=" ${ITER}"; fi
+
+EXTRAS=""
+[ -n "$STEP" ] && EXTRAS="${EXTRAS} › ${STEP}"
+[ -n "$ISSUE" ] && EXTRAS="${EXTRAS} | ${YELLOW}#${ISSUE}${RESET}"
+
+line="${CYAN}${PHASE}${ITER_LABEL}${RESET}${EXTRAS}${BRANCH}"
+printf '%b\n' "$line"

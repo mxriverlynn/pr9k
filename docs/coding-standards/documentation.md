@@ -6,7 +6,7 @@ Every code change that adds or modifies a user-visible surface must update the r
 
 User-visible surfaces that require doc updates:
 - New or changed CLI flags, exit codes, or `--version` output
-- New or changed `ralph-steps.json` schema fields
+- New or changed `config.json` schema fields
 - New or changed `{{VAR}}` template tokens
 - New TUI modes, keyboard shortcuts, or UI regions
 - New or changed step error categories (for `code-packages/validator.md`)

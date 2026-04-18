@@ -1,15 +1,15 @@
 # Getting Started
 
-This guide walks you through installing ralph-tui, pointing it at a target repo, and interpreting your first run. If you want to adapt ralph-tui for a different workflow entirely, start here — then head to [Building Custom Workflows](building-custom-workflows.md).
+This guide walks you through installing pr9k, pointing it at a target repo, and interpreting your first run. If you want to adapt pr9k for a different workflow entirely, start here — then head to [Building Custom Workflows](building-custom-workflows.md).
 
 ## Prerequisites
 
-- **[Go 1.26.2](https://go.dev/dl/)** — ralph-tui compiles to a single static binary
-- **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS/Windows) or Docker Engine (Linux), running. ralph-tui runs every Claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
+- **[Go 1.26.2](https://go.dev/dl/)** — pr9k compiles to a single static binary
+- **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS/Windows) or Docker Engine (Linux), running. pr9k runs every Claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
 - **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`)
 - **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`). The CLI's credentials are used inside the sandbox container
-- A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `ralph-steps.json`
-- A Unix-like terminal — ralph-tui uses `ioctl TIOCGWINSZ` for terminal sizing, so it runs on macOS and Linux but not Windows
+- A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `config.json`
+- A Unix-like terminal — pr9k uses `ioctl TIOCGWINSZ` for terminal sizing, so it runs on macOS and Linux but not Windows
 
 ## Installing
 
@@ -17,61 +17,73 @@ Clone this repo and build:
 
 ```bash
 git clone https://github.com/mxriverlynn/pr9k.git
-cd pr9k
+cd src
 make build
 ```
 
 `make build` produces:
 
-- `bin/ralph-tui` — the orchestrator binary
-- `bin/ralph-steps.json` — the default workflow config
-- `bin/prompts/` — the default Claude prompt files
-- `bin/scripts/` — helper scripts (`get_next_issue`, `get_gh_user`, `close_gh_issue`, ...)
-- `bin/ralph-art.txt` — ASCII art shown at the first init step
+```
+bin/
+├── pr9k                          # the orchestrator binary
+└── .pr9k/
+    └── workflow/
+        ├── config.json           # default workflow config
+        ├── ralph-art.txt         # ASCII art shown at the first init step
+        ├── prompts/              # default Claude prompt files
+        └── scripts/              # helper scripts (get_next_issue, get_gh_user, close_gh_issue, ...)
+```
 
-`bin/` is self-contained — you can copy it elsewhere or symlink `bin/ralph-tui` into your `PATH`.
+`bin/` is self-contained — you can copy it elsewhere or symlink `bin/pr9k` into your `PATH`.
 
-If you just want to rebuild the Go binary without copying assets, run `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`. Don't use `go run`: the orchestrator resolves its project directory from the executable path (`os.Executable()` + `filepath.EvalSymlinks`), and `go run` uses a temp dir that doesn't contain the prompts or scripts.
+If you just want to rebuild the Go binary without copying assets, run `cd src && go build -o ../bin/pr9k ./cmd/pr9k`. Don't use `go run`: the orchestrator resolves its project directory from the executable path (`os.Executable()` + `filepath.EvalSymlinks`), and `go run` uses a temp dir that doesn't contain the prompts or scripts.
 
 ## First run against the default workflow
 
-Before the first run, add `logs/` to your target repo's `.gitignore`. Since ralph-tui 0.2.3, log files land under `<project-dir>/logs/` — that is, inside your target repo — and will appear as untracked changes if the directory is not ignored:
+Before the first run, add `.pr9k/` to your target repo's `.gitignore`. Log files and runtime state land under `<project-dir>/.pr9k/` — that is, inside your target repo — and will appear as untracked changes if the directory is not ignored:
 
 ```bash
-echo 'logs/' >> .gitignore
-git add .gitignore && git commit -m "ignore ralph-tui log directory"
+echo '.pr9k/' >> .gitignore
+git add .gitignore && git commit -m "ignore pr9k runtime directory"
 ```
 
-From the **target repo's working directory** (not pr9k's — ralph-tui runs subprocesses with the current working directory):
+From the **target repo's working directory** (not pr9k's — pr9k runs subprocesses with the current working directory):
 
 ```bash
 # Run until no more ralph-labeled issues remain:
-/path/to/pr9k/bin/ralph-tui
+/path/to/pr9k/bin/pr9k
 
 # Or cap at 3 iterations for a dry run:
-/path/to/pr9k/bin/ralph-tui -n 3
+/path/to/pr9k/bin/pr9k -n 3
 ```
 
-With `-n 0` (the default), ralph-tui runs until `scripts/get_next_issue` returns an empty string (no more open issues). With `-n N`, it caps the loop at N iterations regardless of remaining issues.
+With `-n 0` (the default), pr9k runs until `scripts/get_next_issue` returns an empty string (no more open issues). With `-n N`, it caps the loop at N iterations regardless of remaining issues.
 
 To check which version you are running without launching the workflow:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui --version
-# ralph-tui version 0.4.1
+/path/to/pr9k/bin/pr9k --version
+# pr9k version 0.4.1
 ```
 
 `-v` is accepted as a short alias. See [Versioning](../coding-standards/versioning.md) for the repo's semver rules.
 
 ## Pointing at a different workflow bundle
 
-If your pr9k install lives somewhere other than the current directory's resolved binary path — for example, if you're testing a feature branch of ralph-tui itself — pass `--workflow-dir` to override the workflow directory:
+pr9k resolves its workflow bundle automatically in two steps:
+
+1. `<projectDir>/.pr9k/workflow/` — checked first (in-repo override; useful for per-repo custom workflows)
+2. `<executableDir>/.pr9k/workflow/` — fallback (the standard shipped bundle from `make build`)
+
+To use a custom bundle in your target repo, create `.pr9k/workflow/` with at least a `config.json` and the required `scripts/` and `prompts/` directories. pr9k picks it up with no flags needed.
+
+To override both candidates explicitly — for example, when testing a feature branch of pr9k — pass `--workflow-dir`:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui --workflow-dir /path/to/pr9k/bin
+/path/to/pr9k/bin/pr9k --workflow-dir /path/to/pr9k/bin/.pr9k/workflow
 ```
 
-The workflow directory is where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch ralph-tui (or can be overridden with `--project-dir`).
+The workflow directory is where pr9k looks for `config.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch pr9k (or can be overridden with `--project-dir`).
 
 ## What the TUI shows on first run
 
@@ -79,7 +91,7 @@ The TUI is a hand-built rounded frame with three inner regions. The current run 
 
 1. **Checkbox grid** — one row per four steps (`[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped) immediately below the top border
 2. **Log panel** — streams subprocess output in real time (rendered in white), interleaved with phase banners, per-step banners, and capture logs; supports keyboard arrow/vim keys and mouse-wheel/trackpad scrolling (to drag-select text, hold Option on macOS or Shift on Linux/Windows — see [Reading the TUI](reading-the-tui.md#selecting-log-text-to-copy))
-3. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `ralph-tui v<semver>` label pinned to the bottom-right. Mapped key tokens and the version label render in white; descriptions render in light gray
+3. **Footer** — shortcut bar for the current mode (`↑/k up  ↓/j down  n next step  q quit` in normal mode) on the left, with the `pr9k v<semver>` label pinned to the bottom-right. Mapped key tokens and the version label render in white; descriptions render in light gray
 
 The two horizontal rules separating these regions use T-junction glyphs (`├`, `┤`) so they visually connect to the `│` side borders.
 

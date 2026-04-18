@@ -1,6 +1,6 @@
 # CLI & Configuration
 
-Parses command-line flags and resolves the two directories that anchor all path resolution throughout ralph-tui.
+Parses command-line flags and resolves the two directories that anchor all path resolution throughout pr9k.
 
 - **Last Updated:** 2026-04-13
 - **Authors:**
@@ -8,21 +8,21 @@ Parses command-line flags and resolves the two directories that anchor all path 
 
 ## Overview
 
-- ralph-tui accepts an optional `--iterations` / `-n` flag (default 0 = run until done), an optional `--workflow-dir` flag, an optional `--project-dir` flag, and a `--version` / `-v` flag that prints the version and exits
+- pr9k accepts an optional `--iterations` / `-n` flag (default 0 = run until done), an optional `--workflow-dir` flag, an optional `--project-dir` flag, and a `--version` / `-v` flag that prints the version and exits
 - Built on [spf13/cobra](https://github.com/spf13/cobra), which handles POSIX-style flags in any position — no custom reordering needed
-- When `--workflow-dir` is not provided, the workflow directory is resolved from the executable's real path via `os.Executable()` + `filepath.EvalSymlinks` (symlink-safe)
+- When `--workflow-dir` is not provided, the workflow directory is resolved via a two-candidate search: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The first existing directory wins; if neither exists an error listing both paths is returned
 - When `--project-dir` is not provided, the project directory is resolved from the current working directory via `os.Getwd()` + `filepath.EvalSymlinks`
 - Both `WorkflowDir` and `ProjectDir` fan out to every subsystem that needs them
 - The version string is sourced from `internal/version.Version` — the single source of truth for both the `--version` output and the TUI footer label. See [Versioning](../coding-standards/versioning.md).
 
 Key files:
-- `ralph-tui/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir`
-- `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
-- `ralph-tui/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
-- `ralph-tui/cmd/ralph-tui/main.go` — Entry point that calls `Execute` and distributes `Config`; assembles all services and starts the status-line runner before handing off to `runWithShutdown`
-- `ralph-tui/cmd/ralph-tui/wiring.go` — Pure helper functions extracted from `main.go` for testability: `modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `buildRunConfig`, `runWithShutdown`, and the `teaProgram`/`shutdownable` interfaces
-- `ralph-tui/cmd/ralph-tui/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
-- `ralph-tui/cmd/ralph-tui/wiring_test.go` — 14 unit tests for all wiring helpers (mode-string table, sender payload discard, mode-getter freshness, config nil/populated, shutdown ordering, run-error propagation, RunConfig field mapping)
+- `src/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir`
+- `src/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
+- `src/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
+- `src/cmd/src/main.go` — Entry point that calls `Execute` and distributes `Config`; assembles all services and starts the status-line runner before handing off to `runWithShutdown`
+- `src/cmd/src/wiring.go` — Pure helper functions extracted from `main.go` for testability: `modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `buildRunConfig`, `runWithShutdown`, and the `teaProgram`/`shutdownable` interfaces
+- `src/cmd/src/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
+- `src/cmd/src/wiring_test.go` — 14 unit tests for all wiring helpers (mode-string table, sender payload discard, mode-getter freshness, config nil/populated, shutdown ordering, run-error propagation, RunConfig field mapping)
 
 ## Architecture
 
@@ -39,12 +39,18 @@ Key files:
                │                           │
         --workflow-dir given         not given
                │                           │
-               │                   ┌───────▼──────────┐
-               │                   │resolveWorkflowDir │
-               │                   │ os.Executable()   │
-               │                   │ EvalSymlinks()    │
-               │                   │ filepath.Dir()    │
-               │                   └───────┬──────────┘
+               │              ┌────────────▼───────────────┐
+               │              │      resolveProjectDir      │
+               │              │  os.Getwd() + EvalSymlinks  │
+               │              └────────────┬───────────────┘
+               │                           │
+               │              ┌────────────▼───────────────┐
+               │              │      resolveWorkflowDir     │
+               │              │ 1. <projectDir>/.pr9k/      │
+               │              │    workflow/ (if dir)       │
+               │              │ 2. <executableDir>/.pr9k/   │
+               │              │    workflow/ (if dir)       │
+               │              └────────────┬───────────────┘
                └─────────────┬─────────────┘
                              │
                ┌─────────────┴─────────────┐
@@ -77,9 +83,9 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/cli/args.go` | `Execute`, `NewCommand`, `Config` struct, `resolveWorkflowDir`, `resolveProjectDir` |
-| `ralph-tui/internal/cli/args_test.go` | Unit tests for all argument parsing branches |
-| `ralph-tui/cmd/ralph-tui/main.go` | Entry point — calls `Execute`, distributes `Config` to subsystems |
+| `src/internal/cli/args.go` | `Execute`, `NewCommand`, `Config` struct, `resolveWorkflowDir`, `resolveProjectDir` |
+| `src/internal/cli/args_test.go` | Unit tests for all argument parsing branches |
+| `src/cmd/src/main.go` | Entry point — calls `Execute`, distributes `Config` to subsystems |
 
 ## Core Types
 
@@ -87,7 +93,7 @@ Key files:
 // Config holds parsed CLI arguments.
 type Config struct {
     Iterations  int    // number of workflow iterations to run (0 = run until done)
-    WorkflowDir string // install dir: ralph-steps.json, scripts/, prompts/, ralph-art.txt
+    WorkflowDir string // install dir: config.json, scripts/, prompts/, ralph-art.txt
     ProjectDir  string // target repository: subprocess cmd.Dir and log file location
 }
 ```
@@ -127,22 +133,22 @@ Return values:
 
 ```go
 cmd := &cobra.Command{
-    Use:     "ralph-tui [flags]",
+    Use:     "pr9k [flags]",
     Short:   "Automated development workflow orchestrator",
     Version: version.Version,  // enables --version / -v
     Args:    cobra.NoArgs,
     // ...
 }
 cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
-cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: resolved from executable)")
+cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
 cmd.Flags().StringVar(&cfg.ProjectDir, "project-dir", "", "path to the target repository (default: current working directory)")
 ```
 
 Note: neither `--workflow-dir` nor `--project-dir` has a short form. The `-p` short form was removed in 0.3.0 when `--project-dir` changed meaning. Using `-p` now triggers a `SetFlagErrorFunc` guidance message pointing to the migration ADR.
 
-When `--version` or `-v` is passed, cobra prints `ralph-tui version <semver>` to stdout and exits **without invoking `RunE`** — the `ranE` sentinel stays `false`, `Execute` returns `(nil, nil)`, and `main` exits cleanly without starting the workflow. This is the contract that the `--version` public-API surface in the [Versioning](../coding-standards/versioning.md) standard commits to.
+When `--version` or `-v` is passed, cobra prints `pr9k version <semver>` to stdout and exits **without invoking `RunE`** — the `ranE` sentinel stays `false`, `Execute` returns `(nil, nil)`, and `main` exits cleanly without starting the workflow. This is the contract that the `--version` public-API surface in the [Versioning](../coding-standards/versioning.md) standard commits to.
 
-RunE validates and resolves both directories:
+RunE validates and resolves both directories. `projectDir` is resolved **before** `workflowDir` because the first workflow-dir candidate is `<projectDir>/.pr9k/workflow/`:
 
 ```go
 RunE: func(cmd *cobra.Command, args []string) error {
@@ -150,16 +156,7 @@ RunE: func(cmd *cobra.Command, args []string) error {
     if cfg.Iterations < 0 {
         return errors.New("cli: --iterations must be a non-negative integer")
     }
-    if cfg.WorkflowDir == "" {
-        dir, err := resolveWorkflowDir()
-        if err != nil {
-            return fmt.Errorf("cli: could not resolve workflow dir: %w", err)
-        }
-        cfg.WorkflowDir = dir
-    } else {
-        // EvalSymlinks + IsDir check for explicit --workflow-dir
-        ...
-    }
+    // projectDir resolved first — resolveWorkflowDir needs it for candidate 1
     if cfg.ProjectDir == "" {
         dir, err := resolveProjectDir()
         if err != nil {
@@ -170,25 +167,47 @@ RunE: func(cmd *cobra.Command, args []string) error {
         // EvalSymlinks + IsDir check for explicit --project-dir
         ...
     }
+    if cfg.WorkflowDir == "" {
+        dir, err := resolveWorkflowDir(cfg.ProjectDir)
+        if err != nil {
+            return err
+        }
+        cfg.WorkflowDir = dir
+    } else {
+        // EvalSymlinks + IsDir check for explicit --workflow-dir
+        ...
+    }
     return nil
 },
 ```
 
 ### Workflow Directory Resolution
 
-When `--workflow-dir` is not provided, the workflow directory is inferred from the compiled binary's location:
+When `--workflow-dir` is not provided, the workflow directory is resolved via a two-candidate search. `projectDir` is resolved first (because candidate 1 requires it), then `resolveWorkflowDirWith(projectDir, execDir)` checks both candidates in order:
 
 ```go
-func resolveWorkflowDir() (string, error) {
-    exe, err := os.Executable()              // path of the running binary
-    resolved, err := filepath.EvalSymlinks(exe) // dereference symlinks
-    return filepath.Dir(resolved), nil          // directory containing the binary
+func resolveWorkflowDirWith(projectDir, execDir string) (string, error) {
+    projCandidate := filepath.Join(projectDir, ".pr9k", "workflow")
+    execCandidate := filepath.Join(execDir, ".pr9k", "workflow")
+
+    for _, candidate := range []string{projCandidate, execCandidate} {
+        info, err := os.Stat(candidate)
+        if err == nil && info.IsDir() {
+            return candidate, nil
+        }
+    }
+    return "", fmt.Errorf("cli: could not locate workflow bundle. Checked:\n  - %s\n  - %s\nInstall the bundle or pass --workflow-dir.", projCandidate, execCandidate)
 }
 ```
 
-`filepath.EvalSymlinks` is critical: without it, a symlinked binary (e.g., installed in `~/bin/`) would resolve to the symlink's directory rather than where `configs/`, `prompts/`, and `scripts/` actually live.
+Resolution order:
+1. `<projectDir>/.pr9k/workflow/` — preferred if it exists and is a directory (in-repo override)
+2. `<executableDir>/.pr9k/workflow/` — fallback (the standard shipped bundle layout produced by `make build`)
+3. Error listing both paths if neither qualifies
 
-This is why `go run` does not work — it places the binary in a temporary directory. Use `go build` and run the compiled binary, or pass `--workflow-dir` explicitly.
+`filepath.EvalSymlinks` is applied to the executable path: without it, a symlinked binary (e.g., installed in `~/bin/`) would resolve to the symlink's directory rather than where the bundle actually lives.
+
+This is why `go run` does not work — it places the binary in a temporary directory that does not contain the bundle. Use `go build` and run the compiled binary, or pass `--workflow-dir` explicitly.
 
 ### Project Directory Resolution
 
@@ -208,18 +227,18 @@ func resolveProjectDir() (string, error) {
 
 ### WorkflowDir vs ProjectDir
 
-ralph-tui distinguishes two directories that are often conflated:
+pr9k distinguishes two directories that are often conflated:
 
-- **WorkflowDir** (install dir) — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path by default, or overridden by `--workflow-dir`.
-- **ProjectDir** (target repo) — the user's shell CWD captured at startup via `os.Getwd()`. Governs subprocess `cmd.Dir` (so `gh`, `git`, and `claude` run against the target repo) and log file location (so `logs/` land alongside the work). Overridden by `--project-dir`.
+- **WorkflowDir** (install dir) — where pr9k's bundled `config.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from `<projectDir>/.pr9k/workflow/` (in-repo override) or `<executableDir>/.pr9k/workflow/` (shipped bundle) by default, or overridden by `--workflow-dir`.
+- **ProjectDir** (target repo) — the user's shell CWD captured at startup via `os.Getwd()`. Governs subprocess `cmd.Dir` (so `gh`, `git`, and `claude` run against the target repo) and log file location (so `.pr9k/logs/` lands alongside the work). Overridden by `--project-dir`.
 
 Consumers in `main.go`:
 
 | Consumer | Dir | Path Resolved |
 |----------|-----|---------------|
-| `logger.NewLogger(projectDir)` | ProjectDir | `{projectDir}/logs/ralph-*.log` |
-| `steps.LoadSteps(workflowDir)` | WorkflowDir | `{workflowDir}/ralph-steps.json` |
-| `validator.Validate(workflowDir)` | WorkflowDir | Validates `ralph-steps.json` relative to `{workflowDir}` |
+| `logger.NewLogger(projectDir)` | ProjectDir | `{projectDir}/.pr9k/logs/ralph-*.log` |
+| `steps.LoadSteps(workflowDir)` | WorkflowDir | `{workflowDir}/config.json` |
+| `validator.Validate(workflowDir)` | WorkflowDir | Validates `config.json` relative to `{workflowDir}` |
 | `workflow.NewRunner(log, projectDir)` | ProjectDir | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.WorkflowDir` | WorkflowDir | Scripts, prompt files, `{{WORKFLOW_DIR}}` variable |
 
@@ -227,7 +246,7 @@ Within the workflow, `WorkflowDir` anchors two path-resolution mechanisms:
 - `{workflowDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt` (for Claude steps)
 - Relative script paths from step config — resolved against `workflowDir` by `ResolveCommand` (e.g. `scripts/get_gh_user`, `scripts/close_gh_issue`); not hardcoded in `Run()`
 
-The `{{WORKFLOW_DIR}}` template variable resolves to `WorkflowDir` (install dir) — e.g., `{{WORKFLOW_DIR}}/ralph-art.txt` in `ralph-steps.json` refers to the bundled banner file alongside the binary. The `{{PROJECT_DIR}}` template variable resolves to `ProjectDir` (target repo).
+The `{{WORKFLOW_DIR}}` template variable resolves to `WorkflowDir` (install dir) — e.g., `{{WORKFLOW_DIR}}/ralph-art.txt` in `config.json` refers to the bundled banner file alongside the binary. The `{{PROJECT_DIR}}` template variable resolves to `ProjectDir` (target repo).
 
 ## Error Handling
 
@@ -236,41 +255,41 @@ The `{{WORKFLOW_DIR}}` template variable resolves to `WorkflowDir` (install dir)
 | Negative iterations | `"cli: --iterations must be a non-negative integer"` | Exit 1 |
 | Unknown flag | pflag error + `flagSplitGuidance` hint | Exit 1 |
 | Positional argument given | cobra error (`"unknown command"` / `"accepts 0 arg(s)"`) | Exit 1 |
-| Cannot resolve workflow dir | `"cli: could not resolve workflow dir: ..."` | Exit 1 |
+| Cannot resolve workflow dir | `"cli: could not locate workflow bundle. Checked:\n  - <projectDir>/.pr9k/workflow/\n  - <executableDir>/.pr9k/workflow/\nInstall the bundle or pass --workflow-dir."` | Exit 1 |
 | Cannot resolve project dir | `"cli: could not resolve project dir: ..."` | Exit 1 |
 | `--workflow-dir` points to a file | `"cli: --workflow-dir %q is not a directory"` | Exit 1 |
 | `--project-dir` points to a file | `"cli: --project-dir %q is not a directory"` | Exit 1 |
 
-All errors are written to stderr followed by a `Run 'ralph-tui --help' for usage.` hint, and cause `os.Exit(1)`.
+All errors are written to stderr followed by a `Run 'pr9k --help' for usage.` hint, and cause `os.Exit(1)`.
 
 ## Configuration
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--iterations` | `-n` | Number of iterations to run (0 = run until done) | `0` |
-| `--workflow-dir` | — | Path to the workflow bundle directory (install dir) | Resolved from executable location |
+| `--workflow-dir` | — | Path to the workflow bundle directory (install dir) | `<projectDir>/.pr9k/workflow/`, then `<executableDir>/.pr9k/workflow/` |
 | `--project-dir` | — | Path to the target repository | Current working directory |
-| `--version` | `-v` | Print `ralph-tui version <semver>` and exit without running the workflow | — |
+| `--version` | `-v` | Print `pr9k version <semver>` and exit without running the workflow | — |
 | `--help` | `-h` | Print cobra-generated usage and exit without running the workflow | — |
 
 **Usage:**
 
 ```
-ralph-tui [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
-ralph-tui sandbox create [--force]
-ralph-tui sandbox login
-ralph-tui --version
+pr9k [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
+pr9k sandbox create [--force]
+pr9k sandbox login
+pr9k --version
 ```
 
 ## Testing
 
-- `ralph-tui/internal/cli/args_test.go` — 28 test cases covering all `NewCommand` and `Execute` branches
+- `src/internal/cli/args_test.go` — 28 test cases covering all `NewCommand` and `Execute` branches
 
 ### Test Cases
 
 | Test | What It Validates |
 |------|-------------------|
-| `TestNewCommand_NoFlags` | No flags → iterations=0, workflow-dir resolved from executable (non-empty), project-dir resolved from CWD (non-empty) |
+| `TestNewCommand_NoFlags` | No flags → iterations=0, workflow-dir resolved from the in-repo `.pr9k/workflow/` candidate (non-empty), project-dir resolved from CWD (non-empty) |
 | `TestNewCommand_LongIterationsFlag` | `--iterations 3` → iterations=3 |
 | `TestNewCommand_ShortIterationsFlag` | `-n 3` → iterations=3 |
 | `TestNewCommand_NegativeIterations` | `--iterations -1` → error containing expected message |
@@ -298,12 +317,22 @@ ralph-tui --version
 | `TestNewCommand_ArbitraryUnknownFlagFiresGuidanceMessage` | Any unknown flag → error contains `flagSplitGuidance` message |
 | `TestNewCommand_NoShortFormsForDirFlags` | `-w` and `-p` are not registered → error for each |
 | `TestNewCommandImpl_AddedSubcommandRunsItsRunE` | Subcommand added via `AddCommand` fires its `RunE` when invoked by name |
+| `TestResolveWorkflowDir_PrefersProjectDirCandidate` | Both candidates exist → `<projectDir>/.pr9k/workflow/` is returned |
+| `TestResolveWorkflowDir_FallsBackToExecDirCandidate` | Project-dir candidate absent → `<executableDir>/.pr9k/workflow/` returned |
+| `TestResolveWorkflowDir_FileNotDirFallsThrough` | Project-dir candidate is a file → falls through to exec-dir candidate |
+| `TestResolveWorkflowDir_BothMissingReturnsError` | Neither candidate exists → error listing both paths |
+| `TestResolveWorkflowDir_FlagOverridesBothCandidates` | `--workflow-dir` override → exact EvalSymlinks-resolved path used, ignoring both candidates |
+| `TestResolveWorkflowDir_InvalidProjectDirShortCircuits` | Invalid `--project-dir` → project-dir error fires before workflow-dir resolution |
+| `TestResolveWorkflowDir_FlagUsageContainsBothCandidates` | `--workflow-dir` Usage string contains `projectDir` and `executableDir` descriptions in that order |
+| `TestResolveWorkflowDirWith_BothPresent_ReturnsProject` | Direct seam: both candidates present → project wins |
+| `TestResolveWorkflowDirWith_ProjectAbsent_ExecPresent` | Direct seam: project absent → exec candidate returned |
+| `TestResolveWorkflowDirWith_ProjectIsFile_ExecPresent` | Direct seam: project is file → exec candidate returned |
 
 The two version tests read the expected string from `version.Version` rather than hardcoding `"0.1.0"` — the pattern required by [Versioning](../coding-standards/versioning.md) so a version bump does not require touching the test file.
 
 ### startup() Tests
 
-`ralph-tui/cmd/ralph-tui/main_test.go` covers `startup()` wiring and the `stepNames` helper:
+`src/cmd/src/main_test.go` covers `startup()` wiring and the `stepNames` helper:
 
 | Test | What It Validates |
 |------|-------------------|
@@ -315,14 +344,14 @@ The two version tests read the expected string from `version.Version` rather tha
 | `TestStartupPreflight_SkippedForSandboxLogin` | `sandbox login` subcommand → root RunE does not fire; preflight is not invoked |
 | `TestStartupPreflight_CollectsAllErrors` | D13 error + missing profile dir + docker unavailable → all errors appear in output |
 | `TestStartup_HappyPath` (TP-001) | Valid step file + passing prober + zero-byte credentials → ok=true, all services wired, credentials warning in output |
-| `TestStartup_LoadStepsFailure` (TP-002) | Missing `ralph-steps.json` → early return: ok=false, svc=nil, no logs/ directory created |
+| `TestStartup_LoadStepsFailure` (TP-002) | Missing `config.json` → early return: ok=false, svc=nil, no .pr9k/logs/ directory created |
 | `TestStartup_LoggerFailure` (TP-003) | Unwritable projectDir → ok=false, svc=nil after validation and preflight pass |
 | `TestStartup_ValidationOnlyErrors` (TP-004) | Invalid step file + passing prober → ok=false; "config error:" and "validation error(s)" in output; no "preflight:" line |
 | `TestStartup_PreflightOnlyErrors` (WARN-005) | Valid step file + failing prober (docker binary unavailable) → ok=false; "preflight:" in output; no "validation error(s)" line |
 
 ### wiring.go Tests
 
-`ralph-tui/cmd/ralph-tui/wiring_test.go` covers the pure helper functions extracted from `main.go`:
+`src/cmd/src/wiring_test.go` covers the pure helper functions extracted from `main.go`:
 
 | Test | What It Validates |
 |------|-------------------|
@@ -343,15 +372,15 @@ The two version tests read the expected string from `version.Version` rather tha
 
 ## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
+- [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams and data flow
 - [ADR: Use Cobra for CLI Argument Parsing](../adr/20260409135303-cobra-cli-framework.md) — Decision rationale for replacing stdlib `flag` with cobra
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Decision rationale for splitting the single `--project-dir` flag into `--workflow-dir` + `--project-dir`
-- [Versioning](../coding-standards/versioning.md) — Single-source-of-truth rule for `version.Version`, what counts as ralph-tui's public API (CLI flags, `--version` output format), and how to bump the version
+- [Versioning](../coding-standards/versioning.md) — Single-source-of-truth rule for `version.Version`, what counts as pr9k's public API (CLI flags, `--version` output format), and how to bump the version
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How WorkflowDir affects config and prompt file resolution
 - [Step Definitions & Prompt Building](../code-packages/steps.md) — How WorkflowDir resolves config and prompt files
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How ProjectDir sets the working directory for subprocesses
 - [Workflow Orchestration](workflow-orchestration.md) — How RunConfig carries WorkflowDir and Iterations into the Run loop
 - [TUI Status Header & Log Display](tui-display.md) — Where the `version.Version` constant is rendered as the footer label
 - [File Logging](../code-packages/logger.md) — How ProjectDir determines the log file location
-- [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including CLI design decisions
+- [pr9k Plan](../plans/pr9k.md) — Original specification including CLI design decisions
 - [Go Patterns](../coding-standards/go-patterns.md) — Coding standards for symlink-safe path resolution

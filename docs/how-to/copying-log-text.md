@@ -1,6 +1,6 @@
 # Copying Log Text
 
-Ralph-tui includes built-in text selection so you can copy any visible log output to the clipboard without leaving the TUI. This is particularly useful on SSH sessions where the terminal's native selection mechanism is defeated by application mouse mode.
+pr9k includes built-in text selection so you can copy any visible log output to the clipboard without leaving the TUI. This is particularly useful on SSH sessions where the terminal's native selection mechanism is defeated by application mouse mode.
 
 ## Common paths
 
@@ -52,10 +52,10 @@ Vertical movement preserves the intended column (`virtualCol`) across shorter li
 
 ## Clipboard delivery
 
-Ralph-tui tries three delivery paths in order:
+pr9k tries three delivery paths in order:
 
 1. **System clipboard daemon** (`pbcopy` on macOS, `xclip`/`xsel` on Linux, native API on Windows). This works in most local desktop sessions and is the default when the tools are present.
-2. **OSC 52 escape sequence** (stderr fallback). When the clipboard daemon is unavailable (for example, on a headless Linux VM accessed over SSH), ralph-tui writes `\x1b]52;c;<base64-payload>\x07` to stderr. Terminal emulators that support OSC 52 — iTerm2, Kitty, WezTerm, Windows Terminal, and tmux with `set -g set-clipboard on` enabled, and recent xterm — can receive this and place the text in the system clipboard on the *local* machine, even though the process is running remotely.
+2. **OSC 52 escape sequence** (stderr fallback). When the clipboard daemon is unavailable (for example, on a headless Linux VM accessed over SSH), pr9k writes `\x1b]52;c;<base64-payload>\x07` to stderr. Terminal emulators that support OSC 52 — iTerm2, Kitty, WezTerm, Windows Terminal, and tmux with `set -g set-clipboard on` enabled, and recent xterm — can receive this and place the text in the system clipboard on the *local* machine, even though the process is running remotely.
 3. **Failure log line**. If stderr is not a terminal (for example, when stdout and stderr are both redirected), a `[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]` line appears in the log.
 
 ### What clipboard text contains

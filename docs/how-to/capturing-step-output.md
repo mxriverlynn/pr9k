@@ -6,7 +6,7 @@ If you're looking for how `{{VAR}}` tokens get *resolved* against the VarTable, 
 
 ## The basic shape
 
-Every step in `ralph-steps.json` accepts an optional `captureAs` field. When set, ralph-tui calls `runner.LastCapture()` after the step completes and stores the result in the VarTable under that name.
+Every step in `config.json` accepts an optional `captureAs` field. When set, pr9k calls `runner.LastCapture()` after the step completes and stores the result in the VarTable under that name.
 
 ```json
 {
@@ -188,7 +188,7 @@ A common pattern pairs `captureAs` with `breakLoopIfEmpty: true` so the loop exi
 }
 ```
 
-When `get_next_issue` prints an empty line (no more issues), `LastCapture()` is `""`, ralph-tui marks the remaining iteration steps as skipped (`[-]`), and exits the iteration loop. Finalization still runs. See [Breaking Out of the Loop](breaking-out-of-the-loop.md) for details.
+When `get_next_issue` prints an empty line (no more issues), `LastCapture()` is `""`, pr9k marks the remaining iteration steps as skipped (`[-]`), and exits the iteration loop. Finalization still runs. See [Breaking Out of the Loop](breaking-out-of-the-loop.md) for details.
 
 ## Related documentation
 

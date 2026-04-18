@@ -1,6 +1,6 @@
 # Workflow Orchestration
 
-Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
+Drives the entire pr9k workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
 - **Last Updated:** 2026-04-18
 - **Authors:**
@@ -18,10 +18,10 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - After the finalize phase, `Run` emits the run-level cumulative claude spend summary via `WriteRunSummary` (D13 2c), then writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
-- `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
-- `ralph-tui/internal/ui/orchestrate.go` — `Orchestrate` function, `ResolvedStep`, error handling loop
-- `ralph-tui/internal/workflow/run_test.go` — Unit tests for the `Run` orchestration loop
-- `ralph-tui/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
+- `src/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
+- `src/internal/ui/orchestrate.go` — `Orchestrate` function, `ResolvedStep`, error handling loop
+- `src/internal/workflow/run_test.go` — Unit tests for the `Run` orchestration loop
+- `src/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
 
 ## Architecture
 
@@ -69,10 +69,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/run.go` | Run loop, RunConfig, buildStep, ResolveCommand, header adapters |
-| `ralph-tui/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
-| `ralph-tui/internal/workflow/run_test.go` | Tests for Run lifecycle, initialize phase, BreakLoopIfEmpty |
-| `ralph-tui/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
+| `src/internal/workflow/run.go` | Run loop, RunConfig, buildStep, ResolveCommand, header adapters |
+| `src/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
+| `src/internal/workflow/run_test.go` | Tests for Run lifecycle, initialize phase, BreakLoopIfEmpty |
+| `src/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
 
 ## Core Types
 
@@ -98,7 +98,7 @@ type RunConfig struct {
     WorkflowDir     string
     Iterations      int
     // Env is the per-workflow env allowlist loaded from the "env" field of
-    // ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+    // config.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
     // when building docker run args for claude steps.
     Env             []string
     InitializeSteps []steps.Step  // run once before the iteration loop
@@ -174,7 +174,7 @@ type ResolvedStep struct {
 
 ### Pre-Run Validation
 
-Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
+Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `config.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
 See [Config Validation](../code-packages/validator.md) for the full list of validation rules.
 
@@ -355,7 +355,7 @@ if resolved.IsClaude {
 `artifactPath` is a local helper closure in `Run` that computes the per-step `.jsonl` path:
 
 ```
-<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+<projectDir>/.pr9k/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
 ```
 
 Phase prefixes: `"initialize-"`, `"iter<NN>-"` (1-indexed iteration), `"finalize-"`. Returns `""` when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
@@ -378,7 +378,7 @@ Per-phase tracking variables (`prevInitStats/State`, `prevIterStats/State`, `pre
 
 Skipped steps (via `skipIfCaptureEmpty`) do **not** reset the resume chain. When a step is skipped, `prevIterStats`/`prevIterState` are not updated. The next `resumePrevious` step therefore evaluates gates against the step **before** the skipped one — the resume chain jumps over the skip.
 
-The feature is **shipped engine-off**: the default `ralph-steps.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `ralph-steps.json` and A/B validation.
+The feature is **shipped engine-off**: the default `config.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `config.json` and A/B validation.
 
 ### The Orchestrate State Machine
 
@@ -541,7 +541,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 
 ## Testing
 
-- `ralph-tui/internal/workflow/run_test.go` — Tests `Run` lifecycle with `fakeExecutor` and `fakeRunHeader` test doubles:
+- `src/internal/workflow/run_test.go` — Tests `Run` lifecycle with `fakeExecutor` and `fakeRunHeader` test doubles:
   - `TestRun_InitializeStepsRunBeforeIterationSteps` — verifies ordering: init steps run before iteration steps
   - `TestRun_InitializeCaptureAvailableInIteration` — verifies that `CaptureAs` values bound in the initialize phase are substituted as `{{VAR}}` tokens in iteration step commands
   - `TestRun_InitializeBuildErrorContinuesToNextInitStep` — verifies that a bad init step (missing prompt file) logs `"Error preparing initialize step"`, skips that step, and continues to the next
@@ -601,7 +601,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError` — exercises the first-error → second-success retry path: asserts `invocations=2`, `retries=1`, and `prevFailed` cleared after success
   - `TestStepDispatcher_NonClaudeStep_ResetsRetryTracking` — verifies a non-claude step between two claude steps clears `prevFailed`, preventing spurious retry counts on the second claude step
   - `TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode` — verifies `ResolvedStep.ArtifactPath` and `ResolvedStep.CaptureMode` flow through `stepDispatcher.RunStep` into `SandboxOptions` passed to `RunSandboxedStep`
-  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
+  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/.pr9k/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
   - `TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath` — verifies `ArtifactPath` is empty (persistence disabled) when `RunConfig.RunStamp == ""`
   - `TestRun_InitializePhase_ArtifactPathPrefix` — verifies the `"initialize-"` phase prefix appears in the artifact path for initialize-phase claude steps
   - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps
@@ -618,7 +618,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_RunSummary_EmittedForClaudeSteps` — verifies the run-level cumulative summary line appears before `CompletionSummary`, contains expected token/cost fragments, and that `writeRunSummaryCalls == 1`
   - `TestRun_RunSummary_NotEmittedForNonClaudeSteps` — verifies no summary line is written when no claude steps ran (FinalizeRun returns nil for zero invocations)
   - `TestRun_RunSummary_MultipleClaudeStepsAccumulate` — verifies stats from two claude step invocations are accumulated (total cost and invocation count both reflected in the summary line)
-- `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
+- `src/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
   - `TestOrchestrate_Retry_StateTransitionSequence` — verifies the `Active→Failed→Done` state transition sequence on retry (note: `StepActive` is not re-set on retry — this is documented in the test)
@@ -639,6 +639,6 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 - [TUI Status Header](tui-display.md) — How step state updates are rendered
 - [File Logging](../code-packages/logger.md) — How step separator lines are written to the log file
 - [Variable State Management](../code-packages/vars.md) — VarTable scopes, phase transitions, and CaptureAs binding
-- [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
+- [pr9k Plan](../plans/pr9k.md) — Original specification including orchestration design
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
 - [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters

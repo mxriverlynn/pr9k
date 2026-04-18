@@ -229,8 +229,8 @@ Signs that code falls into this category:
 // Example: assembling a Bubble Tea program from tested components.
 // StatusHeader, KeyHandler, Runner, and workflow.Run all have thorough tests.
 // The wiring itself — constructing the Model, calling program.Run — is framework usage,
-// not application logic. Adding a test here would test Bubble Tea, not ralph-tui.
-model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+// not application logic. Adding a test here would test Bubble Tea, not pr9k.
+model := ui.NewModel(header, keyHandler, "pr9k v"+version.Version)
 program := tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())
 _, err = program.Run()
 ```
@@ -653,12 +653,12 @@ The same applies to any slice of structs keyed by name: sort by `Name` field bef
 
 ## Test the shipped production configuration file end-to-end
 
-Every project that ships a configuration file (`ralph-steps.json`, `config.yaml`, etc.) must have at least one integration test that loads the real file from the source tree and runs it through the full validation and loading pipeline. This closes the gap between "unit tests pass" and "the config the user actually ships is valid."
+Every project that ships a configuration file (`config.json`, `config.yaml`, etc.) must have at least one integration test that loads the real file from the source tree and runs it through the full validation and loading pipeline. This closes the gap between "unit tests pass" and "the config the user actually ships is valid."
 
 ```go
 // production_steps_test.go — loads from the live source tree
 func TestValidate_ProductionStepsJSON(t *testing.T) {
-    dir := assembleWorkflowDir(t) // points at ralph-tui/ in source tree
+    dir := assembleWorkflowDir(t) // points at src/ in source tree
     errs := validator.Validate(dir)
     for _, e := range errs {
         if e.IsFatal() {
@@ -673,6 +673,139 @@ Checklist:
 2. The test must assert zero fatal errors.
 3. The test must be updated whenever the config schema gains a new field that requires a value — a schema change that breaks the production file should fail this test immediately, not after a deploy.
 
+## Commit-SHA keyed tests are fragile — use Skip, not Fatal
+
+Occasionally a test verifies a property of a specific commit (e.g., "this commit only touched files under `docs/adr/`"). These tests are inherently fragile: the SHA disappears in shallow clones, after a squash merge, or after a rebase. Apply three rules when you write one:
+
+1. **Skip, don't fail, when the commit is unreachable.** Use `t.Skipf` so the test is silently bypassed in environments that don't have the full history rather than producing a red build.
+2. **Document the fragility in a comment.** Immediately above the test, note that the test is keyed to a specific SHA and must be updated or deleted if that commit is ever rewritten.
+3. **Prefer property tests over history tests.** Most SHA-keyed tests can be rewritten to assert a file-system property (e.g., "no files other than `docs/adr/*.md` were added by the PR") rather than a specific commit's diff. Prefer that form.
+
+```go
+// TP-008: commit 32b668f only added files under docs/adr/ — none were modified or deleted.
+// Note: this test is keyed to a specific commit SHA. If the commit is rewritten (e.g. squash
+// merge), this test must be updated or deleted.
+func TestDocIntegrity_ADR_ExistingADRsUnmodified(t *testing.T) {
+    if _, err := exec.LookPath("git"); err != nil {
+        t.Skip("git not on $PATH")
+    }
+    root := repoRoot(t)
+    cmd := exec.Command("git", "show", "--name-status", "32b668f")
+    cmd.Dir = root
+    out, err := cmd.Output()
+    if err != nil {
+        t.Skipf("commit 32b668f unreachable: %v", err) // not t.Fatal
+    }
+    // ... assertions ...
+}
+```
+
+## Write a rename guard test after any significant rename
+
+When a type, binary, directory, or config file is renamed, add a tree-walk test that asserts the old name no longer appears anywhere in the source tree. Without this guard, stale references accumulate silently — documentation, scripts, and embedded strings can all lag behind the rename.
+
+Two rules make the guard reliable:
+
+**Assemble the old name at runtime** so the guard test file itself does not appear as a match:
+
+```go
+// Assembled at runtime so this file is not flagged by its own scan.
+var legacyToolName = "ralph" + "-tui"
+```
+
+**Collect all offenders before failing** so the report shows every file that still needs updating, not just the first one:
+
+```go
+func checkNoLegacyNameInTree(t *testing.T, root string) {
+    t.Helper()
+    var offenders []string
+    _ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+        // ... skip binary/hidden files and dirs ...
+        if strings.Contains(string(data), legacyToolName) {
+            rel, _ := filepath.Rel(root, path)
+            offenders = append(offenders, rel)
+        }
+        return nil
+    })
+    if len(offenders) > 0 {
+        t.Errorf("files still contain %q:\n  %s", legacyToolName, strings.Join(offenders, "\n  "))
+    }
+}
+```
+
+Skip files that should not be scanned: binary extensions (`.sum`, `.png`, etc.), hidden files/dirs, and ephemeral working files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) that are never committed and may contain historical references. Skip the `bin/` and `.git/` directories.
+
+Apply one call per renamed artifact. A single rename guard for the binary name and a separate one for any renamed config file (e.g., `ralph-steps.json` → `config.json`) keeps failure messages specific.
+
+## Gate slow build-system tests with `//go:build integration`
+
+When a test must invoke the full build pipeline (e.g., `make build`) to verify that the binary or bundle is assembled correctly, gate it with the `integration` build tag:
+
+```go
+//go:build integration
+
+package main
+```
+
+This keeps `go test ./...` fast — the default CI run excludes the build step — while preserving the safety net for explicit invocations:
+
+```bash
+go test -tags=integration ./...   # runs integration tests too
+```
+
+Integration tests of this kind should:
+- Use `t.Skip` if the required tool (`make`, `docker`) is not on `$PATH`.
+- Verify the complete output structure: every expected file exists, every script has executable bits, no required file is empty.
+- Use `docTestRepoRoot(t)` (via `runtime.Caller(0)`) to locate the repo root rather than assuming a working directory.
+
+```go
+//go:build integration
+
+func TestBundleLayout_MakeBuildProducesWorkflowBundle(t *testing.T) {
+    if _, err := exec.LookPath("make"); err != nil {
+        t.Skip("make not on $PATH")
+    }
+    root := docTestRepoRoot(t)
+    if out, err := exec.Command("make", "build").CombinedOutput(); err != nil {
+        t.Fatalf("make build: %v\n%s", err, out)
+    }
+    // Assert bundle layout: config.json, prompts/*.md, scripts/* (executable), ralph-art.txt.
+}
+```
+
+## Extend doc integrity tests to validate cross-file references
+
+When a doc file contains a relative link to another doc file, add two assertions to `doc_integrity_test.go`:
+
+1. The link text or filename appears in the referencing file's body.
+2. The linked file exists on disk.
+
+This catches doc reorganizations that move or rename a file without updating every file that references it.
+
+```go
+func TestDocIntegrity_HowTo_RelatedLinksValid(t *testing.T) {
+    root := docTestRepoRoot(t)
+    content := readFile(t, root, "docs/how-to/copying-log-text.md")
+
+    relatedLinks := []struct {
+        ref  string
+        path string
+    }{
+        {"reading-the-tui.md", "docs/how-to/reading-the-tui.md"},
+        {"keyboard-input.md", "docs/features/keyboard-input.md"},
+        {"tui-display.md", "docs/features/tui-display.md"},
+    }
+    for _, l := range relatedLinks {
+        assertContains(t, content, l.ref, "copying-log-text.md Related documentation")
+        assertFileExists(t, filepath.Join(root, l.path))
+    }
+}
+```
+
+Apply this whenever a doc file gains a Related documentation section or an explicit cross-reference. The file-existence assertion is the critical part — the text assertion alone does not verify the link is valid after a rename.
+
+When a doc file refers to another doc as a source of further reading, also add the inverse: verify the referenced file links back to the referencing one (e.g., `TestDocIntegrity_ReadingTheTUI_LinksToHowTo`). Cross-links that are asserted in both directions cannot drift independently.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -683,7 +816,7 @@ Checklist:
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes); newTestKeyHandler as the canonical async signal injection pattern
 - [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration
 - [Config Validation](../code-packages/validator.md) — Positive and negative scope-visibility tests for variable table phase propagation
-- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
+- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage and OS-call injection seam (`...With` convention)
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify; channel priming before blocking receives
 - [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests; public accessors over private field access from tests
 - [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage

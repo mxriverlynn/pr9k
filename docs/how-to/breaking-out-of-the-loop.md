@@ -1,6 +1,6 @@
 # Breaking Out of the Loop
 
-Ralph-tui's iteration loop runs until one of two conditions is true: it hits the `--iterations N` cap, or a step with `breakLoopIfEmpty: true` returns an empty capture. This guide explains the `breakLoopIfEmpty` pattern — when to use it, how it interacts with the rest of the workflow, and what it looks like at runtime.
+pr9k's iteration loop runs until one of two conditions is true: it hits the `--iterations N` cap, or a step with `breakLoopIfEmpty: true` returns an empty capture. This guide explains the `breakLoopIfEmpty` pattern — when to use it, how it interacts with the rest of the workflow, and what it looks like at runtime.
 
 ## When you want it
 
@@ -28,13 +28,13 @@ Mark a step with both `captureAs` and `breakLoopIfEmpty: true`:
 }
 ```
 
-At runtime, after the step completes, ralph-tui checks three conditions:
+At runtime, after the step completes, pr9k checks three conditions:
 
 1. The step has `breakLoopIfEmpty: true`
 2. `executor.LastCapture()` is empty (the trimmed last non-empty stdout line is `""`)
 3. The step finished as `StepDone` — it did **not** return a non-zero exit code
 
-If all three are true, ralph-tui:
+If all three are true, pr9k:
 
 - Marks every remaining step in the current iteration as `[-]` (skipped) in the TUI header
 - Exits the iteration loop
@@ -78,7 +78,7 @@ The cap and `breakLoopIfEmpty` are both ceilings — whichever fires first wins:
 | `3` | Iteration 5 | 3 (cap hit first) |
 | `0` (unbounded) | Never (always has work) | **infinite** — don't do this |
 
-If `--iterations 0` and no step ever breaks the loop, ralph-tui will run forever. Always pair unbounded mode with at least one `breakLoopIfEmpty` step, or expect to kill it with `Ctrl+C` / `q`.
+If `--iterations 0` and no step ever breaks the loop, pr9k will run forever. Always pair unbounded mode with at least one `breakLoopIfEmpty` step, or expect to kill it with `Ctrl+C` / `q`.
 
 ## What you'll see in the TUI
 
@@ -131,7 +131,7 @@ Either the killswitch going absent, or the task queue going empty, exits the loo
 
 ## Not a failure signal
 
-**`breakLoopIfEmpty` is for "nothing left to do", not for error reporting.** If your step fails (non-zero exit, network error, missing file), let it fail — ralph-tui will enter error mode and let the user decide whether to retry or continue. Don't use a "print an empty string on error" pattern to smuggle failures through the break; you'll lose visibility into what broke.
+**`breakLoopIfEmpty` is for "nothing left to do", not for error reporting.** If your step fails (non-zero exit, network error, missing file), let it fail — pr9k will enter error mode and let the user decide whether to retry or continue. Don't use a "print an empty string on error" pattern to smuggle failures through the break; you'll lose visibility into what broke.
 
 For handling step failures, see [Recovering from Step Failures](recovering-from-step-failures.md).
 

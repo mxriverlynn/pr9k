@@ -37,7 +37,7 @@ run until the sandbox is present, Docker is reachable, and the Claude profile
 directory exists.
 
 This release also splits the ambiguous `--project-dir` flag into
-`--workflow-dir` (the workflow bundle — `ralph-steps.json`, `prompts/`,
+`--workflow-dir` (the workflow bundle — `config.json`, `prompts/`,
 `scripts/`, `ralph-art.txt`) and `--project-dir` (the target repo, newly
 first-class because the sandbox bind-mount needs to name it distinctly
 from the workflow bundle). See §4.14 and the split ADR for rationale.
@@ -117,7 +117,7 @@ reference.
    ([docs/adr/20260410170952-narrow-reading-principle.md](../../adr/20260410170952-narrow-reading-principle.md))
    already tolerates the existing hardcoded claude command here; we extend
    that slice rather than refactoring the step abstraction in the same PR.
-   Moving claude-step resolution into `ralph-steps.json` proper is a
+   Moving claude-step resolution into `config.json` proper is a
    legitimate later refactor that should be done separately.
 9. **UID/GID mapping: `-u $(id -u):$(id -g)`.** Files claude writes into the
    bind-mounted repo are owned by the host user, so subsequent shell steps
@@ -129,7 +129,7 @@ reference.
     trust in the upstream image — the user chose this cadence.
 11. **Environment passthrough: layered allowlist.** Ralph-tui always attempts
     to pass five "sandbox-plumbing" variables (see §5). A new top-level `env`
-    field in `ralph-steps.json` lets workflows extend the list with
+    field in `config.json` lets workflows extend the list with
     workflow-specific variables (e.g., `GITHUB_TOKEN`, `AWS_ACCESS_KEY_ID`).
     Exact names only — no glob or prefix wildcards in v1.
 12. **Lifecycle: `--rm --init --cidfile <tmp>` with `-i`, no `-t`.** `--rm`
@@ -271,7 +271,7 @@ docker run                                              \
 - `-e <NAME>` (no value): pass through host env var `NAME` if set, skip
   otherwise. Implemented as `if v, ok := os.LookupEnv(name); ok { args = append(args, "-e", name) }`.
   Built-in set: `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`,
-  `HTTP_PROXY`, `NO_PROXY`. User-extended from `ralph-steps.json`.
+  `HTTP_PROXY`, `NO_PROXY`. User-extended from `config.json`.
 - `docker/sandbox-templates:claude-code`: tag-only image reference.
 - `claude --permission-mode bypassPermissions --model <MODEL> -p <PROMPT>`:
   since we replace the image's default CMD (`claude --dangerously-skip-permissions`),
@@ -339,7 +339,7 @@ Runs once, at ralph-tui invocation (any command other than `create-sandbox`),
 before the main orchestration loop begins.
 
 ### Sequence
-1. Parse CLI flags and load `ralph-steps.json`. Existing config validation
+1. Parse CLI flags and load `config.json`. Existing config validation
    (D13) runs first; any config errors exit with existing behavior.
 2. **Resolve profile dir**: `$CLAUDE_CONFIG_DIR` if set, else `$HOME/.claude`.
    Expand to absolute.
@@ -368,7 +368,7 @@ before the main orchestration loop begins.
 
 §11's upgrade path expects the docker-missing or sandbox-image-missing
 message to be the first thing a migrating user sees. §7 step 1 runs D13
-first, which means a user whose custom `ralph-steps.json` uses
+first, which means a user whose custom `config.json` uses
 `{{PROJECT_DIR}}` in a prompt would instead hit the prompt-token-ban
 error — then fix, re-run, hit profile, fix, re-run, hit docker. To
 align the two sections, the preflight dispatcher collects *all*
@@ -393,7 +393,7 @@ forcing the plan to pick a single "most important" check.
 
 ### New top-level field: `env`
 
-`ralph-steps.json` gains one new optional top-level entry: an array of host
+`config.json` gains one new optional top-level entry: an array of host
 environment variable names to pass through into the sandbox.
 
 ```json
@@ -409,7 +409,7 @@ environment variable names to pass through into the sandbox.
 ```
 
 Note: the existing top-level schema is `initialize` / `iteration` / `finalize`
-(see `ralph-tui/internal/steps/steps.go:27-31` and `ralph-tui/ralph-steps.json`).
+(see `ralph-tui/internal/steps/steps.go:27-31` and `src/config.json`).
 `env` is a new sibling alongside those three phase arrays — not a wrapper
 around them.
 
@@ -785,10 +785,10 @@ rename diff is reviewable independently inside the sandbox PR.
   doing it inline). Specific line numbers from `4f4481b`
   (`main.go:46`, `:53`, `:60`, `:71`, `:77`, `:92`, `:142`) are
   shown for orientation and may shift slightly during implementation.
-- `ralph-tui/ralph-steps.json` — line 3 Splash step's `{{PROJECT_DIR}}`
+- `src/config.json` — line 3 Splash step's `{{PROJECT_DIR}}`
   flips to `{{WORKFLOW_DIR}}` (ralph-art.txt lives in the workflow
   bundle, not the target repo).
-- ~~`ralph-tui/bin/ralph-steps.json`~~ — **dropped from inventory.**
+- ~~`ralph-tui/bin/config.json`~~ — **dropped from inventory.**
   The entire `bin/` tree is gitignored (`.gitignore:9`); editing it
   is either a no-op (untracked) or introduces a tracked copy that
   diverges from `make build` output. Adversarial validator V5.
@@ -888,7 +888,7 @@ ban. Error message updated to name both tokens (§13).
 
 **Default workflow content:**
 
-- `ralph-tui/ralph-steps.json` — `env` entries remain untouched; only
+- `src/config.json` — `env` entries remain untouched; only
   line 3's Splash token flips (`{{PROJECT_DIR}}` → `{{WORKFLOW_DIR}}`).
   If a migration to add `GITHUB_TOKEN` etc. is needed for the default
   loop, that's a separate content change.
@@ -994,7 +994,7 @@ Per `docs/coding-standards/versioning.md`, this is a `y` bump under the
 
 **Characterization of the change**: `0.3.0` bundles three independently-
 breaking changes to the public API surface named by
-`docs/coding-standards/versioning.md:19` (CLI flags, `ralph-steps.json`
+`docs/coding-standards/versioning.md:19` (CLI flags, `config.json`
 schema, `{{VAR}}` language, environment dependencies):
 
 1. **Environment-breaking** — Docker becomes a hard runtime dependency,
@@ -1007,18 +1007,18 @@ schema, `{{VAR}}` language, environment dependencies):
    will break loudly at flag-parse or silently mount the wrong directory
    if not updated — hence the MINOR (breaking) bump, not PATCH.
 3. **Schema-additive and VAR-language change** — new top-level `env`
-   field in `ralph-steps.json` (backwards-compatible) plus a new
+   field in `config.json` (backwards-compatible) plus a new
    `{{WORKFLOW_DIR}}` built-in and a behavior change for `{{PROJECT_DIR}}`
    (now means target repo, not workflow bundle). The default
-   `ralph-steps.json:3` flips from `{{PROJECT_DIR}}` to
+   `config.json:3` flips from `{{PROJECT_DIR}}` to
    `{{WORKFLOW_DIR}}` — so any user who copied the default workflow
    verbatim will continue to work (because the default config ships
-   with them); any user whose own `ralph-steps.json` uses
+   with them); any user whose own `config.json` uses
    `{{PROJECT_DIR}}` to mean "workflow bundle" must rename it to
    `{{WORKFLOW_DIR}}`.
 
 Under the versioning standard's §2 rule ("Any existing user's
-ralph-steps.json that was valid before must still be valid and still
+config.json that was valid before must still be valid and still
 produce the same workflow"), (1) and (2) and the `{{PROJECT_DIR}}`
 semantic change in (3) would all be MAJOR in a `1.y.z` regime. They
 are MINOR here *only* under the `0.y.z` escape hatch. The first
@@ -1028,7 +1028,7 @@ token resemantications will each be MAJOR.
 
 New user-visible surface:
 - `create-sandbox` subcommand
-- `env` top-level field in `ralph-steps.json`
+- `env` top-level field in `config.json`
 - `--workflow-dir` flag (rename of `--project-dir`)
 - `--project-dir` flag (reintroduced, new meaning: target repo)
 - `{{WORKFLOW_DIR}}` built-in variable
@@ -1042,7 +1042,7 @@ New user-visible surface:
    replaces the old argument with `--workflow-dir` (for the current
    meaning) and optionally adds `--project-dir` (for target repo, else
    defaults to `os.Getwd()` + `EvalSymlinks`).
-3. If the user's custom `ralph-steps.json` uses `{{PROJECT_DIR}}` to
+3. If the user's custom `config.json` uses `{{PROJECT_DIR}}` to
    mean the workflow bundle (paths like `{{PROJECT_DIR}}/prompts/foo.md`
    in claude prompts, **or** `{{PROJECT_DIR}}/scripts/foo` in `command`
    step argv): the failure surfaces are *different* and the user
@@ -1052,7 +1052,7 @@ New user-visible surface:
    - **`command` steps**: validator does **not** scan these (`{{VAR}}`
      tokens in `command` argv are supported, just now with new
      meaning). Failure is a runtime `exec: no such file` at first
-     run. User must audit their `ralph-steps.json` for any
+     run. User must audit their `config.json` for any
      `{{PROJECT_DIR}}` token referring to workflow-bundle assets
      (scripts, art files, config) and rename to `{{WORKFLOW_DIR}}`.
      Adversarial validator V6 originally proposed a preflight
@@ -1355,7 +1355,7 @@ beyond themselves, so the warning's purpose (loud migration signal
 across many configs) does not apply. Mitigation dropped entirely:
 §11 upgrade-path bullet 3 no longer recommends the warning. The
 runtime `exec: no such file` error is sufficient signal for a sole
-user who maintains their own `ralph-steps.json`. Rationale aligns
+user who maintains their own `config.json`. Rationale aligns
 with the project-level preference recorded in `~/.claude/CLAUDE.md`
 ("Don't add error handling, fallbacks, or validation for scenarios
 that can't happen... Don't design for hypothetical future
@@ -1374,7 +1374,7 @@ it to implementation PR. Adversarial validator V6 flagged this as
 silent-failure surface with a runtime `exec: no such file`
 payload.
 
-Impact: governs whether a user whose `ralph-steps.json` references
+Impact: governs whether a user whose `config.json` references
 `{{PROJECT_DIR}}/scripts/...` gets a loud signal at preflight or
 discovers the break mid-run.
 
@@ -1496,7 +1496,7 @@ repro for the V6/V8 silent-failure paths.
   DNS allowlist, or an egress proxy. Significant complexity for marginal
   additional safety given claude needs Anthropic API + GitHub + public
   registries. Revisit if a compelling threat emerges.
-- **Refactoring claude-step resolution into `ralph-steps.json`**: the
+- **Refactoring claude-step resolution into `config.json`**: the
   narrow-reading-principle ADR favors this, but doing it simultaneously
   with the sandbox change doubles the PR size. Tracked as future work.
 - **Per-step sandbox customization** (different images, different env
@@ -1574,7 +1574,7 @@ validation (evidence-based-investigator + adversarial-validator).
     - V4 (MED — correctness gap): `reservedNames` map in `vars.go`
       is missing `"WORKFLOW_DIR"` entry. Updated §9 vars.go bullet
       and §10 validator test plan.
-    - V5 (LOW): `bin/ralph-steps.json` is gitignored. Dropped from
+    - V5 (LOW): `bin/config.json` is gitignored. Dropped from
       §9 rename inventory.
     - V6 (MED): `{{PROJECT_DIR}}` in `command` steps silently flips
       meaning post-split; validator does not scan command argv.
@@ -1720,7 +1720,7 @@ validation (evidence-based-investigator + adversarial-validator).
 ### Agent validation outcomes
 - **evidence-based-investigator**: 9 of 10 plan claims verified against
   file:line evidence; 1 claim (no prompt uses `{{PROJECT_DIR}}`)
-  confirmed for `prompts/` but flagged that `ralph-steps.json:3` does
+  confirmed for `prompts/` but flagged that `config.json:3` does
   use it in a non-claude command (runs on host — out of sandbox scope).
   Confirmed there is no existing UID/GID lookup code in ralph-tui.
 - **adversarial-validator**: surfaced 10 findings, of which 7 became

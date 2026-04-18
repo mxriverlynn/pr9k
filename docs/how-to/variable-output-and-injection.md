@@ -1,6 +1,6 @@
 # Variable Output and Injection
 
-This guide explains how data flows between workflow steps in ralph-tui: how variables are injected into prompts and commands, how step output is captured, and how steps pass data to each other through files.
+This guide explains how data flows between workflow steps in pr9k: how variables are injected into prompts and commands, how step output is captured, and how steps pass data to each other through files.
 
 ## {{VAR}} Substitution Engine
 
@@ -85,10 +85,10 @@ After the 0.3.0 split (`docs/adr/20260413162428-workflow-project-dir-split.md`),
 
 | Token | Expands to | Default source | Override flag |
 |-------|-----------|----------------|---------------|
-| `{{WORKFLOW_DIR}}` | The workflow bundle directory — where `ralph-steps.json`, `prompts/`, `scripts/`, and `ralph-art.txt` live | `os.Executable()` + `filepath.EvalSymlinks` | `--workflow-dir` |
+| `{{WORKFLOW_DIR}}` | The workflow bundle directory — where `config.json`, `prompts/`, `scripts/`, and `ralph-art.txt` live | `os.Executable()` + `filepath.EvalSymlinks` | `--workflow-dir` |
 | `{{PROJECT_DIR}}` | The target repository — the git repo being modified by the workflow | `os.Getwd()` + `filepath.EvalSymlinks` | `--project-dir` |
 
-In the default pr9k install both directories often share a parent (the binary lives under `bin/` inside the pr9k repo), but they are distinct concepts and may point to entirely different locations when ralph-tui is used from `PATH` or with explicit flags.
+In the default pr9k install both directories often share a parent (the binary lives under `bin/` inside the pr9k repo), but they are distinct concepts and may point to entirely different locations when pr9k is used from `PATH` or with explicit flags.
 
 Use `{{WORKFLOW_DIR}}` to reach workflow artifacts: `{{WORKFLOW_DIR}}/ralph-art.txt` (the default Splash step), `scripts/get_gh_user` (resolved against `workflowDir` by `ResolveCommand`). Use `{{PROJECT_DIR}}` when a shell command step needs to reference the target repo root explicitly (e.g., running a repo-specific tool). Do not use either token in prompt files (see sandbox constraint above).
 

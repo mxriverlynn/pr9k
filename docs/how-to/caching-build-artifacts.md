@@ -8,7 +8,7 @@ The fix: redirect cache directories to a subdirectory of the bind-mounted projec
 
 ## How It Works
 
-The `containerEnv` block in `ralph-steps.json` sets environment variables inside the Docker container before any Claude step runs. Point cache env vars at `/home/agent/workspace/.ralph-cache/<subdir>` — inside the bind-mounted project directory — and the build toolchain will use paths that are both writable and persistent across iterations.
+The `containerEnv` block in `config.json` sets environment variables inside the Docker container before any Claude step runs. Point cache env vars at `/home/agent/workspace/.ralph-cache/<subdir>` — inside the bind-mounted project directory — and the build toolchain will use paths that are both writable and persistent across iterations.
 
 The parent `.ralph-cache/` directory is created by `preflight.Run` before the first step executes. Subdirectories (`go/`, `go-build/`, `gomod/`, `xdg/`) are created on first use by the respective toolchain.
 
@@ -28,7 +28,7 @@ Add `.ralph-cache/` to your target project's `.gitignore` so the cache is never 
 
 ### Go
 
-If you are running Ralph against a Go project, the default bundled `ralph-steps.json` already includes these settings — you do not need to add them manually unless you are writing a custom workflow.
+If you are running Ralph against a Go project, the default bundled `config.json` already includes these settings — you do not need to add them manually unless you are writing a custom workflow.
 
 ```json
 {
@@ -95,8 +95,12 @@ If you run Docker in rootless mode or with a custom UID mapping, verify that the
 Add the following to the `.gitignore` of every project you run Ralph against:
 
 ```
+# pr9k runtime state (session logs, iteration.jsonl, optional in-repo workflow override)
+.pr9k/
 # Ralph build artifact cache
 .ralph-cache/
 ```
 
-This prevents the cache from being accidentally committed. The pr9k repo itself already has this entry.
+This prevents runtime state and the build cache from being accidentally committed. The pr9k repo itself already has both entries.
+
+`.pr9k/` is the primary runtime output directory (logs, `iteration.jsonl`). `.ralph-cache/` is the bind-mounted artifact cache created separately by the Docker sandbox preflight; it lands at the project root alongside `.pr9k/`.
