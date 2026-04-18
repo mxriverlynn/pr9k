@@ -51,7 +51,7 @@ path/to/pr9k/bin/pr9k
 path/to/pr9k/bin/pr9k -n <iterations>
 
 # Specify the project directory explicitly:
-path/to/pr9k/bin/pr9k --project-dir path/to/pr9k
+path/to/pr9k/bin/pr9k --project-dir path/to/your-target-repo
 
 # Build and run directly (without make):
 cd path/to/pr9k/src && go build -o ../bin/pr9k ./cmd/pr9k
