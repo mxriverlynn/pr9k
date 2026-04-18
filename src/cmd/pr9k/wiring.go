@@ -57,7 +57,7 @@ func newStatusLineSender(send func(tea.Msg)) func(interface{}) {
 
 // buildStatusLineConfig constructs a statusline.Config from the parsed
 // steps.StatusLineConfig. Returns nil when slc is nil (no statusLine block
-// in ralph-steps.json), which causes statusline.New to return a no-op runner.
+// in config.json), which causes statusline.New to return a no-op runner.
 func buildStatusLineConfig(slc *steps.StatusLineConfig) *statusline.Config {
 	if slc == nil {
 		return nil

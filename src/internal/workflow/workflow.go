@@ -110,7 +110,7 @@ type SandboxOptions struct {
 // NewRunner creates a Runner that streams subprocess output through the sendLine
 // callback (set via SetSender) and to the file logger. projectDir is set as
 // cmd.Dir for every subprocess and must be the target repository being operated
-// on, not the install dir where pr9k's bundled ralph-steps.json, scripts/,
+// on, not the install dir where pr9k's bundled config.json, scripts/,
 // and prompts/ live.
 //
 // NewRunner initializes sendLine to a sentinel that panics with a descriptive

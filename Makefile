@@ -6,7 +6,7 @@ build:
 	cd src && go build -o ../bin/pr9k ./cmd/pr9k
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
-	cp src/ralph-steps.json bin/
+	cp src/config.json bin/
 	cp ralph-art.txt bin/
 
 test:

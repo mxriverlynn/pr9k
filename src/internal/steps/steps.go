@@ -48,7 +48,7 @@ type Step struct {
 	ResumePrevious bool `json:"resumePrevious,omitempty"`
 }
 
-// StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
+// StatusLineConfig holds the optional status-line configuration from config.json.
 // Populated by LoadSteps; not yet consumed by the TUI (wiring is a follow-up).
 type StatusLineConfig struct {
 	Type                   string `json:"type,omitempty"`
@@ -56,7 +56,7 @@ type StatusLineConfig struct {
 	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
-// StepFile holds the three groups of steps loaded from ralph-steps.json.
+// StepFile holds the three groups of steps loaded from config.json.
 type StepFile struct {
 	Env          []string          `json:"env,omitempty"`
 	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
@@ -66,10 +66,10 @@ type StepFile struct {
 	StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
 }
 
-// LoadSteps loads the step definitions from ralph-steps.json,
+// LoadSteps loads the step definitions from config.json,
 // resolved relative to workflowDir.
 func LoadSteps(workflowDir string) (StepFile, error) {
-	path := filepath.Join(workflowDir, "ralph-steps.json")
+	path := filepath.Join(workflowDir, "config.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return StepFile{}, fmt.Errorf("steps: could not read %s: %w", path, err)

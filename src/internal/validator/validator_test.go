@@ -27,10 +27,10 @@ func tempProject(t *testing.T) string {
 	return dir
 }
 
-// writeStepsJSON writes content to ralph-steps.json in dir.
+// writeStepsJSON writes content to config.json in dir.
 func writeStepsJSON(t *testing.T, dir, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -1,4 +1,4 @@
-// Package validator implements D13 config validation for ralph-steps.json.
+// Package validator implements D13 config validation for config.json.
 // It covers all ten validation categories from the UX corrections design plan
 // and returns a collected slice of structured errors — one per problem found.
 // Validation runs in a single pass so all errors are visible before exit 1.
@@ -146,7 +146,7 @@ var reservedBuiltins = map[string]bool{
 	"STEP_NAME":    true,
 }
 
-// Validate loads ralph-steps.json from workflowDir and validates all D13
+// Validate loads config.json from workflowDir and validates all D13
 // categories. It returns all errors found; an empty slice means valid.
 // Validation collects every error before returning — it does not stop at the
 // first failure.
@@ -154,7 +154,7 @@ func Validate(workflowDir string) []Error {
 	var errs []Error
 
 	// Category 1 — file presence.
-	path := filepath.Join(workflowDir, "ralph-steps.json")
+	path := filepath.Join(workflowDir, "config.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return []Error{cfgErr("file", "config", "", fmt.Sprintf("could not read %s: %v", path, err))}
@@ -239,7 +239,7 @@ func Validate(workflowDir string) []Error {
 					Severity: SeverityWarning,
 					Category: "containerEnv",
 					Phase:    "config",
-					Problem:  fmt.Sprintf("containerEnv key %q looks like a secret; literal values in ralph-steps.json are committed to the repo — consider using the env allowlist to pass it from the host instead", key),
+					Problem:  fmt.Sprintf("containerEnv key %q looks like a secret; literal values in config.json are committed to the repo — consider using the env allowlist to pass it from the host instead", key),
 				})
 			}
 			// INFO notice when key also appears in the env allowlist (containerEnv wins).
@@ -644,7 +644,7 @@ func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 // safePromptPath resolves the named prompt file under workflowDir/prompts and
 // returns its absolute path. It returns an error if the path escapes the
 // prompts directory (e.g. via ".." traversal), preventing path-traversal
-// attacks where a malicious ralph-steps.json could read arbitrary host files.
+// attacks where a malicious config.json could read arbitrary host files.
 func safePromptPath(workflowDir, promptFile string) (string, error) {
 	promptPath := filepath.Join(workflowDir, "prompts", promptFile)
 	absPath, err := filepath.Abs(promptPath)

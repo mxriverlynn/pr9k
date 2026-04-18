@@ -3449,7 +3449,7 @@ func TestRun_FinalizeCaptureAsIgnored(t *testing.T) {
 // SUGG-004: TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand verifies
 // that buildStep with a nil user-env slice does not include any user-supplied
 // env var in the command. This is the common default configuration where
-// ralph-steps.json has no top-level env field.
+// config.json has no top-level env field.
 func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {

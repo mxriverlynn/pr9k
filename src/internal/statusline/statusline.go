@@ -19,7 +19,7 @@ import (
 // DefaultRefreshInterval is applied when cfg.RefreshIntervalSeconds is nil.
 const DefaultRefreshInterval = 5 * time.Second
 
-// Config holds the parsed statusLine block from ralph-steps.json.
+// Config holds the parsed statusLine block from config.json.
 // Callers construct this from steps.StatusLineConfig before calling New.
 type Config struct {
 	// Command is the resolved path or bare name of the script to execute.
@@ -112,7 +112,7 @@ func New(cfg *Config, workflowDir, projectDir string, log *logger.Logger) *Runne
 }
 
 // NewNoOp returns a disabled Runner whose methods are all safe no-ops.
-// Used when statusLine is absent from ralph-steps.json.
+// Used when statusLine is absent from config.json.
 func NewNoOp() *Runner {
 	return &Runner{enabled: false, triggerCh: make(chan struct{}, 4)}
 }

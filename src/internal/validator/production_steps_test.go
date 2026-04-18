@@ -22,8 +22,8 @@ func getRalphTUIDir(t *testing.T) string {
 }
 
 // assembleWorkflowDir builds a temp directory that mirrors the workflow bundle
-// layout (ralph-steps.json + prompts/ + scripts/) from source-tree locations:
-//   - ralph-steps.json  lives at src/ralph-steps.json
+// layout (config.json + prompts/ + scripts/) from source-tree locations:
+//   - config.json  lives at src/config.json
 //   - prompts/          lives at the repo root
 //   - scripts/          lives at the repo root
 func assembleWorkflowDir(t *testing.T) string {
@@ -33,12 +33,12 @@ func assembleWorkflowDir(t *testing.T) string {
 
 	dir := t.TempDir()
 
-	data, err := os.ReadFile(filepath.Join(ralphTUIDir, "ralph-steps.json"))
+	data, err := os.ReadFile(filepath.Join(ralphTUIDir, "config.json"))
 	if err != nil {
-		t.Fatalf("read ralph-steps.json: %v", err)
+		t.Fatalf("read config.json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), data, 0o644); err != nil {
-		t.Fatalf("write ralph-steps.json: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
 	}
 
 	for _, sub := range []string{"prompts", "scripts"} {
@@ -54,13 +54,13 @@ func assembleWorkflowDir(t *testing.T) string {
 	return dir
 }
 
-// TP-001: production ralph-steps.json passes validation with zero fatal errors,
+// TP-001: production config.json passes validation with zero fatal errors,
 // and the containerEnv block contains no collision notices (TP-003).
 func TestValidate_ProductionStepsJSON(t *testing.T) {
 	workflowDir := assembleWorkflowDir(t)
 	errs := validator.Validate(workflowDir)
 	if n := validator.FatalErrorCount(errs); n != 0 {
-		t.Fatalf("production ralph-steps.json has %d fatal validation error(s): %v", n, errs)
+		t.Fatalf("production config.json has %d fatal validation error(s): %v", n, errs)
 	}
 	// TP-003: none of the returned entries should be a containerEnv collision
 	// notice (Severity==info, Category=="containerEnv"). Such a notice means one
@@ -330,7 +330,7 @@ func TestCodeReviewPrompt_ContainsSentinel(t *testing.T) {
 }
 
 // TestLoadSteps_TestWritingStep_TimeoutSeconds pins that the "Test writing" step
-// in the shipped ralph-steps.json has timeoutSeconds: 900. This guards against
+// in the shipped config.json has timeoutSeconds: 900. This guards against
 // accidental removal of the conservative cap that prevents runaway test-writing
 // runs from blocking the iteration loop indefinitely.
 func TestLoadSteps_TestWritingStep_TimeoutSeconds(t *testing.T) {

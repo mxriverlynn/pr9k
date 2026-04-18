@@ -48,7 +48,7 @@ func TestStepNames_Multiple(t *testing.T) {
 	}
 }
 
-// writeMinimalStepFile creates a minimal valid ralph-steps.json under dir so
+// writeMinimalStepFile creates a minimal valid config.json under dir so
 // steps.LoadSteps and validator.Validate succeed without requiring real
 // prompts or scripts.
 func writeMinimalStepFile(t *testing.T, dir string) {
@@ -60,12 +60,12 @@ func writeMinimalStepFile(t *testing.T, dir string) {
 		],
 		"finalize": []
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// writeInvalidStepFile creates a ralph-steps.json whose JSON is valid but
+// writeInvalidStepFile creates a config.json whose JSON is valid but
 // fails D13 validation — a claude step missing the required promptFile field.
 // Used to exercise the validator.Validate failure path in startup.
 func writeInvalidStepFile(t *testing.T, dir string) {
@@ -77,7 +77,7 @@ func writeInvalidStepFile(t *testing.T, dir string) {
 		],
 		"finalize": []
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -221,10 +221,10 @@ func TestStartup_HappyPath(t *testing.T) {
 }
 
 // TestStartup_LoadStepsFailure verifies that startup() returns (nil, false) and
-// prints an error when ralph-steps.json is missing — before creating the logger
+// prints an error when config.json is missing — before creating the logger
 // or running validation/preflight.
 func TestStartup_LoadStepsFailure(t *testing.T) {
-	workflowDir := t.TempDir() // no ralph-steps.json
+	workflowDir := t.TempDir() // no config.json
 	projectDir := t.TempDir()
 	profileDir := t.TempDir()
 
@@ -238,7 +238,7 @@ func TestStartup_LoadStepsFailure(t *testing.T) {
 	var buf bytes.Buffer
 	svc, ok := startup(cfg, projectDir, profileDir, prober, &buf)
 	if ok {
-		t.Fatal("startup() returned ok=true; want false when ralph-steps.json is missing")
+		t.Fatal("startup() returned ok=true; want false when config.json is missing")
 	}
 	if svc != nil {
 		t.Error("startup() returned non-nil services on LoadSteps failure")
@@ -392,7 +392,7 @@ func TestStartup_PreflightOnlyErrors(t *testing.T) {
 	}
 }
 
-// writeWarningOnlyStepFile creates a ralph-steps.json that triggers only a
+// writeWarningOnlyStepFile creates a config.json that triggers only a
 // warning-level validation finding (GITHUB_TOKEN in containerEnv), no fatal errors.
 func writeWarningOnlyStepFile(t *testing.T, dir string) {
 	t.Helper()
@@ -404,12 +404,12 @@ func writeWarningOnlyStepFile(t *testing.T, dir string) {
 		],
 		"finalize": []
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// writeWarningAndFatalStepFile creates a ralph-steps.json with both a fatal
+// writeWarningAndFatalStepFile creates a config.json with both a fatal
 // containerEnv error (CLAUDE_CONFIG_DIR is reserved) and a non-fatal warning
 // (GITHUB_TOKEN looks like a secret).
 func writeWarningAndFatalStepFile(t *testing.T, dir string) {
@@ -425,7 +425,7 @@ func writeWarningAndFatalStepFile(t *testing.T, dir string) {
 		],
 		"finalize": []
 	}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -14,7 +14,7 @@ func HostUIDGID() (int, int) {
 // BuildRunArgs constructs the full `docker run ...` argv for a claude
 // step. uid/gid are inputs (pure function, no syscalls) so tests can
 // assert a deterministic argv shape. envAllowlist is the union of
-// BuiltinEnvAllowlist and the per-workflow env list from ralph-steps.json.
+// BuiltinEnvAllowlist and the per-workflow env list from config.json.
 // Duplicate names are emitted once (de-dup by string equality, first-seen order).
 // Unset host vars (os.LookupEnv returns ok=false) are silently skipped.
 // CLAUDE_CONFIG_DIR is always set to the container mount point; callers

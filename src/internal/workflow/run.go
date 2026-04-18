@@ -180,11 +180,11 @@ type RunConfig struct {
 	WorkflowDir string
 	Iterations  int
 	// Env is the per-workflow env allowlist loaded from the "env" field of
-	// ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+	// config.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
 	// when building docker run args for claude steps.
 	Env []string
 	// ContainerEnv is the per-workflow literal env map from the "containerEnv"
-	// field of ralph-steps.json. Each entry is injected as -e KEY=VALUE into
+	// field of config.json. Each entry is injected as -e KEY=VALUE into
 	// the Docker command. Emitted after Env allowlist entries so containerEnv
 	// wins on collision (Docker last-wins).
 	ContainerEnv    map[string]string

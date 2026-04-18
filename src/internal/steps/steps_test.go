@@ -208,7 +208,7 @@ func TestLoadSteps_FinalizeNonClaudeFieldsPopulated(t *testing.T) {
 func TestLoadSteps_MissingOptionalFieldsNoError(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,7 +227,7 @@ func TestLoadSteps_MissingOptionalFieldsNoError(t *testing.T) {
 
 func TestLoadSteps_MalformedJSON(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`not valid json`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`not valid json`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -236,7 +236,7 @@ func TestLoadSteps_MalformedJSON(t *testing.T) {
 		t.Fatal("expected an error for malformed JSON, got nil")
 	}
 	// Error should include the file path
-	wantPath := filepath.Join(dir, "ralph-steps.json")
+	wantPath := filepath.Join(dir, "config.json")
 	if !strings.Contains(err.Error(), wantPath) {
 		t.Errorf("error %q should contain file path %q", err.Error(), wantPath)
 	}
@@ -252,7 +252,7 @@ func TestLoadSteps_FileNotFound(t *testing.T) {
 func TestLoadSteps_InitializeDefaultsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -268,7 +268,7 @@ func TestLoadSteps_InitializeDefaultsEmpty(t *testing.T) {
 func TestLoadSteps_InitializeDeserializes(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"initialize":[{"name":"Setup","isClaude":false,"command":["echo","ready"]}],"iteration":[],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -287,7 +287,7 @@ func TestLoadSteps_InitializeDeserializes(t *testing.T) {
 func TestStep_CaptureAsDefault(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -303,7 +303,7 @@ func TestStep_CaptureAsDefault(t *testing.T) {
 func TestStep_CaptureAsDeserializes(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Get Issue","isClaude":false,"captureAs":"ISSUE_ID"}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -319,7 +319,7 @@ func TestStep_CaptureAsDeserializes(t *testing.T) {
 func TestStep_BreakLoopIfEmptyDefault(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Only Name","isClaude":false}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -335,7 +335,7 @@ func TestStep_BreakLoopIfEmptyDefault(t *testing.T) {
 func TestStep_BreakLoopIfEmptyDeserializes(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Get Issue","isClaude":false,"captureAs":"ISSUE_ID","breakLoopIfEmpty":true}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -350,7 +350,7 @@ func TestStep_BreakLoopIfEmptyDeserializes(t *testing.T) {
 
 func TestLoadSteps_EmptyArrays(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{"iteration":[],"finalize":[]}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"iteration":[],"finalize":[]}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -394,7 +394,7 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 func TestLoadSteps_EnvPopulatedArray(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"env":["GITHUB_TOKEN","AWS_KEY"],"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -417,7 +417,7 @@ func TestLoadSteps_EnvPopulatedArray(t *testing.T) {
 func TestLoadSteps_EnvAbsentKeyIsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -434,7 +434,7 @@ func TestLoadSteps_EnvAbsentKeyIsEmpty(t *testing.T) {
 func TestLoadSteps_EnvEmptyArrayIsNonNil(t *testing.T) {
 	dir := t.TempDir()
 	json := `{"env":[],"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(json), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(json), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -569,7 +569,7 @@ func TestBuildPrompt_UnresolvedVarBecomesEmpty(t *testing.T) {
 func TestLoadSteps_StatusLineDeserializes(t *testing.T) {
 	dir := t.TempDir()
 	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"type":"command","command":"scripts/status.sh","refreshIntervalSeconds":5}}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(jsonContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -601,7 +601,7 @@ func TestLoadSteps_StatusLineDeserializes(t *testing.T) {
 func TestLoadSteps_StatusLineAbsentIsNil(t *testing.T) {
 	dir := t.TempDir()
 	jsonContent := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(jsonContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -621,7 +621,7 @@ func TestLoadSteps_StatusLineAbsentIsNil(t *testing.T) {
 func TestLoadSteps_StatusLineRefreshIntervalZeroIsNonNilPointer(t *testing.T) {
 	dir := t.TempDir()
 	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"command":"echo","refreshIntervalSeconds":0}}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(jsonContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -643,7 +643,7 @@ func TestLoadSteps_StatusLineRefreshIntervalZeroIsNonNilPointer(t *testing.T) {
 func TestLoadSteps_StatusLineRefreshIntervalAbsentIsNilPointer(t *testing.T) {
 	dir := t.TempDir()
 	jsonContent := `{"iteration":[],"finalize":[],"statusLine":{"command":"echo"}}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(jsonContent), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(jsonContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -662,11 +662,11 @@ func TestLoadSteps_StatusLineRefreshIntervalAbsentIsNilPointer(t *testing.T) {
 // --- TP-009: ContainerEnv JSON deserialization ---
 
 // TestLoadSteps_ContainerEnvPopulated verifies that a populated containerEnv map
-// is correctly deserialized from ralph-steps.json.
+// is correctly deserialized from config.json.
 func TestLoadSteps_ContainerEnvPopulated(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"containerEnv":{"K":"V"},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -687,7 +687,7 @@ func TestLoadSteps_ContainerEnvPopulated(t *testing.T) {
 func TestLoadSteps_ContainerEnvAbsentIsNil(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -705,7 +705,7 @@ func TestLoadSteps_ContainerEnvAbsentIsNil(t *testing.T) {
 func TestLoadSteps_ContainerEnvEmptyMap(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"containerEnv":{},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -723,7 +723,7 @@ func TestLoadSteps_ContainerEnvEmptyMap(t *testing.T) {
 func TestLoadSteps_CaptureMode_Populated(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"iteration":[{"name":"Fetch","isClaude":false,"command":["echo"],"captureAs":"OUT","captureMode":"fullStdout"}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -748,7 +748,7 @@ func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {
 	t.Run("absent when zero value", func(t *testing.T) {
 		dir := t.TempDir()
 		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"]}],"finalize":[]}`
-		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 		got, err := steps.LoadSteps(dir)
@@ -767,7 +767,7 @@ func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {
 	t.Run("present when fullStdout", func(t *testing.T) {
 		dir := t.TempDir()
 		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"],"captureMode":"fullStdout"}],"finalize":[]}`
-		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
 		got, err := steps.LoadSteps(dir)
@@ -787,7 +787,7 @@ func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {
 func TestLoadSteps_CaptureMode_Absent(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -845,7 +845,7 @@ func TestStep_SkipIfCaptureEmpty_JSONRoundtrip(t *testing.T) {
 func TestStep_TimeoutSeconds_RoundTrip(t *testing.T) {
 	t.Run("absent_key_yields_zero", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
 			"initialize":[],
 			"iteration":[{"name":"Step","isClaude":false,"command":["echo"]}],
 			"finalize":[]
@@ -863,7 +863,7 @@ func TestStep_TimeoutSeconds_RoundTrip(t *testing.T) {
 
 	t.Run("present_key_900_is_loaded", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
 			"initialize":[],
 			"iteration":[{"name":"Step","isClaude":false,"command":["echo"],"timeoutSeconds":900}],
 			"finalize":[]
