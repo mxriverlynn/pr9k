@@ -1,0 +1,145 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/mxriverlynn/pr9k/src/internal/preflight"
+	"github.com/mxriverlynn/pr9k/src/internal/sandbox"
+)
+
+// sandboxCreateDeps holds injected dependencies so unit tests can drive every
+// branch without shelling out to a real docker daemon.
+type sandboxCreateDeps struct {
+	prober    preflight.Prober
+	dockerRun dockerRunFunc
+	uid       int
+	gid       int
+	stdout    io.Writer
+	stderr    io.Writer
+}
+
+// newSandboxCreateCmd returns the production `sandbox create` cobra command
+// wired with real docker dependencies.
+func newSandboxCreateCmd() *cobra.Command {
+	uid, gid := sandbox.HostUIDGID()
+	return newSandboxCreateCmdWith(&sandboxCreateDeps{
+		prober:    preflight.RealProber{},
+		dockerRun: realDockerRun,
+		uid:       uid,
+		gid:       gid,
+		stdout:    os.Stdout,
+		stderr:    os.Stderr,
+	})
+}
+
+// newSandboxCreateCmdWith builds the cobra command using the provided deps.
+// Separated from newSandboxCreateCmd so tests can inject fakes.
+func newSandboxCreateCmdWith(deps *sandboxCreateDeps) *cobra.Command {
+	var force bool
+
+	cmd := &cobra.Command{
+		Use:           "create",
+		Short:         "Pull the sandbox image and verify it can run under the current user",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSandboxCreate(deps, force)
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "re-pull the sandbox image even if it is already present")
+	return cmd
+}
+
+// semverRe matches a semver-shaped pattern (e.g. "2.1.101") anywhere in a string.
+var semverRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+func runSandboxCreate(deps *sandboxCreateDeps, force bool) error {
+	// Step 1: Docker reachability check.
+	_, _ = fmt.Fprint(deps.stdout, "Checking Docker... ")
+	if !deps.prober.DockerBinaryAvailable() {
+		_, _ = fmt.Fprintln(deps.stdout)
+		_, _ = fmt.Fprintln(deps.stderr, "Docker is not installed. Install Docker and try again.")
+		return errSilentExit
+	}
+	if err := deps.prober.DockerDaemonReachable(); err != nil {
+		_, _ = fmt.Fprintln(deps.stdout)
+		_, _ = fmt.Fprintln(deps.stderr, "Docker is installed but the daemon isn't running. Start Docker and try again.")
+		return errSilentExit
+	}
+	_, _ = fmt.Fprintln(deps.stdout, "✓")
+
+	// Step 2: Image presence / pull.
+	present, err := deps.prober.SandboxImagePresent()
+	if err != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "Failed to check sandbox image: %v\n", err)
+		return errSilentExit
+	}
+
+	if present && !force {
+		_, _ = fmt.Fprintf(deps.stdout, "Image %s already present; skipping pull (use --force to re-pull).\n", sandbox.ImageTag)
+	} else {
+		// Pull — stream stdout directly; capture stderr for failure reporting.
+		var pullStderr bytes.Buffer
+		exitCode, runErr := deps.dockerRun([]string{"docker", "pull", sandbox.ImageTag}, deps.stdout, &pullStderr)
+		if runErr != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "Failed to pull sandbox image: %v\n", runErr)
+			return errSilentExit
+		}
+		if exitCode != 0 {
+			_, _ = fmt.Fprintln(deps.stderr, "Failed to pull sandbox image.")
+			if s := pullStderr.String(); s != "" {
+				_, _ = fmt.Fprint(deps.stderr, s)
+			}
+			return errSilentExit
+		}
+	}
+
+	// Step 3: Smoke test.
+	var smokeStdout, smokeStderr bytes.Buffer
+	smokeArgs := []string{
+		"docker", "run", "--rm",
+		"-u", fmt.Sprintf("%d:%d", deps.uid, deps.gid),
+		sandbox.ImageTag,
+		"claude", "--version",
+	}
+	exitCode, runErr := deps.dockerRun(smokeArgs, &smokeStdout, &smokeStderr)
+	if runErr != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "Sandbox smoke test failed: %v\n", runErr)
+		return errSilentExit
+	}
+	if exitCode != 0 {
+		_, _ = fmt.Fprintf(deps.stderr, "Sandbox smoke test failed — container exited with status %d.\n", exitCode)
+		if s := smokeStderr.String(); s != "" {
+			_, _ = fmt.Fprint(deps.stderr, s)
+		}
+		return errSilentExit
+	}
+
+	// Accept version output from stdout first, then stderr.
+	// stripANSI prevents terminal injection from a malicious or compromised image.
+	output := stripANSI(strings.TrimSpace(smokeStdout.String()))
+	if output == "" {
+		output = stripANSI(strings.TrimSpace(smokeStderr.String()))
+	}
+	if output == "" {
+		_, _ = fmt.Fprintln(deps.stderr, "Sandbox smoke test failed — image ran but produced no version output. Image may be corrupted or a locally-tagged stub. Re-pull with --force.")
+		return errSilentExit
+	}
+
+	if !semverRe.MatchString(output) {
+		_, _ = fmt.Fprintf(deps.stdout, "Sandbox smoke test warning — unexpected version output: %s. The image may not be claude-code (e.g., a tag squat or local stub). Re-pull with --force or verify the image digest before proceeding.\n", output)
+	} else {
+		_, _ = fmt.Fprintf(deps.stdout, "Sandbox verified: %s under UID %d:%d.\n", output, deps.uid, deps.gid)
+	}
+
+	// Step 4: Done.
+	_, _ = fmt.Fprintln(deps.stdout, "Sandbox ready.")
+	return nil
+}

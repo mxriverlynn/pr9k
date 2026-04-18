@@ -1,10 +1,10 @@
 # Configuring a Status Line
 
-ralph-tui can display live workflow state in the TUI footer by running a custom script on a schedule. This replaces the default shortcut bar in Normal mode with a single line of text from your script, plus a `? Help` shortcut for the keyboard shortcut modal.
+pr9k can display live workflow state in the TUI footer by running a custom script on a schedule. This replaces the default shortcut bar in Normal mode with a single line of text from your script, plus a `? Help` shortcut for the keyboard shortcut modal.
 
 ## Prerequisites
 
-- ralph-tui 0.6.0 or later
+- pr9k 0.6.1 or later
 - A `ralph-steps.json` in your workflow directory
 - [`jq`](https://jqlang.github.io/jq/) — required by the sample script to parse stdin JSON
 - `git` (optional) — used by the sample script to display the current branch
@@ -28,12 +28,12 @@ The `command` field is required. `type` and `refreshIntervalSeconds` are optiona
 
 ## Step 2 — Copy or write a script
 
-The sample script at `scripts/statusline` in the ralph-tui distribution reads ralph-tui's JSON payload and prints the current phase, iteration, step name, and issue ID with ANSI color:
+The sample script at `scripts/statusline` in the pr9k distribution reads pr9k's JSON payload and prints the current phase, iteration, step name, and issue ID with ANSI color:
 
 ```bash
 #!/usr/bin/env bash
-# ralph-tui status line — demo script, adapt for your needs.
-# Reads ralph-tui's JSON payload from stdin and prints a single status line.
+# pr9k status line — demo script, adapt for your needs.
+# Reads pr9k's JSON payload from stdin and prints a single status line.
 # Requires: bash 3.1+, jq; git is used when available for branch display.
 
 command -v jq >/dev/null || { printf 'statusline: jq is required\n' >&2; exit 1; }
@@ -66,11 +66,11 @@ printf '%b\n' "$line"
 Copy it into your workflow's `scripts/` directory and make it executable:
 
 ```bash
-cp /path/to/ralph-tui/scripts/statusline scripts/statusline
+cp /path/to/pr9k/scripts/statusline scripts/statusline
 chmod +x scripts/statusline
 ```
 
-The script uses `input=$(cat)` to drain stdin before processing, which is required — if the script exits without reading, ralph-tui's stdin write blocks until the 2-second command timeout fires.
+The script uses `input=$(cat)` to drain stdin before processing, which is required — if the script exits without reading, pr9k's stdin write blocks until the 2-second command timeout fires.
 
 ## Step 3 — Available stdin fields
 
@@ -87,7 +87,7 @@ Available fields from stdin:
 | `.step.num` | `4` |
 | `.mode` | `"normal"` |
 | `.captures.ISSUE_ID` | `"42"` |
-| `.version` | `"0.6.0"` |
+| `.version` | `"0.6.1"` |
 | `.workflowDir` | `"/home/user/.local/bin"` |
 | `.projectDir` | `"/home/user/myrepo"` |
 
@@ -113,7 +113,7 @@ Set to `0` to disable the timer and only refresh on workflow events (phase chang
 
 ## Debugging
 
-ralph-tui logs all status-line activity to the session log file (under `logs/` in your project directory). Lines are prefixed with `[statusline]`:
+pr9k logs all status-line activity to the session log file (under `logs/` in your project directory). Lines are prefixed with `[statusline]`:
 
 ```
 tail -f logs/<timestamp>.log | grep '\[statusline\]'

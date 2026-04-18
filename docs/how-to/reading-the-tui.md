@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  ralph-tui v0.6.0 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  pr9k v0.6.1 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -176,7 +176,7 @@ The modifier key bypass is a standard feature of every mainstream terminal that 
 
 ## Region 3 — the shortcut footer
 
-A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`ralph-tui v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `ralph-tui --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`pr9k v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `pr9k --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
 
 The footer uses a two-tone color scheme: the version label on the right renders in **white**. On the left, for the key-mapping lines (Normal and Error modes), each mapped key token (e.g. `↑/k`, `n`, `q`, `c`, `r`) renders in **white** and its trailing description (e.g. `up`, `next step`, `quit`) renders in **light gray**. For the status-message lines the whole line renders in **white** — with one exception: in the quit-confirm prompt, the embedded `Power-Ralph.9000` substring renders in **green** to match the top-border title's brand color, so the confirmation footer and the title line read as the same app.
 
@@ -185,7 +185,7 @@ The footer uses a two-tone color scheme: the version label on the right renders 
 When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
-[status text…]                    ? Help | ralph-tui v0.6.0
+[status text…]                    ? Help | pr9k v0.6.1
 ```
 
 The status text sits on the left and the `? Help | <version>` cluster is right-aligned, so the help hint and version label stay pinned to the right edge regardless of how wide the status text grows or shrinks between refreshes. The status text is the sanitized first non-empty line of the most recent command run; it is right-truncated to protect the `? Help | <version>` cluster. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.

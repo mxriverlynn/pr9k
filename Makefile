@@ -3,25 +3,25 @@
 build:
 	rm -rf bin
 	mkdir -p bin
-	cd ralph-tui && go build -o ../bin/ralph-tui ./cmd/ralph-tui
+	cd src && go build -o ../bin/pr9k ./cmd/pr9k
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
-	cp ralph-tui/ralph-steps.json bin/
+	cp src/ralph-steps.json bin/
 	cp ralph-art.txt bin/
 
 test:
-	cd ralph-tui && go test -race -count=1 ./...
+	cd src && go test -race -count=1 ./...
 
 lint:
-	cd ralph-tui && golangci-lint run
+	cd src && golangci-lint run
 
 GOFMT_PATHS := cmd internal tools.go
 
 format:
-	cd ralph-tui && gofmt -w $(GOFMT_PATHS)
+	cd src && gofmt -w $(GOFMT_PATHS)
 
 format-check:
-	@cd ralph-tui && unformatted=$$(gofmt -l $(GOFMT_PATHS)); \
+	@cd src && unformatted=$$(gofmt -l $(GOFMT_PATHS)); \
 	if [ -n "$$unformatted" ]; then \
 		echo "Files not formatted:"; \
 		echo "$$unformatted"; \
@@ -29,14 +29,14 @@ format-check:
 	fi
 
 vet:
-	cd ralph-tui && go vet ./...
-	cd ralph-tui && go vet -tags tools .
+	cd src && go vet ./...
+	cd src && go vet -tags tools .
 
 vulncheck:
-	cd ralph-tui && govulncheck ./...
+	cd src && govulncheck ./...
 
 mod-tidy:
-	@cd ralph-tui && go mod tidy && \
+	@cd src && go mod tidy && \
 	files="go.mod"; \
 	if [ -f go.sum ]; then files="$$files go.sum"; fi; \
 	if ! git diff --exit-code $$files; then \
