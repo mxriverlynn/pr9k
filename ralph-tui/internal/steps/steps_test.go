@@ -802,3 +802,40 @@ func TestLoadSteps_CaptureMode_Absent(t *testing.T) {
 		t.Errorf("CaptureMode = %q, want %q", got.Iteration[0].CaptureMode, "")
 	}
 }
+
+// TestStep_SkipIfCaptureEmpty_JSONRoundtrip guards the JSON field tag for
+// skipIfCaptureEmpty: parse with value, parse without, and omitempty on marshal.
+func TestStep_SkipIfCaptureEmpty_JSONRoundtrip(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		data := []byte(`{"name":"a","isClaude":false,"command":["echo"],"skipIfCaptureEmpty":"X"}`)
+		var s steps.Step
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if s.SkipIfCaptureEmpty != "X" {
+			t.Errorf("SkipIfCaptureEmpty: want %q, got %q", "X", s.SkipIfCaptureEmpty)
+		}
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		data := []byte(`{"name":"a","isClaude":false,"command":["echo"]}`)
+		var s steps.Step
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if s.SkipIfCaptureEmpty != "" {
+			t.Errorf("SkipIfCaptureEmpty: want empty, got %q", s.SkipIfCaptureEmpty)
+		}
+	})
+
+	t.Run("omitempty_on_marshal", func(t *testing.T) {
+		s := steps.Step{Name: "a", IsClaude: false, Command: []string{"echo"}}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(string(data), "skipIfCaptureEmpty") {
+			t.Errorf("expected skipIfCaptureEmpty to be omitted when empty; got %s", data)
+		}
+	})
+}

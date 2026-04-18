@@ -144,6 +144,51 @@ func TestReviewVerdict_MissingFile(t *testing.T) {
 	}
 }
 
+// TestReviewVerdict_CRLFLineEndings: CRLF-terminated files are normalised by
+// tr -d '\r' and the NOTHING-TO-FIX sentinel is still matched.
+func TestReviewVerdict_CRLFLineEndings(t *testing.T) {
+	workDir := t.TempDir()
+	writeReview(t, workDir, "# Review\r\n\r\nNOTHING-TO-FIX\r\n")
+
+	stdout, _, exitCode := runVerdict(t, workDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code: want 0, got %d", exitCode)
+	}
+	if stdout != "" {
+		t.Errorf("stdout: want empty (CRLF stripped, sentinel matched), got %q", stdout)
+	}
+}
+
+// TestReviewVerdict_ProseBeforeSentinel: prose before the sentinel makes the
+// content non-matching — the equality check is strict, not a suffix check.
+func TestReviewVerdict_ProseBeforeSentinel(t *testing.T) {
+	workDir := t.TempDir()
+	writeReview(t, workDir, "Here is the review.\n\nNOTHING-TO-FIX\n")
+
+	stdout, _, exitCode := runVerdict(t, workDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code: want 0, got %d", exitCode)
+	}
+	if stdout != "yes" {
+		t.Errorf("stdout: want %q, got %q", "yes", stdout)
+	}
+}
+
+// TestReviewVerdict_ProseAfterSentinel: prose after the sentinel makes the
+// content non-matching — the equality check is strict, not a prefix check.
+func TestReviewVerdict_ProseAfterSentinel(t *testing.T) {
+	workDir := t.TempDir()
+	writeReview(t, workDir, "NOTHING-TO-FIX\n\nActually wait, found a bug.\n")
+
+	stdout, _, exitCode := runVerdict(t, workDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code: want 0, got %d", exitCode)
+	}
+	if stdout != "yes" {
+		t.Errorf("stdout: want %q, got %q", "yes", stdout)
+	}
+}
+
 // TestReviewVerdict_NormalReviewBody: real review content → "yes".
 func TestReviewVerdict_NormalReviewBody(t *testing.T) {
 	workDir := t.TempDir()

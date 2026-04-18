@@ -275,3 +275,56 @@ func TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty(t *testing.T) {
 	}
 	t.Fatal(`iteration phase has no step named "Fix review items"`)
 }
+
+// TestLoadSteps_ReviewVerdictAdjacency pins that "Check review verdict" appears
+// immediately between "Code review" and "Fix review items". A future insertion
+// between these three steps would silently invalidate the capture dependency.
+func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	crIdx, crvIdx, friIdx := -1, -1, -1
+	for i, step := range sf.Iteration {
+		switch step.Name {
+		case "Code review":
+			crIdx = i
+		case "Check review verdict":
+			crvIdx = i
+		case "Fix review items":
+			friIdx = i
+		}
+	}
+	if crIdx < 0 {
+		t.Fatal(`no iteration step named "Code review"`)
+	}
+	if crvIdx < 0 {
+		t.Fatal(`no iteration step named "Check review verdict"`)
+	}
+	if friIdx < 0 {
+		t.Fatal(`no iteration step named "Fix review items"`)
+	}
+
+	if !(crIdx < crvIdx && crvIdx < friIdx) {
+		t.Errorf("want Code review (%d) < Check review verdict (%d) < Fix review items (%d)", crIdx, crvIdx, friIdx)
+	}
+	if crvIdx != crIdx+1 || friIdx != crvIdx+1 {
+		t.Errorf("steps must be consecutive: Code review (%d), Check review verdict (%d), Fix review items (%d)", crIdx, crvIdx, friIdx)
+	}
+}
+
+// TestCodeReviewPrompt_ContainsSentinel verifies the code-review-changes.md
+// prompt instructs the model to emit the NOTHING-TO-FIX sentinel when no
+// issues are found — a misspelling or removal would silently disable the skip.
+func TestCodeReviewPrompt_ContainsSentinel(t *testing.T) {
+	ralphTUIDir := getRalphTUIDir(t)
+	repoRoot := filepath.Join(ralphTUIDir, "..")
+	data, err := os.ReadFile(filepath.Join(repoRoot, "prompts", "code-review-changes.md"))
+	if err != nil {
+		t.Fatalf("read code-review-changes.md: %v", err)
+	}
+	if !strings.Contains(string(data), "NOTHING-TO-FIX") {
+		t.Error("code-review-changes.md does not contain the NOTHING-TO-FIX sentinel")
+	}
+}

@@ -653,6 +653,71 @@ func TestValidate_SkipIfCaptureEmpty_InFinalize(t *testing.T) {
 	requireError(t, errs, "only valid in the iteration phase")
 }
 
+// TestValidate_SkipIfCaptureEmpty_EmptyString verifies that setting
+// skipIfCaptureEmpty to an empty string is rejected with the dedicated error
+// and does NOT also fire the "not bound by any earlier captureAs" branch.
+func TestValidate_SkipIfCaptureEmpty_EmptyString(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":""}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "skipIfCaptureEmpty must not be empty when set")
+	if hasError(errs, "not bound by any earlier captureAs") {
+		t.Error("expected no 'not bound by any earlier captureAs' error for empty-string case")
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_InInitialize verifies that skipIfCaptureEmpty
+// is rejected in the initialize phase (symmetric to the finalize test).
+func TestValidate_SkipIfCaptureEmpty_InInitialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "setup")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Setup","isClaude":false,"command":["scripts/setup"],"captureAs":"OUT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"OUT"}
+		],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "only valid in the iteration phase")
+}
+
+// TestValidate_SkipIfCaptureEmpty_MultipleReferents verifies that multiple steps
+// may reference the same captured variable without triggering scope errors.
+func TestValidate_SkipIfCaptureEmpty_MultipleReferents(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix1.md", "fix 1")
+	writePrompt(t, dir, "fix2.md", "fix 2")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"OUT"},
+			{"name":"Fix1","isClaude":true,"model":"sonnet","promptFile":"fix1.md","skipIfCaptureEmpty":"OUT"},
+			{"name":"Fix2","isClaude":true,"model":"sonnet","promptFile":"fix2.md","skipIfCaptureEmpty":"OUT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("expected no fatal errors, got: %v", errs)
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Category 3 — phase-size checks
 // ----------------------------------------------------------------------------

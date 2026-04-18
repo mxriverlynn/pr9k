@@ -645,6 +645,172 @@ func TestRun_SkipIfCaptureEmpty_SourceFailedEmptyCapture(t *testing.T) {
 	}
 }
 
+// TestRun_SkipIfCaptureEmpty_UnboundReference: when skipIfCaptureEmpty names a
+// variable that no prior step captured, the map lookup returns the zero-value
+// StepState (StepPending, not StepDone), so the skip condition is false and
+// the step runs normally. This is the silent-skip safety contract.
+func TestRun_SkipIfCaptureEmpty_UnboundReference(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:      projectDir,
+		runStepCaptures: []string{"work-output"},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "UNBOUND_VAR"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(executor.runStepCalls) != 1 {
+		t.Fatalf("runStepCalls: want 1 (fix must run), got %d: %v", len(executor.runStepCalls), executor.runStepCalls)
+	}
+	if executor.runStepCalls[0].name != "fix" {
+		t.Errorf("call name: want %q, got %q", "fix", executor.runStepCalls[0].name)
+	}
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 iteration record, got %d", len(recs))
+	}
+	if recs[0].Status != "done" {
+		t.Errorf("Status: want %q, got %q", "done", recs[0].Status)
+	}
+
+	for _, sc := range header.stepStateCalls {
+		if sc.idx == 0 && sc.state == ui.StepSkipped {
+			t.Error("SetStepState(0, StepSkipped) was called but step should have run")
+		}
+	}
+}
+
+// TestRun_SkipIfCaptureEmpty_FastPath: a step without SkipIfCaptureEmpty runs
+// normally even when a sibling step produced empty capture. Regression anchor
+// for the fast-path guard at run.go:421.
+func TestRun_SkipIfCaptureEmpty_FastPath(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:      projectDir,
+		runStepCaptures: []string{"", "second-output"},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "first", IsClaude: false, Command: []string{"echo"}, CaptureAs: "MAYBE_EMPTY"},
+			{Name: "second", IsClaude: false, Command: []string{"echo", "s"}},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(executor.runStepCalls) != 2 {
+		t.Fatalf("runStepCalls: want 2, got %d: %v", len(executor.runStepCalls), executor.runStepCalls)
+	}
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 2 {
+		t.Fatalf("want 2 iteration records, got %d", len(recs))
+	}
+	if recs[1].Status != "done" {
+		t.Errorf("second record Status: want %q, got %q", "done", recs[1].Status)
+	}
+
+	for _, sc := range header.stepStateCalls {
+		if sc.idx == 1 && sc.state == ui.StepSkipped {
+			t.Error("SetStepState(1, StepSkipped) was called but step should have run")
+		}
+	}
+}
+
+// TestRun_SkipIfCaptureEmpty_LogMessage: the skip path emits a log line
+// containing both "Step skipped" and the variable name.
+func TestRun_SkipIfCaptureEmpty_LogMessage(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:      projectDir,
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"echo"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	found := 0
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "Step skipped") && strings.Contains(line, "VERDICT") {
+			found++
+		}
+	}
+	if found == 0 {
+		t.Errorf("expected a log line containing %q and %q; got: %v", "Step skipped", "VERDICT", executor.logLines)
+	}
+}
+
+// TestRun_SkipIfCaptureEmpty_SkipPathLogWriteFailure: when AppendIterationRecord
+// fails in the skip path (iteration.jsonl is a directory), a warning log line is
+// emitted, the skip still occurs, and Run does not panic.
+func TestRun_SkipIfCaptureEmpty_SkipPathLogWriteFailure(t *testing.T) {
+	projectDir := t.TempDir()
+	// Make iteration.jsonl a directory so os.OpenFile fails.
+	jsonlDir := filepath.Join(projectDir, ".ralph-cache", "iteration.jsonl")
+	if err := os.MkdirAll(jsonlDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	executor := &fakeExecutor{
+		projectDir:      projectDir,
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"echo"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// The skip still occurred (fix was not executed).
+	if len(executor.runStepCalls) != 1 {
+		t.Errorf("runStepCalls: want 1 (verdict only), got %d", len(executor.runStepCalls))
+	}
+
+	warnFound := false
+	for _, line := range executor.logLines {
+		if strings.HasPrefix(line, "warning:") {
+			warnFound = true
+			break
+		}
+	}
+	if !warnFound {
+		t.Errorf("expected a warning log line; got: %v", executor.logLines)
+	}
+}
+
 // TP-016: SchemaVersion == 1 in records from all three phases (initialize,
 // iteration, finalize). Bumping the literal requires updating this test.
 func TestRun_IterationLog_SchemaVersionAllPhases(t *testing.T) {
