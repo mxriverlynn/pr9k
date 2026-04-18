@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -33,7 +34,7 @@ func fakeSentinelGh(t *testing.T) (ghDir, sentinel string) {
 	dir := t.TempDir()
 	sentinel = filepath.Join(dir, "gh.called")
 	script := fmt.Sprintf("#!/usr/bin/env bash\ntouch %q\n", sentinel)
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
 	return dir, sentinel
@@ -45,7 +46,7 @@ func recordingGh(t *testing.T) (ghDir, record string) {
 	dir := t.TempDir()
 	record = filepath.Join(dir, "gh.argv")
 	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%%s\\n' \"$@\" >> %q\n", record)
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0o755); err != nil {
 		t.Fatalf("write recording gh: %v", err)
 	}
 	return dir, record
@@ -64,7 +65,8 @@ func runScript(t *testing.T, args []string, workDir, pathPrefix string) (stderr 
 	err := cmd.Run()
 	stderr = errBuf.String()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
@@ -91,7 +93,7 @@ func TestPostIssueSummary_MissingProgressFile(t *testing.T) {
 // TP-003: empty progress.txt → exit 0, gh not invoked.
 func TestPostIssueSummary_EmptyProgressFile(t *testing.T) {
 	workDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte{}, 0o644); err != nil {
 		t.Fatalf("write progress.txt: %v", err)
 	}
 	ghDir, sentinel := fakeSentinelGh(t)
@@ -109,7 +111,7 @@ func TestPostIssueSummary_EmptyProgressFile(t *testing.T) {
 // TP-004: populated progress.txt → gh issue comment with exact heading + body, no trailing newline.
 func TestPostIssueSummary_PopulatedProgressFile(t *testing.T) {
 	workDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("hello\nworld\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
 		t.Fatalf("write progress.txt: %v", err)
 	}
 	ghDir, record := recordingGh(t)
@@ -154,14 +156,14 @@ func TestPostIssueSummary_MissingArg(t *testing.T) {
 func TestPostIssueSummary_JSONLPreference(t *testing.T) {
 	workDir := t.TempDir()
 	cacheDir := filepath.Join(workDir, ".ralph-cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir .ralph-cache: %v", err)
 	}
 	jsonl := `{"step_name":"feature-work","status":"done","schema_version":1,"iteration_num":1,"duration_s":1.5}` + "\n"
-	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(jsonl), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(jsonl), 0o644); err != nil {
 		t.Fatalf("write iteration.jsonl: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("OLD CONTENT"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("OLD CONTENT"), 0o644); err != nil {
 		t.Fatalf("write progress.txt: %v", err)
 	}
 
@@ -190,7 +192,7 @@ func TestPostIssueSummary_JSONLPreference(t *testing.T) {
 func TestPostIssueSummary_JSONLNotesFormatting(t *testing.T) {
 	workDir := t.TempDir()
 	cacheDir := filepath.Join(workDir, ".ralph-cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir .ralph-cache: %v", err)
 	}
 	lines := strings.Join([]string{
@@ -198,7 +200,7 @@ func TestPostIssueSummary_JSONLNotesFormatting(t *testing.T) {
 		`{"step_name":"b","status":"failed","notes":"timed out"}`,
 		`{"step_name":"c","status":"done","notes":""}`,
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(lines), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(lines), 0o644); err != nil {
 		t.Fatalf("write iteration.jsonl: %v", err)
 	}
 
@@ -229,7 +231,7 @@ func TestPostIssueSummary_JSONLNotesFormatting(t *testing.T) {
 func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
 	t.Run("no_cache_dir", func(t *testing.T) {
 		workDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0o644); err != nil {
 			t.Fatalf("write progress.txt: %v", err)
 		}
 
@@ -253,14 +255,14 @@ func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
 	t.Run("empty_jsonl", func(t *testing.T) {
 		workDir := t.TempDir()
 		cacheDir := filepath.Join(workDir, ".ralph-cache")
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			t.Fatalf("mkdir .ralph-cache: %v", err)
 		}
 		// Empty JSONL file — must not satisfy the -s test.
-		if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0o644); err != nil {
 			t.Fatalf("write empty iteration.jsonl: %v", err)
 		}
-		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0o644); err != nil {
 			t.Fatalf("write progress.txt: %v", err)
 		}
 
@@ -287,10 +289,10 @@ func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
 func TestPostIssueSummary_EmptyJSONLNoProgress(t *testing.T) {
 	workDir := t.TempDir()
 	cacheDir := filepath.Join(workDir, ".ralph-cache")
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir .ralph-cache: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0o644); err != nil {
 		t.Fatalf("write empty iteration.jsonl: %v", err)
 	}
 

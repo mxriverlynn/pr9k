@@ -9,6 +9,7 @@ When a workflow does something unexpected — a Claude step generated the wrong 
 | **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
 | **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when ralph-tui exits |
 | **JSONL artifacts** | `<project-dir>/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
+| **Iteration log** | `<project-dir>/.ralph-cache/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
 If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
@@ -98,6 +99,50 @@ jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text
 ```
 
 > **Retry behavior:** When you press `r` (retry) in error mode, the next attempt overwrites the `.jsonl` file from the beginning. The prior attempt's raw events are lost from the artifact (but the rendered lines remain in the `.log` file, separated by a `(retry)` separator). Token spend from discarded retry attempts is still included in the per-step and run-level summary lines.
+
+## Iteration log (.ralph-cache/iteration.jsonl)
+
+ralph-tui writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
+
+```json
+{"schema_version":1,"issue_id":"42","iteration_num":1,"step_name":"feature-work","status":"done","duration_s":12.34,"input_tokens":1500,"output_tokens":800,"session_id":"abc-123"}
+```
+
+**Fields:**
+
+| Field | Meaning |
+|-------|---------|
+| `schema_version` | Always `1`. Third-party parsers should reject unknown versions. |
+| `issue_id` | The value of `ISSUE_ID` at the time the record was written (empty in initialize/finalize phases). |
+| `iteration_num` | Loop iteration index (1-based). `0` for initialize and finalize phases. |
+| `step_name` | Step name from `ralph-steps.json`. |
+| `status` | `"done"`, `"failed"`, `"skipped"`, or `"unknown"` (step never started). |
+| `duration_s` | Wall-clock seconds from step start to finish. For steps that enter error mode, this includes user idle time. |
+| `notes` | Only present on prep failures — contains the `buildStep` error string. |
+
+**Lifecycle:** the file accumulates records across the entire run. The `lessons-learned.md` finalize step truncates it at the end of each run.
+
+**Useful queries** (requires `jq` — see [Prerequisites](#prerequisites) below):
+
+```bash
+# Show all step names and statuses for the last run:
+jq -r '"- \(.step_name) [\(.status)]"' .ralph-cache/iteration.jsonl
+
+# Find any failed steps:
+jq 'select(.status == "failed")' .ralph-cache/iteration.jsonl
+
+# Show prep failures with their error details:
+jq 'select(.status == "failed" and .notes != null) | {step_name, notes}' .ralph-cache/iteration.jsonl
+
+# Total token spend across all claude steps:
+jq -s '[.[].input_tokens // 0] | add' .ralph-cache/iteration.jsonl
+```
+
+### Prerequisites
+
+The iteration log queries above require `jq`. Install it before running ralph-tui if you intend to query `.ralph-cache/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
+
+Install on macOS: `brew install jq`. Install on Debian/Ubuntu: `apt-get install jq`.
 
 ## Navigating with chrome landmarks
 

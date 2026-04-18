@@ -163,14 +163,14 @@ func TestRun_IterationLog_WriteFailureNonFatal(t *testing.T) {
 	}
 	warnFound := false
 	for _, line := range executor.logLines {
-		if strings.HasPrefix(line, "warning: iteration log: ") {
+		if strings.HasPrefix(line, "warning: workflow: iteration log: ") {
 			warnFound = true
 			break
 		}
 	}
 	if !warnFound {
 		t.Errorf("expected at least one log line with prefix %q; got %v",
-			"warning: iteration log: ", executor.logLines)
+			"warning: workflow: iteration log: ", executor.logLines)
 	}
 }
 
@@ -347,9 +347,9 @@ func TestStepDispatcher_CapturedStats(t *testing.T) {
 	}
 }
 
-// TP-014: stepStatus maps all StepState values to the correct string. The
-// default branch ("done") covers StepPending and StepActive so future additions
-// to StepState are forced to update this switch.
+// TP-014: stepStatus maps all StepState values to the correct string.
+// StepPending returns "unknown" (SetStepState was never called — step never ran).
+// The default branch catches any unlisted future states and maps them to "done".
 func TestStepStatus(t *testing.T) {
 	tests := []struct {
 		state ui.StepState
@@ -358,7 +358,7 @@ func TestStepStatus(t *testing.T) {
 		{ui.StepDone, "done"},
 		{ui.StepFailed, "failed"},
 		{ui.StepSkipped, "skipped"},
-		{ui.StepPending, "done"},
+		{ui.StepPending, "unknown"},
 		{ui.StepActive, "done"},
 	}
 	for _, tc := range tests {
@@ -383,6 +383,122 @@ func TestStateTracker_SetStepState(t *testing.T) {
 	s.SetStepState(99, ui.StepFailed)
 	if s.lastState != ui.StepFailed {
 		t.Errorf("lastState after idx=99: want StepFailed, got %v", s.lastState)
+	}
+}
+
+// badStep creates a non-claude step with an invalid captureMode, which causes
+// buildStep to return an error (simulating a prep failure).
+func badStep(name string) steps.Step {
+	return steps.Step{
+		Name:        name,
+		IsClaude:    false,
+		Command:     []string{"echo", name},
+		CaptureMode: "badMode",
+	}
+}
+
+// TP-017: buildStep failure in the initialize phase appends a failed record
+// with Notes containing the error message (SUGG-005).
+func TestRun_IterationLog_InitializePrepFailure(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: []steps.Step{badStep("init-bad")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record for failed init step, got %d", len(recs))
+	}
+	r := recs[0]
+	if r.StepName != "init-bad" {
+		t.Errorf("StepName: want %q, got %q", "init-bad", r.StepName)
+	}
+	if r.Status != "failed" {
+		t.Errorf("Status: want %q, got %q", "failed", r.Status)
+	}
+	if r.Notes == "" {
+		t.Error("Notes must contain the prep error message")
+	}
+	if r.IterationNum != 0 {
+		t.Errorf("IterationNum: want 0, got %d", r.IterationNum)
+	}
+}
+
+// TP-018: buildStep failure in the iteration phase appends a failed record
+// with Notes containing the error message (SUGG-005).
+func TestRun_IterationLog_IterationPrepFailure(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       []steps.Step{badStep("iter-bad")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record for failed iteration step, got %d", len(recs))
+	}
+	r := recs[0]
+	if r.StepName != "iter-bad" {
+		t.Errorf("StepName: want %q, got %q", "iter-bad", r.StepName)
+	}
+	if r.Status != "failed" {
+		t.Errorf("Status: want %q, got %q", "failed", r.Status)
+	}
+	if r.Notes == "" {
+		t.Error("Notes must contain the prep error message")
+	}
+	if r.IterationNum != 1 {
+		t.Errorf("IterationNum: want 1, got %d", r.IterationNum)
+	}
+}
+
+// TP-019: buildStep failure in the finalize phase appends a failed record
+// with Notes containing the error message (SUGG-005).
+func TestRun_IterationLog_FinalizePrepFailure(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    1,
+		FinalizeSteps: []steps.Step{badStep("finalize-bad")},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record for failed finalize step, got %d", len(recs))
+	}
+	r := recs[0]
+	if r.StepName != "finalize-bad" {
+		t.Errorf("StepName: want %q, got %q", "finalize-bad", r.StepName)
+	}
+	if r.Status != "failed" {
+		t.Errorf("Status: want %q, got %q", "failed", r.Status)
+	}
+	if r.Notes == "" {
+		t.Error("Notes must contain the prep error message")
+	}
+	if r.IterationNum != 0 {
+		t.Errorf("IterationNum: want 0, got %d", r.IterationNum)
 	}
 }
 

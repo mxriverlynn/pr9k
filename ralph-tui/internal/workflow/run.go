@@ -205,10 +205,14 @@ func (s *stateTracker) SetStepState(_ int, state ui.StepState) {
 // stepStatus converts a ui.StepState to the IterationRecord Status string.
 func stepStatus(state ui.StepState) string {
 	switch state {
+	case ui.StepDone, ui.StepActive:
+		return "done"
 	case ui.StepFailed:
 		return "failed"
 	case ui.StepSkipped:
 		return "skipped"
+	case ui.StepPending:
+		return "unknown"
 	default:
 		return "done"
 	}
@@ -330,6 +334,17 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, cfg.ContainerEnv, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
+			prepRec := IterationRecord{
+				SchemaVersion: 1,
+				IterationNum:  0,
+				StepName:      s.Name,
+				Model:         s.Model,
+				Status:        "failed",
+				Notes:         err.Error(),
+			}
+			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+			}
 			continue
 		}
 		if resolved.IsClaude {
@@ -354,7 +369,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			SessionID:     disp.capturedStats.SessionID,
 		}
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
-			executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
 		if action == ui.ActionQuit {
 			return RunResult{}
@@ -397,6 +412,19 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, cfg.ContainerEnv, executor)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
+				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				prepRec := IterationRecord{
+					SchemaVersion: 1,
+					IssueID:       issueID,
+					IterationNum:  i,
+					StepName:      s.Name,
+					Model:         s.Model,
+					Status:        "failed",
+					Notes:         err.Error(),
+				}
+				if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
 				breakOuter = true
 				break
 			}
@@ -423,7 +451,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				SessionID:     disp.capturedStats.SessionID,
 			}
 			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
-				executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
 			if action == ui.ActionQuit {
 				return RunResult{IterationsRun: iterationsRun}
@@ -472,6 +500,19 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, cfg.ContainerEnv, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
+			issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+			prepRec := IterationRecord{
+				SchemaVersion: 1,
+				IssueID:       issueID,
+				IterationNum:  0,
+				StepName:      s.Name,
+				Model:         s.Model,
+				Status:        "failed",
+				Notes:         err.Error(),
+			}
+			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+			}
 			continue
 		}
 		if resolved.IsClaude {
@@ -498,7 +539,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			SessionID:     disp.capturedStats.SessionID,
 		}
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
-			executor.WriteToLog(fmt.Sprintf("warning: iteration log: %v", logErr))
+			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}

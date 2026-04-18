@@ -77,3 +77,57 @@ type StepExecutor interface {
 ## Run loop
 
 `Run` (in `run.go`) drives three phases — initialize, iteration, finalize — calling `buildStep` for each step to produce a `ui.ResolvedStep`, then wrapping it in a `stepDispatcher` and handing it to `ui.Orchestrate`. Captured values are bound to the VarTable after each `captureAs` step via `executor.LastCapture()`.
+
+After every step (including prep failures), `Run` appends one `IterationRecord` to `.ralph-cache/iteration.jsonl`. See [Iteration log](#iteration-log) below.
+
+## Iteration log
+
+### IterationRecord
+
+```go
+type IterationRecord struct {
+    SchemaVersion int     `json:"schema_version"` // always 1; bump on incompatible changes
+    IssueID       string  `json:"issue_id"`
+    IterationNum  int     `json:"iteration_num"`  // 0 for initialize/finalize phases
+    StepName      string  `json:"step_name"`
+    Model         string  `json:"model,omitempty"`
+    Status        string  `json:"status"`         // "done" | "skipped" | "failed" | "unknown"
+    DurationS     float64 `json:"duration_s"`
+    InputTokens   int     `json:"input_tokens,omitempty"`
+    OutputTokens  int     `json:"output_tokens,omitempty"`
+    SessionID     string  `json:"session_id,omitempty"`
+    Notes         string  `json:"notes,omitempty"` // prep error message when Status=="failed"
+}
+```
+
+**Status values:**
+| Value | Meaning |
+|-------|---------|
+| `"done"` | Step completed successfully (`StepDone` or `StepActive`) |
+| `"failed"` | Step exited non-zero, or `buildStep` returned a prep error |
+| `"skipped"` | Step was skipped (`StepSkipped`) |
+| `"unknown"` | `SetStepState` was never called — step never started |
+
+**Notes field:** populated only when `buildStep` fails (prep error). The value is the error string. Normal successful steps leave `notes` absent (`omitempty`).
+
+### AppendIterationRecord
+
+```go
+func AppendIterationRecord(projectDir string, rec IterationRecord) error
+```
+
+Appends one JSON line to `<projectDir>/.ralph-cache/iteration.jsonl`. Safe for concurrent callers: O_APPEND writes under PIPE_BUF are atomic on POSIX. The caller is responsible for ensuring `.ralph-cache/` exists (preflight.Run guarantees this at startup). Write failures are non-fatal — `Run` logs a `warning:` line and continues.
+
+**File location:** `<projectDir>/.ralph-cache/iteration.jsonl`
+**Schema version:** `1` (in the `schema_version` field of every record)
+**Lifecycle:** the file accumulates records for the entire run. The finalize step `lessons-learned.md` truncates it at the end of each run.
+
+### stateTracker / stepStatus helpers
+
+`stateTracker` is a `ui.StepHeader` that records the last `StepState` without TUI output. It is used in the initialize phase (which uses `noopHeader` for display) so that `Run` can determine step success or failure for `IterationRecord.Status` after `Orchestrate` returns.
+
+```go
+func stepStatus(state ui.StepState) string
+```
+
+Maps a `ui.StepState` to the `IterationRecord.Status` string using explicit cases for all known states. `StepPending` (zero value — step never started) maps to `"unknown"` rather than `"done"` so that records from short-circuited call paths are distinguishable.
