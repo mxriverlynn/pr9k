@@ -1,6 +1,7 @@
 package steps_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -727,6 +728,48 @@ func TestLoadSteps_CaptureMode_Populated(t *testing.T) {
 
 // TestLoadSteps_CaptureMode_Absent verifies that a step without captureMode
 // deserializes with an empty string (zero value).
+// TP-010: TestStep_CaptureMode_JSONRoundTrip verifies that the captureMode
+// field is omitted from JSON when absent (omitempty) and present when set.
+func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {
+	t.Run("absent when zero value", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"]}],"finalize":[]}`
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonBytes, err := json.Marshal(got.Iteration[0])
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(jsonBytes), "captureMode") {
+			t.Errorf("expected captureMode absent from JSON when zero value, got: %s", jsonBytes)
+		}
+	})
+
+	t.Run("present when fullStdout", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"],"captureMode":"fullStdout"}],"finalize":[]}`
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonBytes, err := json.Marshal(got.Iteration[0])
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(jsonBytes), `"captureMode":"fullStdout"`) {
+			t.Errorf("expected captureMode:fullStdout in JSON, got: %s", jsonBytes)
+		}
+	})
+}
+
 func TestLoadSteps_CaptureMode_Absent(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`

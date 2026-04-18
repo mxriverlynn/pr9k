@@ -2091,6 +2091,70 @@ func TestValidate_CaptureMode_OnClaudeStep(t *testing.T) {
 	}
 }
 
+// TP-004: TestValidate_CaptureMode_InvalidValue_StepNameAttribution verifies
+// that a captureMode validation error carries correct StepName, Category,
+// Phase, and IsFatal attributes, and that Error() includes the quoted step name.
+func TestValidate_CaptureMode_InvalidValue_StepNameAttribution(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "get-thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Fetch","isClaude":false,"command":["scripts/get-thing"],"captureAs":"THING","captureMode":"bogus"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+
+	var captureErr *validator.Error
+	for i := range errs {
+		if errs[i].Category == "schema" && strings.Contains(errs[i].Problem, "captureMode") {
+			captureErr = &errs[i]
+			break
+		}
+	}
+	if captureErr == nil {
+		t.Fatalf("expected a schema captureMode error, got: %v", errs)
+	}
+	if captureErr.StepName != "Fetch" {
+		t.Errorf("StepName = %q, want %q", captureErr.StepName, "Fetch")
+	}
+	if captureErr.Category != "schema" {
+		t.Errorf("Category = %q, want %q", captureErr.Category, "schema")
+	}
+	if captureErr.Phase != "iteration" {
+		t.Errorf("Phase = %q, want %q", captureErr.Phase, "iteration")
+	}
+	if !captureErr.IsFatal() {
+		t.Errorf("IsFatal() = false, want true")
+	}
+	got := captureErr.Error()
+	if !strings.Contains(got, `"Fetch"`) {
+		t.Errorf("Error() = %q, want quoted step name \"Fetch\"", got)
+	}
+}
+
+// TP-005: TestValidate_CaptureMode_InvalidOnClaudeStep_CollectsBoth verifies
+// that both the "invalid value" and the "must not be set on claude steps"
+// errors are collected rather than short-circuited.
+func TestValidate_CaptureMode_InvalidOnClaudeStep_CollectsBoth(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "x.md", "do the thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"x.md","captureMode":"garbage"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+
+	if !hasError(errs, "not valid") {
+		t.Errorf("expected 'not valid' captureMode error; got: %v", errs)
+	}
+	if !hasError(errs, "must not be set on claude") {
+		t.Errorf("expected 'must not be set on claude' captureMode error; got: %v", errs)
+	}
+}
+
 // --- TP-012: step-level Error() includes quoted step name ---
 
 func TestError_StepLevel_QuotedStepName(t *testing.T) {

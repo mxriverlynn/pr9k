@@ -22,14 +22,15 @@ import (
 // --- Test doubles ---
 
 type fakeExecutor struct {
-	runStepCalls           []runStepCall
-	runStepErrors          []error  // per-call errors; nil entries mean success
-	runStepCaptures        []string // per-call LastCapture values (indexed by call order)
-	lastCapture            string
-	logLines               []string
-	projectDir             string
-	runSandboxedStepCalls  []runSandboxedStepCall
-	runSandboxedStepErrors []error // per-call errors; nil entries mean success
+	runStepCalls            []runStepCall
+	runStepErrors           []error          // per-call errors; nil entries mean success
+	runStepCaptures         []string         // per-call LastCapture values (indexed by call order)
+	runStepFullCaptureModes []ui.CaptureMode // per-call captureMode passed to RunStepFull
+	lastCapture             string
+	logLines                []string
+	projectDir              string
+	runSandboxedStepCalls   []runSandboxedStepCall
+	runSandboxedStepErrors  []error // per-call errors; nil entries mean success
 	// lastStatsReturn holds per-call return values for LastStats(). Index 0 is
 	// returned on the first call, index 1 on the second, etc. If the call index
 	// exceeds the slice length, a zero StepStats is returned.
@@ -61,9 +62,10 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 	return f.RunStepFull(name, command, ui.CaptureLastLine)
 }
 
-func (f *fakeExecutor) RunStepFull(name string, command []string, _ ui.CaptureMode) error {
+func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode) error {
 	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
+	f.runStepFullCaptureModes = append(f.runStepFullCaptureModes, captureMode)
 	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {
 		f.lastCapture = ""
 		return f.runStepErrors[idx]
@@ -2853,6 +2855,128 @@ func TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy(t *testing.T) {
 		}
 	}
 }
+
+// TP-001: TestBuildStep_NonClaudeStep_CaptureModeMapping verifies that the
+// string captureMode field on a non-claude Step is correctly mapped to the
+// ui.CaptureMode enum in the returned ResolvedStep.
+func TestBuildStep_NonClaudeStep_CaptureModeMapping(t *testing.T) {
+	cases := []struct {
+		input string
+		want  ui.CaptureMode
+	}{
+		{"fullStdout", ui.CaptureFullStdout},
+		{"lastLine", ui.CaptureLastLine},
+		{"", ui.CaptureLastLine},
+	}
+	for _, tc := range cases {
+		t.Run("captureMode="+tc.input, func(t *testing.T) {
+			dir := t.TempDir()
+			step := steps.Step{
+				Name:        "s",
+				IsClaude:    false,
+				Command:     []string{"echo", "x"},
+				CaptureMode: tc.input,
+			}
+			vt := vars.New(dir, dir, 0)
+			vt.SetPhase(vars.Iteration)
+			exec := &fakeExecutor{projectDir: dir}
+
+			resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec)
+			if err != nil {
+				t.Fatalf("buildStep: %v", err)
+			}
+			if resolved.CaptureMode != tc.want {
+				t.Errorf("CaptureMode = %v, want %v", resolved.CaptureMode, tc.want)
+			}
+		})
+	}
+}
+
+// TP-002: TestStepDispatcher_NonClaudeStep_ThreadsCaptureMode verifies that
+// stepDispatcher.RunStep passes d.current.CaptureMode through to the underlying
+// executor's RunStepFull for non-claude steps.
+func TestStepDispatcher_NonClaudeStep_ThreadsCaptureMode(t *testing.T) {
+	cases := []struct {
+		name string
+		mode ui.CaptureMode
+	}{
+		{"fullStdout", ui.CaptureFullStdout},
+		{"lastLine (zero)", ui.CaptureLastLine},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := &fakeExecutor{}
+			current := ui.ResolvedStep{
+				Name:        "shell-step",
+				IsClaude:    false,
+				Command:     []string{"echo", "hi"},
+				CaptureMode: tc.mode,
+			}
+			d := &stepDispatcher{exec: exec, current: current}
+
+			if err := d.RunStep("shell-step", current.Command); err != nil {
+				t.Fatalf("RunStep: %v", err)
+			}
+
+			if len(exec.runStepFullCaptureModes) != 1 {
+				t.Fatalf("expected 1 RunStepFull call, got %d", len(exec.runStepFullCaptureModes))
+			}
+			if exec.runStepFullCaptureModes[0] != tc.mode {
+				t.Errorf("captureMode = %v, want %v", exec.runStepFullCaptureModes[0], tc.mode)
+			}
+		})
+	}
+}
+
+// TP-003: TestRun_FullStdout_CaptureAsBindsMultiLine verifies the headline
+// feature: a step with captureMode="fullStdout" and captureAs="OUT" binds the
+// full multi-line stdout payload (not just the last line) into the var table.
+// Verified via LastCapture() after the run and the capture log written to the
+// log stream.
+func TestRun_FullStdout_CaptureAsBindsMultiLine(t *testing.T) {
+	runner, log, drain := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{{
+			Name:        "capture-step",
+			IsClaude:    false,
+			Command:     []string{"sh", "-c", "printf 'a\\nb\\nc'"},
+			CaptureAs:   "OUT",
+			CaptureMode: "fullStdout",
+		}},
+	}
+
+	Run(runner, header, kh, cfg)
+
+	got := runner.LastCapture()
+	want := "a\nb\nc"
+	if got != want {
+		t.Errorf("LastCapture() = %q, want %q", got, want)
+	}
+
+	// writeCaptureLog should have emitted the bound value to the log stream.
+	lines := drain()
+	captureLogged := false
+	for _, l := range lines {
+		if strings.Contains(l, "OUT") && strings.Contains(l, "a") {
+			captureLogged = true
+			break
+		}
+	}
+	if !captureLogged {
+		t.Errorf("expected capture log entry for OUT in log stream; got lines: %v", lines)
+	}
+}
+
+// TP-009: Compile-time assertion that *Runner satisfies StepExecutor.
+// Mirrors the existing ui.HeartbeatReader assertion in workflow.go.
+var _ StepExecutor = (*Runner)(nil)
 
 // TP-010: TestRunStep_CurrentTerminatorStaysNilDuringExecution verifies that
 // RunStep installs no terminator — currentTerminator remains nil throughout

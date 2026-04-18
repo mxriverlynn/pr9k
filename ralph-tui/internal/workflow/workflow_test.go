@@ -13,6 +13,7 @@ import (
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
@@ -2186,4 +2187,131 @@ func TestFullStdoutCapture_TruncatesAt32KiB(t *testing.T) {
 	if !strings.HasSuffix(got, marker) {
 		t.Errorf("got does not end with truncation marker; suffix = %q", got[len(got)-len(marker):])
 	}
+}
+
+// TP-006: TestFullStdoutCapture_BoundaryAt32KiB verifies off-by-one behaviour at
+// the 32 KiB hard cap: content exactly 32 KiB is returned verbatim with no
+// truncation marker; content of 32 KiB + 1 byte is truncated to 30 KiB and the
+// marker is appended.
+func TestFullStdoutCapture_BoundaryAt32KiB(t *testing.T) {
+	const hardCap = 32 * 1024
+	const keepBytes = 30 * 1024
+	const marker = "\n[...truncated, full content exceeds 32 KiB]"
+
+	// Helper: build a single-line payload of exactly n bytes (no trailing newline).
+	makePayload := func(n int) []string {
+		return []string{strings.Repeat("x", n)}
+	}
+
+	t.Run("exactly 32 KiB — no truncation", func(t *testing.T) {
+		got := fullStdoutCapture(makePayload(hardCap))
+		if strings.Contains(got, "truncated") {
+			t.Errorf("expected no truncation marker for exactly %d bytes, got %q…", hardCap, got[:80])
+		}
+		if len(got) != hardCap {
+			t.Errorf("len(got) = %d, want %d", len(got), hardCap)
+		}
+	})
+
+	t.Run("32 KiB + 1 byte — truncated", func(t *testing.T) {
+		got := fullStdoutCapture(makePayload(hardCap + 1))
+		if !strings.HasSuffix(got, marker) {
+			t.Errorf("expected truncation marker suffix; last %d bytes: %q", len(marker), got[len(got)-len(marker):])
+		}
+		if len(got) != keepBytes+len(marker) {
+			t.Errorf("len(got) = %d, want %d", len(got), keepBytes+len(marker))
+		}
+	})
+}
+
+// TP-007: TestFullStdoutCapture_EdgeCases verifies the helper's contract for
+// nil input, a single blank line, and blank lines embedded in multi-line output.
+func TestFullStdoutCapture_EdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+		want  string
+	}{
+		{"nil", nil, ""},
+		{"single empty string", []string{""}, ""},
+		{"embedded blank lines", []string{"a", "", "b"}, "a\n\nb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fullStdoutCapture(tc.input)
+			if got != tc.want {
+				t.Errorf("fullStdoutCapture(%v) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TP-008: TestRun_BreakLoopIfEmpty_WithFullStdout verifies the interaction
+// between breakLoopIfEmpty and captureMode="fullStdout". When the command
+// produces no stdout, fullStdoutCapture returns "" and the loop must exit.
+// When the command produces only whitespace, fullStdout capture is non-empty
+// and the loop must NOT break (unlike lastLine which trims whitespace).
+func TestRun_BreakLoopIfEmpty_WithFullStdout(t *testing.T) {
+	t.Run("empty stdout exits loop", func(t *testing.T) {
+		runner, log, _ := newCapturingRunner(t)
+		defer func() { _ = log.Close() }()
+
+		header := &fakeRunHeader{}
+		kh := newTestKeyHandler()
+
+		cfg := RunConfig{
+			WorkflowDir: t.TempDir(),
+			Iterations:  3,
+			Steps: []steps.Step{
+				{
+					Name:             "get-issue",
+					IsClaude:         false,
+					Command:          []string{"sh", "-c", "true"},
+					CaptureAs:        "X",
+					CaptureMode:      "fullStdout",
+					BreakLoopIfEmpty: true,
+				},
+				{
+					Name:     "work",
+					IsClaude: false,
+					Command:  []string{"echo", "running"},
+				},
+			},
+		}
+
+		result := Run(runner, header, kh, cfg)
+
+		// Loop must exit after iter 1 because fullStdout of "true" is "".
+		if result.IterationsRun != 1 {
+			t.Errorf("IterationsRun = %d, want 1 (loop should break on empty fullStdout)", result.IterationsRun)
+		}
+	})
+
+	t.Run("whitespace-only stdout does not exit loop", func(t *testing.T) {
+		runner, log, _ := newCapturingRunner(t)
+		defer func() { _ = log.Close() }()
+
+		header := &fakeRunHeader{}
+		kh := newTestKeyHandler()
+
+		cfg := RunConfig{
+			WorkflowDir: t.TempDir(),
+			Iterations:  2,
+			Steps: []steps.Step{{
+				Name:             "get-issue",
+				IsClaude:         false,
+				Command:          []string{"sh", "-c", "printf '   '"},
+				CaptureAs:        "X",
+				CaptureMode:      "fullStdout",
+				BreakLoopIfEmpty: true,
+			}},
+		}
+
+		result := Run(runner, header, kh, cfg)
+
+		// fullStdout of "   " is "   " (non-empty), so breakLoopIfEmpty must NOT fire.
+		if result.IterationsRun != 2 {
+			t.Errorf("IterationsRun = %d, want 2 (whitespace is non-empty under fullStdout)", result.IterationsRun)
+		}
+	})
 }
