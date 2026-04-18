@@ -211,6 +211,21 @@ func TestLogsDirectoryCreatedIfMissing(t *testing.T) {
 	}
 }
 
+func TestNewLogger_CreatesPr9kLogsAndNotLegacyLogs(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	_ = l.Close()
+	if _, err := os.Stat(filepath.Join(dir, ".pr9k", "logs")); err != nil {
+		t.Errorf(".pr9k/logs/ not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "logs")); !os.IsNotExist(err) {
+		t.Errorf("legacy logs/ should NOT be created; Stat err=%v", err)
+	}
+}
+
 func TestCloseFlushesAndPreventsSubsequentWrites(t *testing.T) {
 	dir := t.TempDir()
 	l, err := NewLogger(dir)

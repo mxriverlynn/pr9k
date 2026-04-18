@@ -218,6 +218,17 @@ func TestStartup_HappyPath(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workflowDir, ".pr9k", "logs")); !os.IsNotExist(err) {
 		t.Errorf(".pr9k/logs/ should NOT exist under workflowDir; Stat err=%v", err)
 	}
+
+	// TP-001: per-run artifact dir must exist under .pr9k/logs/<runStamp>/.
+	runStampDir := filepath.Join(projectDir, ".pr9k", "logs", svc.log.RunStamp())
+	if info, err := os.Stat(runStampDir); err != nil || !info.IsDir() {
+		t.Errorf("expected per-run artifact dir at %q, err=%v", runStampDir, err)
+	}
+
+	// TP-002: legacy logs/ must NOT be created under projectDir.
+	if _, err := os.Stat(filepath.Join(projectDir, "logs")); !os.IsNotExist(err) {
+		t.Errorf("legacy logs/ should NOT exist under projectDir; Stat err=%v", err)
+	}
 }
 
 // TestStartup_LoadStepsFailure verifies that startup() returns (nil, false) and
