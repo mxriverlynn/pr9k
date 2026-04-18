@@ -114,6 +114,132 @@ func TestProductionStepsJSON_ContainerEnvValuesUnderBindMount(t *testing.T) {
 	})
 }
 
+// TP-003: ordering invariant — "Get starting SHA" before "Feature work", "Get post-feature diff" after.
+// Also asserts STARTING_SHA is bound by exactly one step and that PRE_REVIEW_DIFF's command
+// references {{STARTING_SHA}}..HEAD, pinning the dependency direction.
+func TestProductionStepsJSON_StartingShaDiffInvariant(t *testing.T) {
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	startSHAIdx, featureWorkIdx, postDiffIdx := -1, -1, -1
+	for i, step := range sf.Iteration {
+		switch step.Name {
+		case "Get starting SHA":
+			startSHAIdx = i
+		case "Feature work":
+			featureWorkIdx = i
+		case "Get post-feature diff":
+			postDiffIdx = i
+		}
+	}
+	if startSHAIdx < 0 {
+		t.Fatal(`no iteration step named "Get starting SHA"`)
+	}
+	if featureWorkIdx < 0 {
+		t.Fatal(`no iteration step named "Feature work"`)
+	}
+	if postDiffIdx < 0 {
+		t.Fatal(`no iteration step named "Get post-feature diff"`)
+	}
+
+	if startSHAIdx >= featureWorkIdx {
+		t.Errorf("Get starting SHA (idx %d) must appear before Feature work (idx %d)", startSHAIdx, featureWorkIdx)
+	}
+	if postDiffIdx <= featureWorkIdx {
+		t.Errorf("Get post-feature diff (idx %d) must appear after Feature work (idx %d)", postDiffIdx, featureWorkIdx)
+	}
+
+	var captureCount int
+	for _, step := range sf.Iteration {
+		if step.CaptureAs == "STARTING_SHA" {
+			captureCount++
+		}
+	}
+	if captureCount != 1 {
+		t.Errorf("STARTING_SHA is bound by %d steps, want exactly 1", captureCount)
+	}
+
+	postDiffStep := sf.Iteration[postDiffIdx]
+	found := false
+	for _, arg := range postDiffStep.Command {
+		if strings.Contains(arg, "{{STARTING_SHA}}..HEAD") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Get post-feature diff command %v does not contain {{STARTING_SHA}}..HEAD", postDiffStep.Command)
+	}
+}
+
+// TP-007: shape assertions for the three new capture steps added in issue #127.
+func TestLoadSteps_IterationCaptureSteps_Shape(t *testing.T) {
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	cases := []struct {
+		name          string
+		wantCmd0      string
+		wantCapture   string
+		wantMode      string
+		wantNonClaude bool
+	}{
+		{"Get issue body", "gh", "ISSUE_BODY", "fullStdout", true},
+		{"Get project card", "scripts/project_card", "PROJECT_CARD", "fullStdout", true},
+		{"Get post-feature diff", "git", "PRE_REVIEW_DIFF", "fullStdout", true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var found *steps.Step
+			for i := range sf.Iteration {
+				if sf.Iteration[i].Name == tc.name {
+					found = &sf.Iteration[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("no iteration step named %q", tc.name)
+			}
+			if tc.wantNonClaude && found.IsClaude {
+				t.Errorf("IsClaude = true, want false")
+			}
+			if len(found.Command) == 0 || found.Command[0] != tc.wantCmd0 {
+				t.Errorf("Command[0] = %q, want %q", found.Command[0], tc.wantCmd0)
+			}
+			if found.CaptureAs != tc.wantCapture {
+				t.Errorf("CaptureAs = %q, want %q", found.CaptureAs, tc.wantCapture)
+			}
+			if found.CaptureMode != tc.wantMode {
+				t.Errorf("CaptureMode = %q, want %q", found.CaptureMode, tc.wantMode)
+			}
+		})
+	}
+
+	// "Get post-feature diff" must also include --stat in its command.
+	for _, step := range sf.Iteration {
+		if step.Name != "Get post-feature diff" {
+			continue
+		}
+		found := false
+		for _, arg := range step.Command {
+			if arg == "--stat" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Get post-feature diff command %v does not include --stat", step.Command)
+		}
+		break
+	}
+}
+
 // TP-001 (cont.): iteration phase contains "Summarize to issue" wired to the correct script.
 func TestLoadSteps_IterationContainsSummarizeToIssue(t *testing.T) {
 	sf, err := steps.LoadSteps(getRalphTUIDir(t))

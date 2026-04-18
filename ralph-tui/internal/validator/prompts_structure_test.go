@@ -148,6 +148,59 @@ func TestPrompts_NumberedStepsConsecutive(t *testing.T) {
 	}
 }
 
+// TP-005: all six iteration-phase prompts reference {{ISSUE_BODY}} and {{PROJECT_CARD}};
+// four of them also reference {{PRE_REVIEW_DIFF}}; feature-work.md and test-planning.md
+// must NOT reference {{PRE_REVIEW_DIFF}} (those run before the feature commit exists).
+func TestPrompts_IterationPhase_ReferencesContextVars(t *testing.T) {
+	dir := promptsDir(t)
+
+	// Prompts that should contain both ISSUE_BODY and PROJECT_CARD (but NOT PRE_REVIEW_DIFF).
+	preFeaturePrompts := []string{"feature-work.md", "test-planning.md"}
+	// Prompts that should contain ISSUE_BODY, PROJECT_CARD, and PRE_REVIEW_DIFF.
+	postFeaturePrompts := []string{"test-writing.md", "code-review-changes.md", "code-review-fixes.md", "update-docs.md"}
+
+	readPrompt := func(t *testing.T, name string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(data)
+	}
+
+	for _, name := range preFeaturePrompts {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			body := readPrompt(t, name)
+			if !strings.Contains(body, "{{ISSUE_BODY}}") {
+				t.Errorf("missing {{ISSUE_BODY}}")
+			}
+			if !strings.Contains(body, "{{PROJECT_CARD}}") {
+				t.Errorf("missing {{PROJECT_CARD}}")
+			}
+			if strings.Contains(body, "{{PRE_REVIEW_DIFF}}") {
+				t.Errorf("must not reference {{PRE_REVIEW_DIFF}} (runs before feature commit exists)")
+			}
+		})
+	}
+
+	for _, name := range postFeaturePrompts {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			body := readPrompt(t, name)
+			if !strings.Contains(body, "{{ISSUE_BODY}}") {
+				t.Errorf("missing {{ISSUE_BODY}}")
+			}
+			if !strings.Contains(body, "{{PROJECT_CARD}}") {
+				t.Errorf("missing {{PROJECT_CARD}}")
+			}
+			if !strings.Contains(body, "{{PRE_REVIEW_DIFF}}") {
+				t.Errorf("missing {{PRE_REVIEW_DIFF}}")
+			}
+		})
+	}
+}
+
 // TP-007: every prompt file ends with a newline.
 func TestPrompts_TrailingNewline(t *testing.T) {
 	for _, pf := range loadPromptFiles(t) {

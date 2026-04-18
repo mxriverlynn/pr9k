@@ -664,6 +664,37 @@ func TestResolveCommand_UsesWorkflowDir(t *testing.T) {
 	}
 }
 
+// TP-002: the production "Get issue body" argv survives ResolveCommand intact.
+// {{{{.title}}}} must collapse to {{.title}} (one escape level consumed), and
+// {{ISSUE_ID}} must be substituted, while the literal \n characters remain.
+func TestResolveCommand_PreservesGhTemplateEscape(t *testing.T) {
+	workflowDir := "/workflow"
+	// Matches the production argv from ralph-steps.json "Get issue body" step,
+	// with \n as real newlines (JSON \n is 0x0A, same as Go \n in a string literal).
+	cmd := []string{
+		"gh", "issue", "view", "{{ISSUE_ID}}",
+		"--json", "title,body",
+		"-t", "{{{{.title}}}}\n\n{{{{.body}}}}",
+	}
+	vt := newIterVT(workflowDir, "42")
+
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
+
+	want := []string{
+		"gh", "issue", "view", "42",
+		"--json", "title,body",
+		"-t", "{{.title}}\n\n{{.body}}",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("element %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 // Terminate unit tests
 
 // TestTerminate_RunStepReturnsWithinTimeout starts a long-running subprocess,

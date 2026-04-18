@@ -112,14 +112,25 @@ func TestLoadSteps_FinalizeOrder(t *testing.T) {
 	}
 }
 
+// findIterStep returns the first iteration step with the given name, or fails the test.
+func findIterStep(t *testing.T, sf steps.StepFile, name string) steps.Step {
+	t.Helper()
+	for _, s := range sf.Iteration {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("no iteration step named %q", name)
+	panic("unreachable")
+}
+
 func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude step (index 4; preceded by four non-claude data-gathering steps)
-	s := got.Iteration[4]
+	s := findIterStep(t, got, "Feature work")
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
 	}
@@ -137,8 +148,7 @@ func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" is a non-claude step (index 13)
-	s := got.Iteration[13]
+	s := findIterStep(t, got, "Git push")
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -361,14 +371,12 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" command should be ["git", "push"] (index 13)
-	gitPush := got.Iteration[13]
+	gitPush := findIterStep(t, got, "Git push")
 	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
 		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
 	}
 
-	// "Close issue" command should contain "close_gh_issue" (index 11)
-	closeIssue := got.Iteration[11]
+	closeIssue := findIterStep(t, got, "Close issue")
 	found := false
 	for _, part := range closeIssue.Command {
 		if strings.Contains(part, "close_gh_issue") {
