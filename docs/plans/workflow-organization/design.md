@@ -49,6 +49,11 @@ The rename and the `.pr9k/` consolidation land in the same release because both 
 - **Renaming internal packages (`internal/workflow`, `internal/ui`, etc.).** The rename stops at the module-path boundary. Everything under `src/internal/` keeps its current package names — touching them is unrelated churn.
 - **Renaming `.pen` files, the MCP server namespace, or the GitHub repo.** Out of scope for code; those are user/infra decisions.
 - **Renaming the `ralph` issue label, `progress.txt`, `deferred.txt`, or `ralph-art.txt`.** These are workflow-content identifiers, not tool-identity identifiers. "Ralph" is still the name of the workflow even after the tool is renamed. (`ralph-steps.json` was previously listed here but is now in scope as `config.json` — see §1 and §4.6 — because it names what pr9k *loads*, not what's inside it.)
+- **Renaming the `ralph-` log-filename prefix, the per-run artifact-directory prefix, and the `ralph-*.cid` tempfile pattern.** All three are produced by pr9k but carry the workflow identity in their basename:
+  - `<projectDir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (formatted by `logger.go:33`).
+  - `<projectDir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm/` (the per-run artifact directory, derived from `RunStamp()` at `logger.go:34`).
+  - `$TMPDIR/ralph-*.cid` (the docker cidfile pattern at `sandbox/cidfile.go:20`, asserted by `sandbox/cidfile_test.go:35` and `workflow/run_test.go:1110`).
+  These basenames stay "ralph-" for the same reason `ralph-art.txt` does: they identify the workflow this tool ran, not the tool itself. Renaming to `pr9k-*` would require a second pass through the logger package, cidfile package, four test files, and a handful of doc assertions; bundling that into 0.7.0 multiplies test surface without corresponding user value. Post-0.7.0, if the user-facing filename prefix becomes confusing, revisit as a follow-up.
 - **Renaming `.ralph-cache` inside running Docker containers in this release.** `containerEnv` paths in `config.json` (`/home/agent/workspace/.ralph-cache/...`) stay put for Phase A; the host-side reconciliation is covered in §4.5.
 - **Discovery of workflow dirs anywhere other than `<projectDir>/.pr9k/workflow/` or `<executableDir>/.pr9k/workflow/`.** No `$XDG_CONFIG_HOME`, no `~/.config/pr9k`, no parent-walk.
 - **Backwards-compat shims for the old `logs/` path or the old bundle layout.**
@@ -122,7 +127,7 @@ Note that `cmd/ralph-tui/` becomes `cmd/pr9k/` so the default `go build` output 
 1. `git mv ralph-tui src`.
 2. `git mv src/cmd/ralph-tui src/cmd/pr9k`.
 3. In `src/go.mod`, change the module declaration from `module github.com/mxriverlynn/pr9k/ralph-tui` to `module github.com/mxriverlynn/pr9k/src`.
-4. Across all `*.go` files, rewrite every import path `github.com/mxriverlynn/pr9k/ralph-tui/…` to `github.com/mxriverlynn/pr9k/src/…`. A grep count at planning time shows 134 files containing the old path; all are in the `src/` subtree. A scripted `sed -i` on the matched files is appropriate.
+4. Across all `*.go` files, rewrite every import path `github.com/mxriverlynn/pr9k/ralph-tui/…` to `github.com/mxriverlynn/pr9k/src/…`. A grep count at planning time (commit `fc8b054`, `grep -rn github.com/mxriverlynn/pr9k/ralph-tui --include="*.go"`) reports 87 occurrences across 38 `*.go` files, all in the `ralph-tui/` (soon `src/`) subtree. A scripted `sed -i` on the matched files is appropriate.
 5. Grep for commented `ralph-tui/…` paths (e.g. `internal/scripts/post_issue_summary_test.go` has a comment referencing the source location). Update those too.
 6. Run `go mod tidy` and commit `go.mod` + `go.sum`.
 
@@ -153,8 +158,10 @@ User-facing error messages and instructional strings (rename audit, not just pre
 - `src/internal/sandbox/image.go` line 9 — comment `// BuiltinEnvAllowlist is the sandbox-plumbing env var set ralph-tui …`.
 - `src/internal/version/version.go` — package and constant doc comments (`// Package version exposes the ralph-tui application version …`; `// Version is the current ralph-tui release version.`).
 - `src/internal/scripts/post_issue_summary_test.go` line 16 — comment `// (ralph-tui/internal/scripts/ → three levels up).` becomes `(src/internal/scripts/ → three levels up)`.
+- `src/internal/validator/prompts_structure_test.go` line 28 — comment `// test file: ralph-tui/internal/validator/prompts_structure_test.go` becomes `src/internal/validator/prompts_structure_test.go`.
+- `scripts/statusline` (the shipped demo script) lines 2–3 — `# ralph-tui status line — demo script…` and `# Reads ralph-tui's JSON payload from stdin…` become `pr9k status line` and `Reads pr9k's JSON payload from stdin`. The script ships inside the bundle under `.pr9k/workflow/scripts/`; its identity surface is part of the 0.7.0 rename even though it is not Go code.
 
-Audit method: after the scripted import-path rewrite (§4.1), run `grep -rn ralph-tui src/` and walk every remaining hit. The list above is what that grep returns at planning time on `main` (commit `f12d2a2`); a fresh grep before merge catches any new occurrence introduced after this plan was written.
+Audit method: after the scripted import-path rewrite (§4.1), run `grep -rn ralph-tui src/ scripts/` and walk every remaining hit. The list above is what that grep returns at planning time on `main` (commit `fc8b054`); a fresh grep before merge catches any new occurrence introduced after this plan was written. The `scripts/` sweep is required because `scripts/` is part of the shipped workflow bundle, not test-only fixtures.
 
 ### 4.3 Build — `Makefile`
 
@@ -252,7 +259,7 @@ If any of these three writers disagree about the prefix, claude-step `.jsonl` fi
 
 Concretely:
 
-- `src/internal/preflight/run.go` line 34 — keep the existing `cacheDir := filepath.Join(projectDir, ".ralph-cache")` MkdirAll. Add a new MkdirAll for `filepath.Join(projectDir, ".pr9k")` so iteration.jsonl writes succeed on first run.
+- `src/internal/preflight/run.go` line 34 — keep the existing `cacheDir := filepath.Join(projectDir, ".ralph-cache")` MkdirAll. Add a new MkdirAll for `filepath.Join(projectDir, ".pr9k")` so iteration.jsonl writes succeed on first run. Update the `Run` function's doc comment (lines 16–27 today) so the documented sequence lists the new step 2 (`os.MkdirAll(projectDir+"/.pr9k")` — creates the umbrella dir for iteration.jsonl and `.pr9k/logs/`) after the existing `.ralph-cache` step, with prose explaining that both directories must be pre-created under the host UID for the same reason.
 - `src/internal/workflow/iterationlog.go` line 48 — change `filepath.Join(projectDir, ".ralph-cache", "iteration.jsonl")` to `filepath.Join(projectDir, ".pr9k", "iteration.jsonl")`. Update the package doc comments at lines 12, 44, and 46 (which mention `.ralph-cache/iteration.jsonl`) to `.pr9k/iteration.jsonl`.
 
 Tests covering `.ralph-cache` → `.pr9k` for iteration.jsonl:
@@ -312,7 +319,7 @@ The rename reaches into nearly every doc file; the consolidation reaches fewer. 
 
 **Scope rule.** Two doc surfaces are intentionally **not** rewritten:
 
-- `docs/plans/ralph-tui.md` and `docs/plans/docker-sandbox/design.md` — historical plan documents that describe the state of the system *at the time the plan was written*. Editing them after the fact rewrites history and breaks the cross-references back from ADRs and commit messages. Leave them as-is.
+- Everything under `docs/plans/*.md` — these are historical plan documents that describe the state of the system *at the time the plan was written*. Editing them after the fact rewrites history and breaks the cross-references back from ADRs, issues, and commit messages. This includes the already-merged plans (`docs/plans/ralph-tui.md`, `docs/plans/docker-sandbox/design.md`, `docs/plans/streaming-json-output/design.md`, `docs/plans/status-line/design.md`, `docs/plans/word-wrap-and-select/design.md`, `docs/plans/command-confirmation/design.md`, `docs/plans/use-bubble-tea.md`, `docs/plans/cobra-cli-option-parsing.md`, `docs/plans/ux-corrections/design.md`) **and** `docs/plans/workflow-optimization/design.md`, which was merged on 2026-04-17 but is still a record of past intent under the "plans live forever as written" rule. This plan file itself (`docs/plans/workflow-organization/design.md`) is the only exception; it is the current plan and keeps evolving through the iterative review.
 - `docs/adr/*.md` — ADRs are immutable records of *past* decisions; do not retroactively edit them. Instead, add a new ADR that records this rename and the `.pr9k/` layout decision (see §4.7 final bullet), and rely on cross-reference from the new ADR to flag superseded passages.
 
 Doc surfaces that **are** rewritten in this release:
@@ -424,7 +431,7 @@ No in-repo migration script. Users upgrading to 0.7.0 manually delete `<repo>/lo
 | Symlink farms — user has `<projectDir>/.pr9k/workflow` as a symlink to a third location | `EvalSymlinks` handles this; the resolver already uses it per §4.4. |
 | External tooling reads `<projectDir>/.ralph-cache/iteration.jsonl` | Documented breaking change in §4.8; update `docs/how-to/debugging-a-run.md`. |
 | `make build` run against an existing `bin/` with the old layout leaves stale files | `Makefile` already runs `rm -rf bin` before rebuilding. |
-| Git history harder to follow after `git mv` across 134 files | `git log --follow` still works. The rename is a one-time cost for long-term readability. |
+| Git history harder to follow after `git mv ralph-tui src` moves all tracked files under that subtree (113 at planning time, 110 of them `.go`) | `git log --follow` still works. The rename is a one-time cost for long-term readability. |
 | User has a workflow bundle named `ralph-steps.json` (in their own `--workflow-dir` or in-repo `.pr9k/workflow/`) and pr9k 0.7.0 silently fails to find it | `steps.LoadSteps` returns a clear error today (`steps: read /<dir>/config.json: no such file or directory`) — surfaced through the same path that `TestStartup_LoadStepsFailure` exercises. Documented as a breaking change in §4.8 with the rename instruction. |
 
 ## 9. Out of scope / follow-ups
@@ -441,7 +448,7 @@ No in-repo migration script. Users upgrading to 0.7.0 manually delete `<repo>/lo
 This plan was sharpened through codebase-grounded iterations on 2026-04-18. Findings and resulting edits:
 
 **Iteration 1 — code-surface verification.**
-- Verified the 134-file count for `github.com/mxriverlynn/pr9k/ralph-tui` import-path occurrences (correct).
+- Recorded a "134-file" count for `github.com/mxriverlynn/pr9k/ralph-tui` import-path occurrences. (Iteration 4 corrected this to 87 occurrences across 38 files — the original count was wrong.)
 - Verified specific line references for cobra `Use` (args.go:61), version label (main.go:158), and the four `"ralph-tui v..."` test fixtures (model_test.go:19/449/460, version_footer_test.go:18). All correct.
 - Discovered three host-side `logs/` writers — not one. `logger.go:27` was the only one in the original plan; added `cmd/pr9k/main.go:90` (artifact dir) and `internal/workflow/run.go:377` (per-step JSONL artifact path) to §4.5. Without this, the migration would have been partial (session log under `.pr9k/logs/`, JSONL artifacts still under `logs/`).
 - Discovered that the original plan's "error-message prefix audit" (grep for `ralph-tui:`) missed the broader user-facing string surface. Added a full §4.2 inventory of help/error/comment strings (eight files: main.go, sandbox_login.go, sandbox.go, args.go Long, preflight/docker.go, preflight/profile.go, sandbox/command.go, sandbox/image.go, version/version.go, scripts/post_issue_summary_test.go).
@@ -456,5 +463,12 @@ This plan was sharpened through codebase-grounded iterations on 2026-04-18. Find
 
 **Iteration 3 — user-introduced scope addition.**
 - User asked mid-review to also rename `ralph-steps.json` → `config.json`. This contradicted the original §2 non-goal and required propagation across §1 prose, §2 goals/non-goals, §3 layout diagrams, §4.3 Makefile, §4.6 (rewritten), §4.7 doc surface, §4.8 breaking-changes list, §6 testing plan, §7 rollout, §8 risks, and §9 follow-ups. All occurrences updated.
+
+**Iteration 4 — completeness / ambiguity sweep.**
+- Corrected the "134 files" import-path count in §4.1. A fresh `grep -rn github.com/mxriverlynn/pr9k/ralph-tui --include="*.go"` at `fc8b054` returns 87 occurrences across 38 files, all under `ralph-tui/`. Also corrected the corresponding "134 files" reference in the §8 risk row to the actual 113 git-tracked files moved by `git mv ralph-tui src` (110 of them `.go`).
+- Resolved a silent ambiguity: the plan's §3.2 layout diagram wrote `ralph-2026-04-18-161500.123.log` but never stated whether the `ralph-` filename prefix (produced by `logger.go:33-34`) stays or changes. Added an explicit §2 non-goal covering three related `ralph-` basename surfaces — log filename prefix, per-run artifact directory prefix (from `RunStamp()`), and `sandbox/cidfile.go:20`'s `ralph-*.cid` tempfile pattern — all of which stay "ralph-" for the same reason `ralph-art.txt` does (workflow identity, not tool identity).
+- Filled a §4.2 audit gap. The inventory did not enumerate `scripts/statusline` (shipped demo script, two "ralph-tui" comments on lines 2–3) or `src/internal/validator/prompts_structure_test.go:28`. Added both. Expanded the audit-method grep to cover `scripts/` because `scripts/` is part of the shipped bundle, not just Go test fixtures.
+- Tightened the §4.7 scope rule. The original wording called out only two plan files as frozen-history; the rule now covers all of `docs/plans/*.md`, explicitly listing the recently-merged `docs/plans/workflow-optimization/design.md` (merged 2026-04-17) as in-scope-for-freeze, with the plan-in-progress itself (this file) as the only exception.
+- Added a `preflight.Run` doc-comment update to §4.5. The function's package doc comment (lines 16–27) describes its MkdirAll sequence and currently names only `.ralph-cache`; after this release it also creates `.pr9k`, and the doc comment must reflect both.
 
 Open questions: none. Every "deferred" item in the plan body is now explicit in §9.
