@@ -20,6 +20,23 @@ type Config struct {
 	ProjectDir  string
 }
 
+// resolveWorkflowDirWith is the testable core of the two-candidate resolution
+// rule. projectDir and execDir are both absolute paths; neither is obtained
+// from os.Executable() so tests can inject arbitrary directories.
+func resolveWorkflowDirWith(projectDir, execDir string) (string, error) {
+	projCandidate := filepath.Join(projectDir, ".pr9k", "workflow")
+	if info, err := os.Stat(projCandidate); err == nil && info.IsDir() {
+		return projCandidate, nil
+	}
+
+	execCandidate := filepath.Join(execDir, ".pr9k", "workflow")
+	if info, err := os.Stat(execCandidate); err == nil && info.IsDir() {
+		return execCandidate, nil
+	}
+
+	return "", fmt.Errorf("cli: could not locate workflow bundle. Checked:\n  - %s\n  - %s\nInstall the bundle or pass --workflow-dir.", projCandidate, execCandidate)
+}
+
 // resolveWorkflowDir implements the two-candidate resolution rule:
 //  1. <projectDir>/.pr9k/workflow/ if it exists and is a directory.
 //  2. <executableDir>/.pr9k/workflow/ if it exists and is a directory.
@@ -34,18 +51,7 @@ func resolveWorkflowDir(projectDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	execCandidate := filepath.Join(filepath.Dir(resolvedExe), ".pr9k", "workflow")
-
-	projCandidate := filepath.Join(projectDir, ".pr9k", "workflow")
-	if info, err := os.Stat(projCandidate); err == nil && info.IsDir() {
-		return projCandidate, nil
-	}
-
-	if info, err := os.Stat(execCandidate); err == nil && info.IsDir() {
-		return execCandidate, nil
-	}
-
-	return "", fmt.Errorf("cli: could not locate workflow bundle. Checked:\n  - %s\n  - %s\nInstall the bundle or pass --workflow-dir.", projCandidate, execCandidate)
+	return resolveWorkflowDirWith(projectDir, filepath.Dir(resolvedExe))
 }
 
 // resolveProjectDir returns the current working directory, following symlinks.

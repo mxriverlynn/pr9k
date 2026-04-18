@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,6 +25,8 @@ func runNewCommand(t *testing.T, args []string) (*Config, error) {
 	return cfg, nil
 }
 
+// setupWorkflowCandidate cannot be combined with t.Parallel() — os.Chdir is process-global.
+//
 // setupWorkflowCandidate creates <dir>/.pr9k/workflow/ with a placeholder
 // config.json, then chdirs into dir so that resolveProjectDir returns dir.
 // Returns dir. Restores the original working directory on test cleanup.
@@ -578,7 +581,7 @@ func TestResolveWorkflowDir_BothMissingReturnsError(t *testing.T) {
 	}
 }
 
-// R5. --workflow-dir flag overrides both candidates.
+// R5. --workflow-dir flag overrides both candidates (TP-004: exact equality after EvalSymlinks).
 func TestResolveWorkflowDir_FlagOverridesBothCandidates(t *testing.T) {
 	projDir := t.TempDir()
 	// Set up project-dir candidate to ensure it would win if flag didn't override.
@@ -591,11 +594,12 @@ func TestResolveWorkflowDir_FlagOverridesBothCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.WorkflowDir == projCandidate {
-		t.Error("--workflow-dir flag should override project-dir candidate")
+	want, err := filepath.EvalSymlinks(override)
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
 	}
-	if cfg.WorkflowDir == "" {
-		t.Error("expected non-empty workflow-dir from flag")
+	if cfg.WorkflowDir != want {
+		t.Errorf("expected WorkflowDir=%q (EvalSymlinks of override), got %q", want, cfg.WorkflowDir)
 	}
 }
 
@@ -613,7 +617,8 @@ func TestResolveWorkflowDir_InvalidProjectDirShortCircuits(t *testing.T) {
 	}
 }
 
-// R7. --workflow-dir flag Usage string reflects both candidate paths.
+// R7. --workflow-dir flag Usage string reflects both candidate paths in order
+// (TP-005: projectDir first, then executableDir).
 func TestResolveWorkflowDir_FlagUsageContainsBothCandidates(t *testing.T) {
 	cfg := &Config{}
 	cmd := NewCommand(cfg)
@@ -621,10 +626,80 @@ func TestResolveWorkflowDir_FlagUsageContainsBothCandidates(t *testing.T) {
 	if flag == nil {
 		t.Fatal("--workflow-dir flag not registered")
 	}
-	if !strings.Contains(flag.Usage, "<projectDir>/.pr9k/workflow/") {
+	idxProj := strings.Index(flag.Usage, "<projectDir>/.pr9k/workflow/")
+	idxExec := strings.Index(flag.Usage, "<executableDir>/.pr9k/workflow/")
+	if idxProj < 0 {
 		t.Errorf("flag Usage should mention <projectDir>/.pr9k/workflow/, got %q", flag.Usage)
 	}
-	if !strings.Contains(flag.Usage, "<executableDir>/.pr9k/workflow/") {
+	if idxExec < 0 {
 		t.Errorf("flag Usage should mention <executableDir>/.pr9k/workflow/, got %q", flag.Usage)
+	}
+	if idxProj >= 0 && idxExec >= 0 && idxExec <= idxProj {
+		t.Errorf("flag Usage should list <projectDir> before <executableDir>, got %q", flag.Usage)
+	}
+}
+
+// TP-002: Direct tests against resolveWorkflowDirWith for the fallback branch
+// that cannot be exercised via the public wrapper (exec-dir is the test binary dir).
+
+// TestResolveWorkflowDirWith_BothPresent_ReturnsProject verifies project-dir wins when both exist.
+func TestResolveWorkflowDirWith_BothPresent_ReturnsProject(t *testing.T) {
+	projDir := t.TempDir()
+	execDir := t.TempDir()
+	projCandidate := projDir + "/.pr9k/workflow"
+	execCandidate := execDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(projCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll proj: %v", err)
+	}
+	if err := os.MkdirAll(execCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll exec: %v", err)
+	}
+	got, err := resolveWorkflowDirWith(projDir, execDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != projCandidate {
+		t.Errorf("expected project candidate %q, got %q", projCandidate, got)
+	}
+}
+
+// TestResolveWorkflowDirWith_ProjectAbsent_ExecPresent_ReturnsExec verifies the fallback branch.
+func TestResolveWorkflowDirWith_ProjectAbsent_ExecPresent_ReturnsExec(t *testing.T) {
+	projDir := t.TempDir() // no .pr9k/workflow
+	execDir := t.TempDir()
+	execCandidate := execDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(execCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll exec: %v", err)
+	}
+	got, err := resolveWorkflowDirWith(projDir, execDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != execCandidate {
+		t.Errorf("expected exec candidate %q, got %q", execCandidate, got)
+	}
+}
+
+// TestResolveWorkflowDirWith_ProjectIsFile_ExecPresent_ReturnsExec verifies file-not-dir fallthrough.
+func TestResolveWorkflowDirWith_ProjectIsFile_ExecPresent_ReturnsExec(t *testing.T) {
+	projDir := t.TempDir()
+	pr9kDir := projDir + "/.pr9k"
+	if err := os.MkdirAll(pr9kDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(pr9kDir+"/workflow", []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	execDir := t.TempDir()
+	execCandidate := execDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(execCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll exec: %v", err)
+	}
+	got, err := resolveWorkflowDirWith(projDir, execDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != execCandidate {
+		t.Errorf("expected exec candidate %q, got %q", execCandidate, got)
 	}
 }

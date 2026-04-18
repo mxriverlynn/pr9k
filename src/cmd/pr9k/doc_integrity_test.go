@@ -329,6 +329,52 @@ func TestMakefile_CopiesConfigJSONToBin(t *testing.T) {
 	assertNotContains(t, content, legacyConfigName, "Makefile legacy config filename")
 }
 
+// TP-001: All four bundle-layout lines under bin/.pr9k/workflow/ are present
+// and the three legacy top-level positions are absent.
+func TestMakefile_BundleLayoutIsUnderPr9kWorkflow(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "Makefile")
+
+	assertContains(t, content, "mkdir -p bin/.pr9k/workflow", "Makefile mkdir target")
+	assertContains(t, content, "cp -r prompts bin/.pr9k/workflow/prompts", "Makefile prompts cp target")
+	assertContains(t, content, "cp -r scripts bin/.pr9k/workflow/scripts", "Makefile scripts cp target")
+	assertContains(t, content, "cp ralph-art.txt bin/.pr9k/workflow/", "Makefile ralph-art.txt cp target")
+
+	assertNotContains(t, content, "cp -r prompts bin/prompts", "Makefile legacy prompts position")
+	assertNotContains(t, content, "cp -r scripts bin/scripts", "Makefile legacy scripts position")
+	// Legacy: "cp ralph-art.txt bin/" followed by newline (not "bin/.pr9k/…")
+	assertNotContains(t, content, "cp ralph-art.txt bin/\n", "Makefile legacy ralph-art.txt position")
+}
+
+// TP-003: The Makefile copies scripts/ into bin/.pr9k/workflow/scripts/, which
+// is where config.json command[0] prefixes ("scripts/X") will resolve against
+// workflowDir at runtime.
+func TestBundleLayout_MakefileWiresScriptsToWhereResolveCommandLooksForThem(t *testing.T) {
+	root := docTestRepoRoot(t)
+	makefile := readFile(t, root, "Makefile")
+	configJSON := readFile(t, root, "src/config.json")
+
+	// The Makefile must copy scripts/ into the bundle.
+	assertContains(t, makefile, "cp -r scripts bin/.pr9k/workflow/scripts", "Makefile scripts bundle copy")
+
+	// config.json commands that start with "scripts/" must reference source files
+	// that actually exist under the repo-level scripts/ directory.
+	lines := strings.Split(configJSON, "\n")
+	for _, line := range lines {
+		if idx := strings.Index(line, `"scripts/`); idx != -1 {
+			// Extract the scripts/X portion up to the closing quote.
+			rest := line[idx+1:]
+			end := strings.IndexByte(rest, '"')
+			if end == -1 {
+				continue
+			}
+			scriptRef := rest[:end] // e.g. "scripts/get_next_issue"
+			scriptPath := filepath.Join(root, scriptRef)
+			assertFileExists(t, scriptPath)
+		}
+	}
+}
+
 // TestMakefile_BuildsBinaryNamedPr9k asserts that the Makefile builds the pr9k
 // binary and references the renamed src/ directory.
 func TestMakefile_BuildsBinaryNamedPr9k(t *testing.T) {
