@@ -442,9 +442,16 @@ func validatePhase(
 			}
 		}
 
-		// Schema 2d — timeoutSeconds: must be a positive integer when set.
-		if step.TimeoutSeconds != nil && *step.TimeoutSeconds <= 0 {
-			*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
+		// Schema 2d — timeoutSeconds: must be a positive integer when set, and
+		// must not exceed 86400 (24 h). Values above ~9.2e9 overflow time.Duration
+		// when multiplied by time.Second, causing the timer to fire immediately
+		// and kill every step on start-up (SEC-001 / WARN-005).
+		if step.TimeoutSeconds != nil {
+			if *step.TimeoutSeconds <= 0 {
+				*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
+			} else if *step.TimeoutSeconds > 86400 {
+				*errs = append(*errs, at("schema", "timeoutSeconds must not exceed 86400 (24 hours)"))
+			}
 		}
 
 		// Category 4 — referenced files must exist.

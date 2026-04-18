@@ -73,6 +73,18 @@ func LoadSteps(workflowDir string) (StepFile, error) {
 		return StepFile{}, fmt.Errorf("steps: malformed JSON in %s: %w", path, err)
 	}
 
+	// SUGG-003: Reject negative TimeoutSeconds at load time so that a broken
+	// validator call chain cannot silently treat a negative value as "no timeout"
+	// (the runtime guard `if timeoutSeconds > 0` would pass through 0 but reject
+	// negatives anyway — this makes the failure explicit and early).
+	for _, group := range [][]Step{sf.Initialize, sf.Iteration, sf.Finalize} {
+		for _, s := range group {
+			if s.TimeoutSeconds < 0 {
+				return StepFile{}, fmt.Errorf("steps: step %q: timeoutSeconds must not be negative", s.Name)
+			}
+		}
+	}
+
 	return sf, nil
 }
 

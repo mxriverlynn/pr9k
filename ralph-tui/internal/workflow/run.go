@@ -124,9 +124,19 @@ type stepDispatcher struct {
 	// call. Captured here (rather than calling LastStats again later) so that
 	// Run can read per-step stats for IterationRecord without a second call.
 	capturedStats claudestream.StepStats
+	// onTimeoutRetry, when non-nil, is called at the start of RunStep whenever
+	// the previous call timed out. Run uses this to emit an IterationRecord for
+	// the timed-out attempt before the retry begins (WARN-001).
+	onTimeoutRetry func()
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
+	// WARN-001: If the previous attempt timed out, emit a record for it before
+	// the retry resets timeoutFired. WasTimedOut() is still true here because
+	// RunStepFull/RunSandboxedStep reset the flag only at their entry.
+	if d.exec.WasTimedOut() && d.onTimeoutRetry != nil {
+		d.onTimeoutRetry()
+	}
 	if d.current.IsClaude {
 		err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
 			CidfilePath:    d.current.CidfilePath,
@@ -223,6 +233,15 @@ func stepStatus(state ui.StepState) string {
 }
 
 func (noopHeader) SetStepState(int, ui.StepState) {}
+
+// setTimeoutNote sets rec.Notes to the standard timeout message when the executor
+// reports that the most recent step was ended by a per-step timeout goroutine.
+// SUGG-001: extracted from three near-identical inline blocks in Run.
+func setTimeoutNote(rec *IterationRecord, executor StepExecutor, s steps.Step) {
+	if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+		rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
+	}
+}
 
 // trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
 // iteration step at absolute index idx. It also records the last StepState
@@ -352,7 +371,20 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		emitBlank()
 		st := &stateTracker{}
-		disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+		// WARN-001: capture step/iteration context for potential timeout-before-retry record.
+		capturedS := s
+		disp := &stepDispatcher{
+			exec:    executor,
+			current: resolved,
+			stats:   rs,
+			onTimeoutRetry: func() {
+				timeoutRec := newIterationRecord("", 0, capturedS, "failed")
+				timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+				if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
+			},
+		}
 		stepStart := time.Now()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, st, keyHandler)
 		rec := newIterationRecord("", 0, s, stepStatus(st.lastState))
@@ -360,9 +392,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
-		if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
-			rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
-		}
+		setTimeoutNote(&rec, executor, s)
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -449,7 +479,23 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			}
 			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
-			disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+			// WARN-001: snapshot issueID and step at dispatcher construction time for
+			// the timeout-before-retry record. issueID may be empty if not yet bound.
+			issueIDAtDispatch, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+			iterNum := i
+			capturedS := s
+			disp := &stepDispatcher{
+				exec:    executor,
+				current: resolved,
+				stats:   rs,
+				onTimeoutRetry: func() {
+					timeoutRec := newIterationRecord(issueIDAtDispatch, iterNum, capturedS, "failed")
+					timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+					if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+						executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+					}
+				},
+			}
 			stepStart := time.Now()
 			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
 			issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
@@ -458,9 +504,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			rec.InputTokens = disp.capturedStats.InputTokens
 			rec.OutputTokens = disp.capturedStats.OutputTokens
 			rec.SessionID = disp.capturedStats.SessionID
-			if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
-				rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
-			}
+			setTimeoutNote(&rec, executor, s)
 			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -529,7 +573,21 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		emitBlank()
 		th := &trackingOffsetIterHeader{h: header, idx: j}
-		disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
+		// WARN-001: snapshot issueID and step at dispatcher construction time.
+		issueIDAtDispatch, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+		capturedS := s
+		disp := &stepDispatcher{
+			exec:    executor,
+			current: resolved,
+			stats:   rs,
+			onTimeoutRetry: func() {
+				timeoutRec := newIterationRecord(issueIDAtDispatch, 0, capturedS, "failed")
+				timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+				if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
+			},
+		}
 		stepStart := time.Now()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
 		issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
@@ -538,9 +596,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
-		if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
-			rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
-		}
+		setTimeoutNote(&rec, executor, s)
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}

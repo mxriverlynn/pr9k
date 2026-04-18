@@ -123,6 +123,121 @@ func TestRun_Timeout_FinalizePhaseNotesWiring(t *testing.T) {
 	}
 }
 
+// SUGG-007a: Claude-branch sibling of TP-003. The initialize-phase notes wiring
+// uses the RunSandboxedStep dispatcher path (IsClaude:true) which goes through
+// a distinct code path from non-claude steps (run.go:129-148).
+func TestRun_Timeout_InitializePhaseNotesWiring_Claude(t *testing.T) {
+	workflowDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workflowDir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "prompts", "init.md"), []byte("do work"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:             projectDir,
+		runSandboxedStepErrors: []error{fmt.Errorf("killed")},
+		wasTimedOut:            true,
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: workflowDir,
+		Iterations:  1,
+		InitializeSteps: []steps.Step{
+			{Name: "init-claude", IsClaude: true, Model: "sonnet", PromptFile: "init.md", TimeoutSeconds: 60},
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	var found bool
+	for _, rec := range recs {
+		if rec.StepName == "init-claude" {
+			found = true
+			if rec.Notes != "timed out after 60s" {
+				t.Errorf("Notes: want %q, got %q", "timed out after 60s", rec.Notes)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for init-claude in iteration log")
+	}
+}
+
+// SUGG-007b: Claude-branch sibling of TP-004. The finalize-phase notes wiring
+// uses the RunSandboxedStep dispatcher path (IsClaude:true).
+func TestRun_Timeout_FinalizePhaseNotesWiring_Claude(t *testing.T) {
+	workflowDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workflowDir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "prompts", "final.md"), []byte("do finalize"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:             projectDir,
+		runSandboxedStepErrors: []error{fmt.Errorf("killed")},
+		wasTimedOut:            true,
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: workflowDir,
+		Iterations:  1,
+		FinalizeSteps: []steps.Step{
+			{Name: "finalize-claude", IsClaude: true, Model: "sonnet", PromptFile: "final.md", TimeoutSeconds: 120},
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	var found bool
+	for _, rec := range recs {
+		if rec.StepName == "finalize-claude" {
+			found = true
+			if rec.Notes != "timed out after 120s" {
+				t.Errorf("Notes: want %q, got %q", "timed out after 120s", rec.Notes)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for finalize-claude in iteration log")
+	}
+}
+
 // TP-005: stepDispatcher propagates TimeoutSeconds from the ResolvedStep to
 // RunSandboxedStep's SandboxOptions for claude steps.
 func TestRun_Timeout_StepDispatcherPropagatesTimeoutToSandboxed(t *testing.T) {

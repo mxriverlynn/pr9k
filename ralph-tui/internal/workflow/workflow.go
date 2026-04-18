@@ -59,11 +59,11 @@ type Runner struct {
 	// per-step timeout goroutine. Used in tests to avoid waiting 10 seconds.
 	timeoutGraceOverride time.Duration
 
-	// SessionBlacklist records timed-out claude session IDs. Populated when a
+	// sessionBlacklist records timed-out claude session IDs. Populated when a
 	// claude step times out and the claudestream pipeline produced a partial
 	// session_id. Protected by processMu. A future issue wires a session-resume
-	// gate that consults this list.
-	SessionBlacklist map[string]bool
+	// gate that consults this list. Access via SessionBlacklisted / BlacklistedSessions.
+	sessionBlacklist map[string]bool
 
 	// lastCapture holds the last non-empty stdout line from the most recent
 	// successful RunStep call. Empty string if the last step failed or produced
@@ -120,7 +120,7 @@ func NewRunner(log *logger.Logger, projectDir string) *Runner {
 	return &Runner{
 		log:              log,
 		projectDir:       projectDir,
-		SessionBlacklist: make(map[string]bool),
+		sessionBlacklist: make(map[string]bool),
 		sendLine: func(string) {
 			panic("workflow.Runner: sendLine not set — call SetSender before running steps")
 		},
@@ -167,6 +167,26 @@ func (r *Runner) WasTimedOut() bool {
 	return r.timeoutFired
 }
 
+// SessionBlacklisted reports whether id is in the session blacklist. Safe for
+// concurrent use; acquires processMu internally.
+func (r *Runner) SessionBlacklisted(id string) bool {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	return r.sessionBlacklist[id]
+}
+
+// BlacklistedSessions returns a snapshot of all blacklisted session IDs. Safe
+// for concurrent use; acquires processMu internally.
+func (r *Runner) BlacklistedSessions() []string {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	out := make([]string, 0, len(r.sessionBlacklist))
+	for id := range r.sessionBlacklist {
+		out = append(out, id)
+	}
+	return out
+}
+
 // Terminate sends SIGTERM to the currently running subprocess (or invokes the
 // installed terminator for sandboxed steps). If the process has not exited
 // within the grace period, SIGKILL is sent. Safe to call when no subprocess is
@@ -177,7 +197,15 @@ func (r *Runner) Terminate() {
 	proc := r.currentProc
 	term := r.currentTerminator
 	done := r.procDone
-	r.terminated = true
+	// WARN-002: Only set terminated if the timeout goroutine has not already
+	// claimed the step. First flag to fire wins; prevents contradictory
+	// status="done" + notes="timed out after Ns" in the iteration log.
+	if !r.timeoutFired {
+		r.terminated = true
+	}
+	// SUGG-004: Clear timeoutFired so WasTimedOut() accurately reflects that
+	// the user (not the timer) ended the step. Safe because terminated is now set.
+	r.timeoutFired = false
 	r.processMu.Unlock()
 
 	if proc == nil {
@@ -197,11 +225,14 @@ func (r *Runner) Terminate() {
 			_ = term(syscall.SIGKILL)
 		}
 	} else {
-		_ = proc.Signal(syscall.SIGTERM)
+		// WARN-006: Signal the process group (negative PID) so grandchildren that
+		// called setsid/nohup are included. Setpgid is set in runCommand for host
+		// steps, making the child's pgid == child's pid.
+		_ = syscall.Kill(-proc.Pid, syscall.SIGTERM)
 		select {
 		case <-done:
 		case <-time.After(grace):
-			_ = proc.Kill()
+			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
 		}
 	}
 }
@@ -322,7 +353,10 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	// pipeline captured a partial session_id. A future issue wires the consumer.
 	r.processMu.Lock()
 	if r.timeoutFired && stats.SessionID != "" {
-		r.SessionBlacklist[stats.SessionID] = true
+		if r.sessionBlacklist == nil {
+			r.sessionBlacklist = make(map[string]bool)
+		}
+		r.sessionBlacklist[stats.SessionID] = true
 	}
 	r.processMu.Unlock()
 
@@ -408,6 +442,12 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 		} else if opts.CidfilePath != "" {
 			terminator = sandbox.NewTerminator(cmd, opts.CidfilePath)
 		}
+	} else {
+		// WARN-006: For host (non-sandbox) steps, place the child in its own
+		// process group so that grandchildren that call setsid/nohup can still be
+		// reached by the process-group SIGTERM/SIGKILL path in Terminate() and the
+		// timeout goroutine below.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -433,6 +473,10 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 		r.processMu.Unlock()
 	}()
 
+	// isHostStep tracks whether the child was started with Setpgid=true (host
+	// steps only). Only host steps use process-group signaling in the goroutine.
+	isHostStep := opts == nil
+
 	// Per-step timeout goroutine: fires SIGTERM after the deadline, then SIGKILL
 	// after the grace window if the process has not exited. Does not set
 	// r.terminated (which is reserved for user-initiated skips via Terminate()).
@@ -443,32 +487,66 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 			if r.timeoutGraceOverride > 0 {
 				grace = r.timeoutGraceOverride
 			}
+			// WARN-007/SUGG-008: Use time.NewTimer so the timer is stopped (and its
+			// goroutine slot freed) when the step exits normally — time.After leaks
+			// the timer for the full timeoutSeconds after the done branch is taken.
+			timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+			defer timer.Stop()
 			select {
 			case <-done:
 				// Step completed normally; timeout goroutine exits cleanly.
-			case <-time.After(time.Duration(timeoutSeconds) * time.Second):
-				r.processMu.Lock()
-				r.timeoutFired = true
-				term := r.currentTerminator
-				proc := r.currentProc
-				procDone := r.procDone
-				r.processMu.Unlock()
+				return
+			case <-timer.C:
+				// WARN-003/SEC-005: The process may have exited concurrently with the
+				// timer. Go's select chooses randomly when both cases are ready, so
+				// re-check done before committing the flag to avoid marking a
+				// successful step as timed out.
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
 
-				if term != nil {
-					_ = term(syscall.SIGTERM)
-				} else if proc != nil {
+			r.processMu.Lock()
+			// WARN-002: Only claim timeoutFired if Terminate() has not already set
+			// terminated. First flag to fire wins, preventing contradictory state.
+			if !r.terminated {
+				r.timeoutFired = true
+			}
+			term := r.currentTerminator
+			proc := r.currentProc
+			procDone := r.procDone
+			r.processMu.Unlock()
+
+			if !r.timeoutFired {
+				return // Terminate() got there first; let it drive the kill sequence.
+			}
+
+			if term != nil {
+				_ = term(syscall.SIGTERM)
+			} else if proc != nil {
+				if isHostStep {
+					// WARN-006: Signal the process group so grandchildren that called
+					// setsid/nohup are included (Setpgid is set for host steps above).
+					_ = syscall.Kill(-proc.Pid, syscall.SIGTERM)
+				} else {
 					_ = proc.Signal(syscall.SIGTERM)
 				}
-				select {
-				case <-procDone:
-				case <-time.After(grace):
-					r.processMu.Lock()
-					term = r.currentTerminator
-					proc = r.currentProc
-					r.processMu.Unlock()
-					if term != nil {
-						_ = term(syscall.SIGKILL)
-					} else if proc != nil {
+			}
+			select {
+			case <-procDone:
+			case <-time.After(grace):
+				r.processMu.Lock()
+				term = r.currentTerminator
+				proc = r.currentProc
+				r.processMu.Unlock()
+				if term != nil {
+					_ = term(syscall.SIGKILL)
+				} else if proc != nil {
+					if isHostStep {
+						_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+					} else {
 						_ = proc.Kill()
 					}
 				}

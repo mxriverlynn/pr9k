@@ -38,7 +38,9 @@ Add `timeoutSeconds` to any step in `ralph-steps.json`:
 
 ## Partial session-ID blacklist
 
-When a Claude step times out and the `claudestream` pipeline has already received a `session_id` from the model, that session ID is added to an in-memory `Runner.SessionBlacklist`. A future issue will wire a session-resume gate that consults this list to prevent resuming a timed-out session.
+When a Claude step times out and the `claudestream` pipeline has already received a `session_id` from the model, that session ID is added to an in-memory blacklist (accessible via `Runner.SessionBlacklisted` / `Runner.BlacklistedSessions`). A future issue will wire a session-resume gate that consults this list to prevent resuming a timed-out session.
+
+Session IDs are also written to `.ralph-cache/iteration.jsonl`. If session IDs are sensitive in your environment, add `.ralph-cache/` to `.gitignore` in the target repository.
 
 ## Advisory prompt budget
 
@@ -50,4 +52,4 @@ fix them in batch rather than one at a time. Do not exceed 8 minutes of
 wall-clock test execution.
 ```
 
-The budget guides the model; `timeoutSeconds` enforces the cap regardless of model behaviour.
+The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 900` (15 minutes) is the separate, enforced wall-clock cap that ralph-tui applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.

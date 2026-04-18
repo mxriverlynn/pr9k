@@ -75,9 +75,22 @@ type StepExecutor interface {
 
 `WasTimedOut()` returns `true` if the most recent step was ended by the per-step timeout goroutine. The flag is reset at the start of each `RunStepFull` or `RunSandboxedStep` call.
 
+### Session blacklist
+
+When a claude step times out and the claudestream pipeline has captured a `session_id`, that ID is added to an unexported map protected by `processMu`. Callers must not access this map directly; use the thread-safe accessors:
+
+```go
+func (r *Runner) SessionBlacklisted(id string) bool
+func (r *Runner) BlacklistedSessions() []string
+```
+
+Both acquire `processMu` internally. Writing to the blacklist is only done inside `RunSandboxedStep` while holding `processMu`, so there is no data race.
+
 ## stepDispatcher
 
 `stepDispatcher` wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep(name, command)` uniformly. For claude steps it transparently delegates to `RunSandboxedStep` (passing `TimeoutSeconds` via `SandboxOptions`); for non-claude steps it calls `RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)`, forwarding both fields from the resolved step.
+
+When a step times out and the user chooses to retry, `stepDispatcher.RunStep` detects that `WasTimedOut()` is still `true` (the flag is reset only at the start of the next inner call) and invokes `onTimeoutRetry` to emit an `IterationRecord` for the timed-out attempt before the retry begins. This ensures the iteration log always has a record of timeout events even when the retry ultimately succeeds.
 
 ## Run loop
 

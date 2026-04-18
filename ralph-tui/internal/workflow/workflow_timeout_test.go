@@ -9,7 +9,7 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 )
 
-// TP-001: SessionBlacklist populated when a claude step times out and the
+// TP-001: sessionBlacklist populated when a claude step times out and the
 // pipeline captured a partial session_id from a result event.
 func TestTimeout_SessionBlacklist_PopulatedOnTimedOutStepWithSessionID(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
@@ -43,11 +43,8 @@ func TestTimeout_SessionBlacklist_PopulatedOnTimedOutStepWithSessionID(t *testin
 		t.Error("WasTimedOut should be true after timeout fired")
 	}
 
-	r.processMu.Lock()
-	blacklisted := r.SessionBlacklist[wantSession]
-	r.processMu.Unlock()
-	if !blacklisted {
-		t.Errorf("SessionBlacklist[%q] should be true after timeout, but was false", wantSession)
+	if !r.SessionBlacklisted(wantSession) {
+		t.Errorf("SessionBlacklisted(%q) should be true after timeout, but was false", wantSession)
 	}
 }
 
@@ -82,16 +79,14 @@ func TestTimeout_SessionBlacklist_NotPopulatedWhenNoSessionID(t *testing.T) {
 		t.Error("WasTimedOut should be true after timeout fired")
 	}
 
-	r.processMu.Lock()
-	n := len(r.SessionBlacklist)
-	_, hasEmpty := r.SessionBlacklist[""]
-	r.processMu.Unlock()
-
-	if hasEmpty {
-		t.Error("SessionBlacklist must not contain the empty-string key")
+	sessions := r.BlacklistedSessions()
+	for _, id := range sessions {
+		if id == "" {
+			t.Error("SessionBlacklist must not contain the empty-string key")
+		}
 	}
-	if n != 0 {
-		t.Errorf("SessionBlacklist should be empty (no session_id emitted), got len=%d", n)
+	if len(sessions) != 0 {
+		t.Errorf("SessionBlacklist should be empty (no session_id emitted), got len=%d", len(sessions))
 	}
 }
 
@@ -180,13 +175,10 @@ func TestTimeout_TimeoutFiredResetBetweenRunSandboxedStepCalls(t *testing.T) {
 		t.Error("after second call: WasTimedOut should be false — timeoutFired must be reset on entry")
 	}
 
-	// SessionBlacklist state from the first call is preserved (no session_id was
+	// sessionBlacklist state from the first call is preserved (no session_id was
 	// emitted, so it remains empty — the important thing is it is not wiped).
-	r.processMu.Lock()
-	n := len(r.SessionBlacklist)
-	r.processMu.Unlock()
-	if n != 0 {
-		t.Errorf("SessionBlacklist should still be empty after both calls, got len=%d", n)
+	if n := len(r.BlacklistedSessions()); n != 0 {
+		t.Errorf("sessionBlacklist should still be empty after both calls, got len=%d", n)
 	}
 }
 

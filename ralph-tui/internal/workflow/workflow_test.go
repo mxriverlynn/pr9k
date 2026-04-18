@@ -2396,32 +2396,58 @@ func TestTimeout_SIGTERMSentOnDeadline(t *testing.T) {
 
 // TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored verifies that when a step
 // ignores SIGTERM, the timeout goroutine escalates to SIGKILL after the grace
-// period and RunStepFull returns an error.
+// period. Uses a recording+forwarding terminator (SUGG-006) to pin the signal
+// sequence [SIGTERM, SIGKILL] so regressions that skip SIGKILL would be caught.
 func TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
-	// Short grace period so the test doesn't block for 10 s.
+	defer func() { _ = log.Close() }()
 	r.timeoutGraceOverride = 200 * time.Millisecond
-	// trap '' TERM ignores SIGTERM; the process only exits via SIGKILL.
-	script := `trap '' TERM; while true; do sleep 0.05; done`
 
-	stepDone := make(chan error, 1)
-	go func() {
-		stepDone <- r.RunStepFull("kill-step", []string{"sh", "-c", script}, ui.CaptureLastLine, 1)
-	}()
+	var sigsLock sync.Mutex
+	var sigs []syscall.Signal
 
-	select {
-	case err := <-stepDone:
-		if err == nil {
-			t.Error("expected non-nil error after SIGKILL, got nil")
+	// Recording+forwarding terminator: records every signal and forwards it to
+	// the process so the step actually receives the kills.
+	terminator := func(sig syscall.Signal) error {
+		sigsLock.Lock()
+		sigs = append(sigs, sig)
+		sigsLock.Unlock()
+		r.processMu.Lock()
+		proc := r.currentProc
+		r.processMu.Unlock()
+		if proc != nil {
+			return proc.Signal(sig)
 		}
-		if !r.WasTimedOut() {
-			t.Error("WasTimedOut should be true after timeout+SIGKILL")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("RunStepFull did not return within 5 seconds; SIGKILL escalation may be broken")
+		return nil
 	}
 
-	_ = log.Close()
+	// Script ignores SIGTERM; only SIGKILL terminates it.
+	script := `trap '' TERM; while true; do sleep 0.05; done`
+	err := r.RunSandboxedStep("kill-step", []string{"sh", "-c", script}, SandboxOptions{
+		Terminator:     terminator,
+		TimeoutSeconds: 1,
+	})
+	if err == nil {
+		t.Error("expected non-nil error after SIGKILL, got nil")
+	}
+	if !r.WasTimedOut() {
+		t.Error("WasTimedOut should be true after timeout+SIGKILL")
+	}
+
+	sigsLock.Lock()
+	gotSigs := make([]syscall.Signal, len(sigs))
+	copy(gotSigs, sigs)
+	sigsLock.Unlock()
+
+	if len(gotSigs) < 2 {
+		t.Fatalf("expected at least 2 signals [SIGTERM, SIGKILL], got %v", gotSigs)
+	}
+	if gotSigs[0] != syscall.SIGTERM {
+		t.Errorf("signal[0]: want SIGTERM, got %v", gotSigs[0])
+	}
+	if gotSigs[1] != syscall.SIGKILL {
+		t.Errorf("signal[1]: want SIGKILL, got %v", gotSigs[1])
+	}
 }
 
 // TestTimeout_IterationLogNote verifies that a timed-out step records
