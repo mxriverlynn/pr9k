@@ -124,7 +124,7 @@ Key differences from `env`:
 
 ### The `.ralph-cache` directory
 
-pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo.
+pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add both `.pr9k/` and `.ralph-cache/` to `.gitignore` in your target repo — `.pr9k/` covers session logs and runtime state, while `.ralph-cache/` covers the build artifact cache (see [Caching Build Artifacts](caching-build-artifacts.md#target-project-gitignore)).
 
 ## Related documentation
 
