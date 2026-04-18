@@ -34,7 +34,7 @@ func resolveWorkflowDirWith(projectDir, execDir string) (string, error) {
 		return execCandidate, nil
 	}
 
-	return "", fmt.Errorf("cli: could not locate workflow bundle. Checked:\n  - %s\n  - %s\nInstall the bundle or pass --workflow-dir.", projCandidate, execCandidate)
+	return "", fmt.Errorf("cli: could not locate workflow bundle (checked %s and %s); install the bundle or pass --workflow-dir", projCandidate, execCandidate)
 }
 
 // resolveWorkflowDir implements the two-candidate resolution rule:

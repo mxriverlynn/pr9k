@@ -47,7 +47,11 @@ func setupWorkflowCandidate(t *testing.T, dir string) string {
 		t.Fatalf("setupWorkflowCandidate Chdir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(orig) })
-	return dir
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatalf("setupWorkflowCandidate EvalSymlinks: %v", err)
+	}
+	return resolved
 }
 
 // 1. No flags → iterations=0 (until-done), workflow-dir resolved from project candidate (non-empty).
@@ -596,7 +600,7 @@ func TestResolveWorkflowDir_BothMissingReturnsError(t *testing.T) {
 	if !strings.Contains(err.Error(), "could not locate workflow bundle") {
 		t.Errorf("expected error to say 'could not locate workflow bundle', got %q", err.Error())
 	}
-	if !strings.Contains(err.Error(), "Install the bundle or pass --workflow-dir") {
+	if !strings.Contains(err.Error(), "install the bundle or pass --workflow-dir") {
 		t.Errorf("expected error to mention install hint, got %q", err.Error())
 	}
 }
