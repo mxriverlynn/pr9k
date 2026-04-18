@@ -603,6 +603,76 @@ func TestCopySelectedText_CopyFnNotCalledBeforeCmdInvoked(t *testing.T) {
 
 Apply this pattern any time a correctness property is "this must happen asynchronously" and a synchronous implementation would compile and pass all other tests.
 
+## Use t.Run subtests for per-item scoping
+
+When a test function iterates over files, keys, or table rows, wrap each iteration body in `t.Run(name, ...)`. Flat test functions fail at the first failing item and hide whether later items pass or fail. Subtests let the runner continue past the first failure and report each item individually.
+
+```go
+// Bad — stops at first failure; later files untested in that run
+for _, pf := range promptFiles {
+    content := pf.Body
+    if !strings.Contains(content, hint) {
+        t.Errorf("%s: hint not found", pf.Name)
+    }
+}
+
+// Good — all items run; failure output names the specific subtest
+for _, pf := range promptFiles {
+    t.Run(pf.Name, func(t *testing.T) {
+        if !strings.Contains(pf.Body, hint) {
+            t.Errorf("hint not found")
+        }
+    })
+}
+```
+
+Apply any time a test loops over a collection and the loop body can independently fail for each element.
+
+## Sort before iterating for deterministic test output
+
+When a test iterates over a map or uses a function that returns results in non-deterministic order, sort the keys or results before iterating. Non-deterministic order produces flaky failure messages that name different items on different runs, making failures hard to reproduce and bisect.
+
+```go
+// Bad — map iteration order is non-deterministic; failure message names a random file
+for name, body := range promptFiles {
+    t.Run(name, func(t *testing.T) { ... })
+}
+
+// Good — sorted order; failure output is stable across runs
+names := make([]string, 0, len(promptFiles))
+for name := range promptFiles {
+    names = append(names, name)
+}
+sort.Strings(names)
+for _, name := range names {
+    t.Run(name, func(t *testing.T) { ... })
+}
+```
+
+The same applies to any slice of structs keyed by name: sort by `Name` field before the loop.
+
+## Test the shipped production configuration file end-to-end
+
+Every project that ships a configuration file (`ralph-steps.json`, `config.yaml`, etc.) must have at least one integration test that loads the real file from the source tree and runs it through the full validation and loading pipeline. This closes the gap between "unit tests pass" and "the config the user actually ships is valid."
+
+```go
+// production_steps_test.go — loads from the live source tree
+func TestValidate_ProductionStepsJSON(t *testing.T) {
+    dir := assembleWorkflowDir(t) // points at ralph-tui/ in source tree
+    errs := validator.Validate(dir)
+    for _, e := range errs {
+        if e.IsFatal() {
+            t.Errorf("fatal: %s", e.Error())
+        }
+    }
+}
+```
+
+Checklist:
+1. The test must load the file from its real source-tree path (via `runtime.Caller(0)` resolution, not a test fixture copy).
+2. The test must assert zero fatal errors.
+3. The test must be updated whenever the config schema gains a new field that requires a value — a schema change that breaks the production file should fail this test immediately, not after a deploy.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -621,3 +691,4 @@ Apply this pattern any time a correctness property is "this must happen asynchro
 - [File Logging](../code-packages/logger.md) — `runStampRe` package-level variable as the canonical shared-regex example (issue #90)
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)
 - [Status Line](../code-packages/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)
+- [Config Validation](../code-packages/validator.md) — `prompts_structure_test.go` as the canonical t.Run + sorted-iteration test example (issue #125); `production_steps_test.go` as the canonical production-config integration test (issue #124)

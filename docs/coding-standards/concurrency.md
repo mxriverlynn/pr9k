@@ -259,6 +259,57 @@ When adding any new blocking receive to orchestration code:
 2. Document which goroutine is responsible for sending to unblock the receive.
 3. Update tests to inject the required signal (see [Testing — Inject an additional signal for each new blocking receive](testing.md)).
 
+## Mutually exclusive state flags: first-flag-wins
+
+When multiple concurrent conditions can each transition a step or operation to a terminal state (e.g., user cancellation vs. timeout), model them as mutually exclusive boolean flags and enforce that only the first condition to fire wins.
+
+The risk: if both flags can be set, the downstream code that reads them produces contradictory results — for example, a step logged as `status="done"` with `notes="timed out after 30s"`.
+
+```go
+// Good — first flag to fire wins; second flag is a no-op
+r.processMu.Lock()
+if !r.timeoutFired && !r.terminated {
+    r.terminated = true
+}
+r.processMu.Unlock()
+
+// In the timeout goroutine:
+r.processMu.Lock()
+if !r.terminated && !r.timeoutFired {
+    r.timeoutFired = true
+}
+r.processMu.Unlock()
+```
+
+When resetting flags (e.g., before a retry), reset both flags together under the same mutex lock to prevent a window where one is cleared and the other is stale.
+
+Checklist:
+1. Identify all conditions that can terminate the same operation.
+2. Gate each flag write with "are all other flags currently false?"
+3. Reset all flags atomically before any retry.
+4. Verify that every downstream read is unambiguous given the mutual exclusion guarantee.
+
+## Record state before resetting for retry
+
+When a step fails (timeout, error) and the loop retries it, emit any audit record (e.g., `IterationRecord`, log entry) for the failed attempt *before* resetting the failure flags. Resetting first and then recording produces a record that lacks the failure context, defeating the audit trail.
+
+```go
+// Good — record the timed-out attempt, then reset for retry
+if executor.WasTimedOut() {
+    appendIterationRecord(rec) // record the failure with notes set
+}
+// Now reset so the retry doesn't inherit stale state
+executor.ResetTimeout()
+
+// Bad — reset first, then attempt to record (flags are gone)
+executor.ResetTimeout()
+if executor.WasTimedOut() { // always false now
+    appendIterationRecord(rec) // never reached
+}
+```
+
+Apply whenever a retry loop needs an audit trail of failed attempts.
+
 ## Wrap blocking operations in tea.Cmd closures
 
 In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks, or external process invocations). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
@@ -314,3 +365,4 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 - [Error Handling](error-handling.md) — Complementary standards for goroutine write error tracking
 - [Testing](testing.md) — Standards for test doubles with shared state needing mutexes; injecting signals for blocking receives
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example
+- [Workflow Orchestration](../features/workflow-orchestration.md) — `terminated` / `timeoutFired` mutual exclusion and reset-then-record ordering in `stepDispatcher` (issue #130)

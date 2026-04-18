@@ -482,6 +482,127 @@ The panic at the end replaces the `default` branch. It is unreachable in correct
 
 Apply to any switch that maps an internal iota-based type to a string, error category, or other derived value. Switches that branch on externally-supplied values (e.g., HTTP status codes) may legitimately need a default.
 
+## Use modern octal literals (0o644, not 0644)
+
+Write file permission bits with the `0o` prefix introduced in Go 1.13. The old bare-zero prefix (`0644`) is a C-era convention that has caused real-world misreads; the `0o` prefix makes the octal base unambiguous.
+
+```go
+// Good
+os.WriteFile(path, data, 0o644)
+os.MkdirAll(dir, 0o755)
+os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600)
+
+// Bad — bare zero prefix; easy to misread as decimal
+os.WriteFile(path, data, 0644)
+os.MkdirAll(dir, 0755)
+```
+
+Apply to every `os.Create`, `os.OpenFile`, `os.WriteFile`, `os.MkdirAll`, and `os.Chmod` call — including test files. A reviewer who sees `0644` in a new PR should flag it.
+
+## Use time.NewTimer with defer Stop() for per-operation deadlines
+
+When a goroutine needs to fire an action after a deadline, use `time.NewTimer` with `defer t.Stop()` rather than `time.After`. `time.After` creates a timer that cannot be canceled — it leaks until the channel fires even when the protected operation finishes first, which accumulates goroutine-held allocations over many iterations.
+
+```go
+// Good — timer is stopped immediately when the goroutine exits
+timer := time.NewTimer(deadline)
+defer timer.Stop()
+
+select {
+case <-done:
+    return
+case <-timer.C:
+    // deadline fired
+}
+
+// Bad — the timer fires after `deadline` regardless of whether done closed first;
+// the old timer channel is GC'd only after the duration elapses
+select {
+case <-done:
+    return
+case <-time.After(deadline):
+    // deadline fired
+}
+```
+
+Additionally, after a timer fires, do a non-blocking check of the early-exit path before proceeding:
+
+```go
+case <-timer.C:
+    // Non-blocking re-check: if the step completed in the same scheduler slice
+    // that fired the timer, treat it as done rather than timed-out.
+    select {
+    case <-done:
+        return
+    default:
+    }
+    // Now signal the timeout.
+    proc.Signal(syscall.SIGTERM)
+```
+
+The re-check closes the race window where a fast step and the timer fire in the same goroutine scheduling round.
+
+## Snap byte-length truncation to a rune boundary
+
+When hard-capping a string at a maximum byte length, snap the cut point backward to the nearest valid UTF-8 rune start. Slicing at an arbitrary byte offset splits a multi-byte rune and produces a garbled trailing character.
+
+```go
+import "unicode/utf8"
+
+const maxBytes = 30 * 1024
+
+func truncate(s string) string {
+    if len(s) <= maxBytes {
+        return s
+    }
+    cut := maxBytes
+    // Walk backward until we land on a rune boundary.
+    for cut > 0 && !utf8.RuneStart(s[cut]) {
+        cut--
+    }
+    return s[:cut] + "\n[truncated]"
+}
+```
+
+Apply any time a string is sliced at a byte index rather than a rune index — log truncation, API response capping, capture buffers. The fix is always the same two-line backward walk.
+
+## Kill the process group for host subprocesses
+
+When spawning a host (non-Docker) subprocess that may itself spawn children, set `SysProcAttr.Setpgid = true` so the child runs in its own process group. When sending a signal (SIGTERM, SIGKILL), use `syscall.Kill(-pid, sig)` to deliver it to the entire process group — not just the direct child.
+
+Without `Setpgid`, `syscall.Kill(-pid, sig)` kills the parent process's own process group, potentially delivering signals to the ralph-tui process itself.
+
+```go
+cmd := exec.Command(args[0], args[1:]...)
+cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+// ... start ...
+
+// Signal the process group, not just the direct child:
+syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+```
+
+Docker steps do not need this — Docker's container isolation already provides process-group containment. Apply only to `isClaude: false` (host) steps.
+
+## Extract magic numbers to named constants
+
+When a numeric literal encodes a meaningful domain constraint (e.g., a token budget, a time limit, a buffer size), extract it to a named unexported constant at the top of the file. A bare number forces every reader to infer the meaning; a named constant makes the constraint self-documenting and localizes future changes.
+
+```go
+// Bad — 200_000 appears in three places; meaning is inferred from context
+if stats.InputTokens > 200_000 {
+    ...
+}
+
+// Good — name encodes the constraint; change in one place
+const resumeInputTokenLimit = 200_000
+
+if stats.InputTokens > resumeInputTokenLimit {
+    ...
+}
+```
+
+The threshold is one: even a single use of a non-obvious number warrants a constant if the number encodes a domain rule. Numbers like `0`, `1`, `-1`, and small loop bounds are exempt.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -497,3 +618,7 @@ Apply to any switch that maps an internal iota-based type to a string, error cat
 - [Error Handling](error-handling.md) — Complementary error handling conventions
 - [TUI Display](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example
 - [TUI Display](../features/tui-display.md) — HeartbeatTickMsg handler nil guard fix as the canonical nil-guard completeness example (issue #94)
+- [Workflow Orchestration](../features/workflow-orchestration.md) — `timeoutSeconds` goroutine uses `time.NewTimer` + `defer Stop()` with non-blocking done re-check (issue #130)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — `fullStdoutCapture` uses `utf8.RuneStart` backward walk for truncation (issue #123)
+- [Docker Sandbox](../features/docker-sandbox.md) — `Setpgid: true` + `syscall.Kill(-pid, sig)` for host subprocess process-group signals (issue #130)
+- [Workflow Orchestration](../features/workflow-orchestration.md) — `resumeInputTokenLimit` constant replacing 200_000 magic number (issue #131)
