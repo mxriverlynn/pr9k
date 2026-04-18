@@ -879,3 +879,27 @@ func TestStep_TimeoutSeconds_RoundTrip(t *testing.T) {
 		}
 	})
 }
+
+// legacyConfigFilename is the old config filename assembled at runtime so the
+// rename guard does not match this file's own source.
+var legacyConfigFilename = "ralph-steps" + ".json"
+
+// TP-004: Direct named-contract pin for steps.LoadSteps — with only the legacy
+// filename present (no config.json), LoadSteps must return an error mentioning config.json.
+func TestLoadSteps_LegacyFilenameNotAccepted(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, legacyConfigFilename), []byte(`{
+		"initialize":[],
+		"iteration":[{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize":[]
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := steps.LoadSteps(dir)
+	if err == nil {
+		t.Fatal("LoadSteps: expected error when only legacy config file exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "config.json") {
+		t.Errorf("error does not mention config.json: %q", err.Error())
+	}
+}

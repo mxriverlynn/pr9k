@@ -2088,6 +2088,34 @@ func TestValidate_ContainerEnv_SecretLookingNameEmitsWarning(t *testing.T) {
 	}
 }
 
+// TP-003: Pin that the validator secret-warning message mentions config.json and
+// does not mention the legacy filename.
+func TestValidate_ContainerEnv_SecretWarning_MentionsConfigJSON(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GITHUB_TOKEN": "ghp_literal"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	var found bool
+	for _, e := range errs {
+		if e.Severity == validator.SeverityWarning {
+			found = true
+			if !strings.Contains(e.Problem, "config.json") {
+				t.Errorf("warning Problem does not mention config.json: %q", e.Problem)
+			}
+			if strings.Contains(e.Problem, legacyConfigName) {
+				t.Errorf("warning Problem mentions legacy filename %q: %q", legacyConfigName, e.Problem)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected at least one warning for GITHUB_TOKEN; got: %v", errs)
+	}
+}
+
 // TestValidate_ContainerEnv_UnknownFieldRejected verifies that an unknown top-level
 // field adjacent to containerEnv is rejected by the strict decoder.
 func TestValidate_ContainerEnv_UnknownFieldRejected(t *testing.T) {
@@ -2101,6 +2129,34 @@ func TestValidate_ContainerEnv_UnknownFieldRejected(t *testing.T) {
 	}`)
 	errs := validator.Validate(dir)
 	requireError(t, errs, "malformed JSON")
+}
+
+// legacyConfigName is the old config filename assembled at runtime so the
+// rename guard does not match this file's own source.
+var legacyConfigName = "ralph-steps" + ".json"
+
+// TP-005: Direct named-contract pin for validator.Validate — with only the legacy
+// filename present (no config.json), Validate must return at least one error mentioning config.json.
+func TestValidate_LegacyFilenameNotAccepted(t *testing.T) {
+	dir := tempProject(t)
+	legacy := filepath.Join(dir, legacyConfigName)
+	if err := os.WriteFile(legacy, []byte(`{
+		"initialize":[],
+		"iteration":[{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize":[]
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	errs := validator.Validate(dir)
+	if len(errs) == 0 {
+		t.Fatal("expected errors when only legacy config file exists; got none")
+	}
+	for _, e := range errs {
+		if strings.Contains(e.Problem, "config.json") {
+			return
+		}
+	}
+	t.Errorf("no error mentions config.json; errors: %v", errs)
 }
 
 // --- TP-006: Error.IsFatal ---

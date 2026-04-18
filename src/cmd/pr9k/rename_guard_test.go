@@ -97,3 +97,65 @@ func TestNoLegacyRalphTuiReferences_Scripts(t *testing.T) {
 	root := docTestRepoRoot(t)
 	checkNoLegacyNameInTree(t, filepath.Join(root, "scripts"))
 }
+
+// legacyConfigName is the old config filename, assembled at runtime to avoid the
+// guard matching its own source.
+var legacyConfigName = "ralph-steps" + ".json"
+
+// checkNoLegacyConfigInTree walks root and fails the test if any non-excluded file
+// contains the legacy config filename.
+func checkNoLegacyConfigInTree(t *testing.T, root string) {
+	t.Helper()
+	var offenders []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skipBinary(d.Name()) || skipFile(d.Name()) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(string(data), legacyConfigName) {
+			rel, _ := filepath.Rel(root, path)
+			offenders = append(offenders, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir %s: %v", root, err)
+	}
+	if len(offenders) > 0 {
+		t.Errorf("files in %s still contain %q (acceptance criterion: grep returns zero matches):\n  %s",
+			root, legacyConfigName, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-001: Regression guard — no file under src/ contains the legacy config filename.
+func TestNoLegacyRalphStepsJSONReferences_Src(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyConfigInTree(t, filepath.Join(root, "src"))
+}
+
+// TP-001: Regression guard — no file under scripts/ contains the legacy config filename.
+func TestNoLegacyRalphStepsJSONReferences_Scripts(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyConfigInTree(t, filepath.Join(root, "scripts"))
+}
+
+// TP-001: Regression guard — the repo-root Makefile does not reference the legacy config filename.
+func TestNoLegacyRalphStepsJSONReferences_Makefile(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "Makefile")
+	if strings.Contains(content, legacyConfigName) {
+		t.Errorf("Makefile contains %q — update to config.json", legacyConfigName)
+	}
+}

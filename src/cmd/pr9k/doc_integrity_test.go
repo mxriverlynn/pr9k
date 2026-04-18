@@ -319,6 +319,16 @@ func TestCIWorkflow_NoStaleRalphTuiReferences(t *testing.T) {
 	}
 }
 
+// TP-002: Pin that the Makefile copies src/config.json into bin/ and does not
+// reference the legacy filename in any cp target.
+func TestMakefile_CopiesConfigJSONToBin(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "Makefile")
+
+	assertContains(t, content, "cp src/config.json bin/", "Makefile cp target")
+	assertNotContains(t, content, legacyConfigName, "Makefile legacy config filename")
+}
+
 // TestMakefile_BuildsBinaryNamedPr9k asserts that the Makefile builds the pr9k
 // binary and references the renamed src/ directory.
 func TestMakefile_BuildsBinaryNamedPr9k(t *testing.T) {
