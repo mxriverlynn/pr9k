@@ -334,14 +334,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, cfg.ContainerEnv, executor)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
-			prepRec := IterationRecord{
-				SchemaVersion: 1,
-				IterationNum:  0,
-				StepName:      s.Name,
-				Model:         s.Model,
-				Status:        "failed",
-				Notes:         err.Error(),
-			}
+			prepRec := newIterationRecord("", 0, s, "failed")
+			prepRec.Notes = err.Error()
 			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -357,17 +351,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		disp := &stepDispatcher{exec: executor, current: resolved, stats: rs}
 		stepStart := time.Now()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, st, keyHandler)
-		rec := IterationRecord{
-			SchemaVersion: 1,
-			IterationNum:  0,
-			StepName:      s.Name,
-			Model:         s.Model,
-			Status:        stepStatus(st.lastState),
-			DurationS:     time.Since(stepStart).Seconds(),
-			InputTokens:   disp.capturedStats.InputTokens,
-			OutputTokens:  disp.capturedStats.OutputTokens,
-			SessionID:     disp.capturedStats.SessionID,
-		}
+		rec := newIterationRecord("", 0, s, stepStatus(st.lastState))
+		rec.DurationS = time.Since(stepStart).Seconds()
+		rec.InputTokens = disp.capturedStats.InputTokens
+		rec.OutputTokens = disp.capturedStats.OutputTokens
+		rec.SessionID = disp.capturedStats.SessionID
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -419,19 +407,16 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			// If the source step failed, we fall through and run this step normally
 			// so the failure is not silently swallowed.
 			if s.SkipIfCaptureEmpty != "" {
-				val, _ := vt.GetInPhase(vars.Iteration, s.SkipIfCaptureEmpty)
+				val, ok := vt.GetInPhase(vars.Iteration, s.SkipIfCaptureEmpty)
+				if !ok {
+					executor.WriteToLog(fmt.Sprintf("warning: skipIfCaptureEmpty %q not found in iteration scope; step will run", s.SkipIfCaptureEmpty))
+				}
 				if val == "" && captureStates[s.SkipIfCaptureEmpty] == ui.StepDone {
 					header.SetStepState(j, ui.StepSkipped)
-					executor.WriteToLog(fmt.Sprintf("Step skipped (%s empty)", s.SkipIfCaptureEmpty))
+					executor.WriteToLog(fmt.Sprintf("Step skipped (capture %q is empty)", s.SkipIfCaptureEmpty))
 					issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-					skipRec := IterationRecord{
-						SchemaVersion: 1,
-						IssueID:       issueID,
-						IterationNum:  i,
-						StepName:      s.Name,
-						Model:         s.Model,
-						Status:        "skipped",
-					}
+					skipRec := newIterationRecord(issueID, i, s, "skipped")
+					skipRec.Notes = fmt.Sprintf("capture %q empty", s.SkipIfCaptureEmpty)
 					if logErr := AppendIterationRecord(executor.ProjectDir(), skipRec); logErr != nil {
 						executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 					}
@@ -443,15 +428,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
 				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-				prepRec := IterationRecord{
-					SchemaVersion: 1,
-					IssueID:       issueID,
-					IterationNum:  i,
-					StepName:      s.Name,
-					Model:         s.Model,
-					Status:        "failed",
-					Notes:         err.Error(),
-				}
+				prepRec := newIterationRecord(issueID, i, s, "failed")
+				prepRec.Notes = err.Error()
 				if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
 					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 				}
@@ -468,18 +446,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			stepStart := time.Now()
 			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
 			issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-			rec := IterationRecord{
-				SchemaVersion: 1,
-				IssueID:       issueID,
-				IterationNum:  i,
-				StepName:      s.Name,
-				Model:         s.Model,
-				Status:        stepStatus(th.lastState),
-				DurationS:     time.Since(stepStart).Seconds(),
-				InputTokens:   disp.capturedStats.InputTokens,
-				OutputTokens:  disp.capturedStats.OutputTokens,
-				SessionID:     disp.capturedStats.SessionID,
-			}
+			rec := newIterationRecord(issueID, i, s, stepStatus(th.lastState))
+			rec.DurationS = time.Since(stepStart).Seconds()
+			rec.InputTokens = disp.capturedStats.InputTokens
+			rec.OutputTokens = disp.capturedStats.OutputTokens
+			rec.SessionID = disp.capturedStats.SessionID
 			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -534,15 +505,8 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
 			issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
-			prepRec := IterationRecord{
-				SchemaVersion: 1,
-				IssueID:       issueID,
-				IterationNum:  0,
-				StepName:      s.Name,
-				Model:         s.Model,
-				Status:        "failed",
-				Notes:         err.Error(),
-			}
+			prepRec := newIterationRecord(issueID, 0, s, "failed")
+			prepRec.Notes = err.Error()
 			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -559,18 +523,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		stepStart := time.Now()
 		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
 		issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
-		rec := IterationRecord{
-			SchemaVersion: 1,
-			IssueID:       issueID,
-			IterationNum:  0,
-			StepName:      s.Name,
-			Model:         s.Model,
-			Status:        stepStatus(th.lastState),
-			DurationS:     time.Since(stepStart).Seconds(),
-			InputTokens:   disp.capturedStats.InputTokens,
-			OutputTokens:  disp.capturedStats.OutputTokens,
-			SessionID:     disp.capturedStats.SessionID,
-		}
+		rec := newIterationRecord(issueID, 0, s, stepStatus(th.lastState))
+		rec.DurationS = time.Since(stepStart).Seconds()
+		rec.InputTokens = disp.capturedStats.InputTokens
+		rec.OutputTokens = disp.capturedStats.OutputTokens
+		rec.SessionID = disp.capturedStats.SessionID
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}

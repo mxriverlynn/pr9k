@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 )
 
 // IterationRecord is one JSONL line written to .ralph-cache/iteration.jsonl
@@ -22,6 +24,20 @@ type IterationRecord struct {
 	OutputTokens  int     `json:"output_tokens,omitempty"`
 	SessionID     string  `json:"session_id,omitempty"`
 	Notes         string  `json:"notes,omitempty"`
+}
+
+// newIterationRecord builds an IterationRecord with the common fields populated.
+// Callers set phase-specific fields (DurationS, InputTokens, OutputTokens,
+// SessionID, Notes) after construction.
+func newIterationRecord(issueID string, iterNum int, s steps.Step, status string) IterationRecord {
+	return IterationRecord{
+		SchemaVersion: 1,
+		IssueID:       issueID,
+		IterationNum:  iterNum,
+		StepName:      s.Name,
+		Model:         s.Model,
+		Status:        status,
+	}
 }
 
 // AppendIterationRecord appends one JSON line to

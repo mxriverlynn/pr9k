@@ -26,10 +26,13 @@ type Step struct {
 	// "fullStdout" joins all stdout lines with "\n", capped at 32 KiB.
 	CaptureMode      string `json:"captureMode,omitempty"`
 	BreakLoopIfEmpty bool   `json:"breakLoopIfEmpty,omitempty"`
-	// SkipIfCaptureEmpty names a variable (bound by an earlier iteration step
-	// via captureAs) whose value is checked before this step runs. If the value
-	// is empty and the capturing step completed successfully (StepDone), this
-	// step is skipped without error and recorded as "skipped" in the iteration log.
+	// SkipIfCaptureEmpty names an iteration-phase variable (bound by an earlier
+	// iteration step via captureAs) whose value is checked before this step runs.
+	// If the value is empty and the capturing step completed successfully (StepDone),
+	// this step is skipped without error and recorded as "skipped" in the iteration
+	// log. Load-time constraints: must be non-empty when set, must reference a
+	// captureAs bound earlier in the same iteration phase (initialize-phase captures
+	// are not allowed), and is only valid in the iteration phase.
 	SkipIfCaptureEmpty string `json:"skipIfCaptureEmpty,omitempty"`
 }
 

@@ -718,6 +718,28 @@ func TestValidate_SkipIfCaptureEmpty_MultipleReferents(t *testing.T) {
 	}
 }
 
+// TestValidate_SkipIfCaptureEmpty_InitializeCapture verifies that referencing a
+// capture bound in the initialize phase is rejected. The runtime captureStates
+// map is populated per-iteration only, so an initialize-phase capture would
+// silently never trigger the skip.
+func TestValidate_SkipIfCaptureEmpty_InitializeCapture(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "setup")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Setup","isClaude":false,"command":["scripts/setup"],"captureAs":"INIT_OUT"}
+		],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"INIT_OUT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
 // ----------------------------------------------------------------------------
 // Category 3 — phase-size checks
 // ----------------------------------------------------------------------------

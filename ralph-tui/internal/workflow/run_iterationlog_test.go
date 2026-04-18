@@ -811,6 +811,55 @@ func TestRun_SkipIfCaptureEmpty_SkipPathLogWriteFailure(t *testing.T) {
 	}
 }
 
+// TestRun_SkipIfCaptureEmpty_InterIterationIsolation verifies that captureStates
+// is re-initialised per iteration. An empty capture in iteration 1 triggers a
+// skip; the same variable carries a non-empty value in iteration 2, so the skip
+// must NOT fire — state from iteration 1 must not leak into iteration 2.
+func TestRun_SkipIfCaptureEmpty_InterIterationIsolation(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir: projectDir,
+		// Iteration 1: verdict="" (skip fires), fix skipped (not called)
+		// Iteration 2: verdict="yes" (skip does not fire), fix runs
+		runStepCaptures: []string{"", "yes", ""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  2,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"echo"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Iteration 1: verdict runs (call 0), fix is skipped.
+	// Iteration 2: verdict runs (call 1), fix runs (call 2).
+	if len(executor.runStepCalls) != 3 {
+		t.Fatalf("runStepCalls: want 3 (verdict1, verdict2, fix2), got %d: %v",
+			len(executor.runStepCalls), executor.runStepCalls)
+	}
+	if executor.runStepCalls[2].name != "fix" {
+		t.Errorf("third call name: want %q, got %q", "fix", executor.runStepCalls[2].name)
+	}
+
+	recs := readIterationLog(t, projectDir)
+	// Expected: verdict(iter1,done), fix(iter1,skipped), verdict(iter2,done), fix(iter2,done)
+	if len(recs) != 4 {
+		t.Fatalf("want 4 records, got %d: %v", len(recs), recs)
+	}
+	if recs[1].Status != "skipped" || recs[1].IterationNum != 1 {
+		t.Errorf("record 1: want skipped/iter1, got status=%q iterNum=%d", recs[1].Status, recs[1].IterationNum)
+	}
+	if recs[3].Status != "done" || recs[3].IterationNum != 2 {
+		t.Errorf("record 3: want done/iter2, got status=%q iterNum=%d", recs[3].Status, recs[3].IterationNum)
+	}
+}
+
 // TP-016: SchemaVersion == 1 in records from all three phases (initialize,
 // iteration, finalize). Bumping the literal requires updating this test.
 func TestRun_IterationLog_SchemaVersionAllPhases(t *testing.T) {

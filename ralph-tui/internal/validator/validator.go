@@ -321,6 +321,11 @@ func validatePhase(
 	seenNames := make(map[string]bool)
 	seenCaptureAs := make(map[string]bool)
 	scope := copyScope(initialScope)
+	// ownCaptures tracks only captureAs names bound within this phase (not
+	// inherited from initialScope). skipIfCaptureEmpty must reference one of
+	// these so the runtime captureStates map — which is populated per-iteration
+	// — can always resolve the source step.
+	ownCaptures := make(map[string]bool)
 	var captures []string
 
 	for i, step := range steps {
@@ -418,14 +423,16 @@ func validatePhase(
 		}
 
 		// Schema 2c — skipIfCaptureEmpty must reference a capture bound by a
-		// strictly earlier step in the same phase (i.e., already in scope), and
-		// is only valid in the iteration phase.
+		// strictly earlier step in the iteration phase (not initialize-phase
+		// captures), and is only valid in the iteration phase. The runtime
+		// captureStates map is populated per-iteration, so initialize-phase
+		// captures are never present there and the skip would silently never fire.
 		if step.SkipIfCaptureEmpty != nil {
 			ref := *step.SkipIfCaptureEmpty
 			if ref == "" {
 				*errs = append(*errs, at("schema", "skipIfCaptureEmpty must not be empty when set"))
 			} else {
-				if !scope[ref] {
+				if !ownCaptures[ref] {
 					*errs = append(*errs, at("schema", fmt.Sprintf("skipIfCaptureEmpty %q is not bound by any earlier captureAs in this phase", ref)))
 				}
 				if phase != vars.Iteration {
@@ -517,11 +524,12 @@ func validatePhase(
 
 		// Extend scope with this step's captureAs for subsequent steps.
 		// Add to scope even if invalid (to reduce cascading errors), but only
-		// track non-reserved first-time names in captures.
+		// track non-reserved first-time names in captures and ownCaptures.
 		if step.CaptureAs != nil && *step.CaptureAs != "" {
 			ca := *step.CaptureAs
 			if !scope[ca] {
 				scope[ca] = true
+				ownCaptures[ca] = true
 				if !reservedBuiltins[ca] {
 					captures = append(captures, ca)
 				}
