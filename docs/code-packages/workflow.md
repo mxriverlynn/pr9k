@@ -153,7 +153,7 @@ When a step times out and the user chooses to retry, `stepDispatcher.RunStep` de
 
 `Run` (in `run.go`) drives three phases — initialize, iteration, finalize — calling `buildStep` for each step to produce a `ui.ResolvedStep`, then wrapping it in a `stepDispatcher` and handing it to `ui.Orchestrate`. Captured values are bound to the VarTable after each `captureAs` step via `executor.LastCapture()`.
 
-After every step (including prep failures), `Run` appends one `IterationRecord` to `.ralph-cache/iteration.jsonl`. See [Iteration log](#iteration-log) below.
+After every step (including prep failures), `Run` appends one `IterationRecord` to `.pr9k/iteration.jsonl`. See [Iteration log](#iteration-log) below.
 
 ## Iteration log
 
@@ -191,9 +191,9 @@ type IterationRecord struct {
 func AppendIterationRecord(projectDir string, rec IterationRecord) error
 ```
 
-Appends one JSON line to `<projectDir>/.ralph-cache/iteration.jsonl`. Safe for concurrent callers: O_APPEND writes under PIPE_BUF are atomic on POSIX. The caller is responsible for ensuring `.ralph-cache/` exists (preflight.Run guarantees this at startup). Write failures are non-fatal — `Run` logs a `warning:` line and continues.
+Appends one JSON line to `<projectDir>/.pr9k/iteration.jsonl`. Safe for concurrent callers: O_APPEND writes under PIPE_BUF are atomic on POSIX. The caller is responsible for ensuring `.pr9k/` exists (preflight.Run guarantees this at startup). Write failures are non-fatal — `Run` logs a `warning:` line and continues.
 
-**File location:** `<projectDir>/.ralph-cache/iteration.jsonl`
+**File location:** `<projectDir>/.pr9k/iteration.jsonl`
 **Schema version:** `1` (in the `schema_version` field of every record)
 **Lifecycle:** the file accumulates records for the entire run. The finalize step `lessons-learned.md` truncates it at the end of each run.
 

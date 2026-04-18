@@ -9,7 +9,7 @@ When a workflow does something unexpected — a Claude step generated the wrong 
 | **Log file** | `<project-dir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
 | **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when pr9k exits |
 | **JSONL artifacts** | `<project-dir>/.pr9k/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
-| **Iteration log** | `<project-dir>/.ralph-cache/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
+| **Iteration log** | `<project-dir>/.pr9k/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
 If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
@@ -100,9 +100,9 @@ jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text
 
 > **Retry behavior:** When you press `r` (retry) in error mode, the next attempt overwrites the `.jsonl` file from the beginning. The prior attempt's raw events are lost from the artifact (but the rendered lines remain in the `.log` file, separated by a `(retry)` separator). Token spend from discarded retry attempts is still included in the per-step and run-level summary lines.
 
-## Iteration log (.ralph-cache/iteration.jsonl)
+## Iteration log (.pr9k/iteration.jsonl)
 
-pr9k writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
+pr9k writes one JSON record to `<project-dir>/.pr9k/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
 
 ```json
 {"schema_version":1,"issue_id":"42","iteration_num":1,"step_name":"feature-work","status":"done","duration_s":12.34,"input_tokens":1500,"output_tokens":800,"session_id":"abc-123"}
@@ -126,21 +126,21 @@ pr9k writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` afte
 
 ```bash
 # Show all step names and statuses for the last run:
-jq -r '"- \(.step_name) [\(.status)]"' .ralph-cache/iteration.jsonl
+jq -r '"- \(.step_name) [\(.status)]"' .pr9k/iteration.jsonl
 
 # Find any failed steps:
-jq 'select(.status == "failed")' .ralph-cache/iteration.jsonl
+jq 'select(.status == "failed")' .pr9k/iteration.jsonl
 
 # Show prep failures with their error details:
-jq 'select(.status == "failed" and .notes != null) | {step_name, notes}' .ralph-cache/iteration.jsonl
+jq 'select(.status == "failed" and .notes != null) | {step_name, notes}' .pr9k/iteration.jsonl
 
 # Total token spend across all claude steps:
-jq -s '[.[].input_tokens // 0] | add' .ralph-cache/iteration.jsonl
+jq -s '[.[].input_tokens // 0] | add' .pr9k/iteration.jsonl
 ```
 
 ### Prerequisites
 
-The iteration log queries above require `jq`. Install it before running pr9k if you intend to query `.ralph-cache/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
+The iteration log queries above require `jq`. Install it before running pr9k if you intend to query `.pr9k/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
 
 Install on macOS: `brew install jq`. Install on Debian/Ubuntu: `apt-get install jq`.
 

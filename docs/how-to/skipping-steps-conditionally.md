@@ -46,7 +46,7 @@ If all three are true, pr9k:
 
 - Marks the step as `[-]` (skipped) in the TUI header
 - Logs `Step skipped (capture "VERDICT" is empty)`
-- Writes a `"skipped"` record to `.ralph-cache/iteration.jsonl`
+- Writes a `"skipped"` record to `.pr9k/iteration.jsonl`
 - Moves on to the next step without entering error mode
 
 If the source step **failed** (non-zero exit), the skip check is suppressed and the dependent step runs normally. A failing verdict script should surface an error, not silently skip the fix.

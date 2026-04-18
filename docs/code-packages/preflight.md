@@ -97,10 +97,11 @@ func Run(projectDir, profileDir string, p Prober) Result
 ```
 
 Orchestrates the full preflight sequence. All results are collected before returning regardless of failures:
-1. `os.MkdirAll(projectDir+"/.ralph-cache", 0o755)` — creates the cache directory inside the project dir so Docker bind-mount subpaths exist before any claude step runs. If creation fails (read-only dir, wrong UID/GID), a `"preflight: could not create .ralph-cache in <path>"` error is appended. The operation is idempotent — repeat calls on an existing dir are a no-op.
-2. `CheckProfileDir(profileDir)`
-3. `CheckDocker(p)`
-4. `CheckCredentials(profileDir)` — warnings only
+1. `os.MkdirAll(projectDir+"/.ralph-cache", 0o755)` — creates the cache directory inside the project dir so Docker bind-mount subpaths exist before any claude step runs. Must be pre-created under the host UID before the container runs, to avoid a chmod fight when the container writes its first cache file via the sandbox's UID mapping. If creation fails (read-only dir, wrong UID/GID), a `"preflight: could not create .ralph-cache in <path>"` error is appended. The operation is idempotent — repeat calls on an existing dir are a no-op.
+2. `os.MkdirAll(projectDir+"/.pr9k", 0o755)` — creates the umbrella directory for `iteration.jsonl` and `.pr9k/logs/`. Pre-created under the host UID for the same reason as `.ralph-cache`. If creation fails, a `"preflight: could not create .pr9k in <path>"` error is appended.
+3. `CheckProfileDir(profileDir)`
+4. `CheckDocker(p)`
+5. `CheckCredentials(profileDir)` — warnings only
 
 The caller (`startup()`) prints all D13 + preflight errors together before exiting.
 
@@ -139,9 +140,15 @@ The caller (`startup()`) prints all D13 + preflight errors together before exiti
   - `TestRun_CredentialsPermissionError_CollectedAsError` — verifies credentials stat permission error is collected as an error
   - `TestRun_AllGreen` — verifies nil errors and no warnings when all checks pass with non-empty credentials
   - `TestRun_CollectsAllErrors_ProfileAndDocker` — verifies both profile and docker errors are collected even when profile check fails first
+  - `TestRun_CollectsAllErrors_CacheProfileDocker` — verifies `.ralph-cache`, `.pr9k`, profile, and docker errors are all collected when projectDir is read-only
   - `TestRun_RalphCache_CreatedOnFirstRun` — verifies `.ralph-cache/` is created inside projectDir on first Run
   - `TestRun_RalphCache_IdempotentOnRepeatRun` — verifies calling Run twice does not error when `.ralph-cache/` already exists
   - `TestRun_RalphCache_ReadOnlyProjectDirSurfacesError` — verifies a read-only projectDir produces a `.ralph-cache` preflight error
+  - `TestRun_RalphCache_FileClashSurfacesError` — verifies a file at the `.ralph-cache` path (instead of a dir) surfaces an error
+  - `TestRun_Pr9kDir_CreatedOnFirstRun` — verifies `.pr9k/` is created inside projectDir on first Run
+  - `TestRun_Pr9kDir_IdempotentOnRepeatRun` — verifies calling Run twice does not error when `.pr9k/` already exists
+  - `TestRun_Pr9kDir_ReadOnlyProjectDirSurfacesError` — verifies a read-only projectDir produces a `.pr9k` preflight error
+  - `TestRun_Pr9kDir_FileClashSurfacesError` — verifies a file at the `.pr9k` path (instead of a dir) surfaces an error
 
 ## Package
 

@@ -35,14 +35,14 @@ Add `timeoutSeconds` to any step in `config.json`:
    - **Claude steps** — delivered via `docker kill --signal=SIGTERM` to the container.
    - **Non-claude steps** — delivered via `syscall.Kill(-pid, SIGTERM)` to the process group (the host child is started with `Setpgid: true`, so grandchildren are included).
 2. If the process has not exited within 10 seconds, `SIGKILL` is sent to the same target.
-3. The step's exit code is non-zero → the step is recorded as `status: "failed"` in `.ralph-cache/iteration.jsonl` with `notes: "timed out after Ns"`.
+3. The step's exit code is non-zero → the step is recorded as `status: "failed"` in `.pr9k/iteration.jsonl` with `notes: "timed out after Ns"`.
 4. The workflow enters error mode (same as any other non-zero exit), and the user can choose to continue, retry, or quit.
 
 ## Partial session-ID blacklist
 
 When a Claude step times out and the `claudestream` pipeline has already received a `session_id` from the model, that session ID is added to an in-memory blacklist (accessible via `Runner.SessionBlacklisted` / `Runner.BlacklistedSessions`). A future issue will wire a session-resume gate that consults this list to prevent resuming a timed-out session.
 
-Session IDs are also written to `.ralph-cache/iteration.jsonl`. If session IDs are sensitive in your environment, add `.ralph-cache/` to `.gitignore` in the target repository.
+Session IDs are also written to `.pr9k/iteration.jsonl`. If session IDs are sensitive in your environment, add `.pr9k/` to `.gitignore` in the target repository.
 
 ## Advisory prompt budget
 

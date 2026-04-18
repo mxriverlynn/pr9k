@@ -91,11 +91,11 @@ When all gates pass, the log body shows no resume message — the step simply st
 
 ## Checking iteration.jsonl
 
-The `.ralph-cache/iteration.jsonl` log records `session_id` for each Claude step. You can confirm a resume occurred by checking that the `session_id` of the resuming step matches the preceding step:
+The `.pr9k/iteration.jsonl` log records `session_id` for each Claude step. You can confirm a resume occurred by checking that the `session_id` of the resuming step matches the preceding step:
 
 ```bash
 # Show step name and session_id for each claude step
-jq -r 'select(.session_id != null) | "\(.step_name): \(.session_id)"' .ralph-cache/iteration.jsonl
+jq -r 'select(.session_id != null) | "\(.step_name): \(.session_id)"' .pr9k/iteration.jsonl
 ```
 
 If both steps show the same session ID, the resume worked. Different session IDs mean a gate blocked and a fresh session was started.
