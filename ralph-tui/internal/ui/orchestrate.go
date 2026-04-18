@@ -46,6 +46,9 @@ type ResolvedStep struct {
 	// CaptureMode selects how LastCapture is populated after the step succeeds.
 	// Zero value (CaptureLastLine) preserves current non-claude behaviour.
 	CaptureMode CaptureMode
+	// TimeoutSeconds, when positive, limits the wall-clock time for this step.
+	// Zero means no timeout.
+	TimeoutSeconds int
 }
 
 // Orchestrate runs steps in sequence. On step failure (non-zero exit, not

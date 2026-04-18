@@ -328,3 +328,27 @@ func TestCodeReviewPrompt_ContainsSentinel(t *testing.T) {
 		t.Error("code-review-changes.md does not contain the NOTHING-TO-FIX sentinel")
 	}
 }
+
+// TestLoadSteps_TestWritingStep_TimeoutSeconds pins that the "Test writing" step
+// in the shipped ralph-steps.json has timeoutSeconds: 900. This guards against
+// accidental removal of the conservative cap that prevents runaway test-writing
+// runs from blocking the iteration loop indefinitely.
+func TestLoadSteps_TestWritingStep_TimeoutSeconds(t *testing.T) {
+	ralphTUIDir := getRalphTUIDir(t)
+	sf, err := steps.LoadSteps(ralphTUIDir)
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+	var found bool
+	for _, s := range sf.Iteration {
+		if s.Name == "Test writing" {
+			found = true
+			if s.TimeoutSeconds != 900 {
+				t.Errorf("Test writing TimeoutSeconds: want 900, got %d", s.TimeoutSeconds)
+			}
+		}
+	}
+	if !found {
+		t.Error("no iteration step named \"Test writing\" found")
+	}
+}

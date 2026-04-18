@@ -34,6 +34,11 @@ type Step struct {
 	// captureAs bound earlier in the same iteration phase (initialize-phase captures
 	// are not allowed), and is only valid in the iteration phase.
 	SkipIfCaptureEmpty string `json:"skipIfCaptureEmpty,omitempty"`
+	// TimeoutSeconds, when positive, limits the wall-clock time for this step.
+	// On expiry the step is terminated (SIGTERM then SIGKILL after 10 s) via the
+	// cidfile-driven Terminator path so Docker containers are cleaned up correctly.
+	// Zero means no timeout (the default).
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.

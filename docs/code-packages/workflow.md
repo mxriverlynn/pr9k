@@ -10,10 +10,10 @@ The `workflow` package contains `Runner` — the subprocess executor that drives
 
 ```go
 func (r *Runner) RunStep(stepName string, command []string) error
-func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.CaptureMode) error
+func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
 ```
 
-`RunStep` is the default entry point for non-claude steps; it delegates to `RunStepFull` with `ui.CaptureLastLine`. `RunStepFull` accepts an explicit `captureMode`:
+`RunStep` is the default entry point for non-claude steps; it delegates to `RunStepFull` with `ui.CaptureLastLine` and `timeoutSeconds=0`. `RunStepFull` accepts an explicit `captureMode` and `timeoutSeconds`:
 
 | `captureMode` value | `LastCapture()` result |
 |---------------------|------------------------|
@@ -21,6 +21,8 @@ func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.C
 | `ui.CaptureFullStdout` | All stdout lines joined with `"\n"`, capped at 32 KiB |
 
 The 32 KiB cap: content longer than 32 KiB is truncated to 30 KiB and the following marker is appended: `[...truncated, full content exceeds 32 KiB]`. The cut point is snapped backward with `utf8.RuneStart` to the nearest rune boundary so that multi-byte sequences are never split.
+
+When `timeoutSeconds > 0`, a goroutine is spawned that sends `SIGTERM` (or invokes the cidfile-driven Terminator for sandboxed steps) when the deadline expires. If the process has not exited within 10 seconds, `SIGKILL` is sent. After a timeout, `WasTimedOut()` returns `true` and `Run` sets `IterationRecord.Notes` to `"timed out after Ns"`.
 
 If the step exits non-zero, `LastCapture()` is always `""` regardless of mode.
 
@@ -63,16 +65,19 @@ type StepExecutor interface {
     LastStats() claudestream.StepStats
     ProjectDir() string
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
-    RunStepFull(stepName string, command []string, captureMode ui.CaptureMode) error
+    RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
+    WasTimedOut() bool
     WriteRunSummary(line string)
 }
 ```
 
 `ui.StepRunner` contributes `RunStep`, `WasTerminated`, and `WriteToLog`.
 
+`WasTimedOut()` returns `true` if the most recent step was ended by the per-step timeout goroutine. The flag is reset at the start of each `RunStepFull` or `RunSandboxedStep` call.
+
 ## stepDispatcher
 
-`stepDispatcher` wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep(name, command)` uniformly. For claude steps it transparently delegates to `RunSandboxedStep`; for non-claude steps it calls `RunStepFull(name, command, d.current.CaptureMode)`, forwarding the `CaptureMode` from the resolved step.
+`stepDispatcher` wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep(name, command)` uniformly. For claude steps it transparently delegates to `RunSandboxedStep` (passing `TimeoutSeconds` via `SandboxOptions`); for non-claude steps it calls `RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)`, forwarding both fields from the resolved step.
 
 ## Run loop
 
@@ -108,7 +113,7 @@ type IterationRecord struct {
 | `"skipped"` | Step was skipped (`StepSkipped`) |
 | `"unknown"` | `SetStepState` was never called — step never started |
 
-**Notes field:** populated only when `buildStep` fails (prep error). The value is the error string. Normal successful steps leave `notes` absent (`omitempty`).
+**Notes field:** populated in two cases: (1) `buildStep` prep error — value is the error string; (2) step timeout — value is `"timed out after Ns"`. Normal successful steps leave `notes` absent (`omitempty`).
 
 ### AppendIterationRecord
 

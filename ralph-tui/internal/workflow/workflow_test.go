@@ -2143,7 +2143,7 @@ func TestRunStepFull_FullStdout_MultiLine(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
 	defer func() { _ = log.Close() }()
 
-	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureFullStdout); err != nil {
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureFullStdout, 0); err != nil {
 		t.Fatalf("RunStepFull: %v", err)
 	}
 	got := r.LastCapture()
@@ -2159,7 +2159,7 @@ func TestRunStepFull_LastLine_PreservesExistingBehavior(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
 	defer func() { _ = log.Close() }()
 
-	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureLastLine); err != nil {
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureLastLine, 0); err != nil {
 		t.Fatalf("RunStepFull: %v", err)
 	}
 	got := r.LastCapture()
@@ -2174,7 +2174,7 @@ func TestRunStepFull_FullStdout_EmptyOutput(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
 	defer func() { _ = log.Close() }()
 
-	if err := r.RunStepFull("test-step", []string{"sh", "-c", "true"}, ui.CaptureFullStdout); err != nil {
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "true"}, ui.CaptureFullStdout, 0); err != nil {
 		t.Fatalf("RunStepFull: %v", err)
 	}
 	if got := r.LastCapture(); got != "" {
@@ -2188,7 +2188,7 @@ func TestRunStepFull_FullStdout_FailedStep(t *testing.T) {
 	r, log, _ := newCapturingRunner(t)
 	defer func() { _ = log.Close() }()
 
-	err := r.RunStepFull("test-step", []string{"sh", "-c", "echo output; exit 1"}, ui.CaptureFullStdout)
+	err := r.RunStepFull("test-step", []string{"sh", "-c", "echo output; exit 1"}, ui.CaptureFullStdout, 0)
 	if err == nil {
 		t.Fatal("expected non-zero exit error, got nil")
 	}
@@ -2345,4 +2345,133 @@ func TestRun_BreakLoopIfEmpty_WithFullStdout(t *testing.T) {
 			t.Errorf("IterationsRun = %d, want 2 (whitespace is non-empty under fullStdout)", result.IterationsRun)
 		}
 	})
+}
+
+// --- Per-step timeout tests ---
+
+// TestTimeout_StepCompletesBeforeDeadline verifies that when a step finishes
+// before its timeout fires, RunStepFull returns nil, the timeout goroutine is
+// canceled, and WasTimedOut() returns false.
+func TestTimeout_StepCompletesBeforeDeadline(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	if err := r.RunStepFull("fast-step", []string{"echo", "ok"}, ui.CaptureLastLine, 10); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	if r.WasTimedOut() {
+		t.Error("WasTimedOut should be false when step completed before deadline")
+	}
+	_ = log.Close()
+}
+
+// TestTimeout_SIGTERMSentOnDeadline verifies that a step exceeding its timeout
+// is terminated (SIGTERM arrives, process exits), RunStepFull returns an error,
+// and WasTimedOut() returns true.
+func TestTimeout_SIGTERMSentOnDeadline(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	// Use a 1-second timeout and a script that traps SIGTERM (so we can confirm
+	// it was received) and then exits.
+	r.timeoutGraceOverride = 500 * time.Millisecond
+	script := `trap 'echo received-sigterm; exit 1' TERM; while true; do sleep 0.05; done`
+
+	err := r.RunStepFull("slow-step", []string{"sh", "-c", script}, ui.CaptureLastLine, 1)
+	if err == nil {
+		t.Fatal("RunStepFull: expected non-nil error for timed-out step, got nil")
+	}
+	if !r.WasTimedOut() {
+		t.Error("WasTimedOut should be true after timeout fired")
+	}
+	lines := drain()
+	_ = log.Close()
+	found := false
+	for _, l := range lines {
+		if l == "received-sigterm" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'received-sigterm' in output, confirming SIGTERM delivery; got %v", lines)
+	}
+}
+
+// TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored verifies that when a step
+// ignores SIGTERM, the timeout goroutine escalates to SIGKILL after the grace
+// period and RunStepFull returns an error.
+func TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	// Short grace period so the test doesn't block for 10 s.
+	r.timeoutGraceOverride = 200 * time.Millisecond
+	// trap '' TERM ignores SIGTERM; the process only exits via SIGKILL.
+	script := `trap '' TERM; while true; do sleep 0.05; done`
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStepFull("kill-step", []string{"sh", "-c", script}, ui.CaptureLastLine, 1)
+	}()
+
+	select {
+	case err := <-stepDone:
+		if err == nil {
+			t.Error("expected non-nil error after SIGKILL, got nil")
+		}
+		if !r.WasTimedOut() {
+			t.Error("WasTimedOut should be true after timeout+SIGKILL")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStepFull did not return within 5 seconds; SIGKILL escalation may be broken")
+	}
+
+	_ = log.Close()
+}
+
+// TestTimeout_IterationLogNote verifies that a timed-out step records
+// status:"failed" and a "timed out after Ns" note in the iteration log.
+func TestTimeout_IterationLogNote(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:    projectDir,
+		runStepErrors: []error{fmt.Errorf("killed: signal: killed")},
+		wasTimedOut:   true,
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "slow-step", IsClaude: false, Command: []string{"sleep", "900"}, TimeoutSeconds: 900},
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	khErr := ui.NewKeyHandler(func() {}, actions)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, khErr, cfg)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	var found bool
+	for _, rec := range recs {
+		if rec.StepName == "slow-step" {
+			found = true
+			if rec.Status != "failed" {
+				t.Errorf("Status: want %q, got %q", "failed", rec.Status)
+			}
+			if rec.Notes != "timed out after 900s" {
+				t.Errorf("Notes: want %q, got %q", "timed out after 900s", rec.Notes)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for slow-step")
+	}
 }

@@ -46,6 +46,8 @@ type fakeExecutor struct {
 	onLog func(line string)
 	// writeRunSummaryCalls counts how many times WriteRunSummary has been called.
 	writeRunSummaryCalls int
+	// wasTimedOut controls the value returned by WasTimedOut().
+	wasTimedOut bool
 }
 
 type runStepCall struct {
@@ -60,10 +62,10 @@ type runSandboxedStepCall struct {
 }
 
 func (f *fakeExecutor) RunStep(name string, command []string) error {
-	return f.RunStepFull(name, command, ui.CaptureLastLine)
+	return f.RunStepFull(name, command, ui.CaptureLastLine, 0)
 }
 
-func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode) error {
+func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode, _ int) error {
 	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
 	f.runStepFullCaptureModes = append(f.runStepFullCaptureModes, captureMode)
@@ -80,6 +82,7 @@ func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui
 }
 
 func (f *fakeExecutor) WasTerminated() bool { return false }
+func (f *fakeExecutor) WasTimedOut() bool   { return f.wasTimedOut }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
 	idx := len(f.runSandboxedStepCalls)

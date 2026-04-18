@@ -85,6 +85,7 @@ type vStep struct {
 	CaptureMode        *string  `json:"captureMode,omitempty"`
 	BreakLoopIfEmpty   bool     `json:"breakLoopIfEmpty,omitempty"`
 	SkipIfCaptureEmpty *string  `json:"skipIfCaptureEmpty,omitempty"`
+	TimeoutSeconds     *int     `json:"timeoutSeconds,omitempty"`
 }
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
@@ -439,6 +440,11 @@ func validatePhase(
 					*errs = append(*errs, at("schema", "skipIfCaptureEmpty is only valid in the iteration phase"))
 				}
 			}
+		}
+
+		// Schema 2d — timeoutSeconds: must be a positive integer when set.
+		if step.TimeoutSeconds != nil && *step.TimeoutSeconds <= 0 {
+			*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
 		}
 
 		// Category 4 — referenced files must exist.

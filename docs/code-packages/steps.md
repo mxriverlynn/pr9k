@@ -67,6 +67,7 @@ type Step struct {
     CaptureMode         string   `json:"captureMode,omitempty"`         // "" or "lastLine" (last non-empty line); "fullStdout" (all stdout, 32 KiB cap)
     BreakLoopIfEmpty    bool     `json:"breakLoopIfEmpty,omitempty"`    // exit iteration loop when captured output is empty
     SkipIfCaptureEmpty  string   `json:"skipIfCaptureEmpty,omitempty"`  // skip this step when named capture is empty; iteration phase only
+    TimeoutSeconds      int      `json:"timeoutSeconds,omitempty"`      // wall-clock cap in seconds; 0 = no timeout
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
@@ -117,25 +118,25 @@ Two steps run once before the iteration loop begins:
 
 The 15 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | captureAs | captureMode | skipIfCaptureEmpty |
-|---|------|------|-------|-----------|-------------|--------------------|
-| 1 | Get next issue | Shell | — | `ISSUE_ID` | lastLine | — |
-| 2 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine | — |
-| 3 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout | — |
-| 4 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout | — |
-| 5 | Feature work | Claude | sonnet | — | — | — |
-| 6 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout | — |
-| 7 | Test planning | Claude | opus | — | — | — |
-| 8 | Test writing | Claude | sonnet | — | — | — |
-| 9 | Code review | Claude | opus | — | — | — |
-| 10 | Check review verdict | Shell | — | `REVIEW_HAS_FIXES` | lastLine | — |
-| 11 | Fix review items | Claude | sonnet | — | — | `REVIEW_HAS_FIXES` |
-| 12 | Summarize to issue | Shell | — | — | — | — |
-| 13 | Close issue | Shell | — | — | — | — |
-| 14 | Update docs | Claude | sonnet | — | — | — |
-| 15 | Git push | Shell | — | — | — | — |
+| # | Name | Type | Model | captureAs | captureMode | skipIfCaptureEmpty | timeoutSeconds |
+|---|------|------|-------|-----------|-------------|--------------------|----|
+| 1 | Get next issue | Shell | — | `ISSUE_ID` | lastLine | — | — |
+| 2 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine | — | — |
+| 3 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout | — | — |
+| 4 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout | — | — |
+| 5 | Feature work | Claude | sonnet | — | — | — | — |
+| 6 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout | — | — |
+| 7 | Test planning | Claude | opus | — | — | — | — |
+| 8 | Test writing | Claude | sonnet | — | — | — | 900 |
+| 9 | Code review | Claude | opus | — | — | — | — |
+| 10 | Check review verdict | Shell | — | `REVIEW_HAS_FIXES` | lastLine | — | — |
+| 11 | Fix review items | Claude | sonnet | — | — | `REVIEW_HAS_FIXES` | — |
+| 12 | Summarize to issue | Shell | — | — | — | — | — |
+| 13 | Close issue | Shell | — | — | — | — | — |
+| 14 | Update docs | Claude | sonnet | — | — | — | — |
+| 15 | Git push | Shell | — | — | — | — | — |
 
-"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 3, 4, and 6 use `captureMode: "fullStdout"` to capture multi-line output. "Fix review items" has `skipIfCaptureEmpty: "REVIEW_HAS_FIXES"` — when `scripts/review_verdict` emits empty stdout (sentinel: no fixes needed), the step is skipped. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 3, 4, and 6 use `captureMode: "fullStdout"` to capture multi-line output. "Fix review items" has `skipIfCaptureEmpty: "REVIEW_HAS_FIXES"` — when `scripts/review_verdict` emits empty stdout (sentinel: no fixes needed), the step is skipped. "Test writing" has `timeoutSeconds: 900` (15 min) — a conservative cap that lets normal runs complete while cutting the long tail of runaway iterations. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 

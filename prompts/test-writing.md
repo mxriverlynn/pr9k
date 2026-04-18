@@ -17,3 +17,5 @@ If the test-plan.md file is empty, non-existent, or otherwise says there is noth
 Never commit test-plan.md
 Never commit progress.txt
 Never commit deferred.txt
+
+Budget: write all tests first, then run the suite ONCE. If >5 tests fail, fix them in batch rather than one at a time. Do not exceed 8 minutes of wall-clock test execution.

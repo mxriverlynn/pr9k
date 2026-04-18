@@ -69,7 +69,10 @@ type StepExecutor interface {
 	LastStats() claudestream.StepStats
 	ProjectDir() string
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
-	RunStepFull(stepName string, command []string, captureMode ui.CaptureMode) error
+	RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
+	// WasTimedOut reports whether the most recent step was ended by a timeout
+	// goroutine. Returns false once the next step begins.
+	WasTimedOut() bool
 	// WriteRunSummary writes line to both the TUI and the file logger. Used for
 	// the run-level cumulative summary (D13 2c) so it is visible in the TUI and
 	// persisted to disk, unlike WriteToLog which only sends to the TUI.
@@ -126,9 +129,10 @@ type stepDispatcher struct {
 func (d *stepDispatcher) RunStep(name string, command []string) error {
 	if d.current.IsClaude {
 		err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
-			CidfilePath:  d.current.CidfilePath,
-			ArtifactPath: d.current.ArtifactPath,
-			CaptureMode:  d.current.CaptureMode,
+			CidfilePath:    d.current.CidfilePath,
+			ArtifactPath:   d.current.ArtifactPath,
+			CaptureMode:    d.current.CaptureMode,
+			TimeoutSeconds: d.current.TimeoutSeconds,
 		})
 		// Capture stats once — both for D21 accounting and for IterationRecord.
 		s := d.exec.LastStats()
@@ -140,7 +144,7 @@ func (d *stepDispatcher) RunStep(name string, command []string) error {
 		return err
 	}
 	d.prevFailed = false
-	return d.exec.RunStepFull(name, command, d.current.CaptureMode)
+	return d.exec.RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)
 }
 
 func (d *stepDispatcher) WasTerminated() bool    { return d.exec.WasTerminated() }
@@ -356,6 +360,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
+		if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+			rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
+		}
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -451,6 +458,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			rec.InputTokens = disp.capturedStats.InputTokens
 			rec.OutputTokens = disp.capturedStats.OutputTokens
 			rec.SessionID = disp.capturedStats.SessionID
+			if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+				rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
+			}
 			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -528,6 +538,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
+		if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+			rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
+		}
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -575,10 +588,11 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		envAllowlist = append(envAllowlist, env...)
 		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, s.Model, prompt)
 		return ui.ResolvedStep{
-			Name:        s.Name,
-			Command:     argv,
-			IsClaude:    true,
-			CidfilePath: cidfile,
+			Name:           s.Name,
+			Command:        argv,
+			IsClaude:       true,
+			CidfilePath:    cidfile,
+			TimeoutSeconds: s.TimeoutSeconds,
 		}, nil
 	}
 	var capMode ui.CaptureMode
@@ -591,9 +605,10 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		return ui.ResolvedStep{}, fmt.Errorf("workflow: step %q: invalid captureMode %q", s.Name, s.CaptureMode)
 	}
 	return ui.ResolvedStep{
-		Name:        s.Name,
-		Command:     ResolveCommand(workflowDir, s.Command, vt, phase),
-		CaptureMode: capMode,
+		Name:           s.Name,
+		Command:        ResolveCommand(workflowDir, s.Command, vt, phase),
+		CaptureMode:    capMode,
+		TimeoutSeconds: s.TimeoutSeconds,
 	}, nil
 }
 

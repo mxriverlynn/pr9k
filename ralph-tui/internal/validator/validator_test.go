@@ -2338,3 +2338,37 @@ func TestError_StepLevel_QuotedStepName(t *testing.T) {
 		t.Errorf("Error() = %q, want quoted step name \"Feature work\"", got)
 	}
 }
+
+// --- timeoutSeconds validation ---
+
+// TestValidate_TimeoutSeconds_AcceptsPositiveValue verifies that a positive
+// timeoutSeconds value passes validation without error.
+func TestValidate_TimeoutSeconds_AcceptsPositiveValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":900}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_TimeoutSeconds_RejectsNegativeValue verifies that a negative
+// timeoutSeconds value is rejected.
+func TestValidate_TimeoutSeconds_RejectsNegativeValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":-1}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
+}
