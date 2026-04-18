@@ -27,6 +27,7 @@ type fakeExecutor struct {
 	runStepErrors           []error          // per-call errors; nil entries mean success
 	runStepCaptures         []string         // per-call LastCapture values (indexed by call order)
 	runStepFullCaptureModes []ui.CaptureMode // per-call captureMode passed to RunStepFull
+	runStepFullTimeouts     []int            // per-call timeoutSeconds passed to RunStepFull
 	lastCapture             string
 	logLines                []string
 	projectDir              string
@@ -65,10 +66,11 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 	return f.RunStepFull(name, command, ui.CaptureLastLine, 0)
 }
 
-func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode, _ int) error {
+func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error {
 	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
 	f.runStepFullCaptureModes = append(f.runStepFullCaptureModes, captureMode)
+	f.runStepFullTimeouts = append(f.runStepFullTimeouts, timeoutSeconds)
 	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {
 		f.lastCapture = ""
 		return f.runStepErrors[idx]

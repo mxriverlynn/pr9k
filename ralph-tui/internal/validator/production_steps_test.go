@@ -352,3 +352,43 @@ func TestLoadSteps_TestWritingStep_TimeoutSeconds(t *testing.T) {
 		t.Error("no iteration step named \"Test writing\" found")
 	}
 }
+
+// TP-018: Exclusivity pin — only the "Test writing" step has a positive
+// TimeoutSeconds across all three phases. Any deliberate addition of a timeout
+// to another step must update this test to signal the intentional policy change.
+func TestLoadSteps_OnlyTestWritingHasTimeout(t *testing.T) {
+	ralphTUIDir := getRalphTUIDir(t)
+	sf, err := steps.LoadSteps(ralphTUIDir)
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	var timedOut []string
+	for _, s := range sf.Initialize {
+		if s.TimeoutSeconds > 0 {
+			timedOut = append(timedOut, s.Name)
+		}
+	}
+	for _, s := range sf.Iteration {
+		if s.TimeoutSeconds > 0 {
+			timedOut = append(timedOut, s.Name)
+		}
+	}
+	for _, s := range sf.Finalize {
+		if s.TimeoutSeconds > 0 {
+			timedOut = append(timedOut, s.Name)
+		}
+	}
+
+	want := []string{"Test writing"}
+	if len(timedOut) != len(want) {
+		t.Errorf("steps with TimeoutSeconds > 0: got %v, want %v", timedOut, want)
+		return
+	}
+	for i := range want {
+		if timedOut[i] != want[i] {
+			t.Errorf("steps with TimeoutSeconds > 0: got %v, want %v", timedOut, want)
+			return
+		}
+	}
+}

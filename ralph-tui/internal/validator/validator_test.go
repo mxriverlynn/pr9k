@@ -2372,3 +2372,35 @@ func TestValidate_TimeoutSeconds_RejectsNegativeValue(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
 }
+
+// TP-015: Absent timeoutSeconds key decodes to a nil pointer and the validator
+// short-circuits correctly — no segfault and no spurious error.
+func TestValidate_TimeoutSeconds_AbsentKeyIsValid(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TP-016: An explicit zero value for timeoutSeconds is rejected. Zero means
+// "no timeout" and must be expressed by omitting the key entirely.
+func TestValidate_TimeoutSeconds_ZeroIsRejected(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":0}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
+}

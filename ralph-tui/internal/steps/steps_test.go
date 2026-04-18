@@ -839,3 +839,43 @@ func TestStep_SkipIfCaptureEmpty_JSONRoundtrip(t *testing.T) {
 		}
 	})
 }
+
+// TP-017: TimeoutSeconds JSON tag round-trip — verifies the field is populated
+// from the "timeoutSeconds" key and that absence of the key yields zero.
+func TestStep_TimeoutSeconds_RoundTrip(t *testing.T) {
+	t.Run("absent_key_yields_zero", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+			"initialize":[],
+			"iteration":[{"name":"Step","isClaude":false,"command":["echo"]}],
+			"finalize":[]
+		}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		sf, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("LoadSteps: %v", err)
+		}
+		if sf.Iteration[0].TimeoutSeconds != 0 {
+			t.Errorf("absent timeoutSeconds: want 0, got %d", sf.Iteration[0].TimeoutSeconds)
+		}
+	})
+
+	t.Run("present_key_900_is_loaded", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+			"initialize":[],
+			"iteration":[{"name":"Step","isClaude":false,"command":["echo"],"timeoutSeconds":900}],
+			"finalize":[]
+		}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		sf, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("LoadSteps: %v", err)
+		}
+		if sf.Iteration[0].TimeoutSeconds != 900 {
+			t.Errorf("timeoutSeconds:900: want 900, got %d", sf.Iteration[0].TimeoutSeconds)
+		}
+	})
+}
