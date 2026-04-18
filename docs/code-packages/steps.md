@@ -14,9 +14,9 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 - Step definitions are pure data — command resolution and execution happen in the workflow package
 
 Key files:
-- `ralph-tui/internal/steps/steps.go` — Step struct, StepFile struct, LoadSteps, BuildPrompt
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
-- `ralph-tui/ralph-steps.json` — All step definitions (initialize, iteration, and finalization)
+- `src/internal/steps/steps.go` — Step struct, StepFile struct, LoadSteps, BuildPrompt
+- `src/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
+- `src/ralph-steps.json` — All step definitions (initialize, iteration, and finalization)
 
 ## Architecture
 
@@ -49,9 +49,9 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
-| `ralph-tui/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
-| `ralph-tui/ralph-steps.json` | All step definitions (initialize, iteration, and finalization) |
+| `src/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
+| `src/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
+| `src/ralph-steps.json` | All step definitions (initialize, iteration, and finalization) |
 
 ## Core Types
 
@@ -192,7 +192,7 @@ All errors are package-prefixed with `"steps:"` and include the file path.
 
 ## Testing
 
-- `ralph-tui/internal/steps/steps_test.go` — Unit tests for LoadSteps, BuildPrompt
+- `src/internal/steps/steps_test.go` — Unit tests for LoadSteps, BuildPrompt
 
 ### Test Patterns
 
@@ -200,13 +200,13 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 
 ## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams and data flow
+- [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams and data flow
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix step types
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
 - [CLI & Configuration](../features/cli-configuration.md) — How ProjectDir is resolved and passed to step loading
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
-- [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
+- [pr9k Plan](../plans/pr9k.md) — Original specification including step definition design
 - [Passing Environment Variables](../how-to/passing-environment-variables.md) — How to forward host env vars via `env` and inject literal values via `containerEnv` in `ralph-steps.json`
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

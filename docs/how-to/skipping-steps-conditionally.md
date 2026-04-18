@@ -1,6 +1,6 @@
 # Skipping Steps Conditionally
 
-Ralph-tui can skip a step when a preceding step produced an empty capture — without treating the skip as a failure. This is the `skipIfCaptureEmpty` pattern. The default workflow uses it to bypass the "Fix review items" step when the code reviewer reports nothing to fix.
+pr9k can skip a step when a preceding step produced an empty capture — without treating the skip as a failure. This is the `skipIfCaptureEmpty` pattern. The default workflow uses it to bypass the "Fix review items" step when the code reviewer reports nothing to fix.
 
 ## When you want it
 
@@ -36,13 +36,13 @@ Mark a step with `skipIfCaptureEmpty` naming a capture variable bound by an earl
 }
 ```
 
-At runtime, before "Fix review items" starts, ralph-tui checks three conditions:
+At runtime, before "Fix review items" starts, pr9k checks three conditions:
 
 1. `skipIfCaptureEmpty` is set on the step (`"VERDICT"` in the example)
 2. The capture named by `skipIfCaptureEmpty` is empty (the trimmed last non-empty stdout line is `""`)
 3. The step that produced the capture completed as `StepDone` — it did **not** return a non-zero exit code
 
-If all three are true, ralph-tui:
+If all three are true, pr9k:
 
 - Marks the step as `[-]` (skipped) in the TUI header
 - Logs `Step skipped (capture "VERDICT" is empty)`

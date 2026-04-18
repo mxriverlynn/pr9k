@@ -229,8 +229,8 @@ Signs that code falls into this category:
 // Example: assembling a Bubble Tea program from tested components.
 // StatusHeader, KeyHandler, Runner, and workflow.Run all have thorough tests.
 // The wiring itself — constructing the Model, calling program.Run — is framework usage,
-// not application logic. Adding a test here would test Bubble Tea, not ralph-tui.
-model := ui.NewModel(header, keyHandler, "ralph-tui v"+version.Version)
+// not application logic. Adding a test here would test Bubble Tea, not pr9k.
+model := ui.NewModel(header, keyHandler, "pr9k v"+version.Version)
 program := tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())
 _, err = program.Run()
 ```
@@ -658,7 +658,7 @@ Every project that ships a configuration file (`ralph-steps.json`, `config.yaml`
 ```go
 // production_steps_test.go — loads from the live source tree
 func TestValidate_ProductionStepsJSON(t *testing.T) {
-    dir := assembleWorkflowDir(t) // points at ralph-tui/ in source tree
+    dir := assembleWorkflowDir(t) // points at src/ in source tree
     errs := validator.Validate(dir)
     for _, e := range errs {
         if e.IsFatal() {

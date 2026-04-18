@@ -2,9 +2,9 @@
 
 ## Resolve directories with os.Executable / os.Getwd + filepath.EvalSymlinks
 
-ralph-tui resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
+pr9k resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
 
-**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/ralph-tui` → `pr9k/bin/ralph-tui`).
+**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/pr9k` → `pr9k/bin/pr9k`).
 
 ```go
 exe, err := os.Executable()
@@ -31,7 +31,7 @@ if err != nil {
 }
 ```
 
-This is why `go run` does not work for ralph-tui: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
+This is why `go run` does not work for pr9k: `go run` places the binary in a temp dir, so `os.Executable()` resolves to that temp dir rather than to the workflow bundle. Use `go build` and invoke the compiled binary directly, or pass `--workflow-dir` explicitly.
 
 ## Use runtime.Caller(0) in test helpers for path resolution
 
@@ -140,7 +140,7 @@ func Execute() (*Config, error) {
 // In main:
 cfg, err := cli.Execute()
 if err != nil {
-    fmt.Fprintf(os.Stderr, "error: %v\nRun 'ralph-tui --help' for usage.\n", err)
+    fmt.Fprintf(os.Stderr, "error: %v\nRun 'pr9k --help' for usage.\n", err)
     os.Exit(1)
 }
 if cfg == nil {
@@ -170,7 +170,7 @@ if len(stepFile.Initialize) > 0 {
     }
 }
 
-versionLabel := "ralph-tui v" + version.Version
+versionLabel := "pr9k v" + version.Version
 model := ui.NewModel(header, keyHandler, versionLabel)
 program := tea.NewProgram(model, ...)
 program.Run() // first frame renders from already-populated state
@@ -570,7 +570,7 @@ Apply any time a string is sliced at a byte index rather than a rune index — l
 
 When spawning a host (non-Docker) subprocess that may itself spawn children, set `SysProcAttr.Setpgid = true` so the child runs in its own process group. When sending a signal (SIGTERM, SIGKILL), use `syscall.Kill(-pid, sig)` to deliver it to the entire process group — not just the direct child.
 
-Without `Setpgid`, `syscall.Kill(-pid, sig)` kills the parent process's own process group, potentially delivering signals to the ralph-tui process itself.
+Without `Setpgid`, `syscall.Kill(-pid, sig)` kills the parent process's own process group, potentially delivering signals to the pr9k process itself.
 
 ```go
 cmd := exec.Command(args[0], args[1:]...)

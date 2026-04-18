@@ -6,7 +6,7 @@
 
 ## Context
 
-Ralph-tui runs in alt-screen mode with `tea.WithAltScreen()` and `tea.WithMouseCellMotion()`. This combination gives the TUI full mouse event delivery including cell-motion drag events, but it defeats the terminal's native text-selection mechanism — the OS never sees the mouse events and therefore cannot build a drag selection. Users who want to extract log text (for filing bug reports, pasting into prompts, etc.) have no built-in way to do so unless the TUI provides its own selection layer.
+pr9k runs in alt-screen mode with `tea.WithAltScreen()` and `tea.WithMouseCellMotion()`. This combination gives the TUI full mouse event delivery including cell-motion drag events, but it defeats the terminal's native text-selection mechanism — the OS never sees the mouse events and therefore cannot build a drag selection. Users who want to extract log text (for filing bug reports, pasting into prompts, etc.) have no built-in way to do so unless the TUI provides its own selection layer.
 
 ## Decisions
 
@@ -30,13 +30,13 @@ A pure OSC 52 path would only work in terminal emulators that support it; `atott
 
 **Decision:** Document `xclip`/`xsel` as a soft runtime dependency on Linux. Missing tools fall back to OSC 52; if OSC 52 is also unavailable, the TUI shows `[copy failed: install xclip/xsel or run in a terminal that supports OSC 52]` in the log.
 
-**Rationale:** Making the Docker sandbox image (`docker/sandbox-templates:claude-code`) the sole runtime environment was already decided in `20260413160000-require-docker-sandbox.md`. However, ralph-tui itself runs *outside* the sandbox (as the orchestrator process), so clipboard access depends on the host environment. We cannot unconditionally require `xclip`/`xsel` in the sandbox image because the sandbox is only used for claude steps, not for the TUI process itself.
+**Rationale:** Making the Docker sandbox image (`docker/sandbox-templates:claude-code`) the sole runtime environment was already decided in `20260413160000-require-docker-sandbox.md`. However, pr9k itself runs *outside* the sandbox (as the orchestrator process), so clipboard access depends on the host environment. We cannot unconditionally require `xclip`/`xsel` in the sandbox image because the sandbox is only used for claude steps, not for the TUI process itself.
 
 **How to apply:** When changing clipboard code or the sandbox image, check whether the host environment (not the container) has the required clipboard tool. The `copyToClipboard` function in `clipboard.go` already handles the three-level fallback; do not bypass it.
 
 ### (c) In-TUI selection layer required
 
-**Decision:** Implement a custom selection layer inside ralph-tui (`ModeSelect`, `pos`/`selection` types, `renderContent` overlay) rather than relying on the terminal's native selection.
+**Decision:** Implement a custom selection layer inside pr9k (`ModeSelect`, `pos`/`selection` types, `renderContent` overlay) rather than relying on the terminal's native selection.
 
 **Rationale:** `tea.WithAltScreen() + tea.WithMouseCellMotion()` together defeat native terminal text selection. The TUI receives all mouse events exclusively; the OS clipboard integration never fires. A custom selection layer is the only way to provide copy functionality while alt-screen and mouse cell-motion are both active. The selection layer also integrates with word-wrap correctly: copied text uses raw line coordinates, so wrap-induced visual segments never inject artificial newlines into the copy payload.
 
@@ -54,7 +54,7 @@ A pure OSC 52 path would only work in terminal emulators that support it; `atott
 
 ## Consequences
 
-- `github.com/atotto/clipboard v0.1.4` is a direct dependency in `ralph-tui/go.mod`.
+- `github.com/atotto/clipboard v0.1.4` is a direct dependency in `src/go.mod`.
 - `golang.org/x/term v0.42.0` is a direct dependency (used for `term.IsTerminal(stderr)` to gate the OSC 52 path).
 - Linux users on local desktops need `xclip` or `xsel`; this is documented in `docs/how-to/copying-log-text.md`.
-- The `v` key binding and `ModeSelect` extend ralph-tui's public keyboard surface; the minor version was bumped to `0.5.0` per `docs/coding-standards/versioning.md`.
+- The `v` key binding and `ModeSelect` extend pr9k's public keyboard surface; the minor version was bumped to `0.5.0` per `docs/coding-standards/versioning.md`.

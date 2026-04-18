@@ -16,11 +16,11 @@ The `internal/statusline` package implements a user-configured command that runs
 
 Key files:
 
-- `ralph-tui/internal/statusline/statusline.go` — `Config`, `Runner`, `NewNoOp`, `New`, `Start`, `Shutdown`, `Trigger`, `PushState`, `LastOutput`, `HasOutput`, `SetSender`, `SetModeGetter`, `DefaultRefreshInterval`
-- `ralph-tui/internal/statusline/state.go` — `State` struct (immutable snapshot)
-- `ralph-tui/internal/statusline/payload.go` — `BuildPayload` (stdin JSON marshaling)
-- `ralph-tui/internal/statusline/sanitize.go` — `Sanitize` (ANSI control-sequence filtering)
-- `ralph-tui/internal/statusline/statusline_test.go` — All unit tests
+- `src/internal/statusline/statusline.go` — `Config`, `Runner`, `NewNoOp`, `New`, `Start`, `Shutdown`, `Trigger`, `PushState`, `LastOutput`, `HasOutput`, `SetSender`, `SetModeGetter`, `DefaultRefreshInterval`
+- `src/internal/statusline/state.go` — `State` struct (immutable snapshot)
+- `src/internal/statusline/payload.go` — `BuildPayload` (stdin JSON marshaling)
+- `src/internal/statusline/sanitize.go` — `Sanitize` (ANSI control-sequence filtering)
+- `src/internal/statusline/statusline_test.go` — All unit tests
 
 ## Architecture
 
@@ -274,7 +274,7 @@ When the status-line path is active (runner enabled + has output), `SetStatusLin
 
 ## Testing
 
-- `ralph-tui/internal/statusline/statusline_test.go` — Unit tests for all four source files
+- `src/internal/statusline/statusline_test.go` — Unit tests for all four source files
 
 Tests use an `os.Args[0]`-as-script-stub pattern: the test binary re-invokes itself with a special flag (`-test.run=TestHelperProcess`) to act as a deterministic subprocess without filesystem script fixtures.
 

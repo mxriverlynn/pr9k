@@ -1,18 +1,18 @@
 # Debugging a Run
 
-When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places ralph-tui leaves evidence, and how to use them together.
+When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places pr9k leaves evidence, and how to use them together.
 
 ## The four sources of evidence
 
 | Source | Location | What it tells you |
 |--------|----------|-------------------|
 | **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
-| **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when ralph-tui exits |
+| **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when pr9k exits |
 | **JSONL artifacts** | `<project-dir>/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
 | **Iteration log** | `<project-dir>/.ralph-cache/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
-If ralph-tui is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If ralph-tui has exited, open the log file from the directory where you ran it.
+If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
 
 > **Tip:** Logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
 > ```
@@ -62,7 +62,7 @@ Each line in a `.jsonl` file is one JSON object. The relevant types:
 | `assistant` | One complete turn: text blocks, tool-use indicators, token counts |
 | `user` | Tool results fed back to the model |
 | `result` | Final answer: `result` text, `is_error` flag, session ID, total cost, token counts |
-| `ralph_end` | Sentinel written by ralph-tui after the `result` event — its absence means the run was truncated |
+| `ralph_end` | Sentinel written by pr9k after the `result` event — its absence means the run was truncated |
 
 ### Useful queries
 
@@ -102,7 +102,7 @@ jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text
 
 ## Iteration log (.ralph-cache/iteration.jsonl)
 
-ralph-tui writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
+pr9k writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` after every step completes, including prep failures. Each record has the form:
 
 ```json
 {"schema_version":1,"issue_id":"42","iteration_num":1,"step_name":"feature-work","status":"done","duration_s":12.34,"input_tokens":1500,"output_tokens":800,"session_id":"abc-123"}
@@ -140,7 +140,7 @@ jq -s '[.[].input_tokens // 0] | add' .ralph-cache/iteration.jsonl
 
 ### Prerequisites
 
-The iteration log queries above require `jq`. Install it before running ralph-tui if you intend to query `.ralph-cache/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
+The iteration log queries above require `jq`. Install it before running pr9k if you intend to query `.ralph-cache/iteration.jsonl` directly. The `post_issue_summary` script also uses `jq` to build its GitHub comment body — a missing `jq` binary will cause the "Summarize to issue" step to fail with a bare shell error.
 
 Install on macOS: `brew install jq`. Install on Debian/Ubuntu: `apt-get install jq`.
 
@@ -220,15 +220,15 @@ If you want to reproduce a bug without running the whole workflow, narrow the sc
 
 ```bash
 # Cap at 1 iteration so you only hit the bug once
-ralph-tui -n 1
+pr9k -n 1
 ```
 
-Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where ralph-tui looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
+Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where pr9k looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
 
 If the bug is inside a specific step's prompt or script, you can also run that step directly:
 
 ```bash
-# Run a helper script exactly the way ralph-tui would:
+# Run a helper script exactly the way pr9k would:
 GITHUB_USER=$(scripts/get_gh_user)
 scripts/get_next_issue "$GITHUB_USER"
 ```
@@ -256,7 +256,7 @@ For the full file-passing model, see [Variable Output & Injection](variable-outp
 
 ## Validator errors before a run
 
-If ralph-tui refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
+If pr9k refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
 
 - `ralph-steps.json` exists and parses
 - Every step has valid schema (`name`, `isClaude`, required fields per type)

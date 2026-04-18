@@ -288,7 +288,7 @@ operator. No summary is emitted when `rs.invocations == 0`.
 `workflow.RunConfig.RunStamp`. Millisecond precision prevents two rapid
 successive runs from sharing an artifact directory.
 
-### cmd/ralph-tui/main.go
+### cmd/src/main.go
 
 `startup()` creates the per-run artifact directory
 (`<projectDir>/logs/<runStamp>/`) via `os.MkdirAll(0o700)` immediately after

@@ -15,8 +15,8 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 - Idempotent close — safe to call `Close()` multiple times
 
 Key files:
-- `ralph-tui/internal/logger/logger.go` — Logger struct, NewLogger, SetContext, Log, Close
-- `ralph-tui/internal/logger/logger_test.go` — Unit tests for logging behavior
+- `src/internal/logger/logger.go` — Logger struct, NewLogger, SetContext, Log, Close
+- `src/internal/logger/logger_test.go` — Unit tests for logging behavior
 
 ## Architecture
 
@@ -48,8 +48,8 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/logger/logger.go` | Logger struct and all methods |
-| `ralph-tui/internal/logger/logger_test.go` | Unit tests for logging |
+| `src/internal/logger/logger.go` | Logger struct and all methods |
+| `src/internal/logger/logger_test.go` | Unit tests for logging |
 
 ## Core Types
 
@@ -175,7 +175,7 @@ func (l *Logger) Close() error {
 
 ## Testing
 
-- `ralph-tui/internal/logger/logger_test.go` — Tests for NewLogger, Log with/without context, Close idempotency, write-after-close error
+- `src/internal/logger/logger_test.go` — Tests for NewLogger, Log with/without context, Close idempotency, write-after-close error
 
 ## Additional Information
 

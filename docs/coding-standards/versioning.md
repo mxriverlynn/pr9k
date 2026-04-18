@@ -1,27 +1,27 @@
 # Versioning
 
-ralph-tui follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The general rules of semver — MAJOR for incompatible changes, MINOR for backwards-compatible additions, PATCH for backwards-compatible fixes, pre-release and build metadata suffixes, precedence, etc. — are not restated here. Read the spec. This standard only records the things that are specific to this repository.
+pr9k follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The general rules of semver — MAJOR for incompatible changes, MINOR for backwards-compatible additions, PATCH for backwards-compatible fixes, pre-release and build metadata suffixes, precedence, etc. — are not restated here. Read the spec. This standard only records the things that are specific to this repository.
 
 ## The version constant is the single source of truth
 
-The current version lives in exactly one place: `ralph-tui/internal/version/version.go`, as the exported constant `version.Version`.
+The current version lives in exactly one place: `src/internal/version/version.go`, as the exported constant `version.Version`.
 
-- Every consumer — the `--version` / `-v` CLI flag, the TUI footer, release tooling, any future `About` dialog — **MUST** import `github.com/mxriverlynn/pr9k/ralph-tui/internal/version` and read `version.Version`. Never hardcode the version string anywhere else.
+- Every consumer — the `--version` / `-v` CLI flag, the TUI footer, release tooling, any future `About` dialog — **MUST** import `github.com/mxriverlynn/pr9k/src/internal/version` and read `version.Version`. Never hardcode the version string anywhere else.
 - Never introduce a second constant, a build-time `-ldflags "-X ..."` override, a `VERSION` file, or a `go:embed`'d text file as an alternate source. One constant, one file.
-- Tests that need to assert the version string **MUST** read it from the package, not from a literal. See `ralph-tui/internal/cli/args_test.go` for the pattern.
+- Tests that need to assert the version string **MUST** read it from the package, not from a literal. See `src/internal/cli/args_test.go` for the pattern.
 
-## What counts as ralph-tui's "public API"
+## What counts as pr9k's "public API"
 
-Semver rules apply to backwards-compatible vs. backwards-incompatible changes to a declared public API. ralph-tui is a CLI application, not a Go library, so its "public API" is specifically:
+Semver rules apply to backwards-compatible vs. backwards-incompatible changes to a declared public API. pr9k is a CLI application, not a Go library, so its "public API" is specifically:
 
-1. **The CLI surface** — every flag on `ralph-tui` (name, short alias, type, default, accepted values) and the exit codes it returns. This includes both `--workflow-dir` and `--project-dir` (introduced in 0.3.0). Renaming `--iterations`, changing `-n`'s default, or flipping an exit code from `0` to `1` for the same scenario are all **MAJOR** changes.
+1. **The CLI surface** — every flag on `pr9k` (name, short alias, type, default, accepted values) and the exit codes it returns. This includes both `--workflow-dir` and `--project-dir` (introduced in 0.3.0). Renaming `--iterations`, changing `-n`'s default, or flipping an exit code from `0` to `1` for the same scenario are all **MAJOR** changes.
 2. **The `ralph-steps.json` schema** — every field name, every required-vs-optional rule, every accepted value for `phase`, `type`, `captureAs`, `breakLoopIfEmpty`, and so on. Any existing user's `ralph-steps.json` that was valid before must still be valid and still produce the same workflow after the upgrade, or it's a **MAJOR** change.
 3. **The `{{VAR}}` substitution language** — the token syntax, the built-in variable names (`{{WORKFLOW_DIR}}`, `{{PROJECT_DIR}}`, `{{MAX_ITER}}`, `{{ITER}}`, `{{STEP_NUM}}`, `{{STEP_COUNT}}`, `{{STEP_NAME}}`), and the persistent-vs-iteration scoping rules documented in `docs/how-to/variable-output-and-injection.md` and `docs/how-to/capturing-step-output.md`.
-4. **The `--version` output format** — `ralph-tui version <semver>\n` on stdout. Users may script against this; changing the format is **MAJOR**.
+4. **The `--version` output format** — `pr9k version <semver>\n` on stdout. Users may script against this; changing the format is **MAJOR**.
 
 The following are explicitly **NOT** part of the public API and may change in any release without a MAJOR bump:
 
-- Internal Go package layout under `ralph-tui/internal/**`. Nothing outside this repo should import it.
+- Internal Go package layout under `src/internal/**`. Nothing outside this repo should import it.
 - The prompt files in `prompts/`. They are replaceable content, not API.
 - The TUI layout, colors, chrome, checkbox glyphs, shortcut bar wording, and footer arrangement. Visual polish is not versioned.
 - The persisted log file format in the target repo's working directory. It is a debugging aid, not a data interchange format.
@@ -41,8 +41,8 @@ The current release is `0.6.1`. Per semver §4, while MAJOR is `0`, **anything m
 
 A version bump is its own commit, not a drive-by edit in a feature PR. **Exception:** when a version bump accompanies a documentation-only change (no Go source changes other than `version.go`), the version bump and the doc changes may be combined into a single commit, provided the commit message clearly identifies the bump (e.g. `docs: ... version bump to <semver>`).
 
-1. Update `const Version` in `ralph-tui/internal/version/version.go`.
-2. Run `make ci` — this rebuilds the binary and runs the existing version tests in `ralph-tui/internal/cli/args_test.go`, which read from `version.Version` and will pass automatically.
+1. Update `const Version` in `src/internal/version/version.go`.
+2. Run `make ci` — this rebuilds the binary and runs the existing version tests in `src/internal/cli/args_test.go`, which read from `version.Version` and will pass automatically.
 3. Commit with a message of the form `Bump version to <semver>`. This commit should contain only the version constant change (and any generated artifacts that track it, if we add them later). For docs-only exceptions (see above), include the doc changes in the same commit.
 4. Tag the commit `v<semver>` (e.g. `v0.2.0`) on `main`. The tag name **MUST** have a `v` prefix; the constant value **MUST NOT**. `git tag v0.2.0` matches constant `"0.2.0"`.
 
@@ -55,6 +55,6 @@ If a pre-release suffix is ever needed (release candidates, betas, nightly build
 ## Additional Information
 
 - [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) — The full spec. This standard does not restate it; if a question is not answered above, the answer is in the spec.
-- [`ralph-tui/internal/version/version.go`](../../ralph-tui/internal/version/version.go) — The single source of truth for the current version.
+- [`src/internal/version/version.go`](../../src/internal/version/version.go) — The single source of truth for the current version.
 - [Step Definitions](../code-packages/steps.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
 - [CLI Configuration](../features/cli-configuration.md) — The CLI flag surface, another public-API surface governed by this standard.

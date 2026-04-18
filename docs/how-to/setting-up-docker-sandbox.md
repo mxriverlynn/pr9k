@@ -1,10 +1,10 @@
 # Setting Up the Docker Sandbox
 
-ralph-tui runs every Claude step inside an ephemeral Docker container to limit blast radius. Docker is required — there is no fallback to direct invocation. This guide covers installing Docker, pulling the sandbox image, authenticating the Claude profile, and troubleshooting the most common setup problems.
+pr9k runs every Claude step inside an ephemeral Docker container to limit blast radius. Docker is required — there is no fallback to direct invocation. This guide covers installing Docker, pulling the sandbox image, authenticating the Claude profile, and troubleshooting the most common setup problems.
 
 ## Prerequisites
 
-Before running `ralph-tui` you need:
+Before running `pr9k` you need:
 
 1. **Docker Desktop** (macOS/Windows) or **Docker Engine** (Linux) installed and running
 2. A Claude profile authenticated with your Anthropic account
@@ -50,7 +50,7 @@ docker version
 Run `sandbox create` from your pr9k install:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox create
+/path/to/pr9k/bin/pr9k sandbox create
 ```
 
 This command:
@@ -84,7 +84,7 @@ Sandbox ready.
 To update the image to the latest upstream tag:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox create --force
+/path/to/pr9k/bin/pr9k sandbox create --force
 ```
 
 `--force` skips the "already present" check and runs a fresh `docker pull`.
@@ -101,22 +101,22 @@ To update the image to the latest upstream tag:
 
 ## Step 3 — Authenticate the Claude profile
 
-ralph-tui bind-mounts your Claude profile directory (`$CLAUDE_CONFIG_DIR` if set, otherwise `~/.claude`) into every sandbox container. The claude CLI inside the container uses that mount for authentication — so if your profile is not authenticated, every claude step will fail.
+pr9k bind-mounts your Claude profile directory (`$CLAUDE_CONFIG_DIR` if set, otherwise `~/.claude`) into every sandbox container. The claude CLI inside the container uses that mount for authentication — so if your profile is not authenticated, every claude step will fail.
 
 The sandbox profile lives on disk at `<profileDir>/.credentials.json`. On macOS the host `claude` CLI stores its OAuth token in the Keychain rather than on disk, so you cannot simply `claude login` on the host and expect the sandbox to pick it up — you need to authenticate **inside** the sandbox so the OAuth flow writes `.credentials.json` to the bind-mounted profile directory.
 
-### Preferred: `ralph-tui sandbox login`
+### Preferred: `pr9k sandbox login`
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox login
+/path/to/pr9k/bin/pr9k sandbox login
 ```
 
-This launches a one-shot interactive container with `claude` running. Inside the REPL, type `/login` and complete the OAuth flow in your browser. When you exit, `.credentials.json` exists in your profile directory and every subsequent ralph-tui run picks it up.
+This launches a one-shot interactive container with `claude` running. Inside the REPL, type `/login` and complete the OAuth flow in your browser. When you exit, `.credentials.json` exists in your profile directory and every subsequent pr9k run picks it up.
 
 If the sandbox image hasn't been pulled yet, `sandbox login` auto-pulls it and prints a note:
 
 ```
-Sandbox image not found; pulling it first — run 'ralph-tui sandbox create' next time to separate this step.
+Sandbox image not found; pulling it first — run 'pr9k sandbox create' next time to separate this step.
 ```
 
 The profile directory is created automatically if it doesn't exist (mode `0700`).
@@ -152,7 +152,7 @@ If this prints a version number without an authentication error, the profile is 
 
 ### Warning: credentials file is empty or missing
 
-ralph-tui's startup preflight inspects `<profileDir>/.credentials.json` and emits a warning if it's not usable. The warning text differs based on cause:
+pr9k's startup preflight inspects `<profileDir>/.credentials.json` and emits a warning if it's not usable. The warning text differs based on cause:
 
 **Empty file:**
 
@@ -161,31 +161,31 @@ Warning: /home/you/.claude/.credentials.json is empty. Claude will likely fail a
 Re-authenticate with 'claude login' inside the sandbox.
 ```
 
-An empty credentials file is typically caused by a SIGKILL mid-OAuth-refresh — the file was truncated before the new token could be written. Re-run `ralph-tui sandbox login` to refresh it.
+An empty credentials file is typically caused by a SIGKILL mid-OAuth-refresh — the file was truncated before the new token could be written. Re-run `pr9k sandbox login` to refresh it.
 
 **Missing file:**
 
 ```
 Warning: /home/you/.claude/.credentials.json does not exist. The sandboxed claude has no credentials
-to authenticate with. Run 'ralph-tui sandbox login' to authenticate, or set ANTHROPIC_API_KEY in the
+to authenticate with. Run 'pr9k sandbox login' to authenticate, or set ANTHROPIC_API_KEY in the
 host environment.
 ```
 
-A missing credentials file usually means the profile directory is new and you haven't authenticated yet, or `CLAUDE_CONFIG_DIR` points at a different profile directory than the one that was authenticated. Run `ralph-tui sandbox login` to populate it.
+A missing credentials file usually means the profile directory is new and you haven't authenticated yet, or `CLAUDE_CONFIG_DIR` points at a different profile directory than the one that was authenticated. Run `pr9k sandbox login` to populate it.
 
 **Alternative:** setting `ANTHROPIC_API_KEY` in the host shell satisfies the sandbox without a credentials file — `BuiltinEnvAllowlist` passes that variable into every claude container, so API-key auth works with no on-disk credentials. When `ANTHROPIC_API_KEY` is set, both warnings above are suppressed.
 
 ## Step 4 — Configure `CLAUDE_CONFIG_DIR` (optional, for multiple profiles)
 
-If you need to run ralph-tui with a specific Claude profile — for example, to separate work and personal accounts — set `CLAUDE_CONFIG_DIR` to the profile directory before running ralph-tui:
+If you need to run pr9k with a specific Claude profile — for example, to separate work and personal accounts — set `CLAUDE_CONFIG_DIR` to the profile directory before running pr9k:
 
 ```bash
-CLAUDE_CONFIG_DIR=/path/to/profile /path/to/pr9k/bin/ralph-tui
+CLAUDE_CONFIG_DIR=/path/to/profile /path/to/pr9k/bin/pr9k
 ```
 
-ralph-tui resolves the profile directory at startup from `$CLAUDE_CONFIG_DIR` if set, then falls back to `$HOME/.claude`. The resolved path is bind-mounted into every container at `/home/agent/.claude`.
+pr9k resolves the profile directory at startup from `$CLAUDE_CONFIG_DIR` if set, then falls back to `$HOME/.claude`. The resolved path is bind-mounted into every container at `/home/agent/.claude`.
 
-To persist the variable for all ralph-tui invocations, add it to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
+To persist the variable for all pr9k invocations, add it to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.):
 
 ```bash
 export CLAUDE_CONFIG_DIR=/path/to/profile
@@ -196,33 +196,33 @@ export CLAUDE_CONFIG_DIR=/path/to/profile
 From your target repo's working directory:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui -n 1
+/path/to/pr9k/bin/pr9k -n 1
 ```
 
 The `-n 1` flag caps the run at one iteration, which is useful for verifying the sandbox works end-to-end before a longer unattended run.
 
-On the first run, ralph-tui's startup preflight checks:
+On the first run, pr9k's startup preflight checks:
 
 1. `ralph-steps.json` parses and validates
 2. Claude profile directory exists
 3. Docker is installed and the daemon is running
 4. Sandbox image is present locally
 
-If any check fails, ralph-tui prints a structured error and exits before the TUI starts. Fix the reported issue and re-run.
+If any check fails, pr9k prints a structured error and exits before the TUI starts. Fix the reported issue and re-run.
 
 ## Troubleshooting
 
-### "Claude sandbox image is missing. Run: ralph-tui sandbox create"
+### "Claude sandbox image is missing. Run: pr9k sandbox create"
 
 The image was not pulled yet, or was deleted from the local image store. Run:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox create
+/path/to/pr9k/bin/pr9k sandbox create
 ```
 
 ### "Claude profile directory not found: /home/you/.claude"
 
-The profile directory does not exist yet. Run `ralph-tui sandbox login` to create it and authenticate, or set `CLAUDE_CONFIG_DIR` to an existing profile.
+The profile directory does not exist yet. Run `pr9k sandbox login` to create it and authenticate, or set `CLAUDE_CONFIG_DIR` to an existing profile.
 
 ### "Docker is installed but the daemon isn't running"
 
@@ -237,17 +237,17 @@ systemctl start docker
 The bind-mounted credentials may be invalid. Re-authenticate:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox login
+/path/to/pr9k/bin/pr9k sandbox login
 ```
 
-Then retry the failed step (press `r` in ralph-tui's error mode).
+Then retry the failed step (press `r` in pr9k's error mode).
 
 ### Files written by claude are owned by root
 
 This happens when the `-u` flag is not taking effect (e.g., an older Docker image or a non-standard UID setup). Re-pull the image:
 
 ```bash
-/path/to/pr9k/bin/ralph-tui sandbox create --force
+/path/to/pr9k/bin/pr9k sandbox create --force
 ```
 
 ## Related Documentation

@@ -54,7 +54,7 @@ Any `{{VAR}}` reference in a prompt file or command argument that is not in scop
 
 ### Category 10 — env passthrough names
 
-The optional top-level `env` array lists host environment variable names that ralph-tui passes through into the sandbox. Each name is validated:
+The optional top-level `env` array lists host environment variable names that pr9k passes through into the sandbox. Each name is validated:
 
 - Must not be empty.
 - Must match `^[A-Za-z_][A-Za-z0-9_]*$` (standard POSIX identifier format — no spaces, dots, or hyphens).

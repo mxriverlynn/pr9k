@@ -1,6 +1,6 @@
 # sandbox Subcommand
 
-`ralph-tui sandbox` is the parent command for sandbox-management subcommands. It has two children:
+`pr9k sandbox` is the parent command for sandbox-management subcommands. It has two children:
 
 - **`sandbox create`** — one-shot setup. Checks Docker, pulls the sandbox image, smoke-tests it under the current user.
 - **`sandbox login`** — launches an interactive `claude` REPL inside the sandbox so the user can run `/login` and write `.credentials.json` to the bind-mounted profile directory.
@@ -11,7 +11,7 @@
 
 ## Overview
 
-- `sandbox` is a cobra parent command with no `RunE` — running bare `ralph-tui sandbox` prints the help text listing its children.
+- `sandbox` is a cobra parent command with no `RunE` — running bare `pr9k sandbox` prints the help text listing its children.
 - Subcommands are registered via `cli.Execute(newSandboxCmd())` in `main.go`. Main-workflow flags (`--iterations`, `--workflow-dir`, `--project-dir`) are not available on either child.
 - `--force` on `sandbox create` re-pulls the image even when it is already present.
 - `sandbox login` mounts **only** the profile directory (never a project directory) — login is an auth-only operation; exposing host files to the container is accidental attack surface.
@@ -19,20 +19,20 @@
 
 Key files:
 
-- `ralph-tui/cmd/ralph-tui/sandbox.go` — `newSandboxCmd` (parent), shared helpers (`errSilentExit`, `dockerRunFunc`, `realDockerRun`, `dockerInteractiveFunc`, `realDockerInteractive`, `stripANSI`, `ansiEscapeRe`)
-- `ralph-tui/cmd/ralph-tui/sandbox_create.go` — `newSandboxCreateCmd`, `newSandboxCreateCmdWith`, `runSandboxCreate`, `sandboxCreateDeps`, `semverRe`
-- `ralph-tui/cmd/ralph-tui/sandbox_login.go` — `newSandboxLoginCmd`, `newSandboxLoginCmdWith`, `runSandboxLogin`, `sandboxLoginDeps`
-- `ralph-tui/cmd/ralph-tui/sandbox_create_test.go` — test cases for create covering all branches via injected `sandboxCreateDeps`
-- `ralph-tui/cmd/ralph-tui/sandbox_login_test.go` — test cases for login using injected `sandboxLoginDeps` with a `fakeInteractive` sibling to `fakeRun`
-- `ralph-tui/cmd/ralph-tui/main.go` — registers the parent via `cli.Execute(newSandboxCmd())`
-- `ralph-tui/internal/sandbox/command.go` — `BuildRunArgs` (workflow) and `BuildLoginArgs` (login)
+- `src/cmd/src/sandbox.go` — `newSandboxCmd` (parent), shared helpers (`errSilentExit`, `dockerRunFunc`, `realDockerRun`, `dockerInteractiveFunc`, `realDockerInteractive`, `stripANSI`, `ansiEscapeRe`)
+- `src/cmd/src/sandbox_create.go` — `newSandboxCreateCmd`, `newSandboxCreateCmdWith`, `runSandboxCreate`, `sandboxCreateDeps`, `semverRe`
+- `src/cmd/src/sandbox_login.go` — `newSandboxLoginCmd`, `newSandboxLoginCmdWith`, `runSandboxLogin`, `sandboxLoginDeps`
+- `src/cmd/src/sandbox_create_test.go` — test cases for create covering all branches via injected `sandboxCreateDeps`
+- `src/cmd/src/sandbox_login_test.go` — test cases for login using injected `sandboxLoginDeps` with a `fakeInteractive` sibling to `fakeRun`
+- `src/cmd/src/main.go` — registers the parent via `cli.Execute(newSandboxCmd())`
+- `src/internal/sandbox/command.go` — `BuildRunArgs` (workflow) and `BuildLoginArgs` (login)
 
 ## Usage
 
 ```
-ralph-tui sandbox                   # prints help
-ralph-tui sandbox create [--force]
-ralph-tui sandbox login
+pr9k sandbox                   # prints help
+pr9k sandbox create [--force]
+pr9k sandbox login
 ```
 
 | Command | Flag | Description |
@@ -43,7 +43,7 @@ ralph-tui sandbox login
 ## Architecture — `sandbox create`
 
 ```
-ralph-tui sandbox create
+pr9k sandbox create
         │
         ▼
   runSandboxCreate(deps, force)
@@ -65,7 +65,7 @@ ralph-tui sandbox create
 ## Architecture — `sandbox login`
 
 ```
-ralph-tui sandbox login
+pr9k sandbox login
         │
         ▼
   runSandboxLogin(deps)

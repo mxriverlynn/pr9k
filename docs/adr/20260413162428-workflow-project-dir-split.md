@@ -9,8 +9,8 @@
 
 ## Context
 
-ralph-tui today has a single `--project-dir` flag (cobra registration at
-`ralph-tui/internal/cli/args.go:60`), a single `Config.ProjectDir` field,
+pr9k today has a single `--project-dir` flag (cobra registration at
+`src/internal/cli/args.go:60`), a single `Config.ProjectDir` field,
 and a single `{{PROJECT_DIR}}` built-in variable in its substitution
 language. The name "project-dir" conflates two distinct concepts that
 have coexisted implicitly:
@@ -20,16 +20,16 @@ have coexisted implicitly:
    `scripts/`, `ralph-art.txt`. This is what today's flag actually
    resolves to, via `os.Executable()` + `filepath.EvalSymlinks`
    (`args.go:resolveProjectDir`). It is seeded into the VarTable as
-   `PROJECT_DIR` (`ralph-tui/internal/vars/vars.go:63`).
+   `PROJECT_DIR` (`src/internal/vars/vars.go:63`).
 
-2. **The target repo.** The working directory ralph-tui operates
+2. **The target repo.** The working directory pr9k operates
    against — the git repo being modified, whose cwd is inherited by
    every subprocess. Today this is implicit: `CLAUDE.md:35` states
    *"Ralph is invoked from the target repo — all subprocesses inherit
    that cwd,"* and there is no `TargetRepo` field in `cli.Config` or
    `workflow.RunConfig`, and no flag for it. An internal `workingDir`
    capture via `os.Getwd()` was introduced in commit `4f4481b` (0.2.3)
-   at `cmd/ralph-tui/main.go:77` and routed to the logger and runner,
+   at `cmd/src/main.go:77` and routed to the logger and runner,
    but it is not surfaced as a user-facing flag or variable. The split
    promotes that internal capture to first-class surface: `--project-dir`
    / `{{PROJECT_DIR}}` / `ProjectDir` add `filepath.EvalSymlinks`, an
@@ -40,7 +40,7 @@ have coexisted implicitly:
 These are two distinct directories. In the pr9k project itself they
 happen to be siblings (the binary lives under `bin/`, which is a
 subdirectory of the target repo), but nothing in the design requires
-that — a user can install ralph-tui anywhere and run it against any
+that — a user can install pr9k anywhere and run it against any
 target repo.
 
 The ambiguity became load-bearing during design review of the Docker
@@ -65,19 +65,19 @@ contradicting every other site in the codebase that spells `projectDir`).
   ambiguity isn't tolerable.
 - **Public API names are versioned surface.** `docs/coding-standards/versioning.md:19`
   enumerates CLI flags, the `{{VAR}}` substitution language, and
-  `--version` output as ralph-tui's public API. A flag rename or a
+  `--version` output as pr9k's public API. A flag rename or a
   new variable token is a breaking change, so it must be decided
   deliberately, not drift.
 - **Narrow-reading-principle alignment.** The existing ADR at
-  `docs/adr/20260410170952-narrow-reading-principle.md` says ralph-tui
+  `docs/adr/20260410170952-narrow-reading-principle.md` says pr9k
   should keep the substitution language uniform and phase-only.
   Context-dependent resolution of `{{PROJECT_DIR}}` (different value
   in prompts vs. commands, or different value in sandboxed vs.
   unsandboxed steps) would violate that principle. Two cleanly-named
   tokens with stable meanings do not.
 - **No regression for existing users.** The default `ralph-steps.json`
-  shipped with ralph-tui uses `{{PROJECT_DIR}}/ralph-art.txt` at
-  `ralph-tui/ralph-steps.json:3` to reach a file in the workflow
+  shipped with pr9k uses `{{PROJECT_DIR}}/ralph-art.txt` at
+  `src/ralph-steps.json:3` to reach a file in the workflow
   bundle. Whatever names are chosen, the migration path for that file
   — and any user-authored equivalents — must be documented.
 
@@ -139,7 +139,7 @@ contradicting every other site in the codebase that spells `projectDir`).
    deprecation window.** Same as (3), but accept the old flag for one
    release with a deprecation warning before removal.
 
-   - Pros: gentler migration for users who script around ralph-tui.
+   - Pros: gentler migration for users who script around pr9k.
    - Cons: **silently dangerous**. Post-split, `--project-dir` means
      target repo. If the old flag is accepted as an alias for
      `--workflow-dir`, a script passing
@@ -205,7 +205,7 @@ follow-up doc updates are recorded in
 - Users with custom `ralph-steps.json` files using `{{PROJECT_DIR}}`
   to mean "workflow bundle" must rename those tokens to
   `{{WORKFLOW_DIR}}`. The default shipped workflow has one such site
-  (`ralph-tui/ralph-steps.json:3`) which is migrated as part of the
+  (`src/ralph-steps.json:3`) which is migrated as part of the
   implementation.
 - Two tokens in the substitution language instead of one. Slightly
   more to learn, but the names are self-describing and the per-token
@@ -218,7 +218,7 @@ follow-up doc updates are recorded in
   the post-split names, and a trailing "Updates" note points at this
   ADR. The cobra decision itself is unchanged — only the flag names
   it mentions.
-- Historical plans (`docs/plans/ralph-tui.md`,
+- Historical plans (`docs/plans/pr9k.md`,
   `docs/plans/cobra-cli-option-parsing.md`,
   `docs/plans/ux-corrections/design.md`) are left untouched; current
   docs, ADRs, and the delivery plan are the source of truth for
@@ -230,11 +230,11 @@ follow-up doc updates are recorded in
 
 | File | Role |
 |------|------|
-| `ralph-tui/internal/cli/args.go` | Flag registration for both `--workflow-dir` and `--project-dir`; `resolveWorkflowDir()` + `resolveProjectDir()` |
-| `ralph-tui/internal/vars/vars.go` | Seeds `WORKFLOW_DIR` and `PROJECT_DIR` persistent-scope variables |
-| `ralph-tui/internal/validator/validator.go` | Prompt-scan pass rejecting both tokens in claude prompts |
-| `ralph-tui/internal/workflow/run.go` | `RunConfig.WorkflowDir`; target repo reaches `BuildRunArgs` via `Runner.ProjectDir()` / `StepExecutor.ProjectDir()` per Option B |
-| `ralph-tui/ralph-steps.json` | Default workflow; line 3's Splash step migrated from `{{PROJECT_DIR}}` to `{{WORKFLOW_DIR}}` |
+| `src/internal/cli/args.go` | Flag registration for both `--workflow-dir` and `--project-dir`; `resolveWorkflowDir()` + `resolveProjectDir()` |
+| `src/internal/vars/vars.go` | Seeds `WORKFLOW_DIR` and `PROJECT_DIR` persistent-scope variables |
+| `src/internal/validator/validator.go` | Prompt-scan pass rejecting both tokens in claude prompts |
+| `src/internal/workflow/run.go` | `RunConfig.WorkflowDir`; target repo reaches `BuildRunArgs` via `Runner.ProjectDir()` / `StepExecutor.ProjectDir()` per Option B |
+| `src/ralph-steps.json` | Default workflow; line 3's Splash step migrated from `{{PROJECT_DIR}}` to `{{WORKFLOW_DIR}}` |
 
 ### Related Docs
 

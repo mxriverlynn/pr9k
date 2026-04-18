@@ -17,10 +17,10 @@ Executes workflow steps as subprocesses with real-time stdout/stderr streaming t
 - `LastStats()` returns the `claudestream.StepStats` from the most recent `RunSandboxedStep` call that used the pipeline; the `stepDispatcher` in `workflow/run.go` calls this after each sandboxed step to fold stats into the run-level accumulator
 
 Key files:
-- `ralph-tui/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
-- `ralph-tui/internal/workflow/run.go` — `ResolveCommand` ({{VAR}} substitution + script path resolution)
-- `ralph-tui/internal/workflow/workflow_test.go` — Unit tests for subprocess execution
-- `ralph-tui/internal/workflow/run_test.go` — Integration tests for `LastCapture` and `CaptureOutput`
+- `src/internal/workflow/workflow.go` — `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput`
+- `src/internal/workflow/run.go` — `ResolveCommand` ({{VAR}} substitution + script path resolution)
+- `src/internal/workflow/workflow_test.go` — Unit tests for subprocess execution
+- `src/internal/workflow/run_test.go` — Integration tests for `LastCapture` and `CaptureOutput`
 
 ## Architecture
 
@@ -71,10 +71,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
-| `ralph-tui/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
-| `ralph-tui/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, and `SetSender` |
-| `ralph-tui/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
+| `src/internal/workflow/workflow.go` | `Runner` struct, `RunStep`, `Terminate`, `WriteToLog`, `LastCapture`, `CaptureOutput` |
+| `src/internal/workflow/run.go` | `ResolveCommand` — `{{VAR}}` substitution and script path resolution |
+| `src/internal/workflow/workflow_test.go` | Tests for `RunStep`, `Terminate`, `WasTerminated`, `WriteToLog`, and `SetSender` |
+| `src/internal/workflow/run_test.go` | Integration tests for `LastCapture`, `CaptureOutput`, `ResolveCommand` |
 
 ## Core Types
 
@@ -441,7 +441,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 
 ## Testing
 
-- `ralph-tui/internal/workflow/workflow_test.go` — Tests for `RunStep`, `RunSandboxedStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and empty-command guards:
+- `src/internal/workflow/workflow_test.go` — Tests for `RunStep`, `RunSandboxedStep`, `Terminate`, `WasTerminated`, `WriteToLog`, `ResolveCommand`, `SetSender`, `NewRunner`, and empty-command guards:
   - `TestResolveCommand_*` — 10 tests covering `{{VAR}}` substitution, script path resolution, immutability, empty slice, bare command passthrough
   - `TestSetSender_ForwardsEveryStdoutLine`, `TestSetSender_ForwardsEveryStderrLine` — sendLine receives stdout and stderr lines
   - `TestSetSender_BurstDoesNotDropOrReorder` — lines arrive in order under burst load
@@ -474,7 +474,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestTerminate_UsesProcessWhenNoTerminator` — verifies Terminate signals the host process directly when no terminator is installed
   - `TestTerminate_TerminatorSIGTERMOnlyWhenProcessExitsPromptly` — verifies SIGKILL is not sent when the process exits within the grace period
   - `TestTerminate_IntegrationOrchestrationCanProceed` — integration test verifying that after Terminate() the runner is in a consistent state and can process the next step
-- `ralph-tui/internal/workflow/run_test.go` — Integration tests for:
+- `src/internal/workflow/run_test.go` — Integration tests for:
   - `TestLastCapture_LastNonEmptyStdoutLine` — verifies last non-empty stdout line is returned
   - `TestLastCapture_EmptyOnFailure` — verifies `""` is returned after a failed step
   - `TestLastCapture_StripsTrailingCarriageReturn` — verifies trailing `\r` is stripped

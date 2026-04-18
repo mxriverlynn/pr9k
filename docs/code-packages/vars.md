@@ -1,6 +1,6 @@
 # Variable State Management
 
-Owns and resolves runtime variable state for a ralph-tui run, providing two scoped tables (persistent and iteration) plus a set of built-in variables seeded from CLI flags and updated by the orchestrator.
+Owns and resolves runtime variable state for a pr9k run, providing two scoped tables (persistent and iteration) plus a set of built-in variables seeded from CLI flags and updated by the orchestrator.
 
 - **Last Updated:** 2026-04-17
 - **Authors:**
@@ -15,10 +15,10 @@ Owns and resolves runtime variable state for a ralph-tui run, providing two scop
 - Resolution order during an iteration step: iteration table → persistent table; during initialize or finalize: persistent table only
 
 Key files:
-- `ralph-tui/internal/vars/vars.go` — `VarTable`, `Phase`, built-in constants, all public methods
-- `ralph-tui/internal/vars/substitute.go` — `Substitute` and `ExtractReferences` functions
-- `ralph-tui/internal/vars/vars_test.go` — Unit tests for scoping, phase contract, overwrite semantics, and built-in protection
-- `ralph-tui/internal/vars/substitute_test.go` — Unit tests for token substitution and escape sequences
+- `src/internal/vars/vars.go` — `VarTable`, `Phase`, built-in constants, all public methods
+- `src/internal/vars/substitute.go` — `Substitute` and `ExtractReferences` functions
+- `src/internal/vars/vars_test.go` — Unit tests for scoping, phase contract, overwrite semantics, and built-in protection
+- `src/internal/vars/substitute_test.go` — Unit tests for token substitution and escape sequences
 
 ## Architecture
 
@@ -55,7 +55,7 @@ const (
     Finalize                  // teardown; captureAs not valid
 )
 
-// VarTable holds runtime variable state for a single ralph-tui run.
+// VarTable holds runtime variable state for a single pr9k run.
 type VarTable struct {
     persistent map[string]string
     iteration  map[string]string
@@ -79,7 +79,7 @@ Built-in names are reserved: `Bind` panics if a `captureAs` binding attempts to 
 
 ## captureAs Binding Source
 
-For non-claude steps (`isClaude: false`), `captureAs` binds to the **last non-empty stdout line** from the step (via `runner.LastCapture()`). This is the historical behavior: a shell script prints its result as the last line and ralph-tui captures it.
+For non-claude steps (`isClaude: false`), `captureAs` binds to the **last non-empty stdout line** from the step (via `runner.LastCapture()`). This is the historical behavior: a shell script prints its result as the last line and pr9k captures it.
 
 For claude steps (`isClaude: true`), `captureAs` binds to **`result.result`** — the `result` field of the `ResultEvent` emitted by `claude -p --output-format stream-json --verbose`. This is the authoritative final answer text, parsed from the NDJSON stream by the `claudestream.Aggregator`. The raw JSON on stdout is never meaningful for binding; `result.result` is.
 
@@ -198,8 +198,8 @@ These are programming errors, not runtime conditions — the step validator (iss
 
 ## Testing
 
-- `ralph-tui/internal/vars/vars_test.go` — Unit tests for `VarTable` with race detector
-- `ralph-tui/internal/vars/substitute_test.go` — Unit tests for `Substitute` and `ExtractReferences`
+- `src/internal/vars/vars_test.go` — Unit tests for `VarTable` with race detector
+- `src/internal/vars/substitute_test.go` — Unit tests for `Substitute` and `ExtractReferences`
 
 `VarTable` covered behaviors:
 - Built-in seeding via `New` (both `WORKFLOW_DIR` and `PROJECT_DIR`)
@@ -222,7 +222,7 @@ These are programming errors, not runtime conditions — the step validator (iss
 
 ## Additional Information
 
-- [Architecture Overview](../architecture.md) — System-level view of ralph-tui with block diagrams
+- [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How the orchestrator calls `SetPhase`, `SetIteration`, `SetStep`, and `ResetIteration`
 - [Step Definitions & Prompt Building](steps.md) — `CaptureAs` field on `Step` that feeds `Bind`
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — End-to-end guide to how variables flow through the workflow

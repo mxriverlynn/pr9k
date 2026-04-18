@@ -1,10 +1,10 @@
 # Building Custom Workflows
 
-This guide explains how to create and modify workflow step sequences in ralph-tui. Steps are defined in JSON configuration files and can mix Claude CLI invocations with shell commands.
+This guide explains how to create and modify workflow step sequences in pr9k. Steps are defined in JSON configuration files and can mix Claude CLI invocations with shell commands.
 
 ## Step Configuration Files
 
-Ralph-tui loads step definitions from `ralph-steps.json` (resolved relative to the workflow directory). This file contains three groups:
+pr9k loads step definitions from `ralph-steps.json` (resolved relative to the workflow directory). This file contains three groups:
 
 - **`initialize`** — Steps run once before the iteration loop begins
 - **`iteration`** — Steps run once per issue

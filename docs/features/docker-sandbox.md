@@ -16,19 +16,19 @@ Executes every Claude CLI step inside an ephemeral Docker container, limiting bl
 - `--cidfile` captures the container ID so `Terminate()` can issue a real `docker kill` rather than signaling the host docker CLI (which would orphan the container)
 
 Key files:
-- `ralph-tui/internal/sandbox/command.go` — `BuildRunArgs`
-- `ralph-tui/internal/sandbox/image.go` — `BuiltinEnvAllowlist`, `ImageTag`, container path constants
-- `ralph-tui/internal/sandbox/cidfile.go` — `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal)
-- `ralph-tui/internal/sandbox/terminator.go` — `NewTerminator` closure for SIGTERM/SIGKILL via `docker kill`
-- `ralph-tui/internal/sandbox/command_test.go` — Unit tests for `BuildRunArgs` and env allowlist merging
-- `ralph-tui/internal/sandbox/cidfile_test.go` — Unit tests for `Cleanup`
-- `ralph-tui/internal/workflow/run.go` — `buildStep` dispatches claude steps to `RunSandboxedStep`
+- `src/internal/sandbox/command.go` — `BuildRunArgs`
+- `src/internal/sandbox/image.go` — `BuiltinEnvAllowlist`, `ImageTag`, container path constants
+- `src/internal/sandbox/cidfile.go` — `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal)
+- `src/internal/sandbox/terminator.go` — `NewTerminator` closure for SIGTERM/SIGKILL via `docker kill`
+- `src/internal/sandbox/command_test.go` — Unit tests for `BuildRunArgs` and env allowlist merging
+- `src/internal/sandbox/cidfile_test.go` — Unit tests for `Cleanup`
+- `src/internal/workflow/run.go` — `buildStep` dispatches claude steps to `RunSandboxedStep`
 
 ## Architecture
 
 ```
 Host
-├── ralph-tui (orchestrator)
+├── pr9k (orchestrator)
 │   ├── builds docker run argv via sandbox.BuildRunArgs
 │   ├── generates cidfile path via sandbox.Cidfile.Path()
 │   └── calls Runner.RunSandboxedStep(stepName, argv, SandboxOptions{...})
@@ -45,7 +45,7 @@ After `docker run` exits, `RunSandboxedStep` removes the cidfile (ENOENT-toleran
 
 ## The Runtime Docker Command
 
-ralph-tui constructs the following command for every claude step. Values in `<ANGLE_BRACKETS>` are substituted at runtime:
+pr9k constructs the following command for every claude step. Values in `<ANGLE_BRACKETS>` are substituted at runtime:
 
 ```
 docker run                                              \
@@ -96,14 +96,14 @@ docker run                                              \
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/sandbox/command.go` | `BuildRunArgs` (constructs the `docker run` argv) |
-| `ralph-tui/internal/sandbox/image.go` | `BuiltinEnvAllowlist` (the five sandbox-plumbing vars), `ImageTag`, container path constants |
-| `ralph-tui/internal/sandbox/cidfile.go` | `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal) |
-| `ralph-tui/internal/sandbox/terminator.go` | `NewTerminator` — returns a closure that calls `docker kill --signal=TERM|KILL <cid>` |
-| `ralph-tui/internal/sandbox/command_test.go` | Tests for `BuildRunArgs`, env allowlist merging |
-| `ralph-tui/internal/sandbox/cidfile_test.go` | Tests for `Cleanup` (ENOENT tolerance) |
-| `ralph-tui/internal/workflow/run.go` | `buildStep` reads `stepFile.Env`, calls `sandbox.BuildRunArgs`, returns `ResolvedStep` with `CidfilePath` |
-| `ralph-tui/internal/workflow/workflow.go` | `RunSandboxedStep` — installs terminator, provides empty stdin, delegates to `runCommand` |
+| `src/internal/sandbox/command.go` | `BuildRunArgs` (constructs the `docker run` argv) |
+| `src/internal/sandbox/image.go` | `BuiltinEnvAllowlist` (the five sandbox-plumbing vars), `ImageTag`, container path constants |
+| `src/internal/sandbox/cidfile.go` | `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal) |
+| `src/internal/sandbox/terminator.go` | `NewTerminator` — returns a closure that calls `docker kill --signal=TERM|KILL <cid>` |
+| `src/internal/sandbox/command_test.go` | Tests for `BuildRunArgs`, env allowlist merging |
+| `src/internal/sandbox/cidfile_test.go` | Tests for `Cleanup` (ENOENT tolerance) |
+| `src/internal/workflow/run.go` | `buildStep` reads `stepFile.Env`, calls `sandbox.BuildRunArgs`, returns `ResolvedStep` with `CidfilePath` |
+| `src/internal/workflow/workflow.go` | `RunSandboxedStep` — installs terminator, provides empty stdin, delegates to `runCommand` |
 
 ## Core Types
 
@@ -111,7 +111,7 @@ docker run                                              \
 // sandbox package
 
 // BuiltinEnvAllowlist is the fixed set of host environment variable names
-// ralph-tui always attempts to pass into the sandbox. Each name is passed
+// pr9k always attempts to pass into the sandbox. Each name is passed
 // with -e <NAME> (no value) so Docker reads it from the host env at
 // container start; if the variable is unset on the host it is silently
 // skipped (os.LookupEnv skip-if-unset behavior).
@@ -216,7 +216,7 @@ The following residual risks are accepted:
 |----------|----------|
 | `docker` not on `PATH` | Preflight exits 1 before the TUI starts |
 | Docker daemon not running | Preflight exits 1 before the TUI starts |
-| Sandbox image missing | Preflight exits 1 with message `Run: ralph-tui sandbox create` |
+| Sandbox image missing | Preflight exits 1 with message `Run: pr9k sandbox create` |
 | `docker run` exits non-zero | `RunSandboxedStep` returns the error; orchestrator enters error mode |
 | Cidfile never appears (container crashed instantly) | Terminator falls back to signaling host docker CLI |
 | Cidfile cleanup fails (ENOENT) | Silently ignored — file may not exist if docker run failed before start |
@@ -224,7 +224,7 @@ The following residual risks are accepted:
 ## Additional Information
 
 - [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — User-facing setup guide: install Docker, run `sandbox create`, authenticate via `sandbox login`
-- [sandbox Subcommand](sandbox-subcommand.md) — `ralph-tui sandbox create` and `ralph-tui sandbox login` implementations: Docker check, image pull, smoke test, interactive login flow
+- [sandbox Subcommand](sandbox-subcommand.md) — `pr9k sandbox create` and `pr9k sandbox login` implementations: Docker check, image pull, smoke test, interactive login flow
 - [Preflight](../code-packages/preflight.md) — Startup checks that reject a missing Docker daemon or sandbox image before the TUI starts
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
 - [Config Validation](../code-packages/validator.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)

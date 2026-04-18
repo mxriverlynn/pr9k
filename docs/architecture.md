@@ -1,8 +1,8 @@
-# ralph-tui Architecture
+# pr9k Architecture
 
-ralph-tui is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
+pr9k is a Go TUI application that replaces the original `ralph-loop` bash script with a real-time, interactive orchestrator. It drives the `claude` CLI through multi-step coding loops — picking up GitHub issues, implementing features, writing tests, running code reviews, and pushing — all with live streaming output and keyboard-driven error recovery.
 
-Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, ralph-tui streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, pr9k streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
 
 ## System Block Diagram
 
@@ -234,7 +234,7 @@ An eight-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `Mode
 
 Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHandler.ForceQuit()` which first flips mode to `ModeQuitting` and updates the shortcut bar (so the footer shows `"Quitting..."` immediately), then terminates the current subprocess and injects `ActionQuit` into the actions channel using a non-blocking send. The orchestration loop picks up the quit action before the next step starts, enabling clean shutdown. The main goroutine tracks whether a signal was received to choose the exit code (0 for normal, 1 for signaled).
 
-**Package:** `cmd/ralph-tui/` (`main.go`)
+**Package:** `cmd/src/` (`main.go`)
 
 ### [File Logging](code-packages/logger.md)
 
@@ -281,7 +281,7 @@ Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -
 ## Package Dependency Graph
 
 ```
-cmd/ralph-tui/main.go
+cmd/src/main.go
     ├── internal/cli           (argument parsing)
     │       └── internal/version
     ├── internal/logger        (file logging)
@@ -314,7 +314,7 @@ internal/statusline            (status-line runner, state, payload, sanitizer)
 
 ## Key Design Principles
 
-- **Narrow-reading principle**: Ralph-tui facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
+- **Narrow-reading principle**: pr9k facilitates the workflow; it does not define it. Workflow content (steps, commands, prompts) lives in `ralph-steps.json`. Go code owns only runtime mechanics — phase sequencing, loop bounds, variable substitution, and TUI chrome. Any PR that adds Ralph-specific knowledge to Go code must justify the exception against [ADR: Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md).
 - **Streaming over buffering**: Subprocess output is forwarded line-by-line via the `sendLine` callback into a buffered channel; the drain goroutine coalesces lines before sending `LogLinesMsg` to the Bubble Tea program — no bulk buffering and dump.
 - **Message-passing state**: `StatusHeader` mutations are never applied directly by the orchestration goroutine. They are wrapped as typed messages by `HeaderProxy` and sent via `program.Send`, received on the Bubble Tea Update goroutine, and applied there — eliminating header data races. The completion summary is *not* a header method — it is written to the log body via `ui.CompletionSummary` so it scrolls with the rest of the run transcript.
 - **Channel-based coordination**: The `Actions` channel is the sole communication path from keyboard/signal handlers to the orchestration goroutine.
@@ -327,13 +327,13 @@ internal/statusline            (status-line runner, state, payload, sanitizer)
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
   - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
-- [ralph-tui Plan](plans/ralph-tui.md) — Original specification with acceptance criteria, verification checklist, and design rationale
+- [pr9k Plan](plans/pr9k.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration
-- **Coding Standards** — Conventions that govern ralph-tui implementation:
+- **Coding Standards** — Conventions that govern pr9k implementation:
   - [Concurrency](coding-standards/concurrency.md) — Mutex patterns, WaitGroup drain, channel dispatch, non-blocking sends
   - [Error Handling](coding-standards/error-handling.md) — Package-prefixed errors, file paths in I/O errors, scanner error checking
   - [API Design](coding-standards/api-design.md) — Bounds guards, precondition validation, adapter types, platform assumptions
   - [Go Patterns](coding-standards/go-patterns.md) — Symlink-safe paths, slice immutability, scanner buffers
   - [Testing](coding-standards/testing.md) — Race detector, idempotent close, bounds testing, test doubles with mutexes
   - [Lint and Tooling](coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited; fix the root cause or escalate
-  - [Versioning](coding-standards/versioning.md) — Semver rules specific to ralph-tui, the `version.Version` single source of truth, and what counts as the app's public API
+  - [Versioning](coding-standards/versioning.md) — Semver rules specific to pr9k, the `version.Version` single source of truth, and what counts as the app's public API

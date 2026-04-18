@@ -10,7 +10,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ## Repository Structure
 
-- `ralph-tui/` — Go TUI orchestrator. See "ralph-tui" section below.
+- `src/` — Go TUI orchestrator. See "pr9k" section below.
 - `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
 - `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Prompts use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other `{{VAR}}` tokens that are substituted at runtime.
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
@@ -32,26 +32,26 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 ## Key Design Decisions
 
 - Two distinct directories, captured separately at startup:
-  - **WorkflowDir (install dir)** — where ralph-tui's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
+  - **WorkflowDir (install dir)** — where pr9k's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
   - **ProjectDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup, or overridden with `--project-dir`. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo), the `logs/` output location, and `{{PROJECT_DIR}}` substitution.
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Claude steps run inside an ephemeral Docker container (image `docker/sandbox-templates:claude-code`) via `RunSandboxedStep`, with the target repo and Claude profile directory bind-mounted. Non-claude steps run directly on the host.
 - Non-claude steps (`close_gh_issue`, `git push`) run as shell commands defined in JSON configs
 
-## ralph-tui (Go/Bubble Tea)
+## pr9k (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `ralph-tui/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
 
 ### Build and run
 
 ```bash
 # Using make (recommended):
 make build
-./bin/ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
+./bin/pr9k [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
 
 # Or build directly:
-cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
-./ralph-tui [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
+cd src && go build -o ../bin/pr9k ./cmd/pr9k
+./pr9k [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]
 ```
 
 Use `go build` — `go run` won't work because `workflowDir` is resolved via `os.Executable()`.
@@ -93,7 +93,7 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 ## ADRs
 
 - [`docs/adr/20260409135303-cobra-cli-framework.md`](docs/adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing (POSIX flags, subcommands). Apply when modifying CLI argument handling or adding new commands.
-- [`docs/adr/20260410170952-narrow-reading-principle.md`](docs/adr/20260410170952-narrow-reading-principle.md) — Narrow-reading principle: ralph-tui is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code. Apply when evaluating any PR that adds Ralph-specific knowledge to Go code.
+- [`docs/adr/20260410170952-narrow-reading-principle.md`](docs/adr/20260410170952-narrow-reading-principle.md) — Narrow-reading principle: pr9k is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code. Apply when evaluating any PR that adds Ralph-specific knowledge to Go code.
 - [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](docs/adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate the TUI from Glyph to Bubble Tea + Lip Gloss + bubbles/viewport for dynamic window title, mouse-wheel scrolling, and long-term ecosystem stability. Apply when modifying any TUI rendering, keyboard dispatch, or subprocess-streaming code.
 - [`docs/adr/20260413160000-require-docker-sandbox.md`](docs/adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker an unconditional runtime requirement for claude steps. Apply when evaluating changes to the sandbox or any proposal to make Docker optional.
 - [`docs/adr/20260413162428-workflow-project-dir-split.md`](docs/adr/20260413162428-workflow-project-dir-split.md) — Decision to split the single `--project-dir` flag into `--workflow-dir` (workflow bundle) and `--project-dir` (target repo). Apply when modifying CLI flags, `{{VAR}}` tokens, or any code that distinguishes the workflow bundle from the target repository.
@@ -107,15 +107,15 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 - [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution and 256KB scanner buffers. Apply when working with CLI args, file paths, or subprocess I/O.
 - [`docs/coding-standards/lint-and-tooling.md`](docs/coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited in any form (`//nolint`, `.golangci.yml` exclusions, disabled linters, etc.). Fix the root cause or escalate; never silence a finding. Apply to every commit and every PR review.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
-- [`docs/coding-standards/versioning.md`](docs/coding-standards/versioning.md) — Semantic versioning standard: `version.Version` is the single source of truth, what counts as ralph-tui's public API (CLI flags, `ralph-steps.json` schema, `{{VAR}}` language, `--version` output), `0.y.z` rules, and how to bump. Apply when changing any user-visible surface or preparing a release.
+- [`docs/coding-standards/versioning.md`](docs/coding-standards/versioning.md) — Semantic versioning standard: `version.Version` is the single source of truth, what counts as pr9k's public API (CLI flags, `ralph-steps.json` schema, `{{VAR}}` language, `--version` output), `0.y.z` rules, and how to bump. Apply when changing any user-visible surface or preparing a release.
 - [`docs/coding-standards/documentation.md`](docs/coding-standards/documentation.md) — Documentation standards: feature docs must ship with the feature (not as follow-ups), updating CLAUDE.md when adding new doc files, keeping doc code blocks consistent with production code, and documenting external tool dependencies. Apply to every PR that changes a user-visible surface.
 
 ## How-To Guides
 
-Problem-focused guides for users running ralph-tui against their own projects. When adding a new how-to, keep each guide focused on solving one specific problem or using one specific feature.
+Problem-focused guides for users running pr9k against their own projects. When adding a new how-to, keep each guide focused on solving one specific problem or using one specific feature.
 
-- [`docs/how-to/getting-started.md`](docs/how-to/getting-started.md) — Install ralph-tui, point it at a target repo, and interpret the first run of the default workflow
-- [`docs/how-to/setting-up-docker-sandbox.md`](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `ralph-tui sandbox create`, authenticate the claude profile with `ralph-tui sandbox login`, and configure `CLAUDE_CONFIG_DIR` for multi-profile setups
+- [`docs/how-to/getting-started.md`](docs/how-to/getting-started.md) — Install pr9k, point it at a target repo, and interpret the first run of the default workflow
+- [`docs/how-to/setting-up-docker-sandbox.md`](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `pr9k sandbox create`, authenticate the claude profile with `pr9k sandbox login`, and configure `CLAUDE_CONFIG_DIR` for multi-profile setups
 - [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (checkbox grid, iteration line, log panel, shortcut footer with version label) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
 - [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
@@ -139,11 +139,11 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 - Docs: `docs/`
 - Coding standards: `docs/coding-standards/` — Go error handling, testing, concurrency, API design, and Go-specific patterns
 
-### ralph-tui
+### pr9k
 
 - Language: Go 1.26.2
-- Test: `cd ralph-tui && go test -race ./...` or `make test`
-- Build: `make build` or `cd ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui`
+- Test: `cd src && go test -race ./...` or `make test`
+- Build: `make build` or `cd src && go build -o ../bin/pr9k ./cmd/pr9k`
 - Lint: `make lint` (requires golangci-lint)
 - Vet: `make vet`
 - CI: `make ci` (runs test, lint, format, vet, vulncheck, mod-tidy, build)

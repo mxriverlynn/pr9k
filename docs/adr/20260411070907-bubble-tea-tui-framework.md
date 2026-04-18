@@ -9,7 +9,7 @@
 
 ## Context
 
-The ralph-tui Go orchestrator currently renders its TUI with [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`). Glyph gives us a pointer-binding widget model where mutating a `StatusHeader` field triggers a repaint, a `glyph.Log` widget backed by an `io.Pipe` for streaming subprocess output, and vim-style keyboard navigation. See `ralph-tui/cmd/ralph-tui/main.go:86-186` and `ralph-tui/internal/ui/header.go:15-88` for the current integration.
+The pr9k Go orchestrator currently renders its TUI with [Glyph](https://useglyph.sh/) (`github.com/kungfusheep/glyph`). Glyph gives us a pointer-binding widget model where mutating a `StatusHeader` field triggers a repaint, a `glyph.Log` widget backed by an `io.Pipe` for streaming subprocess output, and vim-style keyboard navigation. See `src/cmd/src/main.go:86-186` and `src/internal/ui/header.go:15-88` for the current integration.
 
 Two user-visible features are now required that Glyph does not support:
 
@@ -23,7 +23,7 @@ Rather than fork Glyph or build these features from scratch on top of it, we are
 - **Dynamic terminal/window title** must be a first-class capability, reactive to `Model` state changes
 - **Mouse-wheel scrolling** on the log panel must work out of the box
 - **Streaming subprocess output** must still flow in real time from two `io.Pipe` readers into a scrollable log view without losing the existing append-latency characteristics (`internal/workflow/workflow.go:42-176`)
-- **Preserve the three-color chrome** established in commit `5bdb2f0`: light-gray frame (`PaletteColor(245)`), bright-white active step, bright-green active marker — per `docs/features/tui-display.md` and `ralph-tui/internal/ui/header.go:15-28`
+- **Preserve the three-color chrome** established in commit `5bdb2f0`: light-gray frame (`PaletteColor(245)`), bright-white active step, bright-green active marker — per `docs/features/tui-display.md` and `src/internal/ui/header.go:15-28`
 - **Preserve the four-mode keyboard state machine** (Normal / Error / QuitConfirm / Quitting) from `docs/features/keyboard-input.md` and `internal/ui/ui.go:36-181`
 - **Long-term ecosystem stability** — consistent with the reasoning in [Cobra CLI ADR](./20260409135303-cobra-cli-framework.md), we prefer the library with the largest community and most active maintenance
 - **Architectural fit** with our pointer-mutable `StatusHeader` model is desirable but not strictly required — a principled rewrite is acceptable
@@ -57,7 +57,7 @@ Rather than fork Glyph or build these features from scratch on top of it, we are
 
 ## Decision
 
-We will migrate ralph-tui to **Bubble Tea + Lip Gloss + bubbles/viewport**. It is the only option that delivers both required features out of the box and also satisfies the long-term ecosystem-stability driver we applied in the Cobra decision. The required rewrite of the pointer-binding render loop into an Elm-style `Model`/`Update`/`View` is a real cost, but it is a one-time cost against a component set (`viewport`, `spinner`, `progress`, `textinput`) that will make subsequent UI work cheaper.
+We will migrate pr9k to **Bubble Tea + Lip Gloss + bubbles/viewport**. It is the only option that delivers both required features out of the box and also satisfies the long-term ecosystem-stability driver we applied in the Cobra decision. The required rewrite of the pointer-binding render loop into an Elm-style `Model`/`Update`/`View` is a real cost, but it is a one-time cost against a component set (`viewport`, `spinner`, `progress`, `textinput`) that will make subsequent UI work cheaper.
 
 We specifically reject tview because its lack of first-class window-title support would force a hand-rolled OSC emitter, and we reject gocui and bare tcell because neither has the community leverage we adopted as a decision driver in [Cobra](./20260409135303-cobra-cli-framework.md).
 
@@ -90,12 +90,12 @@ We specifically reject tview because its lack of first-class window-title suppor
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/cmd/ralph-tui/main.go` | Program entry point — constructs `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())`, wires the drain goroutine and signal handler, and calls `program.Run()`. |
-| `ralph-tui/internal/ui/header.go` | `StatusHeader` struct with per-cell Lip Gloss color arrays. Mutations are applied only via `headerModel.apply()` on the Bubble Tea Update goroutine. |
-| `ralph-tui/internal/ui/ui.go` | Keyboard state machine `KeyHandler`. The `Mode` enum started with four modes at migration time; `ModeNextConfirm` and `ModeDone` were added later (now six modes). Dispatch is handled by `keysModel.Update(msg tea.KeyMsg)` in `keys.go`. |
-| `ralph-tui/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. Interface unchanged. |
-| `ralph-tui/internal/workflow/workflow.go` | Subprocess runner using a `sendLine` callback (installed via `SetSender`) to forward lines non-blockingly into a buffered channel; a drain goroutine in `main.go` coalesces them into `LogLinesMsg` values sent via `program.Send`. No `io.Pipe` or `LogReader`. |
-| `ralph-tui/go.mod` | `github.com/kungfusheep/glyph` removed; `bubbletea`, `lipgloss`, `bubbles` added. |
+| `src/cmd/src/main.go` | Program entry point — constructs `tea.NewProgram(model, tea.WithMouseCellMotion(), tea.WithAltScreen(), tea.WithoutSignalHandler())`, wires the drain goroutine and signal handler, and calls `program.Run()`. |
+| `src/internal/ui/header.go` | `StatusHeader` struct with per-cell Lip Gloss color arrays. Mutations are applied only via `headerModel.apply()` on the Bubble Tea Update goroutine. |
+| `src/internal/ui/ui.go` | Keyboard state machine `KeyHandler`. The `Mode` enum started with four modes at migration time; `ModeNextConfirm` and `ModeDone` were added later (now six modes). Dispatch is handled by `keysModel.Update(msg tea.KeyMsg)` in `keys.go`. |
+| `src/internal/ui/orchestrate.go` | Step sequencer that sends `StepAction` over the `Actions` channel. Interface unchanged. |
+| `src/internal/workflow/workflow.go` | Subprocess runner using a `sendLine` callback (installed via `SetSender`) to forward lines non-blockingly into a buffered channel; a drain goroutine in `main.go` coalesces them into `LogLinesMsg` values sent via `program.Send`. No `io.Pipe` or `LogReader`. |
+| `src/go.mod` | `github.com/kungfusheep/glyph` removed; `bubbletea`, `lipgloss`, `bubbles` added. |
 
 ### Cross-References
 

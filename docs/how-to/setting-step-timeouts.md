@@ -1,6 +1,6 @@
 # Setting Step Timeouts
 
-The `timeoutSeconds` field caps the wall-clock time a single step may run. When the deadline expires, ralph-tui sends `SIGTERM` to the Docker container (for claude steps) or the host process (for non-claude steps). If the process has not exited within 10 seconds, `SIGKILL` is sent.
+The `timeoutSeconds` field caps the wall-clock time a single step may run. When the deadline expires, pr9k sends `SIGTERM` to the Docker container (for claude steps) or the host process (for non-claude steps). If the process has not exited within 10 seconds, `SIGKILL` is sent.
 
 ## When to use it
 
@@ -54,4 +54,4 @@ fix them in batch rather than one at a time. Do not exceed 8 minutes of
 wall-clock test execution.
 ```
 
-The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 900` (15 minutes) is the separate, enforced wall-clock cap that ralph-tui applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.
+The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 900` (15 minutes) is the separate, enforced wall-clock cap that pr9k applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.

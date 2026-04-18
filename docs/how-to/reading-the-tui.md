@@ -1,6 +1,6 @@
 # Reading the TUI
 
-Ralph-tui streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
+pr9k streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
 
 ## The three inner regions
 
@@ -65,7 +65,7 @@ After the finalize phase ends, the title keeps its last finalize value — **the
 
 ### Heartbeat indicator
 
-When ralph-tui is waiting on a `claude` step and no stream-json event arrives for ≥15 seconds, the iteration title appends a `  ⋯ thinking (Ns)` suffix showing how many seconds have elapsed since the last event. The suffix updates in-place every second and disappears as soon as the next event arrives. It is pure view state — never written to the log panel or persisted to disk.
+When pr9k is waiting on a `claude` step and no stream-json event arrives for ≥15 seconds, the iteration title appends a `  ⋯ thinking (Ns)` suffix showing how many seconds have elapsed since the last event. The suffix updates in-place every second and disappears as soon as the next event arrives. It is pure view state — never written to the log panel or persisted to disk.
 
 ## Region 2 — the log panel
 
@@ -153,11 +153,11 @@ When you resize the terminal, content re-wraps to the new width and the viewport
 
 ### Scrolling
 
-The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — ralph-tui enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
+The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — pr9k enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
 
 ### Selecting log text to copy
 
-ralph-tui handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
+pr9k handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
 
 **In-app mouse selection (recommended):**
 - **Left-click and drag** in the log viewport to select text. As you drag, the selected region is highlighted in reverse-video. Dragging past the top or bottom edge auto-scrolls one line per event.

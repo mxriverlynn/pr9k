@@ -37,7 +37,7 @@ Additionally, `CLAUDE_CONFIG_DIR=/home/agent/.claude` is always set inside the c
 
 ## How merging works
 
-At build time, ralph-tui merges the builtin allowlist with your `env` entries:
+At build time, pr9k merges the builtin allowlist with your `env` entries:
 
 ```
 final allowlist = BuiltinEnvAllowlist + env (from ralph-steps.json)
@@ -71,11 +71,11 @@ The default workflow forwards `GH_TOKEN` so that Claude can use the GitHub CLI i
 }
 ```
 
-Before running ralph-tui, set the variable on the host:
+Before running pr9k, set the variable on the host:
 
 ```bash
 export GH_TOKEN=$(gh auth token)
-/path/to/bin/ralph-tui
+/path/to/bin/pr9k
 ```
 
 Inside the container, `echo $GH_TOKEN` will print the token value.
@@ -124,7 +124,7 @@ Key differences from `env`:
 
 ### The `.ralph-cache` directory
 
-Ralph-tui creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo.
+pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo.
 
 ## Related documentation
 

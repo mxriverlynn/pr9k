@@ -9,7 +9,7 @@
 
 ## Context
 
-ralph-tui invokes `claude` with `--permission-mode bypassPermissions` in an
+pr9k invokes `claude` with `--permission-mode bypassPermissions` in an
 unattended loop. When claude runs directly on the host, any hallucinated
 destructive action — `rm -rf`, overwriting credentials, reading `~/.ssh` —
 has the full blast radius of the invoking user across the entire host
@@ -37,7 +37,7 @@ aligns the runtime with the upstream trust model.
   would cause the safety property to evaporate the first time a user or
   operator exercises it under pressure.
 - **Existing toolchain alignment.** `docker/sandbox-templates:claude-code` is
-  the image used by the Claude CLI's own sandbox infrastructure. ralph-tui
+  the image used by the Claude CLI's own sandbox infrastructure. pr9k
   extends rather than replaces that trust model.
 - **No equivalent alternative without new dependencies.** Alternatives
   considered (OCI runtimes via Podman, nsjail, process namespaces via
@@ -53,12 +53,12 @@ aligns the runtime with the upstream trust model.
    - Pros: the safety guarantee is binary and unconditional; no code path
      where the invariant is accidentally bypassed.
    - Cons: users who do not have Docker installed must install it before
-     ralph-tui works at all; adds a startup preflight check; `sandbox create`
+     pr9k works at all; adds a startup preflight check; `sandbox create`
      subcommand is required to pull and verify the image before first use.
 
 2. **Make Docker optional; fall back to direct invocation.**
 
-   - Pros: ralph-tui works without Docker.
+   - Pros: pr9k works without Docker.
    - Cons: the opt-out becomes the default failure mode — users who forget to
      install Docker or whose daemon has stopped silently lose the isolation
      boundary. The safety requirement is effectively opt-in, which is worse
@@ -82,7 +82,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 - The startup preflight (see `docs/code-packages/preflight.md`) checks for Docker
   reachability and the sandbox image before the TUI starts, so users get a
   clear actionable error rather than a mid-run failure.
-- The `ralph-tui sandbox create` subcommand (see `docs/features/sandbox-subcommand.md`)
+- The `pr9k sandbox create` subcommand (see `docs/features/sandbox-subcommand.md`)
   provides a guided setup path that pulls the image and runs a smoke test,
   minimizing the friction of the new dependency.
 - The target audience (developers running an AI-driven coding loop against a
@@ -94,15 +94,15 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 
 - Claude's blast radius is contained to the bind-mounted target repo and a
   scrubbed environment on every step, unconditionally.
-- The safety guarantee is verifiable: if ralph-tui is running, the sandbox is
+- The safety guarantee is verifiable: if pr9k is running, the sandbox is
   active.
 - Startup preflight catches a missing or unreachable Docker daemon before any
   workflow step runs.
 
 **Negative:**
 
-- Users without Docker must install it before ralph-tui works. `sandbox create`
-  provides a guided path, but the install itself is outside ralph-tui's control.
+- Users without Docker must install it before pr9k works. `sandbox create`
+  provides a guided path, but the install itself is outside pr9k's control.
 - A stopped or crashed Docker daemon after startup causes the next claude step
   to fail visibly — recoverable, but disruptive to an unattended run.
 
@@ -114,7 +114,7 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
   threat class.
 - The image reference is tag-only (`docker/sandbox-templates:claude-code`, not
   pinned by digest). Users get upstream updates by re-running
-  `ralph-tui sandbox create --force`. This trades reproducibility for upgrade
+  `pr9k sandbox create --force`. This trades reproducibility for upgrade
   ergonomics — the same trust model as `npm i -g @anthropic-ai/claude-code`.
 
 ## Notes
@@ -123,11 +123,11 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/sandbox/command.go` | `BuildRunArgs` constructs the `docker run` argv for every claude step |
-| `ralph-tui/internal/sandbox/terminator.go` | `NewTerminator` — `docker kill` via cidfile for clean termination |
-| `ralph-tui/internal/preflight/docker.go` | `CheckDocker` — startup check that Docker CLI and daemon are reachable |
-| `ralph-tui/internal/preflight/run.go` | `Run` — orchestrates all preflight checks and returns structured results |
-| `ralph-tui/cmd/ralph-tui/sandbox_create.go` | `sandbox create` subcommand — guided image pull and smoke test |
+| `src/internal/sandbox/command.go` | `BuildRunArgs` constructs the `docker run` argv for every claude step |
+| `src/internal/sandbox/terminator.go` | `NewTerminator` — `docker kill` via cidfile for clean termination |
+| `src/internal/preflight/docker.go` | `CheckDocker` — startup check that Docker CLI and daemon are reachable |
+| `src/internal/preflight/run.go` | `Run` — orchestrates all preflight checks and returns structured results |
+| `src/cmd/src/sandbox_create.go` | `sandbox create` subcommand — guided image pull and smoke test |
 
 ### Related Docs
 

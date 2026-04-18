@@ -1,6 +1,6 @@
 # Workflow Orchestration
 
-Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
+Drives the entire pr9k workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
 - **Last Updated:** 2026-04-18
 - **Authors:**
@@ -18,10 +18,10 @@ Drives the entire ralph-tui workflow: running initialize steps, iterating over G
 - After the finalize phase, `Run` emits the run-level cumulative claude spend summary via `WriteRunSummary` (D13 2c), then writes a `CompletionSummary` line to the log body (not the header) and returns on its own — the workflow goroutine in `main.go` tears down the TUI and exits the process
 
 Key files:
-- `ralph-tui/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
-- `ralph-tui/internal/ui/orchestrate.go` — `Orchestrate` function, `ResolvedStep`, error handling loop
-- `ralph-tui/internal/workflow/run_test.go` — Unit tests for the `Run` orchestration loop
-- `ralph-tui/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
+- `src/internal/workflow/run.go` — `Run` function, `RunConfig`, `buildStep`, `ResolveCommand`, header adapters
+- `src/internal/ui/orchestrate.go` — `Orchestrate` function, `ResolvedStep`, error handling loop
+- `src/internal/workflow/run_test.go` — Unit tests for the `Run` orchestration loop
+- `src/internal/ui/orchestrate_test.go` — Unit tests for step sequencing and error recovery
 
 ## Architecture
 
@@ -69,10 +69,10 @@ Key files:
 
 | File | Purpose |
 |------|---------|
-| `ralph-tui/internal/workflow/run.go` | Run loop, RunConfig, buildStep, ResolveCommand, header adapters |
-| `ralph-tui/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
-| `ralph-tui/internal/workflow/run_test.go` | Tests for Run lifecycle, initialize phase, BreakLoopIfEmpty |
-| `ralph-tui/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
+| `src/internal/workflow/run.go` | Run loop, RunConfig, buildStep, ResolveCommand, header adapters |
+| `src/internal/ui/orchestrate.go` | Step sequencing, error recovery state machine |
+| `src/internal/workflow/run_test.go` | Tests for Run lifecycle, initialize phase, BreakLoopIfEmpty |
+| `src/internal/ui/orchestrate_test.go` | Tests for Orchestrate behavior |
 
 ## Core Types
 
@@ -541,7 +541,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 
 ## Testing
 
-- `ralph-tui/internal/workflow/run_test.go` — Tests `Run` lifecycle with `fakeExecutor` and `fakeRunHeader` test doubles:
+- `src/internal/workflow/run_test.go` — Tests `Run` lifecycle with `fakeExecutor` and `fakeRunHeader` test doubles:
   - `TestRun_InitializeStepsRunBeforeIterationSteps` — verifies ordering: init steps run before iteration steps
   - `TestRun_InitializeCaptureAvailableInIteration` — verifies that `CaptureAs` values bound in the initialize phase are substituted as `{{VAR}}` tokens in iteration step commands
   - `TestRun_InitializeBuildErrorContinuesToNextInitStep` — verifies that a bad init step (missing prompt file) logs `"Error preparing initialize step"`, skips that step, and continues to the next
@@ -618,7 +618,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestRun_RunSummary_EmittedForClaudeSteps` — verifies the run-level cumulative summary line appears before `CompletionSummary`, contains expected token/cost fragments, and that `writeRunSummaryCalls == 1`
   - `TestRun_RunSummary_NotEmittedForNonClaudeSteps` — verifies no summary line is written when no claude steps ran (FinalizeRun returns nil for zero invocations)
   - `TestRun_RunSummary_MultipleClaudeStepsAccumulate` — verifies stats from two claude step invocations are accumulated (total cost and invocation count both reflected in the summary line)
-- `ralph-tui/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
+- `src/internal/ui/orchestrate_test.go` — Tests step sequencing, error recovery (continue/retry/quit), terminated step handling, pre-step quit drain, retry separator:
   - `TestOrchestrate_WritesStepStartBannerBeforeEachStep` — verifies heading, underline, and blank line are written to the log before each step runs
   - `TestOrchestrate_SetsStepActiveBeforeRunning` — verifies `SetStepState(Active)` is called before `RunStep` via a `callbackStubRunner`
   - `TestOrchestrate_Retry_StateTransitionSequence` — verifies the `Active→Failed→Done` state transition sequence on retry (note: `StepActive` is not re-set on retry — this is documented in the test)
@@ -639,6 +639,6 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 - [TUI Status Header](tui-display.md) — How step state updates are rendered
 - [File Logging](../code-packages/logger.md) — How step separator lines are written to the log file
 - [Variable State Management](../code-packages/vars.md) — VarTable scopes, phase transitions, and CaptureAs binding
-- [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including orchestration design
+- [pr9k Plan](../plans/pr9k.md) — Original specification including orchestration design
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for channel-based dispatch and non-blocking drain
 - [API Design](../coding-standards/api-design.md) — Coding standards for adapter types used in header adapters
