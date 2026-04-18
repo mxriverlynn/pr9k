@@ -185,6 +185,7 @@ All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` 
 | Path traversal attempt | `"steps: prompt path escapes prompts directory: {promptFile}"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 | Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
+| Negative `timeoutSeconds` | `"steps: step {name}: timeoutSeconds must not be negative"` | Returned to caller |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 

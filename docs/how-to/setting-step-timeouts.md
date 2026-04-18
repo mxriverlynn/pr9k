@@ -27,12 +27,14 @@ Add `timeoutSeconds` to any step in `ralph-steps.json`:
 
 `900` seconds (15 minutes) is the default applied to the bundled "Test writing" step — roughly 3× the observed median duration.
 
-**Validator constraint:** `timeoutSeconds` must be a positive integer when set. Omitting the field (or setting it to `0` via omitempty round-trip) means no timeout.
+**Validator constraint:** `timeoutSeconds` must be a positive integer when set and must not exceed `86400` (24 hours). Omitting the field (or setting it to `0` via omitempty round-trip) means no timeout.
 
 ## What happens on timeout
 
-1. The timeout goroutine sends `SIGTERM` (via `docker kill` for sandboxed steps) after `timeoutSeconds` wall-clock seconds.
-2. If the process has not exited within 10 seconds, `SIGKILL` is sent.
+1. The timeout goroutine sends `SIGTERM` after `timeoutSeconds` wall-clock seconds:
+   - **Claude steps** — delivered via `docker kill --signal=SIGTERM` to the container.
+   - **Non-claude steps** — delivered via `syscall.Kill(-pid, SIGTERM)` to the process group (the host child is started with `Setpgid: true`, so grandchildren are included).
+2. If the process has not exited within 10 seconds, `SIGKILL` is sent to the same target.
 3. The step's exit code is non-zero → the step is recorded as `status: "failed"` in `.ralph-cache/iteration.jsonl` with `notes: "timed out after Ns"`.
 4. The workflow enters error mode (same as any other non-zero exit), and the user can choose to continue, retry, or quit.
 

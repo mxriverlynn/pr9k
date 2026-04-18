@@ -22,7 +22,12 @@ func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.C
 
 The 32 KiB cap: content longer than 32 KiB is truncated to 30 KiB and the following marker is appended: `[...truncated, full content exceeds 32 KiB]`. The cut point is snapped backward with `utf8.RuneStart` to the nearest rune boundary so that multi-byte sequences are never split.
 
-When `timeoutSeconds > 0`, a goroutine is spawned that sends `SIGTERM` (or invokes the cidfile-driven Terminator for sandboxed steps) when the deadline expires. If the process has not exited within 10 seconds, `SIGKILL` is sent. After a timeout, `WasTimedOut()` returns `true` and `Run` sets `IterationRecord.Notes` to `"timed out after Ns"`.
+When `timeoutSeconds > 0`, a goroutine is spawned that fires when the deadline expires:
+
+- **Sandboxed (claude) steps** — invokes the cidfile-driven Terminator (`docker kill --signal=SIGTERM`), then `docker kill --signal=SIGKILL` after 10 seconds.
+- **Host (non-claude) steps** — the child process is started with `Setpgid: true` so its process-group ID equals its PID. The goroutine uses `syscall.Kill(-proc.Pid, SIGTERM)` to signal the entire group, reaching any grandchildren that called `setsid`. After 10 seconds, `syscall.Kill(-proc.Pid, SIGKILL)` is sent.
+
+After a timeout, `WasTimedOut()` returns `true` and `Run` sets `IterationRecord.Notes` to `"timed out after Ns"`.
 
 If the step exits non-zero, `LastCapture()` is always `""` regardless of mode.
 

@@ -25,7 +25,7 @@ Each step is checked for:
 - `captureMode`, when set, must be one of `""`, `"lastLine"`, or `"fullStdout"`. Any other value is a fatal error. Setting `captureMode` on a claude step (`isClaude: true`) is also a fatal error — claude steps always capture via the stream-json Aggregator result.
 - `breakLoopIfEmpty` requires `captureAs` to be set and is only valid in the iteration phase.
 - `skipIfCaptureEmpty`, when set, must be a non-empty string naming a `captureAs` value bound by a strictly earlier step in the same phase, and is only valid in the iteration phase. Initialize-phase captures are excluded because the runtime `captureStates` map is populated per-iteration; referencing a cross-phase capture would silently never fire.
-- `timeoutSeconds`, when set, must be a positive integer (> 0). Zero is the sentinel for "no timeout" and is represented by omitting the field (`omitempty`).
+- `timeoutSeconds`, when set, must be a positive integer (> 0) and must not exceed `86400` (24 hours). Zero is the sentinel for "no timeout" and is represented by omitting the field (`omitempty`). The 86400 cap prevents integer overflow when the value is converted to `time.Duration` — values above ~9.2e9 seconds would wrap and fire immediately.
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).
 
