@@ -279,8 +279,8 @@ func TestDocIntegrity_StatusLineMd_PayloadVersionMatchesCurrent(t *testing.T) {
 }
 
 // TP-003b: docs/how-to/configuring-a-status-line.md version mentions are current.
-// Pins both the prerequisites prose ("pr9k 0.6.1 or later") and the
-// field-value table row (`"0.6.1"`).
+// Pins both the prerequisites prose ("pr9k <Version> or later") and the
+// field-value table row (`"<Version>"`).
 func TestDocIntegrity_ConfiguringStatusLine_VersionMentionsCurrent(t *testing.T) {
 	root := docTestRepoRoot(t)
 	content := readFile(t, root, "docs/how-to/configuring-a-status-line.md")
