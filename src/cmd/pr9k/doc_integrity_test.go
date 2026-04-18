@@ -851,6 +851,38 @@ func TestDocIntegrity_ADR_StatusAccepted(t *testing.T) {
 	assertContains(t, content, "Status:** accepted", "ADR status line")
 }
 
+// TP-001 (issue #143): docs/project-discovery.md "Current version" line tracks version.Version.
+// Guards the F2-class bug: bumping the constant but forgetting this doc surface.
+func TestDocIntegrity_ProjectDiscovery_CurrentVersionMatchesVersion(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/project-discovery.md")
+	want := "Current version: `" + version.Version + "`"
+	assertContains(t, content, want, "docs/project-discovery.md current version line")
+}
+
+// TP-003 (issue #143): reading-the-tui.md status-line display block contains the current version.
+// TP-109-25 guards the shortcut-footer ASCII diagram (occurrence 1); this test independently
+// guards the status-line display block inside ### Status-line footer path (occurrence 2).
+func TestDocIntegrity_ReadingTheTUI_StatusLineBlockVersionCurrent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/how-to/reading-the-tui.md")
+
+	sectionIdx := strings.Index(content, "### Status-line footer path")
+	if sectionIdx == -1 {
+		t.Fatal("reading-the-tui.md: could not find '### Status-line footer path' heading")
+	}
+	rest := content[sectionIdx+len("### Status-line footer path"):]
+	endIdx := strings.Index(rest, "\n### ")
+	var section string
+	if endIdx == -1 {
+		section = rest
+	} else {
+		section = rest[:endIdx]
+	}
+	want := "pr9k v" + version.Version
+	assertContains(t, section, want, "reading-the-tui.md status-line footer section")
+}
+
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

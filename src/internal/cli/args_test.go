@@ -297,6 +297,26 @@ func TestNewCommand_VersionShortFlag(t *testing.T) {
 	}
 }
 
+// TP-002 (issue #143): --version output exactly equals "pr9k version <Version>\n".
+// Pins the CLI surface described in versioning.md public-API item 4.
+// Additive to TestNewCommand_VersionFlag (prefix+contains checks stay as-is).
+func TestNewCommand_VersionExactOutput(t *testing.T) {
+	cfg := &Config{}
+	var ranE bool
+	cmd := newCommandImpl(cfg, &ranE)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error for --version: %v", err)
+	}
+	want := "pr9k version " + version.Version + "\n"
+	if out.String() != want {
+		t.Errorf("expected --version output %q, got %q", want, out.String())
+	}
+}
+
 // 19. --workflow-dir with nonexistent path → error.
 func TestNewCommand_WorkflowDirNonexistent(t *testing.T) {
 	cfg := &Config{}
