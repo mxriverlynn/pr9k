@@ -6,7 +6,6 @@ If the code-review.md file is empty, non-existant, or otherwise says nothing nee
 4. Commit all changes in a single commit.
 5. Append your progress to progress.txt
 6. Append all deferred work to deferred.txt
-7. Update the github issue #{{ISSUE_ID}} with what was done.
 Never commit code-review.md
 Never commit progress.txt
 Never commit deffered.txt

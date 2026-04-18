@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ISSUE_ID="${1:?Usage: post_issue_summary <issue-id>}"
+PROGRESS_FILE="progress.txt"
+
+if [[ ! -f "$PROGRESS_FILE" ]] || [[ ! -s "$PROGRESS_FILE" ]]; then
+    exit 0
+fi
+
+body="### Ralph iteration summary
+
+$(cat "$PROGRESS_FILE")"
+
+gh issue comment "$ISSUE_ID" --body "$body"

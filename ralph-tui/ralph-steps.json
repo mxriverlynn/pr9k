@@ -17,6 +17,7 @@
     { "name": "Test writing",     "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md" },
     { "name": "Code review",      "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
     { "name": "Fix review items", "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md" },
+    { "name": "Summarize to issue", "isClaude": false, "command": ["scripts/post_issue_summary", "{{ISSUE_ID}}"] },
     { "name": "Close issue",      "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"] },
     { "name": "Update docs",      "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
     { "name": "Git push",         "isClaude": false, "command": ["git", "push"] }

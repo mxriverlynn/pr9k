@@ -71,16 +71,17 @@ Relative paths containing a `/` separator are resolved against the workflow dire
 
 ## The Default Workflow
 
-The default iteration workflow has 8 steps:
+The default iteration workflow has 9 steps:
 
 1. **Feature work** (sonnet) — Implements the GitHub issue
 2. **Test planning** (opus) — Creates a test plan
 3. **Test writing** (sonnet) — Writes tests from the plan
 4. **Code review** (opus) — Reviews changes since the starting SHA
 5. **Fix review items** (sonnet) — Implements review findings
-6. **Close issue** (shell) — Closes the GitHub issue via `gh`
-7. **Update docs** (sonnet) — Updates project documentation
-8. **Git push** (shell) — Pushes all commits
+6. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
+7. **Close issue** (shell) — Closes the GitHub issue via `gh`
+8. **Update docs** (sonnet) — Updates project documentation
+9. **Git push** (shell) — Pushes all commits
 
 The default finalization workflow has 3 steps:
 
