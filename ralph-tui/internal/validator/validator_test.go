@@ -1943,15 +1943,6 @@ func TestValidate_StatusLine_BareCommandInPath(t *testing.T) {
 // containerEnv validation
 // ----------------------------------------------------------------------------
 
-func minimalWithContainerEnv(t *testing.T) string {
-	t.Helper()
-	return `{
-		"initialize": [],
-		"iteration": [{"name":"Step 1","isClaude":false,"command":["echo","hi"]}],
-		"finalize": []
-	}`
-}
-
 // TestValidate_ContainerEnv_Valid verifies that a well-formed containerEnv block
 // produces no errors.
 func TestValidate_ContainerEnv_Valid(t *testing.T) {

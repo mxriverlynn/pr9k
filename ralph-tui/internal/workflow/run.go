@@ -206,10 +206,6 @@ type RunConfig struct {
 	Runner StatusRunner
 }
 
-// noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
-// initialize) that do not update the TUI step-checkbox display.
-type noopHeader struct{}
-
 // stateTracker is a ui.StepHeader that records the last StepState set without
 // any visible TUI output. Used by the initialize phase so AppendIterationRecord
 // can determine step success or failure after Orchestrate returns.
@@ -236,8 +232,6 @@ func stepStatus(state ui.StepState) string {
 		return "done"
 	}
 }
-
-func (noopHeader) SetStepState(int, ui.StepState) {}
 
 // setTimeoutNote sets rec.Notes to the standard timeout message when the executor
 // reports that the most recent step was ended by a per-step timeout goroutine.

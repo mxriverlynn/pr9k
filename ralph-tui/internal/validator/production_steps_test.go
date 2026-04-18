@@ -306,7 +306,7 @@ func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
 		t.Fatal(`no iteration step named "Fix review items"`)
 	}
 
-	if !(crIdx < crvIdx && crvIdx < friIdx) {
+	if crIdx >= crvIdx || crvIdx >= friIdx {
 		t.Errorf("want Code review (%d) < Check review verdict (%d) < Fix review items (%d)", crIdx, crvIdx, friIdx)
 	}
 	if crvIdx != crIdx+1 || friIdx != crvIdx+1 {
