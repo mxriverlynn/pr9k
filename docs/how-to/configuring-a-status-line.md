@@ -66,7 +66,7 @@ printf '%b\n' "$line"
 Copy it into your workflow's `scripts/` directory and make it executable:
 
 ```bash
-cp /path/to/pr9k/scripts/statusline scripts/statusline
+cp /path/to/pr9k/workflow/scripts/statusline scripts/statusline
 chmod +x scripts/statusline
 ```
 
