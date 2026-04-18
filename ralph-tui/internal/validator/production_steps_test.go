@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/sandbox"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
 )
@@ -49,12 +51,68 @@ func assembleWorkflowDir(t *testing.T) string {
 	return dir
 }
 
-// TP-001: production ralph-steps.json passes validation with zero fatal errors.
+// TP-001: production ralph-steps.json passes validation with zero fatal errors,
+// and the containerEnv block contains no collision notices (TP-003).
 func TestValidate_ProductionStepsJSON(t *testing.T) {
 	workflowDir := assembleWorkflowDir(t)
 	errs := validator.Validate(workflowDir)
 	if n := validator.FatalErrorCount(errs); n != 0 {
 		t.Fatalf("production ralph-steps.json has %d fatal validation error(s): %v", n, errs)
+	}
+	// TP-003: none of the returned entries should be a containerEnv collision
+	// notice (Severity==info, Category=="containerEnv"). Such a notice means one
+	// of the Go cache keys also appears in the env allowlist — Docker's last-write
+	// rule would silently discard the host value in that case.
+	for _, e := range errs {
+		if e.Severity == validator.SeverityInfo && e.Category == "containerEnv" {
+			t.Errorf("containerEnv collision notice: %v", e)
+		}
+	}
+}
+
+// TP-001: all four Go cache keys are present in the production containerEnv block.
+func TestLoadSteps_ProductionStepsJSON_ContainerEnvKeys(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
+
+	sf, err := steps.LoadSteps(ralphTUIDir)
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	required := []string{"GOPATH", "GOCACHE", "GOMODCACHE", "XDG_CACHE_HOME"}
+	for _, key := range required {
+		if _, ok := sf.ContainerEnv[key]; !ok {
+			t.Errorf("containerEnv missing key %q", key)
+		}
+	}
+}
+
+// TP-002: every production containerEnv value is clean and resolves under the
+// container bind-mount target (/home/agent/workspace/).
+func TestProductionStepsJSON_ContainerEnvValuesUnderBindMount(t *testing.T) {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
+
+	sf, err := steps.LoadSteps(ralphTUIDir)
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+
+	prefix := sandbox.ContainerRepoPath + "/"
+	for key, val := range sf.ContainerEnv {
+		if filepath.Clean(val) != val {
+			t.Errorf("containerEnv[%q] = %q: filepath.Clean changes it to %q (dot-segments or trailing slash)", key, val, filepath.Clean(val))
+		}
+		if !strings.HasPrefix(val, prefix) {
+			t.Errorf("containerEnv[%q] = %q: want prefix %q (must resolve under the container bind-mount)", key, val, prefix)
+		}
 	}
 }
 
