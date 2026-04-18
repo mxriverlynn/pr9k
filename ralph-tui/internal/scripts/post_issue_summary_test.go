@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,7 @@ func fakeSentinelGh(t *testing.T) (ghDir, sentinel string) {
 	t.Helper()
 	dir := t.TempDir()
 	sentinel = filepath.Join(dir, "gh.called")
-	script := "#!/usr/bin/env bash\ntouch " + sentinel + "\n"
+	script := fmt.Sprintf("#!/usr/bin/env bash\ntouch %q\n", sentinel)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
 		t.Fatalf("write fake gh: %v", err)
 	}
@@ -43,7 +44,7 @@ func recordingGh(t *testing.T) (ghDir, record string) {
 	t.Helper()
 	dir := t.TempDir()
 	record = filepath.Join(dir, "gh.argv")
-	script := "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >> " + record + "\n"
+	script := fmt.Sprintf("#!/usr/bin/env bash\nprintf '%%s\\n' \"$@\" >> %q\n", record)
 	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(script), 0755); err != nil {
 		t.Fatalf("write recording gh: %v", err)
 	}
@@ -51,18 +52,16 @@ func recordingGh(t *testing.T) (ghDir, record string) {
 }
 
 // runScript runs the post_issue_summary script via bash with the given args,
-// working directory, and PATH prefix. Returns stdout, stderr, and exit code.
-func runScript(t *testing.T, args []string, workDir, pathPrefix string) (stdout, stderr string, exitCode int) {
+// working directory, and PATH prefix. Returns stderr and exit code.
+func runScript(t *testing.T, args []string, workDir, pathPrefix string) (stderr string, exitCode int) {
 	t.Helper()
 	cmdArgs := append([]string{scriptPath(t)}, args...)
 	cmd := exec.Command("bash", cmdArgs...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(), "PATH="+pathPrefix+":"+os.Getenv("PATH"))
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
+	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
 	err := cmd.Run()
-	stdout = outBuf.String()
 	stderr = errBuf.String()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -79,7 +78,7 @@ func TestPostIssueSummary_MissingProgressFile(t *testing.T) {
 	workDir := t.TempDir()
 	ghDir, sentinel := fakeSentinelGh(t)
 
-	_, _, exitCode := runScript(t, []string{"999"}, workDir, ghDir)
+	_, exitCode := runScript(t, []string{"999"}, workDir, ghDir)
 
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
@@ -97,7 +96,7 @@ func TestPostIssueSummary_EmptyProgressFile(t *testing.T) {
 	}
 	ghDir, sentinel := fakeSentinelGh(t)
 
-	_, _, exitCode := runScript(t, []string{"999"}, workDir, ghDir)
+	_, exitCode := runScript(t, []string{"999"}, workDir, ghDir)
 
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
@@ -115,7 +114,7 @@ func TestPostIssueSummary_PopulatedProgressFile(t *testing.T) {
 	}
 	ghDir, record := recordingGh(t)
 
-	_, _, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
+	_, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
 
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
@@ -137,7 +136,7 @@ func TestPostIssueSummary_MissingArg(t *testing.T) {
 	workDir := t.TempDir()
 	ghDir, sentinel := fakeSentinelGh(t)
 
-	_, stderr, exitCode := runScript(t, nil, workDir, ghDir)
+	stderr, exitCode := runScript(t, nil, workDir, ghDir)
 
 	if exitCode == 0 {
 		t.Fatal("exit code = 0, want non-zero")

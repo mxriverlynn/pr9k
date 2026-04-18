@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
+# Phase-A implementation: reads the full progress.txt and posts it as one
+# comment. Known limitation — progress.txt accumulates across iterations
+# in a multi-iteration run, so issue N's comment includes iterations 1..N.
+# Replaced by a .ralph-iteration.jsonl filter in workflow-optimization §3.6.
 set -euo pipefail
 
 ISSUE_ID="${1:?Usage: post_issue_summary <issue-id>}"
 PROGRESS_FILE="progress.txt"
 
-if [[ ! -f "$PROGRESS_FILE" ]] || [[ ! -s "$PROGRESS_FILE" ]]; then
+if [[ ! -s "$PROGRESS_FILE" ]]; then
     exit 0
 fi
 
 body="### Ralph iteration summary
 
 $(cat "$PROGRESS_FILE")"
+
+# Truncate to stay within GitHub's 65 536-byte comment limit.
+max_bytes=60000
+if [[ ${#body} -gt $max_bytes ]]; then
+    body="${body:0:$max_bytes}
+...(truncated)"
+fi
 
 gh issue comment "$ISSUE_ID" --body "$body"
