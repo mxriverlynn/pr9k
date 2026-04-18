@@ -148,3 +148,158 @@ func TestPostIssueSummary_MissingArg(t *testing.T) {
 		t.Fatal("gh was invoked but should not have been")
 	}
 }
+
+// TP-001: non-empty .ralph-cache/iteration.jsonl is preferred over progress.txt.
+// The body must be built from the JSONL; progress.txt content must not appear.
+func TestPostIssueSummary_JSONLPreference(t *testing.T) {
+	workDir := t.TempDir()
+	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("mkdir .ralph-cache: %v", err)
+	}
+	jsonl := `{"step_name":"feature-work","status":"done","schema_version":1,"iteration_num":1,"duration_s":1.5}` + "\n"
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(jsonl), 0644); err != nil {
+		t.Fatalf("write iteration.jsonl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("OLD CONTENT"), 0644); err != nil {
+		t.Fatalf("write progress.txt: %v", err)
+	}
+
+	ghDir, record := recordingGh(t)
+	_, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read gh.argv: %v", err)
+	}
+	wantBody := "### Ralph iteration summary\n\n- feature-work [done]"
+	want := "issue\ncomment\n42\n--body\n" + wantBody + "\n"
+	if got := string(data); got != want {
+		t.Fatalf("gh argv:\ngot:  %q\nwant: %q", got, want)
+	}
+	if strings.Contains(string(data), "OLD CONTENT") {
+		t.Error("progress.txt content must not appear when iteration.jsonl is present")
+	}
+}
+
+// TP-002: jq formats each JSONL line into "- <name> [<status>]" with an optional
+// " — <notes>" suffix. Empty or absent notes must produce no suffix.
+func TestPostIssueSummary_JSONLNotesFormatting(t *testing.T) {
+	workDir := t.TempDir()
+	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("mkdir .ralph-cache: %v", err)
+	}
+	lines := strings.Join([]string{
+		`{"step_name":"a","status":"done"}`,
+		`{"step_name":"b","status":"failed","notes":"timed out"}`,
+		`{"step_name":"c","status":"done","notes":""}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(lines), 0644); err != nil {
+		t.Fatalf("write iteration.jsonl: %v", err)
+	}
+
+	ghDir, record := recordingGh(t)
+	_, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read gh.argv: %v", err)
+	}
+	body := string(data)
+	for _, wantLine := range []string{"- a [done]", "- b [failed] — timed out", "- c [done]"} {
+		if !strings.Contains(body, wantLine) {
+			t.Errorf("gh body does not contain %q; got %q", wantLine, body)
+		}
+	}
+	// Empty notes must not produce a suffix.
+	if strings.Contains(body, "- c [done] —") {
+		t.Errorf("empty notes must produce no suffix; got %q", body)
+	}
+}
+
+// TP-003: When iteration.jsonl is absent or empty, the script falls back to
+// progress.txt for backward compatibility.
+func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
+	t.Run("no_cache_dir", func(t *testing.T) {
+		workDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0644); err != nil {
+			t.Fatalf("write progress.txt: %v", err)
+		}
+
+		ghDir, record := recordingGh(t)
+		_, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0", exitCode)
+		}
+
+		data, err := os.ReadFile(record)
+		if err != nil {
+			t.Fatalf("read gh.argv: %v", err)
+		}
+		wantBody := "### Ralph iteration summary\n\nprogress content"
+		want := "issue\ncomment\n42\n--body\n" + wantBody + "\n"
+		if got := string(data); got != want {
+			t.Fatalf("gh argv:\ngot:  %q\nwant: %q", got, want)
+		}
+	})
+
+	t.Run("empty_jsonl", func(t *testing.T) {
+		workDir := t.TempDir()
+		cacheDir := filepath.Join(workDir, ".ralph-cache")
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			t.Fatalf("mkdir .ralph-cache: %v", err)
+		}
+		// Empty JSONL file — must not satisfy the -s test.
+		if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0644); err != nil {
+			t.Fatalf("write empty iteration.jsonl: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(workDir, "progress.txt"), []byte("progress content\n"), 0644); err != nil {
+			t.Fatalf("write progress.txt: %v", err)
+		}
+
+		ghDir, record := recordingGh(t)
+		_, exitCode := runScript(t, []string{"42"}, workDir, ghDir)
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0", exitCode)
+		}
+
+		data, err := os.ReadFile(record)
+		if err != nil {
+			t.Fatalf("read gh.argv: %v", err)
+		}
+		wantBody := "### Ralph iteration summary\n\nprogress content"
+		want := "issue\ncomment\n42\n--body\n" + wantBody + "\n"
+		if got := string(data); got != want {
+			t.Fatalf("gh argv:\ngot:  %q\nwant: %q", got, want)
+		}
+	})
+}
+
+// TP-008: Empty .ralph-cache/iteration.jsonl with no progress.txt → exit 0,
+// gh not invoked. Catches regressions if the -s guard is accidentally inverted.
+func TestPostIssueSummary_EmptyJSONLNoProgress(t *testing.T) {
+	workDir := t.TempDir()
+	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("mkdir .ralph-cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0644); err != nil {
+		t.Fatalf("write empty iteration.jsonl: %v", err)
+	}
+
+	ghDir, sentinel := fakeSentinelGh(t)
+	_, exitCode := runScript(t, []string{"999"}, workDir, ghDir)
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("gh was invoked but should not have been")
+	}
+}
