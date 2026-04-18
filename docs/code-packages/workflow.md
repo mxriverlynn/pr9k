@@ -92,6 +92,57 @@ func (r *Runner) BlacklistedSessions() []string
 
 Both acquire `processMu` internally. Writing to the blacklist is only done inside `RunSandboxedStep` while holding `processMu`, so there is no data race.
 
+## Session Resume
+
+When a step has `ResumePrevious: true`, `Run` calls `evaluateResumeGates` before building the step. All five gates must pass for `--resume <sessionID>` to be injected into the docker command; any single gate failure causes the step to start a fresh session instead (fail-open — never aborts the run).
+
+```go
+func evaluateResumeGates(
+    prevStats claudestream.StepStats,
+    prevState ui.StepState,
+    blacklisted func(string) bool,
+) (sessionID string, gate string)
+```
+
+| Gate | Condition | Failure log message |
+|------|-----------|---------------------|
+| G1 | `prevStats.SessionID` is non-empty | `"G1: previous step has no session ID"` |
+| G2 | `prevState == ui.StepDone` | `"G2: previous step did not complete successfully"` |
+| G3 | *(implicitly satisfied by G2)* `is_error=true` sets `StepFailed`, which blocks G2 | — |
+| G4 | `prevStats.InputTokens < resumeInputTokenLimit` (200 000) | `"G4: previous step context too large (N input tokens >= 200,000)"` |
+| G5 | `!blacklisted(prevStats.SessionID)` | `"G5: previous step session is blacklisted (was timed out)"` |
+
+When a gate blocks, `Run` writes `"resume gate blocked (<gate label>) -- starting fresh session for step <name>"` to the log and passes an empty `resumeSessionID` to `buildStep`.
+
+### Per-phase trackers
+
+Three pairs of tracking variables hold the preceding step's stats and state for gate evaluation. They are declared on `Run`'s stack — no synchronization needed:
+
+| Phase | Stats variable | State variable | Reset point |
+|-------|---------------|----------------|-------------|
+| Initialize | `prevInitStats` | `prevInitState` | Start of `Run` (zero values) |
+| Iteration | `prevIterStats` | `prevIterState` | Start of each iteration (`ResetIteration`) |
+| Finalize | `prevFinalStats` | `prevFinalState` | Start of finalize phase |
+
+The per-iteration reset means `resumePrevious` cannot bridge across iteration boundaries: the first step of every new iteration always starts fresh (G1 fails on the zero-value `SessionID`). The same zero-value initialization applies to the first step of the initialize and finalize phases.
+
+Skipped steps (via `skipIfCaptureEmpty`) do **not** advance the tracking variables. The next `resumePrevious` step evaluates gates against the step immediately before the skipped one — the resume chain jumps over the skip.
+
+After each step completes, `Run` updates the tracking pair:
+
+```go
+prevIterStats = disp.capturedStats   // claudestream.StepStats from the dispatcher
+prevIterState = th.lastState         // ui.StepState recorded by trackingOffsetIterHeader
+```
+
+### Timeout → G5 path
+
+When a claude step times out, `RunSandboxedStep` adds its captured `SessionID` to `Runner`'s session blacklist. On the next iteration (or the next step in the same phase), `evaluateResumeGates` calls `executor.SessionBlacklisted(prevStats.SessionID)` — gate G5 fires and the resume is suppressed. This prevents resuming a session whose server-side state is unknown due to the forced kill.
+
+The feature is **shipped engine-off**: the default `ralph-steps.json` omits `resumePrevious` on all steps. Engine support is fully implemented; activation requires setting `"resumePrevious": true` on the desired claude steps in `ralph-steps.json` and A/B validation.
+
+See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious) in the feature doc for the user-facing gate table and skip-chain behavior. See [Resuming Sessions](../how-to/resuming-sessions.md) for usage guidance.
+
 ## stepDispatcher
 
 `stepDispatcher` wraps `StepExecutor` and implements `ui.StepRunner` so that `Orchestrate` can call `runner.RunStep(name, command)` uniformly. For claude steps it transparently delegates to `RunSandboxedStep` (passing `TimeoutSeconds` via `SandboxOptions`); for non-claude steps it calls `RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)`, forwarding both fields from the resolved step.

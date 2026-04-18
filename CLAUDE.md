@@ -88,7 +88,7 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 - [`docs/code-packages/sandbox.md`](docs/code-packages/sandbox.md) — `internal/sandbox`: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
 - [`docs/code-packages/preflight.md`](docs/code-packages/preflight.md) — `internal/preflight`: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 - [`docs/code-packages/claudestream.md`](docs/code-packages/claudestream.md) — `internal/claudestream`: Parser (NDJSON line → typed Event), Renderer (events → TUI display lines, tool summary, Finalize), Aggregator (StepStats, captureAs result, is_error detection), RawWriter (per-step .jsonl persistence with O_TRUNC retry semantics), Slug (kebab filename generation), and Pipeline (single Observe entry point, atomic LastEventAt, crash-resilience sentinel)
-- [`docs/code-packages/workflow.md`](docs/code-packages/workflow.md) — `internal/workflow`: `Runner` subprocess executor, `RunStep`/`RunStepFull` with `captureMode` (lastLine vs fullStdout with 32 KiB cap), `StepExecutor` interface, `stepDispatcher`, the `Run` loop, and `IterationRecord`/`AppendIterationRecord` for the structured iteration log
+- [`docs/code-packages/workflow.md`](docs/code-packages/workflow.md) — `internal/workflow`: `Runner` subprocess executor, `RunStep`/`RunStepFull` with `captureMode` (lastLine vs fullStdout with 32 KiB cap), `StepExecutor` interface, `stepDispatcher`, the `Run` loop, `IterationRecord`/`AppendIterationRecord` for the structured iteration log, and session resume gates (`evaluateResumeGates`, G1–G5) with per-phase trackers and session blacklist
 
 ## ADRs
 
@@ -130,6 +130,7 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 - [`docs/how-to/copying-log-text.md`](docs/how-to/copying-log-text.md) — Mouse drag, keyboard single-line, and keyboard multi-line copy walkthroughs; OSC 52 SSH fallback; Linux `xclip`/`xsel` requirement; terminal native-selection override keys
 - [`docs/how-to/configuring-a-status-line.md`](docs/how-to/configuring-a-status-line.md) — Add a `statusLine` block to `ralph-steps.json`, use the sample script, read stdin JSON with `jq`, tune `refreshIntervalSeconds`, debug via log file, and recover the shortcut bar
 - [`docs/how-to/caching-build-artifacts.md`](docs/how-to/caching-build-artifacts.md) — Use `containerEnv` to redirect Go/Node/Python/Rust cache dirs into `.ralph-cache/` for persistent, writable caches across iterations; language-to-env-var matrix and per-language example blocks
+- [`docs/how-to/resuming-sessions.md`](docs/how-to/resuming-sessions.md) — Using `resumePrevious` to continue a prior Claude step's conversation via `--resume`, the five runtime gates (G1–G5), skip-chain interaction, and how to verify resume via `iteration.jsonl`
 
 ## Project Discovery
 
