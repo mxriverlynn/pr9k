@@ -405,10 +405,40 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		emitBlank()
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
 
+		// captureStates maps each captureAs variable name to the final StepState
+		// of the step that produced it. Used by skipIfCaptureEmpty to verify the
+		// source step succeeded (StepDone) before applying the skip.
+		captureStates := make(map[string]ui.StepState)
 		breakOuter := false
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
 			push(vars.Iteration)
+
+			// skipIfCaptureEmpty: skip this step when the named capture is empty
+			// AND the step that produced it completed successfully (StepDone).
+			// If the source step failed, we fall through and run this step normally
+			// so the failure is not silently swallowed.
+			if s.SkipIfCaptureEmpty != "" {
+				val, _ := vt.GetInPhase(vars.Iteration, s.SkipIfCaptureEmpty)
+				if val == "" && captureStates[s.SkipIfCaptureEmpty] == ui.StepDone {
+					header.SetStepState(j, ui.StepSkipped)
+					executor.WriteToLog(fmt.Sprintf("Step skipped (%s empty)", s.SkipIfCaptureEmpty))
+					issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+					skipRec := IterationRecord{
+						SchemaVersion: 1,
+						IssueID:       issueID,
+						IterationNum:  i,
+						StepName:      s.Name,
+						Model:         s.Model,
+						Status:        "skipped",
+					}
+					if logErr := AppendIterationRecord(executor.ProjectDir(), skipRec); logErr != nil {
+						executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+					}
+					continue
+				}
+			}
+
 			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, cfg.ContainerEnv, executor)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
@@ -465,6 +495,9 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				updatedIssueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
 				header.RenderIterationLine(i, cfg.Iterations, updatedIssueID)
 				writeCaptureLog(s.CaptureAs, captured)
+				// Record the final state so skipIfCaptureEmpty checks can verify
+				// the source step completed successfully (StepDone) before skipping.
+				captureStates[s.CaptureAs] = th.lastState
 			}
 			// BreakLoopIfEmpty fires only on successful completion (StepDone).
 			// If the step failed (non-zero exit), the check is skipped so that

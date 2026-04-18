@@ -11,7 +11,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 ## Repository Structure
 
 - `ralph-tui/` — Go TUI orchestrator. See "ralph-tui" section below.
-- `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`)
+- `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
 - `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Prompts use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other `{{VAR}}` tokens that are substituted at runtime.
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
 - `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans

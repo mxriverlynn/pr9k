@@ -191,6 +191,7 @@ func TestLoadSteps_IterationCaptureSteps_Shape(t *testing.T) {
 		{"Get issue body", "gh", "ISSUE_BODY", "fullStdout", true},
 		{"Get project card", "scripts/project_card", "PROJECT_CARD", "fullStdout", true},
 		{"Get post-feature diff", "git", "PRE_REVIEW_DIFF", "fullStdout", true},
+		{"Check review verdict", "scripts/review_verdict", "REVIEW_HAS_FIXES", "lastLine", true},
 	}
 
 	for _, tc := range cases {
@@ -255,4 +256,22 @@ func TestLoadSteps_IterationContainsSummarizeToIssue(t *testing.T) {
 		}
 	}
 	t.Fatal(`iteration phase has no step named "Summarize to issue"`)
+}
+
+// TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty pins that "Fix review items"
+// has skipIfCaptureEmpty: "REVIEW_HAS_FIXES", wiring it to "Check review verdict".
+func TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty(t *testing.T) {
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
+	if err != nil {
+		t.Fatalf("LoadSteps: %v", err)
+	}
+	for _, step := range sf.Iteration {
+		if step.Name == "Fix review items" {
+			if step.SkipIfCaptureEmpty != "REVIEW_HAS_FIXES" {
+				t.Errorf("SkipIfCaptureEmpty = %q, want %q", step.SkipIfCaptureEmpty, "REVIEW_HAS_FIXES")
+			}
+			return
+		}
+	}
+	t.Fatal(`iteration phase has no step named "Fix review items"`)
 }

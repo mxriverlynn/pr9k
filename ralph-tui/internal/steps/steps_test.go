@@ -30,8 +30,8 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 14 {
-		t.Errorf("expected 14 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 15 {
+		t.Errorf("expected 15 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
@@ -85,6 +85,7 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 		"Test planning",
 		"Test writing",
 		"Code review",
+		"Check review verdict",
 		"Fix review items",
 		"Summarize to issue",
 		"Close issue",

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Reads code-review.md and emits "yes" if it contains real review items, or
+# nothing (empty stdout) if the reviewer found nothing to fix (NOTHING-TO-FIX sentinel).
+#
+# Output contract (used with captureAs + skipIfCaptureEmpty):
+#   - Exact NOTHING-TO-FIX sentinel → empty stdout (Fix review items will be skipped)
+#   - Any other content             → "yes" (Fix review items will run)
+#   - Missing or empty file         → "yes" (fail-safe; don't skip when reviewer crashed)
+#
+# Matcher spec:
+#   1. Strip Windows line endings (tr -d '\r').
+#   2. Strip leading Markdown headings (#…) and blank lines after them.
+#   3. Trim trailing whitespace from each line.
+#   4. Compare the remaining text byte-for-byte to the 14-byte literal NOTHING-TO-FIX.
+#
+# Exit 0 in all normal cases. Non-zero only on unexpected I/O errors.
+set -euo pipefail
+
+REVIEW_FILE="code-review.md"
+
+if [[ ! -s "$REVIEW_FILE" ]]; then
+    # Missing or empty file — fail-safe: don't silently skip the fix step.
+    echo "yes"
+    exit 0
+fi
+
+# Normalise: strip \r, strip leading heading lines and blank lines, trim trailing whitespace.
+content="$(tr -d '\r' < "$REVIEW_FILE" \
+    | sed '/^[[:space:]]*$/d; /^#/d' \
+    | sed 's/[[:space:]]*$//')"
+
+if [[ "$content" == "NOTHING-TO-FIX" ]]; then
+    # Sentinel matched — empty output signals "skip the fix step".
+    exit 0
+fi
+
+echo "yes"

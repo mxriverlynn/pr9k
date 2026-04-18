@@ -76,14 +76,15 @@ func (e Error) Error() string {
 // CaptureAs uses *string to distinguish absent (nil → not set) from explicit
 // empty string (pointer to "" → error).
 type vStep struct {
-	Name             string   `json:"name"`
-	Model            string   `json:"model,omitempty"`
-	PromptFile       string   `json:"promptFile,omitempty"`
-	IsClaude         *bool    `json:"isClaude"`
-	Command          []string `json:"command,omitempty"`
-	CaptureAs        *string  `json:"captureAs,omitempty"`
-	CaptureMode      *string  `json:"captureMode,omitempty"`
-	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
+	Name               string   `json:"name"`
+	Model              string   `json:"model,omitempty"`
+	PromptFile         string   `json:"promptFile,omitempty"`
+	IsClaude           *bool    `json:"isClaude"`
+	Command            []string `json:"command,omitempty"`
+	CaptureAs          *string  `json:"captureAs,omitempty"`
+	CaptureMode        *string  `json:"captureMode,omitempty"`
+	BreakLoopIfEmpty   bool     `json:"breakLoopIfEmpty,omitempty"`
+	SkipIfCaptureEmpty *string  `json:"skipIfCaptureEmpty,omitempty"`
 }
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
@@ -413,6 +414,23 @@ func validatePhase(
 			}
 			if phase != vars.Iteration {
 				*errs = append(*errs, at("schema", "breakLoopIfEmpty is only valid in the iteration phase"))
+			}
+		}
+
+		// Schema 2c — skipIfCaptureEmpty must reference a capture bound by a
+		// strictly earlier step in the same phase (i.e., already in scope), and
+		// is only valid in the iteration phase.
+		if step.SkipIfCaptureEmpty != nil {
+			ref := *step.SkipIfCaptureEmpty
+			if ref == "" {
+				*errs = append(*errs, at("schema", "skipIfCaptureEmpty must not be empty when set"))
+			} else {
+				if !scope[ref] {
+					*errs = append(*errs, at("schema", fmt.Sprintf("skipIfCaptureEmpty %q is not bound by any earlier captureAs in this phase", ref)))
+				}
+				if phase != vars.Iteration {
+					*errs = append(*errs, at("schema", "skipIfCaptureEmpty is only valid in the iteration phase"))
+				}
 			}
 		}
 

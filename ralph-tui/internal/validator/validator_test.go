@@ -575,6 +575,84 @@ func TestValidate_BreakLoopIfEmptyRejectedInFinalize(t *testing.T) {
 	requireError(t, errs, "only valid in the iteration phase")
 }
 
+// TestValidate_SkipIfCaptureEmpty_ValidReference verifies that referencing a
+// capture bound by an earlier iteration step is accepted.
+func TestValidate_SkipIfCaptureEmpty_ValidReference(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"VERDICT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"VERDICT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("expected no fatal errors, got: %v", errs)
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_UnknownCapture verifies that referencing a
+// name not bound by any earlier captureAs is rejected.
+func TestValidate_SkipIfCaptureEmpty_UnknownCapture(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"NONEXISTENT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
+// TestValidate_SkipIfCaptureEmpty_ForwardReference verifies that a step cannot
+// reference a capture defined by a *later* step (scope is incremental).
+func TestValidate_SkipIfCaptureEmpty_ForwardReference(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"VERDICT"},
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"VERDICT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
+// TestValidate_SkipIfCaptureEmpty_InFinalize verifies that skipIfCaptureEmpty
+// is rejected in the finalize phase.
+func TestValidate_SkipIfCaptureEmpty_InFinalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "s")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": [
+			{"name":"Check","isClaude":false,"command":["scripts/s"],"captureAs":"OUT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"OUT"}
+		]
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "only valid in the iteration phase")
+}
+
 // ----------------------------------------------------------------------------
 // Category 3 — phase-size checks
 // ----------------------------------------------------------------------------

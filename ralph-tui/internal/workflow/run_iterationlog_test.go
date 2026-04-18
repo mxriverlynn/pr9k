@@ -502,6 +502,149 @@ func TestRun_IterationLog_FinalizePrepFailure(t *testing.T) {
 	}
 }
 
+// TestRun_SkipIfCaptureEmpty_SourceDoneEmptyCapture: when the source step
+// completes (StepDone) with empty capture, the target step is skipped and
+// the iteration log records status "skipped".
+func TestRun_SkipIfCaptureEmpty_SourceDoneEmptyCapture(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir: projectDir,
+		// step 0 (verdict) returns empty capture; step 1 (fix) should be skipped
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"echo"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	// 2 records: verdict (done) + fix (skipped)
+	if len(recs) != 2 {
+		t.Fatalf("want 2 records, got %d: %v", len(recs), recs)
+	}
+	if recs[0].Status != "done" {
+		t.Errorf("verdict record Status: want %q, got %q", "done", recs[0].Status)
+	}
+	if recs[0].StepName != "verdict" {
+		t.Errorf("verdict record StepName: want %q, got %q", "verdict", recs[0].StepName)
+	}
+	if recs[1].Status != "skipped" {
+		t.Errorf("fix record Status: want %q, got %q", "skipped", recs[1].Status)
+	}
+	if recs[1].StepName != "fix" {
+		t.Errorf("fix record StepName: want %q, got %q", "fix", recs[1].StepName)
+	}
+	// The skip step should NOT have been executed.
+	if len(executor.runStepCalls) != 1 {
+		t.Errorf("runStepCalls: want 1 (only verdict), got %d", len(executor.runStepCalls))
+	}
+	// Header should reflect skipped state for step index 1.
+	skippedCalls := 0
+	for _, sc := range header.stepStateCalls {
+		if sc.idx == 1 && sc.state == ui.StepSkipped {
+			skippedCalls++
+		}
+	}
+	if skippedCalls == 0 {
+		t.Error("SetStepState(1, StepSkipped) was never called")
+	}
+}
+
+// TestRun_SkipIfCaptureEmpty_SourceDoneNonEmptyCapture: when the source step
+// completes (StepDone) with non-empty capture, the target step runs normally.
+func TestRun_SkipIfCaptureEmpty_SourceDoneNonEmptyCapture(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:      projectDir,
+		runStepCaptures: []string{"yes"}, // non-empty verdict → fix must run
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"echo", "yes"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	// Both steps must have been called.
+	if len(executor.runStepCalls) != 2 {
+		t.Errorf("runStepCalls: want 2, got %d", len(executor.runStepCalls))
+	}
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 2 {
+		t.Fatalf("want 2 iteration records, got %d", len(recs))
+	}
+	if recs[1].Status != "done" {
+		t.Errorf("fix record Status: want %q, got %q", "done", recs[1].Status)
+	}
+}
+
+// TestRun_SkipIfCaptureEmpty_SourceFailedEmptyCapture: when the source step
+// fails (StepFailed), the target step does NOT skip even if the capture is empty.
+// The error from the source step already propagated to ModeError; the fix step
+// runs normally so a crashing verdict script cannot silently suppress the fix.
+func TestRun_SkipIfCaptureEmpty_SourceFailedEmptyCapture(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		projectDir: projectDir,
+		// step 0 (verdict) returns an error → StepFailed; capture will be empty
+		runStepErrors:   []error{errors.New("permission denied")},
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "verdict", IsClaude: false, Command: []string{"scripts/verdict"}, CaptureAs: "VERDICT"},
+			{Name: "fix", IsClaude: false, Command: []string{"echo", "fix"}, SkipIfCaptureEmpty: "VERDICT"},
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Allow the goroutine to reach the blocking point in Orchestrate (ModeError).
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionContinue")
+	}
+
+	// Both steps must have been dispatched (fix was not silently skipped).
+	if len(executor.runStepCalls) != 2 {
+		t.Errorf("runStepCalls: want 2 (verdict + fix), got %d", len(executor.runStepCalls))
+	}
+	if len(executor.runStepCalls) >= 2 && executor.runStepCalls[1].name != "fix" {
+		t.Errorf("second call name: want %q, got %q", "fix", executor.runStepCalls[1].name)
+	}
+}
+
 // TP-016: SchemaVersion == 1 in records from all three phases (initialize,
 // iteration, finalize). Bumping the literal requires updating this test.
 func TestRun_IterationLog_SchemaVersionAllPhases(t *testing.T) {

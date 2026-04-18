@@ -26,6 +26,11 @@ type Step struct {
 	// "fullStdout" joins all stdout lines with "\n", capped at 32 KiB.
 	CaptureMode      string `json:"captureMode,omitempty"`
 	BreakLoopIfEmpty bool   `json:"breakLoopIfEmpty,omitempty"`
+	// SkipIfCaptureEmpty names a variable (bound by an earlier iteration step
+	// via captureAs) whose value is checked before this step runs. If the value
+	// is empty and the capturing step completed successfully (StepDone), this
+	// step is skipped without error and recorded as "skipped" in the iteration log.
+	SkipIfCaptureEmpty string `json:"skipIfCaptureEmpty,omitempty"`
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
