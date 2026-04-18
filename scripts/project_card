@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+# Emit a short project card summarising the build configuration found in the
+# current directory. Each recognised build-config file is probed and its
+# relevant fields printed to stdout. The output is free-text, one finding per
+# line, suitable for injection into a Claude prompt via {{PROJECT_CARD}}.
+#
+# Only files that actually exist are probed — no hard-coded language assumption.
+
+if [ -f go.mod ]; then
+    module=$(grep '^module ' go.mod | awk '{print $2}')
+    echo "Language: Go"
+    echo "Module: $module"
+    echo "Test: go test ./..."
+    echo "Build: go build ./..."
+fi
+
+if [ -f Makefile ]; then
+    targets=$(grep -E '^(test|build|lint|ci|vet|fmt|format|check)[[:space:]]*:' Makefile | sed 's/:.*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    if [ -n "$targets" ]; then
+        echo "Make targets: $targets"
+    fi
+fi
+
+if [ -f package.json ]; then
+    echo "Language: Node.js"
+    if command -v jq >/dev/null 2>&1; then
+        test_cmd=$(jq -r '.scripts.test // empty' package.json 2>/dev/null)
+        build_cmd=$(jq -r '.scripts.build // empty' package.json 2>/dev/null)
+        lint_cmd=$(jq -r '.scripts.lint // empty' package.json 2>/dev/null)
+        [ -n "$test_cmd" ]  && echo "Test: npm run test ($test_cmd)"
+        [ -n "$build_cmd" ] && echo "Build: npm run build ($build_cmd)"
+        [ -n "$lint_cmd" ]  && echo "Lint: npm run lint ($lint_cmd)"
+    fi
+fi
+
+if [ -f pyproject.toml ]; then
+    echo "Language: Python"
+    if grep -q '\[tool.poetry\]' pyproject.toml 2>/dev/null; then
+        echo "Package manager: poetry"
+        echo "Test: poetry run pytest"
+    elif grep -q '\[tool.hatch\]' pyproject.toml 2>/dev/null; then
+        echo "Package manager: hatch"
+    else
+        echo "Package manager: pip (pyproject.toml)"
+    fi
+elif [ -f setup.py ]; then
+    echo "Language: Python"
+    echo "Package manager: pip (setup.py)"
+    echo "Test: python -m pytest"
+fi
+
+if [ -f Cargo.toml ]; then
+    crate=$(grep '^name' Cargo.toml | head -1 | awk -F'"' '{print $2}')
+    echo "Language: Rust"
+    echo "Crate: $crate"
+    echo "Build: cargo build"
+    echo "Test: cargo test"
+    echo "Lint: cargo clippy"
+fi

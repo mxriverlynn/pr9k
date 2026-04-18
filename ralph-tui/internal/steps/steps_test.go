@@ -30,8 +30,8 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 11 {
-		t.Errorf("expected 11 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 14 {
+		t.Errorf("expected 14 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
@@ -78,7 +78,10 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 	wantNames := []string{
 		"Get next issue",
 		"Get starting SHA",
+		"Get issue body",
+		"Get project card",
 		"Feature work",
+		"Get post-feature diff",
 		"Test planning",
 		"Test writing",
 		"Code review",
@@ -115,8 +118,8 @@ func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude step (index 2; preceded by two non-claude data-gathering steps)
-	s := got.Iteration[2]
+	// "Feature work" is a claude step (index 4; preceded by four non-claude data-gathering steps)
+	s := got.Iteration[4]
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
 	}
@@ -134,8 +137,8 @@ func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" is a non-claude step (index 10)
-	s := got.Iteration[10]
+	// "Git push" is a non-claude step (index 13)
+	s := got.Iteration[13]
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -358,14 +361,14 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" command should be ["git", "push"] (index 10)
-	gitPush := got.Iteration[10]
+	// "Git push" command should be ["git", "push"] (index 13)
+	gitPush := got.Iteration[13]
 	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
 		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
 	}
 
-	// "Close issue" command should contain "close_gh_issue" (index 8)
-	closeIssue := got.Iteration[8]
+	// "Close issue" command should contain "close_gh_issue" (index 11)
+	closeIssue := got.Iteration[11]
 	found := false
 	for _, part := range closeIssue.Command {
 		if strings.Contains(part, "close_gh_issue") {

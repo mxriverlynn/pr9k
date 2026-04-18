@@ -1,5 +1,10 @@
 @progress.txt
 You will likely need TodoWrite for tracking multi-step progress on this task. Preload once via ToolSearch query "select:TodoWrite".
+# Context
+Issue #{{ISSUE_ID}}: {{ISSUE_BODY}}
+Project card:
+{{PROJECT_CARD}}
+
 1. Implement github issue #{{ISSUE_ID}} in the current branch (do not switch to a different branch)
 2. Append your progress to progress.txt.
 3. Append all deferred work to deferred.txt

@@ -165,6 +165,30 @@ To use iteration variables in a custom shell command:
 
 1. Use `{{ISSUE_ID}}` or any other `{{VAR_NAME}}` in the command array: `["my-script", "{{ISSUE_ID}}"]`
 
+### Example: precomputed context variables
+
+The default workflow precomputes three context variables before the first Claude step so each prompt has full context without needing to re-query GitHub or git:
+
+```json
+{ "name": "Get issue body", "isClaude": false,
+  "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"],
+  "captureAs": "ISSUE_BODY", "captureMode": "fullStdout" },
+{ "name": "Get project card", "isClaude": false,
+  "command": ["scripts/project_card"],
+  "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" }
+```
+
+`{{{{.title}}}}` uses ralph's escape rule (`{{{{` → `{{`) so the gh `-t` template token survives variable substitution and reaches the `gh` binary intact.
+
+Once captured, the variables are injected into prompt files:
+
+```
+# Context
+Issue #{{ISSUE_ID}}: {{ISSUE_BODY}}
+Project card:
+{{PROJECT_CARD}}
+```
+
 To pass data between custom steps:
 
 1. Have the producing step write to a file (instruct Claude in the prompt)

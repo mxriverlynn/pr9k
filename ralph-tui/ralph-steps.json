@@ -16,10 +16,13 @@
     { "name": "Get GitHub user", "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
   ],
   "iteration": [
-    { "name": "Get next issue",   "isClaude": false, "command": ["scripts/get_next_issue", "{{GITHUB_USER}}"], "captureAs": "ISSUE_ID", "breakLoopIfEmpty": true },
-    { "name": "Get starting SHA", "isClaude": false, "command": ["git", "rev-parse", "HEAD"], "captureAs": "STARTING_SHA" },
-    { "name": "Feature work",     "isClaude": true,  "model": "sonnet", "promptFile": "feature-work.md" },
-    { "name": "Test planning",    "isClaude": true,  "model": "opus",   "promptFile": "test-planning.md" },
+    { "name": "Get next issue",        "isClaude": false, "command": ["scripts/get_next_issue", "{{GITHUB_USER}}"], "captureAs": "ISSUE_ID", "breakLoopIfEmpty": true },
+    { "name": "Get starting SHA",      "isClaude": false, "command": ["git", "rev-parse", "HEAD"], "captureAs": "STARTING_SHA" },
+    { "name": "Get issue body",        "isClaude": false, "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"], "captureAs": "ISSUE_BODY", "captureMode": "fullStdout" },
+    { "name": "Get project card",      "isClaude": false, "command": ["scripts/project_card"], "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" },
+    { "name": "Feature work",          "isClaude": true,  "model": "sonnet", "promptFile": "feature-work.md" },
+    { "name": "Get post-feature diff", "isClaude": false, "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"], "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" },
+    { "name": "Test planning",         "isClaude": true,  "model": "opus",   "promptFile": "test-planning.md" },
     { "name": "Test writing",     "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md" },
     { "name": "Code review",      "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
     { "name": "Fix review items", "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md" },

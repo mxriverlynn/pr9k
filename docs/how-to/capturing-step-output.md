@@ -42,10 +42,23 @@ When a step emits a multi-line payload — such as a GitHub issue body or a git 
 {
   "name": "Get issue body",
   "isClaude": false,
-  "command": ["scripts/get_issue_body", "{{ISSUE_ID}}"],
+  "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"],
   "captureAs": "ISSUE_BODY",
   "captureMode": "fullStdout"
 }
+```
+
+Note the `{{{{.title}}}}` escape: ralph's variable substitution runs first on command arguments, so any literal `{{` that should reach the subprocess must be written as `{{{{` (ralph's escape for a literal `{{`). This step captures the full issue title and body into `{{ISSUE_BODY}}` for later steps.
+
+The default workflow also captures a project card and post-feature diff the same way:
+
+```json
+{ "name": "Get project card", "isClaude": false,
+  "command": ["scripts/project_card"],
+  "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" },
+{ "name": "Get post-feature diff", "isClaude": false,
+  "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"],
+  "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" }
 ```
 
 With `captureMode: "fullStdout"`, all stdout lines are joined with `"\n"` and bound to the variable. A hard cap of **32 KiB** applies: if the joined content exceeds 32 KiB, the first 30 KiB are kept verbatim and the following marker is appended:
