@@ -2,6 +2,7 @@ package scripts_test
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,15 +22,20 @@ func runProjectCard(t *testing.T, workDir string, env []string) (stdout string, 
 	cmd := exec.Command("bash", projectCardPath(t))
 	cmd.Dir = workDir
 	cmd.Env = env
-	var outBuf bytes.Buffer
+	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
 	err := cmd.Run()
 	stdout = outBuf.String()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = -1
+		}
+		if stderr := errBuf.String(); stderr != "" {
+			t.Logf("project_card stderr: %s", stderr)
 		}
 	}
 	return
@@ -49,7 +55,7 @@ func envReplaceOrAddPath(newPath string) []string {
 // writeFile creates a file in dir with the given content.
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
 }
@@ -118,7 +124,7 @@ func TestProjectCard_MakefileWithRecognizedTargets(t *testing.T) {
 // TP-001 case 4: Makefile with zero recognized targets → no "Make targets:" line emitted.
 func TestProjectCard_MakefileNoRecognizedTargets(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "Makefile", "all:\n\techo hello\ninstall:\n\techo install\n")
+	writeFile(t, dir, "Makefile", "all:\n\techo hello\ndeploy:\n\techo deploy\n")
 
 	stdout, exitCode := runProjectCard(t, dir, os.Environ())
 	if exitCode != 0 {
@@ -195,11 +201,11 @@ func TestProjectCard_PyprojectHatch(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
 	}
-	if !strings.Contains(stdout, "Language: Python") {
-		t.Errorf("stdout missing 'Language: Python': %q", stdout)
-	}
-	if !strings.Contains(stdout, "Package manager: hatch") {
-		t.Errorf("stdout missing 'Package manager: hatch': %q", stdout)
+	checks := []string{"Language: Python", "Package manager: hatch", "Test: pytest"}
+	for _, want := range checks {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q: %q", want, stdout)
+		}
 	}
 }
 
@@ -212,11 +218,11 @@ func TestProjectCard_PyprojectPip(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", exitCode)
 	}
-	if !strings.Contains(stdout, "Language: Python") {
-		t.Errorf("stdout missing 'Language: Python': %q", stdout)
-	}
-	if !strings.Contains(stdout, "Package manager: pip (pyproject.toml)") {
-		t.Errorf("stdout missing 'Package manager: pip (pyproject.toml)': %q", stdout)
+	checks := []string{"Language: Python", "Package manager: pip (pyproject.toml)", "Test: pytest"}
+	for _, want := range checks {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout missing %q: %q", want, stdout)
+		}
 	}
 }
 

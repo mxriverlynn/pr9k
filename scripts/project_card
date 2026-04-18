@@ -17,7 +17,7 @@ if [ -f go.mod ]; then
 fi
 
 if [ -f Makefile ]; then
-    targets=$(grep -E '^(test|build|lint|ci|vet|fmt|format|check)[[:space:]]*:' Makefile | sed 's/:.*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+    targets=$(grep -E '^(test|build|lint|ci|vet|fmt|format|check|dev|start|run|clean|install)[[:space:]]*:' Makefile | sed 's/:.*//' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
     if [ -n "$targets" ]; then
         echo "Make targets: $targets"
     fi
@@ -42,8 +42,10 @@ if [ -f pyproject.toml ]; then
         echo "Test: poetry run pytest"
     elif grep -q '\[tool.hatch\]' pyproject.toml 2>/dev/null; then
         echo "Package manager: hatch"
+        echo "Test: pytest"
     else
         echo "Package manager: pip (pyproject.toml)"
+        echo "Test: pytest"
     fi
 elif [ -f setup.py ]; then
     echo "Language: Python"
@@ -52,6 +54,7 @@ elif [ -f setup.py ]; then
 fi
 
 if [ -f Cargo.toml ]; then
+    # Matches `name = "..."` at column 0; single-quoted values and workspace blocks are not handled.
     crate=$(grep '^name' Cargo.toml | head -1 | awk -F'"' '{print $2}')
     echo "Language: Rust"
     echo "Crate: $crate"

@@ -178,7 +178,7 @@ The default workflow precomputes three context variables before the first Claude
   "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" }
 ```
 
-`{{{{.title}}}}` uses ralph's escape rule (`{{{{` → `{{`) so the gh `-t` template token survives variable substitution and reaches the `gh` binary intact.
+`{{{{.title}}}}` uses ralph's escape rule (`{{{{` → `{{`) so the gh `-t` template token survives variable substitution and reaches the `gh` binary intact. The `\n` sequences in the JSON string are real newlines by the time `gh` receives the argument — JSON parsing happens before ralph sees the value, so `gh` gets a literal newline, not the two-character sequence `\n`.
 
 Once captured, the variables are injected into prompt files:
 
