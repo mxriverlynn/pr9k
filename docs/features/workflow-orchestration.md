@@ -355,7 +355,7 @@ if resolved.IsClaude {
 `artifactPath` is a local helper closure in `Run` that computes the per-step `.jsonl` path:
 
 ```
-<projectDir>/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
+<projectDir>/.pr9k/logs/<runStamp>/<phasePrefix><stepIdx02d>-<slug>.jsonl
 ```
 
 Phase prefixes: `"initialize-"`, `"iter<NN>-"` (1-indexed iteration), `"finalize-"`. Returns `""` when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
@@ -601,7 +601,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
   - `TestStepDispatcher_ClaudeStep_RetryCountsOnSecondCallAfterError` — exercises the first-error → second-success retry path: asserts `invocations=2`, `retries=1`, and `prevFailed` cleared after success
   - `TestStepDispatcher_NonClaudeStep_ResetsRetryTracking` — verifies a non-claude step between two claude steps clears `prevFailed`, preventing spurious retry counts on the second claude step
   - `TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode` — verifies `ResolvedStep.ArtifactPath` and `ResolvedStep.CaptureMode` flow through `stepDispatcher.RunStep` into `SandboxOptions` passed to `RunSandboxedStep`
-  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
+  - `TestRun_ClaudeStep_ArtifactPathInSandboxOptions` — verifies the full artifact path format `<projectDir>/.pr9k/logs/<runStamp>/iter01-01-<slug>.jsonl` is set in `SandboxOptions` for an iteration-phase claude step
   - `TestRun_ClaudeStep_EmptyRunStamp_NoArtifactPath` — verifies `ArtifactPath` is empty (persistence disabled) when `RunConfig.RunStamp == ""`
   - `TestRun_InitializePhase_ArtifactPathPrefix` — verifies the `"initialize-"` phase prefix appears in the artifact path for initialize-phase claude steps
   - `TestRun_FinalizePhase_ArtifactPathPrefix` — verifies the `"finalize-"` phase prefix appears in the artifact path for finalize-phase claude steps

@@ -8,7 +8,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 ## Overview
 
-- Writes to `logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` under the project directory (the target repository)
+- Writes to `.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` under the project directory (the target repository)
 - Each line is prefixed with a timestamp, optional iteration context, and step name
 - Protected by `sync.Mutex` for concurrent writes from multiple scanner goroutines
 - Uses `bufio.Writer` for buffered I/O with explicit flush on close
@@ -37,7 +37,8 @@ Key files:
                                            ▼
                                     ┌──────────────┐
                                     │  os.File     │
-                                    │  logs/ralph- │
+                                    │.pr9k/logs/   │
+                                    │  ralph-      │
                                     │  YYYY-MM-DD- │
                                     │  HHMMSS.mmm  │
                                     │  .log        │
@@ -70,11 +71,11 @@ type Logger struct {
 
 ### Logger Creation
 
-`NewLogger` creates the `logs/` directory if needed and opens a millisecond-precision timestamped log file. `time.Now()` is captured once so the filename and `runStamp` cannot drift:
+`NewLogger` creates the `.pr9k/logs/` directory if needed and opens a millisecond-precision timestamped log file. `time.Now()` is captured once so the filename and `runStamp` cannot drift:
 
 ```go
 func NewLogger(projectDir string) (*Logger, error) {
-    logsDir := filepath.Join(projectDir, "logs")
+    logsDir := filepath.Join(projectDir, ".pr9k", "logs")
     if err := os.MkdirAll(logsDir, 0o700); err != nil {
         return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
     }
@@ -122,7 +123,7 @@ func (l *Logger) Log(stepName string, line string) error {
 
 ### RunStamp and Per-Run Artifact Directory
 
-`RunStamp()` returns the run identifier — the log filename without the `.log` suffix (e.g. `"ralph-2026-04-14-173022.123"`). It is set once at construction and never changes. `main.go` reads this after `NewLogger` and eagerly creates the per-run artifact directory `logs/<runstamp>/` via `os.MkdirAll` before any workflow steps run. The `RunStamp` is then passed into `RunConfig.RunStamp` so that `claudestream.Pipeline` can write per-step `.jsonl` files into the artifact directory:
+`RunStamp()` returns the run identifier — the log filename without the `.log` suffix (e.g. `"ralph-2026-04-14-173022.123"`). It is set once at construction and never changes. `main.go` reads this after `NewLogger` and eagerly creates the per-run artifact directory `.pr9k/logs/<runstamp>/` via `os.MkdirAll` before any workflow steps run. The `RunStamp` is then passed into `RunConfig.RunStamp` so that `claudestream.Pipeline` can write per-step `.jsonl` files into the artifact directory:
 
 ```go
 func (l *Logger) RunStamp() string {
@@ -168,7 +169,7 @@ func (l *Logger) Close() error {
 
 | Scenario | Error Message | Behavior |
 |----------|---------------|----------|
-| Cannot create logs directory | `"logger: could not create logs directory: ..."` | Returned to caller (main.go exits) |
+| Cannot create `.pr9k/logs/` directory | `"logger: could not create logs directory: ..."` | Returned to caller (main.go exits) |
 | Cannot create log file | `"logger: could not create log file: ..."` | Returned to caller |
 | Write to closed logger | `"logger: write to closed logger"` | Error returned; no write |
 | Flush fails on close | `"logger: flush failed: ..."` | File still closed; error returned |

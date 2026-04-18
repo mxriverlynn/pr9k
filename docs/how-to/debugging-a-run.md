@@ -6,17 +6,17 @@ When a workflow does something unexpected — a Claude step generated the wrong 
 
 | Source | Location | What it tells you |
 |--------|----------|-------------------|
-| **Log file** | `<project-dir>/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
+| **Log file** | `<project-dir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` | Every line of subprocess output, every chrome line (phase banners, step banners, capture logs), timestamped |
 | **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when pr9k exits |
-| **JSONL artifacts** | `<project-dir>/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
+| **JSONL artifacts** | `<project-dir>/.pr9k/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
 | **Iteration log** | `<project-dir>/.ralph-cache/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
 | **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
 
 If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
 
-> **Tip:** Logs land under `<project-dir>/logs/` — that is, inside your **target repo's working directory**. Add `logs/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> **Tip:** Logs land under `<project-dir>/.pr9k/logs/` — that is, inside your **target repo's working directory**. Add `.pr9k/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
 > ```
-> echo 'logs/' >> .gitignore
+> echo '.pr9k/' >> .gitignore
 > ```
 
 ## Reading the log file
@@ -41,7 +41,7 @@ For details on the logger format, see [File Logging](../code-packages/logger.md)
 Every `isClaude: true` step writes a per-step `.jsonl` file containing the verbatim NDJSON stream emitted by `claude -p --output-format stream-json --verbose`. These files live in a per-run subdirectory alongside the `.log` file:
 
 ```
-logs/
+.pr9k/logs/
   ralph-2026-04-14-173022.123.log        # human-readable log (unchanged)
   ralph-2026-04-14-173022.123/           # JSONL artifacts for this run
     initialize-02-get-gh-user.jsonl
@@ -69,25 +69,25 @@ Each line in a `.jsonl` file is one JSON object. The relevant types:
 **Find the final captured value for a step:**
 
 ```bash
-jq 'select(.type == "result") | .result' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | .result' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Check whether a step ended in error:**
 
 ```bash
-jq 'select(.type == "result") | {is_error, result}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | {is_error, result}' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Check token spend for a step:**
 
 ```bash
-jq 'select(.type == "result") | {total_cost_usd, usage, num_turns}' logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+jq 'select(.type == "result") | {total_cost_usd, usage, num_turns}' .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 **Verify the step's artifact was written completely (sentinel present):**
 
 ```bash
-tail -1 logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
+tail -1 .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
 # "ralph_end" → complete; any other output or an empty tail → truncated
 ```
 
@@ -95,7 +95,7 @@ tail -1 logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl | jq .type
 
 ```bash
 jq -r 'select(.type == "assistant") | .message.content[] | select(.type == "text") | .text' \
-  logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
+  .pr9k/logs/ralph-2026-04-14-173022.123/iter01-03-feature-work.jsonl
 ```
 
 > **Retry behavior:** When you press `r` (retry) in error mode, the next attempt overwrites the `.jsonl` file from the beginning. The prior attempt's raw events are lost from the artifact (but the rendered lines remain in the `.log` file, separated by a `(retry)` separator). Token spend from discarded retry attempts is still included in the per-step and run-level summary lines.
@@ -164,13 +164,13 @@ For example, to see everything that happened in iteration 3:
 
 ```bash
 # Range from the "Iteration 3" separator to the next Iteration separator or Finalizing
-awk '/── Iteration 3 ─/,/── Iteration 4 ─|^Finalizing$/' logs/ralph-2026-04-10-221950.log
+awk '/── Iteration 3 ─/,/── Iteration 4 ─|^Finalizing$/' .pr9k/logs/ralph-2026-04-10-221950.log
 ```
 
 Or to find every captured `ISSUE_ID`:
 
 ```bash
-grep 'Captured ISSUE_ID' logs/ralph-2026-04-10-221950.log
+grep 'Captured ISSUE_ID' .pr9k/logs/ralph-2026-04-10-221950.log
 ```
 
 For the full log-body rhythm (what all the chrome looks like interleaved with real output), see [Reading the TUI](reading-the-tui.md#the-chrome-rhythm).

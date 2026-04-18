@@ -35,11 +35,11 @@ If you just want to rebuild the Go binary without copying assets, run `cd src &&
 
 ## First run against the default workflow
 
-Before the first run, add `logs/` to your target repo's `.gitignore`. Since pr9k 0.2.3, log files land under `<project-dir>/logs/` — that is, inside your target repo — and will appear as untracked changes if the directory is not ignored:
+Before the first run, add `.pr9k/` to your target repo's `.gitignore`. Log files and runtime state land under `<project-dir>/.pr9k/` — that is, inside your target repo — and will appear as untracked changes if the directory is not ignored:
 
 ```bash
-echo 'logs/' >> .gitignore
-git add .gitignore && git commit -m "ignore pr9k log directory"
+echo '.pr9k/' >> .gitignore
+git add .gitignore && git commit -m "ignore pr9k runtime directory"
 ```
 
 From the **target repo's working directory** (not pr9k's — pr9k runs subprocesses with the current working directory):

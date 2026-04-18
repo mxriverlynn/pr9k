@@ -113,10 +113,10 @@ Set to `0` to disable the timer and only refresh on workflow events (phase chang
 
 ## Debugging
 
-pr9k logs all status-line activity to the session log file (under `logs/` in your project directory). Lines are prefixed with `[statusline]`:
+pr9k logs all status-line activity to the session log file (under `.pr9k/logs/` in your project directory). Lines are prefixed with `[statusline]`:
 
 ```
-tail -f logs/<timestamp>.log | grep '\[statusline\]'
+tail -f .pr9k/logs/<timestamp>.log | grep '\[statusline\]'
 ```
 
 Common entries:
