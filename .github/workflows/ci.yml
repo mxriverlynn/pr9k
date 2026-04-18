@@ -146,3 +146,7 @@ jobs:
 
       - name: Build
         run: make build
+
+      - name: Bundle integration tests
+        working-directory: src
+        run: go test -tags=integration -race ./cmd/pr9k/...

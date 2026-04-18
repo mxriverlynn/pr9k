@@ -40,6 +40,14 @@ func assembleWorkflowDir(t *testing.T) string {
 		t.Fatalf("write config.json: %v", err)
 	}
 
+	// TP-010: preflight — verify bundle components exist before symlinking so failures
+	// are immediately actionable rather than producing an opaque "no such file" from Symlink.
+	for _, rel := range []string{"config.json", "prompts", "scripts"} {
+		if _, err := os.Stat(filepath.Join(ralphTUIDir, rel)); err != nil {
+			t.Fatalf("workflow bundle incomplete: %s missing — run from repo root (%v)", rel, err)
+		}
+	}
+
 	for _, sub := range []string{"prompts", "scripts"} {
 		abs, err := filepath.Abs(filepath.Join(ralphTUIDir, sub))
 		if err != nil {

@@ -727,3 +727,20 @@ func TestResolveWorkflowDirWith_ProjectIsFile_ExecPresent_ReturnsExec(t *testing
 		t.Errorf("expected exec candidate %q, got %q", execCandidate, got)
 	}
 }
+
+// TP-011 (issue #145): a plain workflow/ directory inside projectDir is NOT
+// auto-discovered. Only <projectDir>/.pr9k/workflow and <execDir>/.pr9k/workflow
+// are valid candidates; make build is required to install the bundle.
+func TestResolveWorkflowDirWith_SiblingWorkflowDirNotAutoDiscovered(t *testing.T) {
+	projDir := t.TempDir()
+	// Create a workflow/ directory directly inside projectDir (mirrors the source tree).
+	// The resolver must NOT return this — it is only discoverable via .pr9k/workflow.
+	if err := os.MkdirAll(filepath.Join(projDir, "workflow"), 0o755); err != nil {
+		t.Fatalf("MkdirAll workflow: %v", err)
+	}
+	execDir := t.TempDir()
+	_, err := resolveWorkflowDirWith(projDir, execDir)
+	if err == nil {
+		t.Fatal("expected error: resolveWorkflowDirWith must not auto-discover a plain workflow/ directory")
+	}
+}

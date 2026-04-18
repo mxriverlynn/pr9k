@@ -51,7 +51,7 @@ Key files:
 |------|---------|
 | `src/internal/steps/steps.go` | Step struct, StepFile struct, loading function, prompt builder |
 | `src/internal/steps/steps_test.go` | Unit tests for loading and prompt building |
-| `src/config.json` | All step definitions (initialize, iteration, and finalization) |
+| `workflow/config.json` | All step definitions (initialize, iteration, and finalization) |
 
 ## Core Types
 

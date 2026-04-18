@@ -62,7 +62,7 @@
 
 ### Configuration
 
-- Step definitions: `src/config.json`
+- Step definitions: `workflow/config.json`
 - Claude Code settings: `.claude/settings.json`, `.claude/settings.local.json`
 - Dependency pinning: `src/tools.go` — blank imports under `//go:build tools` to pin Bubble Tea dependencies before production code imports them; verified via `go vet -tags tools .` (as `make vet` does)
 

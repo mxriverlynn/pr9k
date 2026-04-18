@@ -922,6 +922,64 @@ func intOrZero(s string) int {
 	return n
 }
 
+// TP-001 (issue #145): No live doc file references the pre-move config path src/config.json.
+// Needle assembled at runtime so this test source does not match its own guard.
+func TestDocs_NoStaleConfigJSONPath(t *testing.T) {
+	root := docTestRepoRoot(t)
+	needle := "src/" + "config.json"
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, needle) {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("TP-001: live docs contain %q — update to workflow/config.json:\n  %s",
+			needle, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-006 (issue #145): README.md contains no stale pre-move workflow paths.
+// Substrings assembled at runtime so this test source does not match its own guards.
+func TestREADME_NoStaleWorkflowPaths(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "README.md")
+	for _, needle := range []string{
+		"src/" + "config.json",
+		"src/" + "prompts/",
+		"src/" + "scripts/",
+	} {
+		assertNotContains(t, content, needle, "README.md")
+	}
+}
+
+// TP-007 (issue #145): docs/project-discovery.md references workflow/config.json
+// and does not contain the pre-move path src/config.json.
+func TestDocIntegrity_ProjectDiscovery_WorkflowConfigJSONPath(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/project-discovery.md")
+	needle := "src/" + "config.json"
+	assertNotContains(t, content, needle, "docs/project-discovery.md")
+	assertContains(t, content, "workflow/config.json", "docs/project-discovery.md")
+}
+
+// TP-009 (issue #145): .gitignore pins that bin/ and .pr9k/ are ignored
+// and that the top-level workflow/ source directory is NOT ignored.
+func TestGitignore_WorkflowIsTracked_BundleIsIgnored(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, ".gitignore")
+
+	hasBinEntry := strings.Contains(content, "\nbin/\n") || strings.Contains(content, "\nbin\n")
+	if !hasBinEntry {
+		t.Error(".gitignore: expected a line matching bin/ or bin")
+	}
+	assertContains(t, content, ".pr9k/", ".gitignore .pr9k/ entry")
+
+	if strings.Contains(content, "\nworkflow/\n") || strings.Contains(content, "\nworkflow\n") {
+		t.Error(".gitignore: workflow/ must NOT be ignored — it is a tracked source directory")
+	}
+}
+
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
