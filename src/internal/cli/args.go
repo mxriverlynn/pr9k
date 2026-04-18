@@ -20,18 +20,32 @@ type Config struct {
 	ProjectDir  string
 }
 
-// resolveWorkflowDir returns the directory containing the executable,
-// following symlinks.
-func resolveWorkflowDir() (string, error) {
+// resolveWorkflowDir implements the two-candidate resolution rule:
+//  1. <projectDir>/.pr9k/workflow/ if it exists and is a directory.
+//  2. <executableDir>/.pr9k/workflow/ if it exists and is a directory.
+//
+// Returns an error listing both paths if neither candidate qualifies.
+func resolveWorkflowDir(projectDir string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(exe)
+	resolvedExe, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Dir(resolved), nil
+	execCandidate := filepath.Join(filepath.Dir(resolvedExe), ".pr9k", "workflow")
+
+	projCandidate := filepath.Join(projectDir, ".pr9k", "workflow")
+	if info, err := os.Stat(projCandidate); err == nil && info.IsDir() {
+		return projCandidate, nil
+	}
+
+	if info, err := os.Stat(execCandidate); err == nil && info.IsDir() {
+		return execCandidate, nil
+	}
+
+	return "", fmt.Errorf("cli: could not locate workflow bundle. Checked:\n  - %s\n  - %s\nInstall the bundle or pass --workflow-dir.", projCandidate, execCandidate)
 }
 
 // resolveProjectDir returns the current working directory, following symlinks.
@@ -70,23 +84,7 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 			if cfg.Iterations < 0 {
 				return errors.New("cli: --iterations must be a non-negative integer")
 			}
-			if cfg.WorkflowDir == "" {
-				dir, err := resolveWorkflowDir()
-				if err != nil {
-					return fmt.Errorf("cli: could not resolve workflow dir: %w", err)
-				}
-				cfg.WorkflowDir = dir
-			} else {
-				resolved, err := filepath.EvalSymlinks(cfg.WorkflowDir)
-				if err != nil {
-					return fmt.Errorf("cli: --workflow-dir %q: %w", cfg.WorkflowDir, err)
-				}
-				info, err := os.Stat(resolved)
-				if err != nil || !info.IsDir() {
-					return fmt.Errorf("cli: --workflow-dir %q is not a directory", cfg.WorkflowDir)
-				}
-				cfg.WorkflowDir = resolved
-			}
+			// Resolve projectDir first — resolveWorkflowDir needs it for candidate 1.
 			if cfg.ProjectDir == "" {
 				dir, err := resolveProjectDir()
 				if err != nil {
@@ -104,6 +102,23 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 				}
 				cfg.ProjectDir = resolved
 			}
+			if cfg.WorkflowDir == "" {
+				dir, err := resolveWorkflowDir(cfg.ProjectDir)
+				if err != nil {
+					return err
+				}
+				cfg.WorkflowDir = dir
+			} else {
+				resolved, err := filepath.EvalSymlinks(cfg.WorkflowDir)
+				if err != nil {
+					return fmt.Errorf("cli: --workflow-dir %q: %w", cfg.WorkflowDir, err)
+				}
+				info, err := os.Stat(resolved)
+				if err != nil || !info.IsDir() {
+					return fmt.Errorf("cli: --workflow-dir %q is not a directory", cfg.WorkflowDir)
+				}
+				cfg.WorkflowDir = resolved
+			}
 			return nil
 		},
 	}
@@ -111,7 +126,7 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 		return fmt.Errorf("%w\n%s", err, flagSplitGuidance)
 	})
 	cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
-	cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: resolved from executable)")
+	cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
 	cmd.Flags().StringVar(&cfg.ProjectDir, "project-dir", "", "path to the target repository (default: current working directory)")
 	return cmd
 }

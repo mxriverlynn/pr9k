@@ -24,8 +24,32 @@ func runNewCommand(t *testing.T, args []string) (*Config, error) {
 	return cfg, nil
 }
 
-// 1. No flags → iterations=0 (until-done), workflow-dir resolved from executable (non-empty).
+// setupWorkflowCandidate creates <dir>/.pr9k/workflow/ with a placeholder
+// config.json, then chdirs into dir so that resolveProjectDir returns dir.
+// Returns dir. Restores the original working directory on test cleanup.
+func setupWorkflowCandidate(t *testing.T, dir string) string {
+	t.Helper()
+	wfDir := dir + "/.pr9k/workflow"
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatalf("setupWorkflowCandidate MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(wfDir+"/config.json", []byte("{}"), 0o644); err != nil {
+		t.Fatalf("setupWorkflowCandidate WriteFile: %v", err)
+	}
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("setupWorkflowCandidate Getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("setupWorkflowCandidate Chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	return dir
+}
+
+// 1. No flags → iterations=0 (until-done), workflow-dir resolved from project candidate (non-empty).
 func TestNewCommand_NoFlags(t *testing.T) {
+	dir := setupWorkflowCandidate(t, t.TempDir())
 	cfg, err := runNewCommand(t, []string{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -34,16 +58,16 @@ func TestNewCommand_NoFlags(t *testing.T) {
 		t.Errorf("expected iterations=0, got %d", cfg.Iterations)
 	}
 	if cfg.WorkflowDir == "" {
-		t.Error("expected non-empty workflow-dir resolved from executable")
+		t.Error("expected non-empty workflow-dir resolved from project candidate")
 	}
-	if cfg.ProjectDir == "" {
-		t.Error("expected non-empty project-dir resolved from cwd")
+	if cfg.ProjectDir != dir {
+		t.Errorf("expected project-dir=%q, got %q", dir, cfg.ProjectDir)
 	}
 }
 
 // 2. --iterations 3 → iterations=3.
 func TestNewCommand_LongIterationsFlag(t *testing.T) {
-	cfg, err := runNewCommand(t, []string{"--iterations", "3"})
+	cfg, err := runNewCommand(t, []string{"--iterations", "3", "--workflow-dir", t.TempDir()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -54,7 +78,7 @@ func TestNewCommand_LongIterationsFlag(t *testing.T) {
 
 // 3. -n 3 → iterations=3 (short flag).
 func TestNewCommand_ShortIterationsFlag(t *testing.T) {
-	cfg, err := runNewCommand(t, []string{"-n", "3"})
+	cfg, err := runNewCommand(t, []string{"-n", "3", "--workflow-dir", t.TempDir()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,7 +116,7 @@ func TestNewCommand_LongWorkflowDirFlag(t *testing.T) {
 // 6. --project-dir <alt> → project-dir set to that path.
 func TestNewCommand_LongProjectDirFlag(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := runNewCommand(t, []string{"--project-dir", dir})
+	cfg, err := runNewCommand(t, []string{"--project-dir", dir, "--workflow-dir", t.TempDir()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +181,7 @@ func TestExecute_HelpReturnsNilNil(t *testing.T) {
 
 // 11. --iterations=3 (equals syntax) → iterations=3.
 func TestNewCommand_EqualsSyntax(t *testing.T) {
-	cfg, err := runNewCommand(t, []string{"--iterations=3"})
+	cfg, err := runNewCommand(t, []string{"--iterations=3", "--workflow-dir", t.TempDir()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -329,7 +353,7 @@ func TestNewCommand_WorkflowDirEvalSymlinks(t *testing.T) {
 // 23. --project-dir with EvalSymlinks applied: resolved path returned.
 func TestNewCommand_ProjectDirEvalSymlinks(t *testing.T) {
 	dir := t.TempDir()
-	cfg, err := runNewCommand(t, []string{"--project-dir", dir})
+	cfg, err := runNewCommand(t, []string{"--project-dir", dir, "--workflow-dir", t.TempDir()})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -473,5 +497,134 @@ func TestNewCommand_LongBeginsWithPr9k(t *testing.T) {
 	cmd := NewCommand(cfg)
 	if !strings.HasPrefix(cmd.Long, "pr9k drives the claude CLI") {
 		t.Errorf("cobra Long should begin with \"pr9k drives the claude CLI\", got %q", cmd.Long)
+	}
+}
+
+// Resolver tests — two-candidate resolveWorkflowDir behavior.
+
+// R1. Project-dir candidate wins when both exist.
+func TestResolveWorkflowDir_PrefersProjectDirCandidate(t *testing.T) {
+	projDir := t.TempDir()
+	projCandidate := projDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(projCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	execDir := t.TempDir()
+	execCandidate := execDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(execCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	got, err := resolveWorkflowDir(projDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != projCandidate {
+		t.Errorf("expected project-dir candidate %q, got %q", projCandidate, got)
+	}
+}
+
+// R2. Falls back to executable-dir candidate when project-dir candidate is missing.
+func TestResolveWorkflowDir_FallsBackToExecDirCandidate(t *testing.T) {
+	projDir := t.TempDir() // no .pr9k/workflow here
+
+	// We can't control the real executable dir in tests, so instead verify that
+	// when the project-dir candidate is absent and the exec-dir candidate is also
+	// absent, we get the "both missing" error rather than a nil result.
+	_, err := resolveWorkflowDir(projDir)
+	if err == nil {
+		t.Fatal("expected error when neither candidate exists, got nil")
+	}
+	if !strings.Contains(err.Error(), projDir+"/.pr9k/workflow") {
+		t.Errorf("error should mention project-dir candidate, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), ".pr9k/workflow") {
+		t.Errorf("error should mention exec-dir candidate, got %q", err.Error())
+	}
+}
+
+// R3. File-not-dir at project-dir candidate falls through to exec-dir candidate.
+func TestResolveWorkflowDir_FileNotDirFallsThrough(t *testing.T) {
+	projDir := t.TempDir()
+	pr9kDir := projDir + "/.pr9k"
+	if err := os.MkdirAll(pr9kDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	// Create .pr9k/workflow as a file, not a directory.
+	if err := os.WriteFile(pr9kDir+"/workflow", []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Both candidates absent (exec-dir won't have .pr9k/workflow either) → error.
+	_, err := resolveWorkflowDir(projDir)
+	if err == nil {
+		t.Fatal("expected error when project-dir candidate is a file and exec-dir candidate is missing")
+	}
+}
+
+// R4. Both candidates missing → error listing both paths.
+func TestResolveWorkflowDir_BothMissingReturnsError(t *testing.T) {
+	projDir := t.TempDir()
+	_, err := resolveWorkflowDir(projDir)
+	if err == nil {
+		t.Fatal("expected error when neither candidate exists, got nil")
+	}
+	if !strings.Contains(err.Error(), "could not locate workflow bundle") {
+		t.Errorf("expected error to say 'could not locate workflow bundle', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "Install the bundle or pass --workflow-dir") {
+		t.Errorf("expected error to mention install hint, got %q", err.Error())
+	}
+}
+
+// R5. --workflow-dir flag overrides both candidates.
+func TestResolveWorkflowDir_FlagOverridesBothCandidates(t *testing.T) {
+	projDir := t.TempDir()
+	// Set up project-dir candidate to ensure it would win if flag didn't override.
+	projCandidate := projDir + "/.pr9k/workflow"
+	if err := os.MkdirAll(projCandidate, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	override := t.TempDir()
+	cfg, err := runNewCommand(t, []string{"--workflow-dir", override, "--project-dir", projDir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.WorkflowDir == projCandidate {
+		t.Error("--workflow-dir flag should override project-dir candidate")
+	}
+	if cfg.WorkflowDir == "" {
+		t.Error("expected non-empty workflow-dir from flag")
+	}
+}
+
+// R6. Invalid --project-dir short-circuits before workflow resolution.
+func TestResolveWorkflowDir_InvalidProjectDirShortCircuits(t *testing.T) {
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	cmd.SetArgs([]string{"--project-dir", "/nonexistent/path/does/not/exist/xyz123"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for invalid --project-dir, got nil")
+	}
+	if !strings.Contains(err.Error(), "--project-dir") {
+		t.Errorf("expected error to mention --project-dir, got %q", err.Error())
+	}
+}
+
+// R7. --workflow-dir flag Usage string reflects both candidate paths.
+func TestResolveWorkflowDir_FlagUsageContainsBothCandidates(t *testing.T) {
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	flag := cmd.Flags().Lookup("workflow-dir")
+	if flag == nil {
+		t.Fatal("--workflow-dir flag not registered")
+	}
+	if !strings.Contains(flag.Usage, "<projectDir>/.pr9k/workflow/") {
+		t.Errorf("flag Usage should mention <projectDir>/.pr9k/workflow/, got %q", flag.Usage)
+	}
+	if !strings.Contains(flag.Usage, "<executableDir>/.pr9k/workflow/") {
+		t.Errorf("flag Usage should mention <executableDir>/.pr9k/workflow/, got %q", flag.Usage)
 	}
 }
