@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -881,6 +882,44 @@ func TestDocIntegrity_ReadingTheTUI_StatusLineBlockVersionCurrent(t *testing.T) 
 	}
 	want := "pr9k v" + version.Version
 	assertContains(t, section, want, "reading-the-tui.md status-line footer section")
+}
+
+// TP-144: versioning.md PATCH example keeps the shape `X.Y.Z → X.Y.(Z+1)`.
+// Guards against the issue #143 failure mode where the PATCH example drifted out
+// of shape (naming a stale MAJOR.MINOR pair) after a version bump. The example
+// is illustrative, so hardcoded numbers are fine — what matters is that both
+// semvers have the same MAJOR.MINOR and the second PATCH is exactly one greater.
+func TestDocIntegrity_VersioningMd_PatchExampleShape(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/coding-standards/versioning.md")
+
+	re := regexp.MustCompile("bump the \\*\\*PATCH\\*\\* \\(e\\.g\\. `(\\d+)\\.(\\d+)\\.(\\d+)` → `(\\d+)\\.(\\d+)\\.(\\d+)`\\)")
+	m := re.FindStringSubmatch(content)
+	if m == nil {
+		t.Fatalf("versioning.md: could not find PATCH example of the form `X.Y.Z → X.Y.(Z+1)`")
+	}
+	if m[1] != m[4] || m[2] != m[5] {
+		t.Errorf("versioning.md: PATCH example MAJOR.MINOR mismatch: %s.%s.%s → %s.%s.%s (MAJOR.MINOR must match)",
+			m[1], m[2], m[3], m[4], m[5], m[6])
+	}
+	want, got := intOrZero(m[3])+1, intOrZero(m[6])
+	if want != got {
+		t.Errorf("versioning.md: PATCH example Z must increment by 1: %s → %s (expected %s → %d)",
+			m[3], m[6], m[3], want)
+	}
+}
+
+// intOrZero parses a small non-negative integer string, returning 0 on any error.
+// The regex already guarantees \d+, so non-digit input is unreachable in practice.
+func intOrZero(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
