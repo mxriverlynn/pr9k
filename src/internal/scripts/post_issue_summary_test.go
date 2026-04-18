@@ -151,13 +151,13 @@ func TestPostIssueSummary_MissingArg(t *testing.T) {
 	}
 }
 
-// TP-001: non-empty .ralph-cache/iteration.jsonl is preferred over progress.txt.
+// TP-001: non-empty .pr9k/iteration.jsonl is preferred over progress.txt.
 // The body must be built from the JSONL; progress.txt content must not appear.
 func TestPostIssueSummary_JSONLPreference(t *testing.T) {
 	workDir := t.TempDir()
-	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	cacheDir := filepath.Join(workDir, ".pr9k")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		t.Fatalf("mkdir .ralph-cache: %v", err)
+		t.Fatalf("mkdir .pr9k: %v", err)
 	}
 	jsonl := `{"step_name":"feature-work","status":"done","schema_version":1,"iteration_num":1,"duration_s":1.5}` + "\n"
 	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte(jsonl), 0o644); err != nil {
@@ -191,9 +191,9 @@ func TestPostIssueSummary_JSONLPreference(t *testing.T) {
 // " — <notes>" suffix. Empty or absent notes must produce no suffix.
 func TestPostIssueSummary_JSONLNotesFormatting(t *testing.T) {
 	workDir := t.TempDir()
-	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	cacheDir := filepath.Join(workDir, ".pr9k")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		t.Fatalf("mkdir .ralph-cache: %v", err)
+		t.Fatalf("mkdir .pr9k: %v", err)
 	}
 	lines := strings.Join([]string{
 		`{"step_name":"a","status":"done"}`,
@@ -254,9 +254,9 @@ func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
 
 	t.Run("empty_jsonl", func(t *testing.T) {
 		workDir := t.TempDir()
-		cacheDir := filepath.Join(workDir, ".ralph-cache")
+		cacheDir := filepath.Join(workDir, ".pr9k")
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-			t.Fatalf("mkdir .ralph-cache: %v", err)
+			t.Fatalf("mkdir .pr9k: %v", err)
 		}
 		// Empty JSONL file — must not satisfy the -s test.
 		if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0o644); err != nil {
@@ -284,13 +284,13 @@ func TestPostIssueSummary_ProgressFileFallback(t *testing.T) {
 	})
 }
 
-// TP-008: Empty .ralph-cache/iteration.jsonl with no progress.txt → exit 0,
+// TP-008: Empty .pr9k/iteration.jsonl with no progress.txt → exit 0,
 // gh not invoked. Catches regressions if the -s guard is accidentally inverted.
 func TestPostIssueSummary_EmptyJSONLNoProgress(t *testing.T) {
 	workDir := t.TempDir()
-	cacheDir := filepath.Join(workDir, ".ralph-cache")
+	cacheDir := filepath.Join(workDir, ".pr9k")
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		t.Fatalf("mkdir .ralph-cache: %v", err)
+		t.Fatalf("mkdir .pr9k: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(cacheDir, "iteration.jsonl"), []byte{}, 0o644); err != nil {
 		t.Fatalf("write empty iteration.jsonl: %v", err)

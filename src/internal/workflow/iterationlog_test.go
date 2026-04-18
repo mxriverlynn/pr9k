@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"github.com/mxriverlynn/pr9k/src/internal/preflight"
 )
 
 func makeRecord(stepName, status string, iterNum int) IterationRecord {
@@ -143,13 +145,75 @@ func TestAppendIterationRecord_PathUsesFilepathJoin(t *testing.T) {
 
 // TestAppendIterationRecord_MissingCacheDir verifies a clear error when
 // .pr9k does not exist (precondition violated — preflight must run first).
+// Creates .ralph-cache ONLY to prove the production code looks at .pr9k, not
+// .ralph-cache.
 func TestAppendIterationRecord_MissingCacheDir(t *testing.T) {
 	dir := t.TempDir()
-	// intentionally do NOT create .pr9k
+	// Create the WRONG dir — .ralph-cache — to assert the production code
+	// is looking at .pr9k, not .ralph-cache.
+	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	err := AppendIterationRecord(dir, makeRecord("step", "done", 1))
 	if err == nil {
-		t.Fatal("expected error when .pr9k/ is missing, got nil")
+		t.Fatal("expected error when .pr9k/ is missing; .ralph-cache alone should not satisfy the precondition")
+	}
+}
+
+// TestAppendIterationRecord_AfterPreflightRun_Succeeds wires the two sides of
+// the contract: preflight.Run creates .pr9k/, then AppendIterationRecord writes
+// into it — without any manual mkdir in between. If either path string drifts,
+// this test fails with a "no such file or directory" error.
+func TestAppendIterationRecord_AfterPreflightRun_Succeeds(t *testing.T) {
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	profileFile := filepath.Join(profileDir, ".credentials.json")
+	if err := os.WriteFile(profileFile, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result := preflight.Run(projectDir, profileDir, allGreenProberForWorkflow{})
+	for _, e := range result.Errors {
+		t.Fatalf("preflight unexpected error: %v", e)
+	}
+
+	// Do NOT mkdir .pr9k — preflight.Run must have done it.
+	if err := AppendIterationRecord(projectDir, makeRecord("step", "done", 1)); err != nil {
+		t.Fatalf("append after preflight failed: %v", err)
+	}
+	path := filepath.Join(projectDir, ".pr9k", "iteration.jsonl")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+}
+
+// allGreenProberForWorkflow is a minimal preflight.Prober fake that reports
+// everything healthy, for use in cross-package tests in this package.
+type allGreenProberForWorkflow struct{}
+
+func (allGreenProberForWorkflow) DockerBinaryAvailable() bool        { return true }
+func (allGreenProberForWorkflow) DockerDaemonReachable() error       { return nil }
+func (allGreenProberForWorkflow) SandboxImagePresent() (bool, error) { return true, nil }
+
+// TestAppendIterationRecord_DoesNotWriteLegacyRalphCache verifies that after an
+// append, .ralph-cache/iteration.jsonl does NOT exist. Guards against a
+// double-write regression or a silent revert that targets the old path.
+func TestAppendIterationRecord_DoesNotWriteLegacyRalphCache(t *testing.T) {
+	dir := t.TempDir()
+	// Create BOTH dirs, as preflight.Run would.
+	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, ".pr9k"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendIterationRecord(dir, makeRecord("s", "done", 1)); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(dir, ".ralph-cache", "iteration.jsonl")
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy path %s should not exist; got err=%v", legacy, err)
 	}
 }
 

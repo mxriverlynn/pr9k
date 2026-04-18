@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prefers .ralph-cache/iteration.jsonl over progress.txt when present. Falls
+# Prefers .pr9k/iteration.jsonl over progress.txt when present. Falls
 # back to progress.txt for back-compat with runs where the jsonl doesn't exist.
 # Phase-A limitation: progress.txt accumulates across iterations in a
 # multi-iteration run, so issue N's comment may include iterations 1..N.
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ISSUE_ID="${1:?Usage: post_issue_summary <issue-id>}"
-JSONL_FILE=".ralph-cache/iteration.jsonl"
+JSONL_FILE=".pr9k/iteration.jsonl"
 PROGRESS_FILE="progress.txt"
 
 if [[ -s "$JSONL_FILE" ]]; then

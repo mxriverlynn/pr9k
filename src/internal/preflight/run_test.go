@@ -443,6 +443,34 @@ func TestRun_Pr9kDir_FileClashSurfacesError(t *testing.T) {
 	}
 }
 
+// TestRun_Pr9kDir_ReadOnlyProjectDirSurfacesError verifies that a projectDir
+// that cannot be written to surfaces a preflight error for .pr9k creation.
+func TestRun_Pr9kDir_ReadOnlyProjectDirSurfacesError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("requires non-root: root bypasses permission checks")
+	}
+
+	parent := t.TempDir()
+	projectDir := filepath.Join(parent, "readonly-project")
+	if err := os.Mkdir(projectDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(projectDir, 0o755) })
+
+	profileDir := t.TempDir()
+	result := Run(projectDir, profileDir, allGreenProber)
+
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), ".pr9k") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a .pr9k error for read-only projectDir; got: %v", result.Errors)
+	}
+}
+
 // TestRun_CollectsAllErrors_CacheProfileDocker (TP-011) documents the collect-all
 // design: a .ralph-cache creation failure does not short-circuit the profile or
 // docker checks — all three errors surface before Run returns.
@@ -461,11 +489,15 @@ func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
 	result := Run(projectDir, "/tmp/ralph-nonexistent-profile-xyzzy11", missingBinaryProber)
 
 	hasCache := false
+	hasPr9k := false
 	hasProfile := false
 	hasDocker := false
 	for _, e := range result.Errors {
 		if strings.Contains(e.Error(), ".ralph-cache") {
 			hasCache = true
+		}
+		if strings.Contains(e.Error(), ".pr9k") {
+			hasPr9k = true
 		}
 		if strings.Contains(e.Error(), "claude profile directory") {
 			hasProfile = true
@@ -476,6 +508,9 @@ func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
 	}
 	if !hasCache {
 		t.Errorf("expected .ralph-cache error in: %v", result.Errors)
+	}
+	if !hasPr9k {
+		t.Errorf("expected .pr9k error in: %v", result.Errors)
 	}
 	if !hasProfile {
 		t.Errorf("expected profile-dir error in: %v", result.Errors)

@@ -159,3 +159,67 @@ func TestNoLegacyRalphStepsJSONReferences_Makefile(t *testing.T) {
 		t.Errorf("Makefile contains %q — update to config.json", legacyConfigName)
 	}
 }
+
+// legacyIterationPath is the old iteration log path, assembled at runtime to
+// avoid the guard test itself appearing as a match in its own scan.
+var legacyIterationPath = ".ralph" + "-cache/iteration.jsonl"
+
+// checkNoLegacyIterationPathInTree walks root and fails if any non-excluded file
+// contains the legacy iteration log path. A broad .ralph-cache walker is not
+// viable (too many intentional preserves), but the exact combined path is narrow
+// enough: after TP-001 it appears in no committed file.
+func checkNoLegacyIterationPathInTree(t *testing.T, root string) {
+	t.Helper()
+	var offenders []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skipBinary(d.Name()) || skipFile(d.Name()) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(string(data), legacyIterationPath) {
+			rel, _ := filepath.Rel(root, path)
+			offenders = append(offenders, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir %s: %v", root, err)
+	}
+	if len(offenders) > 0 {
+		t.Errorf("files in %s still contain %q — update to .pr9k/iteration.jsonl:\n  %s",
+			root, legacyIterationPath, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TP-007: Regression guard — no file under src/ contains the legacy iteration log path.
+func TestNoLegacyIterationJsonlPath_Src(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "src"))
+}
+
+// TP-007: Regression guard — no file under scripts/ contains the legacy iteration log path.
+func TestNoLegacyIterationJsonlPath_Scripts(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "scripts"))
+}
+
+// TP-007: Regression guard — the repo-root Makefile does not contain the legacy iteration log path.
+func TestNoLegacyIterationJsonlPath_Makefile(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "Makefile")
+	if strings.Contains(content, legacyIterationPath) {
+		t.Errorf("Makefile contains %q — update to .pr9k/iteration.jsonl", legacyIterationPath)
+	}
+}
