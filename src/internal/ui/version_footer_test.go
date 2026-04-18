@@ -22,7 +22,7 @@ func TestView_FooterContainsCurrentVersion(t *testing.T) {
 
 	out := stripANSI(m.View())
 
-	if !strings.Contains(out, version.Version) {
-		t.Errorf("View() output does not contain version %q;\ngot:\n%s", version.Version, out)
+	if !strings.Contains(out, "pr9k v"+version.Version) {
+		t.Errorf("View() output does not contain \"pr9k v%s\";\ngot:\n%s", version.Version, out)
 	}
 }

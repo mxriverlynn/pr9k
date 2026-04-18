@@ -173,7 +173,7 @@ func TestCheckCredentials_MissingFile_Warns(t *testing.T) {
 		t.Fatalf("expected non-empty warning for missing credentials, got empty")
 	}
 	expectedPath := filepath.Join(dir, ".credentials.json")
-	for _, want := range []string{expectedPath, "sandbox login", "ANTHROPIC_API_KEY"} {
+	for _, want := range []string{expectedPath, "'pr9k sandbox login'", "ANTHROPIC_API_KEY"} {
 		if !strings.Contains(w, want) {
 			t.Errorf("warning %q does not contain %q", w, want)
 		}

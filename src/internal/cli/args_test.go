@@ -242,6 +242,9 @@ func TestNewCommand_VersionFlag(t *testing.T) {
 	if !strings.Contains(out.String(), version.Version) {
 		t.Errorf("expected --version output to contain %q, got %q", version.Version, out.String())
 	}
+	if !strings.HasPrefix(strings.TrimSpace(out.String()), "pr9k version ") {
+		t.Errorf("expected --version output to start with \"pr9k version \", got %q", out.String())
+	}
 }
 
 // 18. -v (short) behaves the same as --version.
@@ -261,6 +264,9 @@ func TestNewCommand_VersionShortFlag(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), version.Version) {
 		t.Errorf("expected -v output to contain %q, got %q", version.Version, out.String())
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out.String()), "pr9k version ") {
+		t.Errorf("expected -v output to start with \"pr9k version \", got %q", out.String())
 	}
 }
 
@@ -445,5 +451,27 @@ func TestNewCommand_NoShortFormsForDirFlags(t *testing.T) {
 	}
 	if pdFlag.Shorthand != "" {
 		t.Errorf("--project-dir must have no short form, got %q", pdFlag.Shorthand)
+	}
+}
+
+// TestNewCommand_UseBeginsWithPr9k pins the cobra Use field to start with "pr9k".
+// cobra derives the --version output line from Use, so this guards the rename.
+func TestNewCommand_UseBeginsWithPr9k(t *testing.T) {
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	if !strings.HasPrefix(cmd.Use, "pr9k") {
+		t.Errorf("cobra Use should begin with \"pr9k\", got %q", cmd.Use)
+	}
+	if !strings.Contains(cmd.Use, "[flags]") {
+		t.Errorf("cobra Use should contain \"[flags]\", got %q", cmd.Use)
+	}
+}
+
+// TestNewCommand_LongBeginsWithPr9k pins the cobra Long description to start with "pr9k".
+func TestNewCommand_LongBeginsWithPr9k(t *testing.T) {
+	cfg := &Config{}
+	cmd := NewCommand(cfg)
+	if !strings.HasPrefix(cmd.Long, "pr9k drives the claude CLI") {
+		t.Errorf("cobra Long should begin with \"pr9k drives the claude CLI\", got %q", cmd.Long)
 	}
 }

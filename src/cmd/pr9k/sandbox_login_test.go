@@ -170,8 +170,11 @@ func TestSandboxLogin_ImageAbsent_PullThenInteractive(t *testing.T) {
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
 	}
-	if !strings.Contains(outBuf.String(), "Sandbox image not found; pulling it first — run 'pr9k sandbox create' next time to separate this step.") {
-		t.Errorf("want verbose pull note in stdout, got %q", outBuf.String())
+	if !strings.Contains(outBuf.String(), "Sandbox image not found") {
+		t.Errorf("want \"Sandbox image not found\" in stdout, got %q", outBuf.String())
+	}
+	if !strings.Contains(outBuf.String(), "'pr9k sandbox create'") {
+		t.Errorf("want \"'pr9k sandbox create'\" in stdout, got %q", outBuf.String())
 	}
 	if len(fr.calls) != 1 || len(fr.calls[0]) < 2 || fr.calls[0][1] != "pull" {
 		t.Errorf("want exactly one docker pull call, got %v", fr.calls)

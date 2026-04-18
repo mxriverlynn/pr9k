@@ -1,0 +1,99 @@
+package main
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// legacyToolName is the old binary/directory name, assembled at runtime to
+// avoid the guard test itself appearing as a match in its own scan.
+var legacyToolName = "ralph" + "-tui"
+
+// skipBinary reports whether a file should be skipped because it is binary or
+// hidden (and thus not a candidate for legacy name references).
+func skipBinary(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch filepath.Ext(name) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".eot",
+		".pdf", ".zip", ".tar", ".gz", ".sum":
+		return true
+	}
+	return false
+}
+
+// skipDir reports whether a directory should be skipped entirely.
+func skipDir(name string) bool {
+	switch name {
+	case ".git", ".ralph-cache", "bin", "vendor":
+		return true
+	}
+	return skipBinary(name)
+}
+
+// skipFile reports whether a specific filename should be excluded from the scan.
+// Workflow tracking files are excluded because they may contain historical references
+// written before the rename and are never committed.
+func skipFile(name string) bool {
+	switch name {
+	case "progress.txt", "deferred.txt", "test-plan.md", "code-review.md":
+		return true
+	}
+	return false
+}
+
+// checkNoLegacyNameInTree walks root and fails the test if any non-excluded file
+// contains the legacy tool name. All offending paths are collected before failing.
+func checkNoLegacyNameInTree(t *testing.T, root string) {
+	t.Helper()
+	var offenders []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if skipBinary(d.Name()) || skipFile(d.Name()) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(string(data), legacyToolName) {
+			rel, _ := filepath.Rel(root, path)
+			offenders = append(offenders, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WalkDir %s: %v", root, err)
+	}
+	if len(offenders) > 0 {
+		t.Errorf("files in %s still contain %q (acceptance criterion: grep returns zero matches):\n  %s",
+			root, legacyToolName, strings.Join(offenders, "\n  "))
+	}
+}
+
+// TestNoLegacyRalphTuiReferences_Src asserts that no source file under src/
+// contains the legacy tool name. This is an explicit acceptance criterion for
+// the workflow-organization rename issue.
+func TestNoLegacyRalphTuiReferences_Src(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyNameInTree(t, filepath.Join(root, "src"))
+}
+
+// TestNoLegacyRalphTuiReferences_Scripts asserts that no file under scripts/
+// contains the legacy tool name.
+func TestNoLegacyRalphTuiReferences_Scripts(t *testing.T) {
+	root := docTestRepoRoot(t)
+	checkNoLegacyNameInTree(t, filepath.Join(root, "scripts"))
+}

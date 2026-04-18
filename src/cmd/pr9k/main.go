@@ -100,11 +100,22 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 	}, true
 }
 
+// formatUsageError formats a CLI parse error into the standard user-facing
+// message that includes a help pointer.
+func formatUsageError(err error) string {
+	return fmt.Sprintf("error: %v\nRun 'pr9k --help' for usage.\n", err)
+}
+
+// buildVersionLabel composes the TUI footer version string.
+func buildVersionLabel() string {
+	return "pr9k v" + version.Version
+}
+
 func main() {
 	cfg, err := cli.Execute(newSandboxCmd())
 	if err != nil {
 		if !errors.Is(err, errSilentExit) {
-			fmt.Fprintf(os.Stderr, "error: %v\nRun 'pr9k --help' for usage.\n", err)
+			fmt.Fprint(os.Stderr, formatUsageError(err))
 		}
 		os.Exit(1)
 	}
@@ -155,7 +166,7 @@ func main() {
 	// can query silence duration from the active claude pipeline.
 	header.SetHeartbeatReader(runner)
 
-	versionLabel := "pr9k v" + version.Version
+	versionLabel := buildVersionLabel()
 	model := ui.NewModel(header, keyHandler, versionLabel).
 		WithStatusRunner(statusRunner).
 		WithModeTrigger(statusRunner.Trigger)

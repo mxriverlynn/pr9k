@@ -299,3 +299,42 @@ func TestDocIntegrity_TUIDisplay_AsciiDiagramVersionCurrent(t *testing.T) {
 	want := "pr9k v" + version.Version
 	assertContains(t, content, want, "docs/features/tui-display.md ASCII diagram version label")
 }
+
+// legacyName is the old binary name assembled at runtime so this test file
+// does not itself contain the legacy string literal that the guard tests for.
+var legacyName = "ralph" + "-tui"
+
+// TestCIWorkflow_NoStaleRalphTuiReferences asserts that .github/workflows/ci.yml
+// has been updated to reference the renamed src/ directory and contains no
+// stale path references to the old tool name.
+func TestCIWorkflow_NoStaleRalphTuiReferences(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, ".github/workflows/ci.yml")
+
+	if strings.Contains(content, legacyName) {
+		t.Errorf(".github/workflows/ci.yml still contains %q — update working-directory and cache-dependency-path to use src/", legacyName)
+	}
+	if !strings.Contains(content, "working-directory: src") {
+		t.Error(".github/workflows/ci.yml does not contain \"working-directory: src\"")
+	}
+}
+
+// TestMakefile_BuildsBinaryNamedPr9k asserts that the Makefile builds the pr9k
+// binary and references the renamed src/ directory.
+func TestMakefile_BuildsBinaryNamedPr9k(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "Makefile")
+
+	if strings.Contains(content, "./cmd/"+legacyName) {
+		t.Errorf("Makefile still references ./cmd/%s — update to ./cmd/pr9k", legacyName)
+	}
+	if strings.Contains(content, "bin/"+legacyName) {
+		t.Errorf("Makefile still references bin/%s — update to bin/pr9k", legacyName)
+	}
+	if !strings.Contains(content, "./cmd/pr9k") {
+		t.Error("Makefile does not reference ./cmd/pr9k as the build target")
+	}
+	if !strings.Contains(content, "../bin/pr9k") {
+		t.Error("Makefile does not reference ../bin/pr9k as the output binary")
+	}
+}

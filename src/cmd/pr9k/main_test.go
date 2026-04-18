@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
 	"github.com/mxriverlynn/pr9k/src/internal/steps"
+	"github.com/mxriverlynn/pr9k/src/internal/version"
 )
 
 func TestStepNames_Empty(t *testing.T) {
@@ -529,5 +531,55 @@ func TestStartup_FatalAndWarningValidation_CountsOnlyFatals(t *testing.T) {
 	}
 	if strings.Contains(got, "2 validation error(s)") {
 		t.Errorf("count line must not report 2 (non-fatal warning counts as error), got: %q", got)
+	}
+}
+
+// TestFormatUsageError_ContainsPr9kHelpPointer pins the help-pointer string
+// shown to users on any CLI parse failure.
+func TestFormatUsageError_ContainsPr9kHelpPointer(t *testing.T) {
+	msg := formatUsageError(errors.New("unknown flag: --bad"))
+	if !strings.Contains(msg, "error:") {
+		t.Errorf("formatUsageError output missing \"error:\": %q", msg)
+	}
+	if !strings.Contains(msg, "Run 'pr9k --help'") {
+		t.Errorf("formatUsageError output missing \"Run 'pr9k --help'\": %q", msg)
+	}
+}
+
+// TestBuildVersionLabel pins the TUI footer label composition to use "pr9k v".
+func TestBuildVersionLabel(t *testing.T) {
+	label := buildVersionLabel()
+	if !strings.HasPrefix(label, "pr9k v") {
+		t.Errorf("buildVersionLabel() should start with \"pr9k v\", got %q", label)
+	}
+	want := "pr9k v" + version.Version
+	if label != want {
+		t.Errorf("buildVersionLabel() = %q, want %q", label, want)
+	}
+}
+
+// TestStartupPreflight_MissingImageErrorReferencesPr9k is a focused sibling of
+// TestStartupPreflight_RunsBeforeOrchestrator that names the invariant it pins:
+// the missing-image error message must name "pr9k sandbox create".
+func TestStartupPreflight_MissingImageErrorReferencesPr9k(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeMinimalStepFile(t, workflowDir)
+
+	prober := &fakeProber{
+		binaryAvailable: true,
+		daemonErr:       nil,
+		imagePresent:    false,
+	}
+
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir}
+	var buf bytes.Buffer
+	_, ok := startup(cfg, projectDir, profileDir, prober, &buf)
+	if ok {
+		t.Fatal("startup() returned ok=true; want false when sandbox image is missing")
+	}
+	if !strings.Contains(buf.String(), "pr9k sandbox create") {
+		t.Errorf("missing-image error does not mention \"pr9k sandbox create\": %q", buf.String())
 	}
 }

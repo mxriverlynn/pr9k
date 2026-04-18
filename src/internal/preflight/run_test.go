@@ -229,7 +229,7 @@ func TestRun_MissingCredentials_EmitsWarning(t *testing.T) {
 	if len(result.Warnings) != 1 {
 		t.Fatalf("expected exactly 1 warning for missing credentials, got %d: %v", len(result.Warnings), result.Warnings)
 	}
-	for _, want := range []string{"does not exist", "sandbox login", "ANTHROPIC_API_KEY"} {
+	for _, want := range []string{"does not exist", "'pr9k sandbox login'", "ANTHROPIC_API_KEY"} {
 		if !strings.Contains(result.Warnings[0], want) {
 			t.Errorf("warning %q does not contain %q", result.Warnings[0], want)
 		}

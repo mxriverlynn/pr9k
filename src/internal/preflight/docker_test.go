@@ -56,7 +56,7 @@ func TestCheckDocker_ImageMissing(t *testing.T) {
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	if !strings.Contains(errs[0].Error(), "sandbox create") {
+	if !strings.Contains(errs[0].Error(), "Run: pr9k sandbox create") {
 		t.Errorf("unexpected error text: %q", errs[0].Error())
 	}
 }
