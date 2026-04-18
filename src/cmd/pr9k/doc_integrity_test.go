@@ -398,11 +398,14 @@ func TestMakefile_BuildsBinaryNamedPr9k(t *testing.T) {
 	}
 }
 
-// TP-001: .gitignore contains the .pr9k/ entry (line-anchored to reject partial matches).
+// TP-001: .gitignore ignores the runtime-output paths under .pr9k/ (logs and iteration
+// log) while leaving .pr9k/workflow/ tracked so per-repo workflow overrides can be
+// committed. Line-anchored to reject partial matches.
 func TestGitignore_IgnoresPr9kDir(t *testing.T) {
 	root := docTestRepoRoot(t)
 	content := readFile(t, root, ".gitignore")
-	assertContains(t, content, "\n.pr9k/\n", ".gitignore .pr9k/ entry")
+	assertContains(t, content, "\n.pr9k/logs/\n", ".gitignore .pr9k/logs/ entry")
+	assertContains(t, content, "\n.pr9k/iteration.jsonl\n", ".gitignore .pr9k/iteration.jsonl entry")
 }
 
 // TP-002: .gitignore preserves the legacy logs/ entry.
@@ -419,20 +422,35 @@ func TestGitignore_PreservesRalphCacheEntry(t *testing.T) {
 	assertContains(t, content, "\n.ralph-cache/\n", ".gitignore .ralph-cache/ entry")
 }
 
-// TP-004: git actually ignores .pr9k/anything (behavioral pin via git check-ignore).
+// TP-004: git actually ignores runtime-output paths under .pr9k/ but tracks
+// .pr9k/workflow/ (behavioral pin via git check-ignore).
 func TestGitignore_Pr9kDirIsActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on $PATH")
 	}
 	root := docTestRepoRoot(t)
-	cmd := exec.Command("git", "check-ignore", "-q", ".pr9k/test-file")
-	cmd.Dir = root
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			t.Error(".pr9k/test-file is NOT ignored by git — check .gitignore for missing or negated .pr9k/ pattern")
-		} else {
-			t.Fatalf("git check-ignore failed unexpectedly: %v", err)
+
+	ignored := []string{".pr9k/logs/ralph-123.log", ".pr9k/iteration.jsonl"}
+	for _, path := range ignored {
+		cmd := exec.Command("git", "check-ignore", "-q", path)
+		cmd.Dir = root
+		if err := cmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				t.Errorf("%s is NOT ignored by git — check .gitignore for missing entry", path)
+			} else {
+				t.Fatalf("git check-ignore %s failed unexpectedly: %v", path, err)
+			}
 		}
+	}
+
+	tracked := ".pr9k/workflow/config.json"
+	cmd := exec.Command("git", "check-ignore", "-q", tracked)
+	cmd.Dir = root
+	err := cmd.Run()
+	if err == nil {
+		t.Errorf("%s IS ignored by git — .pr9k/workflow/ must remain trackable for per-repo overrides", tracked)
+	} else if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 1 {
+		t.Fatalf("git check-ignore %s failed unexpectedly: %v", tracked, err)
 	}
 }
 
