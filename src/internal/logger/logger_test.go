@@ -132,7 +132,7 @@ func TestLogFileCreatedWithExpectedPattern(t *testing.T) {
 	}
 	_ = l.Close()
 
-	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
 	if err != nil {
 		t.Fatalf("ReadDir logs: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestRunStampMatchesLogFilename(t *testing.T) {
 	}
 	_ = l.Close()
 
-	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
 	if err != nil {
 		t.Fatalf("ReadDir logs: %v", err)
 	}
@@ -193,11 +193,11 @@ func TestSubsecondRunStampDistinct(t *testing.T) {
 
 func TestLogsDirectoryCreatedIfMissing(t *testing.T) {
 	dir := t.TempDir()
-	logsDir := filepath.Join(dir, "logs")
+	logsDir := filepath.Join(dir, ".pr9k", "logs")
 
 	// Confirm it doesn't exist yet.
 	if _, err := os.Stat(logsDir); !os.IsNotExist(err) {
-		t.Fatalf("logs/ should not exist before NewLogger")
+		t.Fatalf(".pr9k/logs/ should not exist before NewLogger")
 	}
 
 	l, err := NewLogger(dir)
@@ -207,7 +207,7 @@ func TestLogsDirectoryCreatedIfMissing(t *testing.T) {
 	_ = l.Close()
 
 	if _, err := os.Stat(logsDir); err != nil {
-		t.Errorf("logs/ not created: %v", err)
+		t.Errorf(".pr9k/logs/ not created: %v", err)
 	}
 }
 
@@ -416,10 +416,10 @@ func TestRunStampReadableAfterClose(t *testing.T) {
 	}
 }
 
-// readLogLines reads all non-empty lines from the single log file in dir/logs/.
+// readLogLines reads all non-empty lines from the single log file in dir/.pr9k/logs/.
 func readLogLines(t *testing.T, dir string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
@@ -427,7 +427,7 @@ func readLogLines(t *testing.T, dir string) []string {
 		t.Fatal("no log files found")
 	}
 
-	f, err := os.Open(filepath.Join(dir, "logs", entries[0].Name()))
+	f, err := os.Open(filepath.Join(dir, ".pr9k", "logs", entries[0].Name()))
 	if err != nil {
 		t.Fatalf("Open log: %v", err)
 	}

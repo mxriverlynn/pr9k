@@ -59,14 +59,14 @@ func readLogFile(t *testing.T, log *logger.Logger, dir string) []string {
 	if err := log.Close(); err != nil {
 		t.Fatalf("log.Close: %v", err)
 	}
-	entries, err := os.ReadDir(filepath.Join(dir, "logs"))
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
 	if err != nil {
 		t.Fatalf("ReadDir logs: %v", err)
 	}
 	if len(entries) == 0 {
 		t.Fatal("no log files found")
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "logs", entries[0].Name()))
+	data, err := os.ReadFile(filepath.Join(dir, ".pr9k", "logs", entries[0].Name()))
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}

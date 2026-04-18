@@ -934,9 +934,9 @@ func TestRunner_NoOpDisabled(t *testing.T) {
 // file log helper for TestRunner_StderrForwarded
 // =============================================================================
 
-// readLogFiles reads all log lines from files in dir/logs/.
+// readLogFiles reads all log lines from files in dir/.pr9k/logs/.
 func readLogFiles(dir string) ([]string, error) {
-	logsDir := dir + "/logs"
+	logsDir := dir + "/.pr9k/logs"
 	entries, err := os.ReadDir(logsDir)
 	if err != nil {
 		return nil, fmt.Errorf("ReadDir %s: %w", logsDir, err)

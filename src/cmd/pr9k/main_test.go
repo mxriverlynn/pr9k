@@ -211,12 +211,12 @@ func TestStartup_HappyPath(t *testing.T) {
 		t.Errorf("expected 'is empty' in credentials warning, got: %q", got)
 	}
 
-	// logs/ directory must be created under projectDir (not workflowDir).
-	if _, err := os.Stat(filepath.Join(projectDir, "logs")); err != nil {
-		t.Errorf("expected logs/ under projectDir, got error: %v", err)
+	// .pr9k/logs/ directory must be created under projectDir (not workflowDir).
+	if _, err := os.Stat(filepath.Join(projectDir, ".pr9k", "logs")); err != nil {
+		t.Errorf("expected .pr9k/logs/ under projectDir, got error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(workflowDir, "logs")); !os.IsNotExist(err) {
-		t.Errorf("logs/ should NOT exist under workflowDir; Stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(workflowDir, ".pr9k", "logs")); !os.IsNotExist(err) {
+		t.Errorf(".pr9k/logs/ should NOT exist under workflowDir; Stat err=%v", err)
 	}
 }
 
@@ -249,9 +249,9 @@ func TestStartup_LoadStepsFailure(t *testing.T) {
 		t.Errorf("expected 'error:' in output, got: %q", got)
 	}
 
-	// Logger must NOT have been created — logs/ must not exist under projectDir.
-	if _, err := os.Stat(filepath.Join(projectDir, "logs")); !os.IsNotExist(err) {
-		t.Errorf("logs/ should NOT exist under projectDir when LoadSteps fails before logger creation; Stat err=%v", err)
+	// Logger must NOT have been created — .pr9k/logs/ must not exist under projectDir.
+	if _, err := os.Stat(filepath.Join(projectDir, ".pr9k", "logs")); !os.IsNotExist(err) {
+		t.Errorf(".pr9k/logs/ should NOT exist under projectDir when LoadSteps fails before logger creation; Stat err=%v", err)
 	}
 }
 

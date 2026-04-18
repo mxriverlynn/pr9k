@@ -3763,7 +3763,7 @@ func TestStepDispatcher_NonClaudeStep_ResetsRetryTracking(t *testing.T) {
 // SandboxOptions passed to RunSandboxedStep.
 func TestStepDispatcher_ClaudeStep_ForwardsArtifactPathAndCaptureMode(t *testing.T) {
 	exec := &fakeExecutor{}
-	wantPath := "/logs/test-stamp/iter01-01-my-step.jsonl"
+	wantPath := "/.pr9k/logs/test-stamp/iter01-01-my-step.jsonl"
 	current := ui.ResolvedStep{
 		Name:         "my-step",
 		IsClaude:     true,
@@ -3808,7 +3808,7 @@ func claudeIterStep(t *testing.T, dir, name string) steps.Step {
 // TP-W5a: TestRun_ClaudeStep_ArtifactPathInSandboxOptions verifies that when
 // RunStamp is non-empty, a claude step in the iteration phase receives an
 // ArtifactPath of the form
-// <projectDir>/logs/<runStamp>/iter<iter>-<stepIdx>-<slug>.jsonl.
+// <projectDir>/.pr9k/logs/<runStamp>/iter<iter>-<stepIdx>-<slug>.jsonl.
 func TestRun_ClaudeStep_ArtifactPathInSandboxOptions(t *testing.T) {
 	dir := t.TempDir()
 	stepName := "feature-work"
@@ -3833,7 +3833,7 @@ func TestRun_ClaudeStep_ArtifactPathInSandboxOptions(t *testing.T) {
 	}
 
 	// Iteration 1, step index j=0 → j+1=1; iter%02d=01, step%02d=01.
-	wantPath := filepath.Join(dir, "logs", runStamp, "iter01-01-feature-work.jsonl")
+	wantPath := filepath.Join(dir, ".pr9k", "logs", runStamp, "iter01-01-feature-work.jsonl")
 	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
 	if gotPath != wantPath {
 		t.Errorf("ArtifactPath: want %q, got %q", wantPath, gotPath)
@@ -3898,7 +3898,7 @@ func TestRun_InitializePhase_ArtifactPathPrefix(t *testing.T) {
 		t.Fatalf("expected 1 RunSandboxedStep call (initialize), got %d", len(exec.runSandboxedStepCalls))
 	}
 	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
-	wantPath := filepath.Join(dir, "logs", runStamp, "initialize-01-init-step.jsonl")
+	wantPath := filepath.Join(dir, ".pr9k", "logs", runStamp, "initialize-01-init-step.jsonl")
 	if gotPath != wantPath {
 		t.Errorf("initialize phase ArtifactPath: want %q, got %q", wantPath, gotPath)
 	}
@@ -3935,7 +3935,7 @@ func TestRun_FinalizePhase_ArtifactPathPrefix(t *testing.T) {
 		t.Fatalf("expected 1 RunSandboxedStep call (finalize), got %d", len(exec.runSandboxedStepCalls))
 	}
 	gotPath := exec.runSandboxedStepCalls[0].opts.ArtifactPath
-	wantPath := filepath.Join(dir, "logs", runStamp, "finalize-01-final-step.jsonl")
+	wantPath := filepath.Join(dir, ".pr9k", "logs", runStamp, "finalize-01-final-step.jsonl")
 	if gotPath != wantPath {
 		t.Errorf("finalize phase ArtifactPath: want %q, got %q", wantPath, gotPath)
 	}

@@ -20,11 +20,11 @@ type Logger struct {
 	runStamp  string
 }
 
-// NewLogger creates a new Logger that writes to logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log
-// under projectDir (the target repository directory). The logs/ directory is
+// NewLogger creates a new Logger that writes to .pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log
+// under projectDir (the target repository directory). The .pr9k/logs/ directory is
 // created if it does not exist.
 func NewLogger(projectDir string) (*Logger, error) {
-	logsDir := filepath.Join(projectDir, "logs")
+	logsDir := filepath.Join(projectDir, ".pr9k", "logs")
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
 	}

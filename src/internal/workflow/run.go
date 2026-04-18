@@ -374,7 +374,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			return ""
 		}
 		filename := fmt.Sprintf("%s%02d-%s.jsonl", phasePrefix, stepIdx, claudestream.Slug(resolved.Name))
-		return filepath.Join(executor.ProjectDir(), "logs", cfg.RunStamp, filename)
+		return filepath.Join(executor.ProjectDir(), ".pr9k", "logs", cfg.RunStamp, filename)
 	}
 
 	// 1. Initialize phase: run each step in order, binding captureAs results
