@@ -30,8 +30,8 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 10 {
-		t.Errorf("expected 10 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 11 {
+		t.Errorf("expected 11 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
@@ -83,6 +83,7 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 		"Test writing",
 		"Code review",
 		"Fix review items",
+		"Summarize to issue",
 		"Close issue",
 		"Update docs",
 		"Git push",
@@ -133,8 +134,8 @@ func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" is a non-claude step (index 9; two new steps prepended)
-	s := got.Iteration[9]
+	// "Git push" is a non-claude step (index 10)
+	s := got.Iteration[10]
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -357,14 +358,14 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" command should be ["git", "push"] (index 9; two new steps prepended)
-	gitPush := got.Iteration[9]
+	// "Git push" command should be ["git", "push"] (index 10)
+	gitPush := got.Iteration[10]
 	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
 		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
 	}
 
-	// "Close issue" command should contain "close_gh_issue" (index 7; two new steps prepended)
-	closeIssue := got.Iteration[7]
+	// "Close issue" command should contain "close_gh_issue" (index 8)
+	closeIssue := got.Iteration[8]
 	found := false
 	for _, part := range closeIssue.Command {
 		if strings.Contains(part, "close_gh_issue") {

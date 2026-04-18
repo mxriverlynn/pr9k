@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"unicode/utf8"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
