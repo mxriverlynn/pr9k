@@ -22,6 +22,7 @@ Each step is checked for:
 - Claude steps (`isClaude: true`) must have a non-empty `promptFile` and `model`, and must not have a `command`.
 - Non-Claude steps (`isClaude: false`) must have a non-empty `command` array, and must not have a `promptFile`.
 - `captureAs`, when set, must be non-empty and must not shadow any built-in variable name (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`).
+- `captureMode`, when set, must be one of `""`, `"lastLine"`, or `"fullStdout"`. Any other value is a fatal error. Setting `captureMode` on a claude step (`isClaude: true`) is also a fatal error — claude steps always capture via the stream-json Aggregator result.
 - `breakLoopIfEmpty` requires `captureAs` to be set and is only valid in the iteration phase.
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).

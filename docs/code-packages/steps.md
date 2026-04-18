@@ -114,7 +114,7 @@ Two steps run once before the iteration loop begins:
 
 ### Iteration Steps
 
-The 10 iteration steps run in sequence for each GitHub issue:
+The 11 iteration steps run in sequence for each GitHub issue:
 
 | # | Name | Type | Model | captureAs |
 |---|------|------|-------|-----------|
@@ -125,9 +125,10 @@ The 10 iteration steps run in sequence for each GitHub issue:
 | 5 | Test writing | Claude | sonnet | — |
 | 6 | Code review | Claude | opus | — |
 | 7 | Fix review items | Claude | sonnet | — |
-| 8 | Close issue | Shell | — | — |
-| 9 | Update docs | Claude | sonnet | — |
-| 10 | Git push | Shell | — | — |
+| 8 | Summarize to issue | Shell | — | — |
+| 9 | Close issue | Shell | — | — |
+| 10 | Update docs | Claude | sonnet | — |
+| 11 | Git push | Shell | — | — |
 
 "Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 

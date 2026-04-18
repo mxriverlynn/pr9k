@@ -26,6 +26,7 @@ Each step object has the following fields:
 | `promptFile` | string | Claude steps | Filename in `prompts/` directory (e.g., `"feature-work.md"`) |
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
 | `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
+| `captureMode` | string | optional | `"lastLine"` (default) or `"fullStdout"` — controls how stdout is bound when `captureAs` is set. Only valid on non-claude steps. See [Capturing Step Output](capturing-step-output.md). |
 | `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
 | `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../code-packages/validator.md) for allowed names) |
 
