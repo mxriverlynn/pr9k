@@ -196,9 +196,10 @@ func (allGreenProberForWorkflow) DockerBinaryAvailable() bool        { return tr
 func (allGreenProberForWorkflow) DockerDaemonReachable() error       { return nil }
 func (allGreenProberForWorkflow) SandboxImagePresent() (bool, error) { return true, nil }
 
-// TestAppendIterationRecord_DoesNotWriteLegacyRalphCache verifies that after an
-// append, .ralph-cache/iteration.jsonl does NOT exist. Guards against a
-// double-write regression or a silent revert that targets the old path.
+// TestAppendIterationRecord_DoesNotWriteLegacyRalphCache verifies that after
+// an append, no iteration.jsonl is written into the legacy .ralph-cache
+// directory. Guards against a double-write regression or a silent revert
+// that targets the old path.
 func TestAppendIterationRecord_DoesNotWriteLegacyRalphCache(t *testing.T) {
 	dir := t.TempDir()
 	// Create BOTH dirs, as preflight.Run would.
