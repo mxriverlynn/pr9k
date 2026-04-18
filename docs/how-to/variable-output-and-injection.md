@@ -33,14 +33,17 @@ The `VarTable` is created at the start of `Run` and carries two categories of va
 > (Rule B) rejects both tokens in any prompt file referenced by a claude step. Shell command steps,
 > which run on the host and see host paths, may use both tokens freely.
 
-- **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration and cleared at the start of the next:
+- **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration (or by capture steps) and cleared at the start of the next:
 
   | Variable | Value |
   |----------|-------|
   | `ISSUE_ID` | Current GitHub issue number |
   | `STARTING_SHA` | HEAD commit SHA at the start of the iteration |
+  | `ISSUE_BODY` | GitHub issue title and body (captured by "Get issue body" step via `captureAs` + `fullStdout`) |
+  | `PROJECT_CARD` | Short project summary from `scripts/project_card` (captured by "Get project card" step) |
+  | `PRE_REVIEW_DIFF` | `git diff --stat` output since iteration start (captured by "Get post-feature diff" step) |
 
-The SHA is not refreshed on retry — a retried step uses the same `STARTING_SHA` from when the iteration started.
+`STARTING_SHA` is not refreshed on retry — a retried step uses the same SHA from when the iteration started. `ISSUE_BODY`, `PROJECT_CARD`, and `PRE_REVIEW_DIFF` are captured via the standard `captureAs` mechanism and are available to all steps that run after the capturing step.
 
 **Resolution order:** During iteration steps, `VarTable` checks the iteration table first, then the persistent table. During finalize steps, only the persistent table is visible.
 

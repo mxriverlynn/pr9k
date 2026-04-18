@@ -72,17 +72,22 @@ Relative paths containing a `/` separator are resolved against the workflow dire
 
 ## The Default Workflow
 
-The default iteration workflow has 9 steps:
+The default iteration workflow has 14 steps:
 
-1. **Feature work** (sonnet) — Implements the GitHub issue
-2. **Test planning** (opus) — Creates a test plan
-3. **Test writing** (sonnet) — Writes tests from the plan
-4. **Code review** (opus) — Reviews changes since the starting SHA
-5. **Fix review items** (sonnet) — Implements review findings
-6. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
-7. **Close issue** (shell) — Closes the GitHub issue via `gh`
-8. **Update docs** (sonnet) — Updates project documentation
-9. **Git push** (shell) — Pushes all commits
+1. **Get next issue** (shell) — Finds the lowest-numbered open GitHub issue labeled "ralph" assigned to the user; exits the loop when none remain
+2. **Get starting SHA** (shell) — Records `HEAD` as `{{STARTING_SHA}}` for later diff references
+3. **Get issue body** (shell) — Fetches the issue title and body via `gh` and captures them as `{{ISSUE_BODY}}` (fullStdout)
+4. **Get project card** (shell) — Runs `scripts/project_card` to probe build-config files and captures a short project summary as `{{PROJECT_CARD}}` (fullStdout)
+5. **Feature work** (sonnet) — Implements the GitHub issue
+6. **Get post-feature diff** (shell) — Captures `git diff {{STARTING_SHA}}..HEAD --stat` as `{{PRE_REVIEW_DIFF}}` (fullStdout) for use in later review prompts
+7. **Test planning** (opus) — Creates a test plan
+8. **Test writing** (sonnet) — Writes tests from the plan
+9. **Code review** (opus) — Reviews changes since the starting SHA
+10. **Fix review items** (sonnet) — Implements review findings
+11. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
+12. **Close issue** (shell) — Closes the GitHub issue via `gh`
+13. **Update docs** (sonnet) — Updates project documentation
+14. **Git push** (shell) — Pushes all commits
 
 The default finalization workflow has 3 steps:
 

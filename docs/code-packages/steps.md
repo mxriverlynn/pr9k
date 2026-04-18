@@ -114,23 +114,26 @@ Two steps run once before the iteration loop begins:
 
 ### Iteration Steps
 
-The 11 iteration steps run in sequence for each GitHub issue:
+The 14 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | captureAs |
-|---|------|------|-------|-----------|
-| 1 | Get next issue | Shell | — | `ISSUE_ID` |
-| 2 | Get starting SHA | Shell | — | `STARTING_SHA` |
-| 3 | Feature work | Claude | sonnet | — |
-| 4 | Test planning | Claude | opus | — |
-| 5 | Test writing | Claude | sonnet | — |
-| 6 | Code review | Claude | opus | — |
-| 7 | Fix review items | Claude | sonnet | — |
-| 8 | Summarize to issue | Shell | — | — |
-| 9 | Close issue | Shell | — | — |
-| 10 | Update docs | Claude | sonnet | — |
-| 11 | Git push | Shell | — | — |
+| # | Name | Type | Model | captureAs | captureMode |
+|---|------|------|-------|-----------|-------------|
+| 1 | Get next issue | Shell | — | `ISSUE_ID` | lastLine |
+| 2 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine |
+| 3 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout |
+| 4 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout |
+| 5 | Feature work | Claude | sonnet | — | — |
+| 6 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout |
+| 7 | Test planning | Claude | opus | — | — |
+| 8 | Test writing | Claude | sonnet | — | — |
+| 9 | Code review | Claude | opus | — | — |
+| 10 | Fix review items | Claude | sonnet | — | — |
+| 11 | Summarize to issue | Shell | — | — | — |
+| 12 | Close issue | Shell | — | — | — |
+| 13 | Update docs | Claude | sonnet | — | — |
+| 14 | Git push | Shell | — | — | — |
 
-"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 3, 4, and 6 use `captureMode: "fullStdout"` to capture multi-line output. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 
