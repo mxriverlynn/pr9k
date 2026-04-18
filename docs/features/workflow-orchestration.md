@@ -376,6 +376,8 @@ When a step has `resumePrevious: true`, `Run` calls `evaluateResumeGates` before
 
 Per-phase tracking variables (`prevInitStats/State`, `prevIterStats/State`, `prevFinalStats/State`) are reset when entering a new phase and the iteration variables are reset at the start of each iteration loop so resume cannot bridge across phase or iteration boundaries. The first step of each phase always starts a fresh session (G1 fails because `prevStats.SessionID` is the zero value `""`).
 
+Skipped steps (via `skipIfCaptureEmpty`) do **not** reset the resume chain. When a step is skipped, `prevIterStats`/`prevIterState` are not updated. The next `resumePrevious` step therefore evaluates gates against the step **before** the skipped one — the resume chain jumps over the skip.
+
 The feature is **shipped engine-off**: the default `ralph-steps.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `ralph-steps.json` and A/B validation.
 
 ### The Orchestrate State Machine

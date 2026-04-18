@@ -473,7 +473,15 @@ func validatePhase(
 				})
 			} else if i > 0 {
 				prevModel := steps[i-1].Model
-				if prevModel != "" && step.Model != "" && prevModel != step.Model {
+				if prevModel == "" {
+					*errs = append(*errs, Error{
+						Severity: SeverityWarning,
+						Category: "schema",
+						Phase:    phaseName,
+						StepName: stepName,
+						Problem:  "resumePrevious: previous step is non-claude and has no session ID; the runtime will always fall through G1 and start a fresh session",
+					})
+				} else if step.Model != "" && prevModel != step.Model {
 					*errs = append(*errs, Error{
 						Severity: SeverityWarning,
 						Category: "schema",

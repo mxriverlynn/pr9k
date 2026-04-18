@@ -71,7 +71,9 @@ type StepExecutor interface {
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
 	RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
 	// SessionBlacklisted reports whether id is in the session blacklist (timed-out
-	// sessions). Used by evaluateResumeGates (G5).
+	// sessions). Used by evaluateResumeGates (G5). The zero-value implementation
+	// (returning false for every id) is safe and correct for test doubles that
+	// do not need to exercise G5.
 	SessionBlacklisted(id string) bool
 	// WasTimedOut reports whether the most recent step was ended by a timeout
 	// goroutine. Returns false once the next step begins.
@@ -246,24 +248,20 @@ func setTimeoutNote(rec *IterationRecord, executor StepExecutor, s steps.Step) {
 	}
 }
 
+// resumeInputTokenLimit is the G4 gate ceiling. Steps whose prior input token
+// count meets or exceeds this value start a fresh session to prevent unbounded
+// context growth.
+const resumeInputTokenLimit = 200_000
+
 // evaluateResumeGates checks the five gates that must pass before a step's
 // --resume flag is issued. Returns the session ID to resume (non-empty = all
 // gates passed) and the gate label that blocked (empty string if all passed).
 //
 // G1: previous step produced a non-empty session ID.
 // G2: previous step ended as StepDone (not StepFailed, not timed-out).
-// G3: implicitly satisfied by G2 — is_error=true causes StepFailed, which
-//
-//	blocks G2, so a separate Aggregator.Err() check is unnecessary.
-//
-// G4: previous step's input token count is below 200 000 to prevent unbounded
-//
-//	session growth that would make every subsequent step slower and more
-//	expensive.
-//
-// G5: session ID is NOT in the timeout blacklist (a timed-out session's state
-//
-//	is unknown and must not be resumed).
+// G3: implicitly satisfied by G2 — is_error=true causes StepFailed, which blocks G2, so a separate Aggregator.Err() check is unnecessary.
+// G4: previous step's input token count is below resumeInputTokenLimit to prevent unbounded session growth.
+// G5: session ID is NOT in the timeout blacklist (a timed-out session's state is unknown and must not be resumed).
 func evaluateResumeGates(
 	prevStats claudestream.StepStats,
 	prevState ui.StepState,
@@ -275,7 +273,7 @@ func evaluateResumeGates(
 	if prevState != ui.StepDone {
 		return "", "G2: previous step did not complete successfully"
 	}
-	if prevStats.InputTokens >= 200_000 {
+	if prevStats.InputTokens >= resumeInputTokenLimit {
 		return "", fmt.Sprintf("G4: previous step context too large (%d input tokens >= 200,000)", prevStats.InputTokens)
 	}
 	if blacklisted(prevStats.SessionID) {
@@ -405,7 +403,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			var gate string
 			resumeSID, gate = evaluateResumeGates(prevInitStats, prevInitState, executor.SessionBlacklisted)
 			if gate != "" {
-				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) — starting fresh session for step %q", gate, s.Name))
+				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
 			}
 		}
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, cfg.ContainerEnv, executor, resumeSID)
@@ -529,7 +527,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				var gate string
 				resumeSID, gate = evaluateResumeGates(prevIterStats, prevIterState, executor.SessionBlacklisted)
 				if gate != "" {
-					executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) — starting fresh session for step %q", gate, s.Name))
+					executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
 				}
 			}
 			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, cfg.ContainerEnv, executor, resumeSID)
@@ -640,7 +638,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			var gate string
 			resumeSID, gate = evaluateResumeGates(prevFinalStats, prevFinalState, executor.SessionBlacklisted)
 			if gate != "" {
-				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) — starting fresh session for step %q", gate, s.Name))
+				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
 			}
 		}
 		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, cfg.ContainerEnv, executor, resumeSID)

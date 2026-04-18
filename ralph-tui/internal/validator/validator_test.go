@@ -2611,3 +2611,31 @@ func TestValidate_ResumePrevious_NoPrevModel_NoCrossModelWarn(t *testing.T) {
 		}
 	}
 }
+
+// TestValidate_ResumePrevious_NonClaudePrev_WarnsFastFeedback verifies that
+// when a claude step with resumePrevious follows a non-claude step, the
+// validator emits a warning explaining that G1 will always fall through at
+// runtime (non-claude steps produce no session ID).
+func TestValidate_ResumePrevious_NonClaudePrev_WarnsFastFeedback(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"]},
+			{"name":"Claude","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	var found bool
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "non-claude") && strings.Contains(e.Error(), "G1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about non-claude previous step falling through G1; got: %v", errs)
+	}
+}

@@ -514,7 +514,7 @@ func TestRun_ResumePrevious_GateBlock_LogFormat(t *testing.T) {
 	for _, line := range executor.logLines {
 		if strings.Contains(line, "resume gate blocked (") &&
 			strings.Contains(line, "G1:") &&
-			strings.Contains(line, ") \u2014 starting fresh session for step \"") &&
+			strings.Contains(line, ") -- starting fresh session for step \"") &&
 			strings.Contains(line, blockedStepName) {
 			found = true
 			break
@@ -683,6 +683,64 @@ func TestRun_ResumePrevious_SkipIfCaptureEmpty_ResumeFromBeforeSkipped(t *testin
 	}
 	if !found {
 		t.Errorf("step C command does not contain '--resume %s' (resume from A, not skipped B): %v", sidA, cmd)
+	}
+}
+
+// TP-010: TestRun_ResumePrevious_G3_IsErrorBlocksViaG2 verifies that G3 is
+// subsumed by G2. When a sandboxed step returns an aggregator error (simulating
+// is_error=true in the claude output stream), Orchestrate marks the step
+// StepFailed, which causes G2 to block the subsequent resumePrevious step.
+func TestRun_ResumePrevious_G3_IsErrorBlocksViaG2(t *testing.T) {
+	t.Parallel()
+	workflowDir := t.TempDir()
+	makeResumePromptFile(t, workflowDir, "step1.txt")
+	makeResumePromptFile(t, workflowDir, "step2.txt")
+
+	executor := &fakeExecutor{
+		projectDir: makeCacheDir(t),
+		// Step 1 returns an aggregator error (mirrors is_error=true → aggErr path).
+		runSandboxedStepErrors: []error{errors.New("aggregator: is_error=true"), nil},
+		lastStatsReturn: []claudestream.StepStats{
+			{SessionID: "would-be-resumable", InputTokens: 1_000},
+			{},
+		},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+	// Orchestrate drains one buffered action in its per-step pre-check select,
+	// then blocks on a second receive when step 1 fails.
+	kh.Actions <- ui.ActionContinue
+	kh.Actions <- ui.ActionContinue
+
+	cfg := RunConfig{
+		WorkflowDir: workflowDir,
+		Iterations:  1,
+		InitializeSteps: []steps.Step{
+			resumeClaudeStep("init-step-1", "step1.txt", false),
+			resumeClaudeStep("init-step-2", "step2.txt", true),
+		},
+	}
+
+	Run(executor, header, kh, cfg)
+
+	if len(executor.runSandboxedStepCalls) < 2 {
+		t.Fatalf("want at least 2 RunSandboxedStep calls, got %d", len(executor.runSandboxedStepCalls))
+	}
+	cmd := executor.runSandboxedStepCalls[1].command
+	for _, arg := range cmd {
+		if arg == "--resume" {
+			t.Errorf("step 2 must not contain '--resume' when G3 (absorbed by G2) blocks: %v", cmd)
+		}
+	}
+	var g2Logged bool
+	for _, line := range executor.logLines {
+		if strings.Contains(line, "G2:") {
+			g2Logged = true
+			break
+		}
+	}
+	if !g2Logged {
+		t.Errorf("expected log entry mentioning G2 gate (G3 absorbed by G2), got lines: %v", executor.logLines)
 	}
 }
 
