@@ -40,7 +40,7 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 
 ## pr9k (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md`.
+The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md` (historical — describes the original TUI design).
 
 ### Build and run
 
@@ -126,7 +126,7 @@ Problem-focused guides for users running pr9k against their own projects. When a
 - [`docs/how-to/setting-step-timeouts.md`](docs/how-to/setting-step-timeouts.md) — Using `timeoutSeconds` to cap the wall-clock time for a step, SIGTERM/SIGKILL escalation, and the advisory prompt budget pattern
 - [`docs/how-to/recovering-from-step-failures.md`](docs/how-to/recovering-from-step-failures.md) — Error mode keyboard controls (`c` continue, `r` retry, `q` quit) and when to use each
 - [`docs/how-to/quitting-gracefully.md`](docs/how-to/quitting-gracefully.md) — The `q`/`y` confirmation flow, Escape cancel, SIGINT/SIGTERM, `Quitting...` feedback, and exit codes
-- [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file and iteration log (`.ralph-cache/iteration.jsonl`), navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
+- [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file and iteration log (`.pr9k/iteration.jsonl`), navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
 - [`docs/how-to/copying-log-text.md`](docs/how-to/copying-log-text.md) — Mouse drag, keyboard single-line, and keyboard multi-line copy walkthroughs; OSC 52 SSH fallback; Linux `xclip`/`xsel` requirement; terminal native-selection override keys
 - [`docs/how-to/configuring-a-status-line.md`](docs/how-to/configuring-a-status-line.md) — Add a `statusLine` block to `config.json`, use the sample script, read stdin JSON with `jq`, tune `refreshIntervalSeconds`, debug via log file, and recover the shortcut bar
 - [`docs/how-to/caching-build-artifacts.md`](docs/how-to/caching-build-artifacts.md) — Use `containerEnv` to redirect Go/Node/Python/Rust cache dirs into `.ralph-cache/` for persistent, writable caches across iterations; language-to-env-var matrix and per-language example blocks

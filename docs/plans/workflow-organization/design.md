@@ -1,6 +1,6 @@
 # Workflow Organization — Design
 
-Status: **Design — not implemented**.
+Status: **Implemented** — issues #135 (rename), #136 (config.json), #137 (logs → .pr9k/logs/), #138 (iteration.jsonl → .pr9k/), #139 (bundle layout + resolver), #140 (.gitignore), #141 (doc sweep) all closed.
 Target pr9k version: **0.7.0** (breaking — `y` bump per `docs/coding-standards/versioning.md`; the binary is renamed from `ralph-tui` to `pr9k`, the source directory is renamed from `ralph-tui/` to `src/`, the workflow-config filename is renamed from `config.json` to `config.json`, the `--workflow-dir` default changes, `config.json`/`scripts/`/`prompts/` move, and `logs/` relocates).
 
 ## 1. Overview

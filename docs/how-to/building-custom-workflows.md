@@ -136,6 +136,56 @@ The orchestrator resolves `scripts/deploy` to `{workflowDir}/scripts/deploy` bef
 
 After modifying configs or prompts, rebuild with `make build` to copy everything into `bin/`. Or run directly if building with `go build`.
 
+## Per-Repo Workflow Override
+
+pr9k supports an in-repo workflow override: if `<projectDir>/.pr9k/workflow/` exists and is a directory, pr9k uses it as the workflow directory instead of the shipped bundle inside `bin/.pr9k/workflow/`. This lets individual repos ship their own `config.json`, `prompts/`, and `scripts/` without touching the pr9k install.
+
+### Setup
+
+1. Create the override directory in your target repo:
+
+   ```bash
+   mkdir -p .pr9k/workflow/prompts
+   mkdir -p .pr9k/workflow/scripts
+   ```
+
+2. Add your `config.json` to `.pr9k/workflow/`:
+
+   ```json
+   {
+     "initialize": [],
+     "iteration": [
+       {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true},
+       {"name": "Push", "isClaude": false, "command": ["git", "push"]}
+     ],
+     "finalize": []
+   }
+   ```
+
+3. Add prompt files to `.pr9k/workflow/prompts/` and scripts to `.pr9k/workflow/scripts/`.
+
+4. Add `.pr9k/` to your `.gitignore` — or commit the override if you want it version-controlled:
+
+   ```bash
+   echo '.pr9k/' >> .gitignore
+   ```
+
+### Resolution order
+
+When pr9k starts, it checks two candidates in order:
+
+1. `<projectDir>/.pr9k/workflow/` — used if it exists and is a directory (in-repo override)
+2. `<executableDir>/.pr9k/workflow/` — the shipped bundle (fallback)
+
+If neither exists, pr9k exits with an error listing both paths. Pass `--workflow-dir <path>` to override both candidates.
+
+### When to use
+
+The in-repo override is useful when:
+- Your project needs workflow steps or prompts tailored to its tech stack
+- You want to version-control your workflow alongside your code
+- You're developing a custom workflow and want quick iteration without rebuilding the pr9k bundle
+
 ## TUI Display Constraints
 
 The TUI status header displays steps as a dynamic grid of 4 columns per row, sized at startup to fit the largest phase (initialize, iteration, or finalize). If your iteration phase has 6 steps, the grid has 2 rows; 9 steps gives 3 rows; and so on. Each row's cells are padded to a uniform width so the step list is distributed evenly across the header. If any phase has more steps than the grid was sized to hold (which cannot happen with a correct config — the grid is sized to the maximum across all phases), extra steps will execute but won't appear in the header.

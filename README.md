@@ -10,7 +10,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ### Prerequisites
 
-- [Go 1.26.2](https://go.dev/dl/) (for ralph-tui)
+- [Go 1.26.2](https://go.dev/dl/) (for pr9k)
 - [GitHub CLI (`gh`)](https://cli.github.com/) — authenticated with access to your target repo
 - [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) — installed and authenticated
 - A GitHub repo with issues labeled `ralph` assigned to your user
@@ -31,10 +31,10 @@ From the **target repo** (the repo where you want Ralph to work):
 
 ```bash
 # Run until no issues remain (until-done mode)
-path/to/pr9k/bin/ralph-tui
+path/to/pr9k/bin/pr9k
 
 # Or cap at 3 iterations
-path/to/pr9k/bin/ralph-tui -n 3
+path/to/pr9k/bin/pr9k -n 3
 ```
 
 Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue. When run without `-n`, Ralph keeps going until `get_next_issue` finds no more issues.
@@ -45,17 +45,17 @@ Ralph will find the next open issue labeled `ralph`, implement the feature, writ
 
 ```bash
 # From your target repo — run until no issues remain:
-path/to/pr9k/bin/ralph-tui
+path/to/pr9k/bin/pr9k
 
 # Cap at N iterations:
-path/to/pr9k/bin/ralph-tui -n <iterations>
+path/to/pr9k/bin/pr9k -n <iterations>
 
 # Specify the project directory explicitly:
-path/to/pr9k/bin/ralph-tui -p path/to/pr9k
+path/to/pr9k/bin/pr9k --project-dir path/to/pr9k
 
 # Build and run directly (without make):
-cd path/to/pr9k/ralph-tui && go build -o ../ralph-tui ./cmd/ralph-tui
-path/to/pr9k/ralph-tui -n <iterations>
+cd path/to/pr9k/src && go build -o ../bin/pr9k ./cmd/pr9k
+path/to/pr9k/bin/pr9k -n <iterations>
 ```
 
 Omitting `-n` (or passing `-n 0`) runs Ralph in until-done mode: it keeps picking up issues until `get_next_issue` finds none. Passing `-n N` caps the run at N iterations.
@@ -82,7 +82,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
 ## Documentation
 
 - [Architecture Overview](docs/architecture.md) — System-level architecture with block diagrams, data flow, and package dependencies
-- **How-To Guides** (in [`docs/how-to/`](docs/how-to/)) — problem-focused guides for using ralph-tui on your own projects:
+- **How-To Guides** (in [`docs/how-to/`](docs/how-to/)) — problem-focused guides for using pr9k on your own projects:
   - [Getting Started](docs/how-to/getting-started.md) — Install, first run against your own repo, quick tour of the TUI
   - [Setting Up Docker Sandbox](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `sandbox create`, authenticate via `sandbox login`, and configure `CLAUDE_CONFIG_DIR`
   - [Reading the TUI](docs/how-to/reading-the-tui.md) — The four regions of the screen: header, checkbox grid, log panel, footer
@@ -117,7 +117,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
   - [`internal/claudestream`](docs/code-packages/claudestream.md) — Parser, Renderer, Aggregator, RawWriter, Pipeline
 - [Coding Standards](docs/coding-standards/) — Go error handling, testing, concurrency, API design, and Go-specific patterns
 - [Architectural Decision Records (ADRs)](docs/adr/) — Historical decisions including the narrow-reading principle and cobra CLI choice
-- [ralph-tui Plan](docs/plans/ralph-tui.md) — Original specification and design decisions
+- [pr9k Plan](docs/plans/ralph-tui.md) — Original specification and design decisions
 
 ## Copyright & License
 
