@@ -13,16 +13,15 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/vars"
 )
 
-// projectRoot returns the path two levels up from this test file's directory
-// (internal/steps/ → src/). Uses runtime.Caller so it is independent
-// of the working directory when tests are run.
+// projectRoot returns the workflow/ directory relative to this test file.
+// Uses runtime.Caller so it is independent of the working directory when tests are run.
 func projectRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("could not determine test file path")
 	}
-	return filepath.Join(filepath.Dir(filename), "..", "..")
+	return filepath.Join(filepath.Dir(filename), "..", "..", "..", "workflow")
 }
 
 func TestLoadSteps_IterationCount(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 
 func projectCardPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), "scripts", "project_card")
+	return filepath.Join(repoRoot(t), "workflow", "scripts", "project_card")
 }
 
 // runProjectCard runs scripts/project_card in workDir using the provided environment.

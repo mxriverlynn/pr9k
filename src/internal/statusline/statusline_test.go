@@ -1387,7 +1387,7 @@ func workspaceRoot(t *testing.T) string {
 // Runner's cached output. This pins the sample script's end-to-end contract.
 func TestSampleScript_OutputLine(t *testing.T) {
 	root := workspaceRoot(t)
-	scriptPath := filepath.Join(root, "scripts", "statusline")
+	scriptPath := filepath.Join(root, "workflow", "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Fatalf("scripts/statusline not found at %s: %v", scriptPath, err)
 	}
@@ -1433,7 +1433,7 @@ func TestSampleScript_OutputLine(t *testing.T) {
 // Without it, New() returns Enabled()==false and the Runner silently disables.
 func TestSampleScript_Executable(t *testing.T) {
 	root := workspaceRoot(t)
-	scriptPath := filepath.Join(root, "scripts", "statusline")
+	scriptPath := filepath.Join(root, "workflow", "scripts", "statusline")
 	info, err := os.Stat(scriptPath)
 	if err != nil {
 		t.Fatalf("scripts/statusline not found: %v", err)
@@ -1451,7 +1451,7 @@ func TestSampleScript_DirectExec_DrainAndOutput(t *testing.T) {
 		t.Skip("jq not found in PATH; skipping script exec test")
 	}
 	root := workspaceRoot(t)
-	scriptPath := filepath.Join(root, "scripts", "statusline")
+	scriptPath := filepath.Join(root, "workflow", "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Fatalf("scripts/statusline not found: %v", err)
 	}
@@ -1483,7 +1483,7 @@ func TestSampleScript_DirectExec_StderrSilent(t *testing.T) {
 		t.Skip("jq not found in PATH; skipping script exec test")
 	}
 	root := workspaceRoot(t)
-	scriptPath := filepath.Join(root, "scripts", "statusline")
+	scriptPath := filepath.Join(root, "workflow", "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Fatalf("scripts/statusline not found: %v", err)
 	}
@@ -1509,7 +1509,7 @@ func TestSampleScript_DirectExec_ExitZero(t *testing.T) {
 		t.Skip("jq not found in PATH; skipping script exec test")
 	}
 	root := workspaceRoot(t)
-	scriptPath := filepath.Join(root, "scripts", "statusline")
+	scriptPath := filepath.Join(root, "workflow", "scripts", "statusline")
 	if _, err := os.Stat(scriptPath); err != nil {
 		t.Fatalf("scripts/statusline not found: %v", err)
 	}

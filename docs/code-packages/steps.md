@@ -16,7 +16,7 @@ Loads workflow step definitions from JSON configuration files and builds prompt 
 Key files:
 - `src/internal/steps/steps.go` — Step struct, StepFile struct, LoadSteps, BuildPrompt
 - `src/internal/steps/steps_test.go` — Unit tests for step loading and prompt building
-- `src/config.json` — All step definitions (initialize, iteration, and finalization)
+- `workflow/config.json` — All step definitions (initialize, iteration, and finalization)
 
 ## Architecture
 

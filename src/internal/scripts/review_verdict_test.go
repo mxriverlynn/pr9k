@@ -12,7 +12,7 @@ import (
 
 func reviewVerdictPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), "scripts", "review_verdict")
+	return filepath.Join(repoRoot(t), "workflow", "scripts", "review_verdict")
 }
 
 // runVerdict runs the review_verdict script via bash in workDir and returns

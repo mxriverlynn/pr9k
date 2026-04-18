@@ -4,9 +4,9 @@ build:
 	rm -rf bin
 	mkdir -p bin/.pr9k/workflow
 	cd src && go build -o ../bin/pr9k ./cmd/pr9k
-	cp -r prompts bin/.pr9k/workflow/prompts
-	cp -r scripts bin/.pr9k/workflow/scripts
-	cp src/config.json bin/.pr9k/workflow/
+	cp -r workflow/prompts bin/.pr9k/workflow/prompts
+	cp -r workflow/scripts bin/.pr9k/workflow/scripts
+	cp workflow/config.json bin/.pr9k/workflow/
 	cp ralph-art.txt bin/.pr9k/workflow/
 
 test:

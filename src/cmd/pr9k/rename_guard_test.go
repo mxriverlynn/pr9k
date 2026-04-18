@@ -91,11 +91,11 @@ func TestNoLegacyRalphTuiReferences_Src(t *testing.T) {
 	checkNoLegacyNameInTree(t, filepath.Join(root, "src"))
 }
 
-// TestNoLegacyRalphTuiReferences_Scripts asserts that no file under scripts/
+// TestNoLegacyRalphTuiReferences_Scripts asserts that no file under workflow/scripts/
 // contains the legacy tool name.
 func TestNoLegacyRalphTuiReferences_Scripts(t *testing.T) {
 	root := docTestRepoRoot(t)
-	checkNoLegacyNameInTree(t, filepath.Join(root, "scripts"))
+	checkNoLegacyNameInTree(t, filepath.Join(root, "workflow", "scripts"))
 }
 
 // legacyConfigName is the old config filename, assembled at runtime to avoid the
@@ -145,10 +145,10 @@ func TestNoLegacyRalphStepsJSONReferences_Src(t *testing.T) {
 	checkNoLegacyConfigInTree(t, filepath.Join(root, "src"))
 }
 
-// TP-001: Regression guard — no file under scripts/ contains the legacy config filename.
+// TP-001: Regression guard — no file under workflow/scripts/ contains the legacy config filename.
 func TestNoLegacyRalphStepsJSONReferences_Scripts(t *testing.T) {
 	root := docTestRepoRoot(t)
-	checkNoLegacyConfigInTree(t, filepath.Join(root, "scripts"))
+	checkNoLegacyConfigInTree(t, filepath.Join(root, "workflow", "scripts"))
 }
 
 // TP-001: Regression guard — the repo-root Makefile does not reference the legacy config filename.
@@ -209,10 +209,10 @@ func TestNoLegacyIterationJsonlPath_Src(t *testing.T) {
 	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "src"))
 }
 
-// TP-007: Regression guard — no file under scripts/ contains the legacy iteration log path.
+// TP-007: Regression guard — no file under workflow/scripts/ contains the legacy iteration log path.
 func TestNoLegacyIterationJsonlPath_Scripts(t *testing.T) {
 	root := docTestRepoRoot(t)
-	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "scripts"))
+	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "workflow", "scripts"))
 }
 
 // TP-007: Regression guard — the repo-root Makefile does not contain the legacy iteration log path.

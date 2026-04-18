@@ -18,18 +18,17 @@ func getRalphTUIDir(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(filename), "..", "..")
+	return filepath.Join(filepath.Dir(filename), "..", "..", "..", "workflow")
 }
 
 // assembleWorkflowDir builds a temp directory that mirrors the workflow bundle
 // layout (config.json + prompts/ + scripts/) from source-tree locations:
-//   - config.json  lives at src/config.json
-//   - prompts/          lives at the repo root
-//   - scripts/          lives at the repo root
+//   - config.json  lives at workflow/config.json
+//   - prompts/          lives at workflow/prompts/
+//   - scripts/          lives at workflow/scripts/
 func assembleWorkflowDir(t *testing.T) string {
 	t.Helper()
 	ralphTUIDir := getRalphTUIDir(t)
-	repoRoot := filepath.Join(ralphTUIDir, "..")
 
 	dir := t.TempDir()
 
@@ -42,7 +41,7 @@ func assembleWorkflowDir(t *testing.T) string {
 	}
 
 	for _, sub := range []string{"prompts", "scripts"} {
-		abs, err := filepath.Abs(filepath.Join(repoRoot, sub))
+		abs, err := filepath.Abs(filepath.Join(ralphTUIDir, sub))
 		if err != nil {
 			t.Fatalf("abs path for %s: %v", sub, err)
 		}
@@ -319,8 +318,7 @@ func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
 // issues are found — a misspelling or removal would silently disable the skip.
 func TestCodeReviewPrompt_ContainsSentinel(t *testing.T) {
 	ralphTUIDir := getRalphTUIDir(t)
-	repoRoot := filepath.Join(ralphTUIDir, "..")
-	data, err := os.ReadFile(filepath.Join(repoRoot, "prompts", "code-review-changes.md"))
+	data, err := os.ReadFile(filepath.Join(ralphTUIDir, "prompts", "code-review-changes.md"))
 	if err != nil {
 		t.Fatalf("read code-review-changes.md: %v", err)
 	}

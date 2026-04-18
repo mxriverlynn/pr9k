@@ -328,7 +328,7 @@ func TestMakefile_CopiesConfigJSONToBin(t *testing.T) {
 	root := docTestRepoRoot(t)
 	content := readFile(t, root, "Makefile")
 
-	assertContains(t, content, "cp src/config.json bin/.pr9k/workflow/", "Makefile cp target")
+	assertContains(t, content, "cp workflow/config.json bin/.pr9k/workflow/", "Makefile cp target")
 	assertNotContains(t, content, legacyConfigName, "Makefile legacy config filename")
 }
 
@@ -339,8 +339,8 @@ func TestMakefile_BundleLayoutIsUnderPr9kWorkflow(t *testing.T) {
 	content := readFile(t, root, "Makefile")
 
 	assertContains(t, content, "mkdir -p bin/.pr9k/workflow", "Makefile mkdir target")
-	assertContains(t, content, "cp -r prompts bin/.pr9k/workflow/prompts", "Makefile prompts cp target")
-	assertContains(t, content, "cp -r scripts bin/.pr9k/workflow/scripts", "Makefile scripts cp target")
+	assertContains(t, content, "cp -r workflow/prompts bin/.pr9k/workflow/prompts", "Makefile prompts cp target")
+	assertContains(t, content, "cp -r workflow/scripts bin/.pr9k/workflow/scripts", "Makefile scripts cp target")
 	assertContains(t, content, "cp ralph-art.txt bin/.pr9k/workflow/", "Makefile ralph-art.txt cp target")
 
 	assertNotContains(t, content, "cp -r prompts bin/prompts", "Makefile legacy prompts position")
@@ -355,13 +355,13 @@ func TestMakefile_BundleLayoutIsUnderPr9kWorkflow(t *testing.T) {
 func TestBundleLayout_MakefileWiresScriptsToWhereResolveCommandLooksForThem(t *testing.T) {
 	root := docTestRepoRoot(t)
 	makefile := readFile(t, root, "Makefile")
-	configJSON := readFile(t, root, "src/config.json")
+	configJSON := readFile(t, root, "workflow/config.json")
 
-	// The Makefile must copy scripts/ into the bundle.
-	assertContains(t, makefile, "cp -r scripts bin/.pr9k/workflow/scripts", "Makefile scripts bundle copy")
+	// The Makefile must copy workflow/scripts/ into the bundle.
+	assertContains(t, makefile, "cp -r workflow/scripts bin/.pr9k/workflow/scripts", "Makefile scripts bundle copy")
 
 	// config.json commands that start with "scripts/" must reference source files
-	// that actually exist under the repo-level scripts/ directory.
+	// that actually exist under the workflow/scripts/ directory.
 	lines := strings.Split(configJSON, "\n")
 	for _, line := range lines {
 		if idx := strings.Index(line, `"scripts/`); idx != -1 {
@@ -372,7 +372,7 @@ func TestBundleLayout_MakefileWiresScriptsToWhereResolveCommandLooksForThem(t *t
 				continue
 			}
 			scriptRef := rest[:end] // e.g. "scripts/get_next_issue"
-			scriptPath := filepath.Join(root, scriptRef)
+			scriptPath := filepath.Join(root, "workflow", scriptRef)
 			assertFileExists(t, scriptPath)
 		}
 	}

@@ -26,9 +26,9 @@ func promptsDir(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	// test file: src/internal/validator/prompts_structure_test.go
-	// repo root: three levels up
+	// repo root: three levels up; prompts live under workflow/
 	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..", "..")
-	abs, err := filepath.Abs(filepath.Join(repoRoot, "prompts"))
+	abs, err := filepath.Abs(filepath.Join(repoRoot, "workflow", "prompts"))
 	if err != nil {
 		t.Fatalf("abs path for prompts: %v", err)
 	}

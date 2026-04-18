@@ -25,7 +25,7 @@ func repoRoot(t *testing.T) string {
 
 func scriptPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), "scripts", "post_issue_summary")
+	return filepath.Join(repoRoot(t), "workflow", "scripts", "post_issue_summary")
 }
 
 // fakeSentinelGh creates a fake `gh` that touches a sentinel file when invoked.
