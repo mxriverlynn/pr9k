@@ -28,6 +28,9 @@ Each step object has the following fields:
 | `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
 | `captureMode` | string | optional | `"lastLine"` (default) or `"fullStdout"` — controls how stdout is bound when `captureAs` is set. Only valid on non-claude steps. See [Capturing Step Output](capturing-step-output.md). |
 | `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
+| `skipIfCaptureEmpty` | string | optional | Skip this step when the named capture variable is empty |
+| `timeoutSeconds` | int | optional | Cap wall-clock time for this step; SIGTERM then SIGKILL if exceeded |
+| `resumePrevious` | bool | optional | (Claude steps only) Attempt to resume the previous claude step's session via `--resume <session_id>`. Five runtime gates (G1–G5) must all pass; any failure falls through to a fresh session without aborting. See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious). **Default workflow ships with this unset on all steps** — engine support is present but feature-flagged-off. |
 | `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../code-packages/validator.md) for allowed names) |
 
 ## Claude Steps

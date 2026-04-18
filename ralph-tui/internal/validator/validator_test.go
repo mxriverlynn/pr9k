@@ -2404,3 +2404,88 @@ func TestValidate_TimeoutSeconds_ZeroIsRejected(t *testing.T) {
 	errs := validator.Validate(dir)
 	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
 }
+
+// ----------------------------------------------------------------------------
+// resumePrevious validation
+// ----------------------------------------------------------------------------
+
+// TestValidate_ResumePrevious_OnNonClaudeStep verifies that resumePrevious on a
+// non-claude step is rejected with a fatal error.
+func TestValidate_ResumePrevious_OnNonClaudeStep(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"],"resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "resumePrevious is only valid on claude steps")
+}
+
+// TestValidate_ResumePrevious_CrossModelWarn verifies that when the previous
+// step uses a different model, a warning (not a fatal error) is emitted.
+func TestValidate_ResumePrevious_CrossModelWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"StepB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning; got: %v", errs)
+	}
+}
+
+// TestValidate_ResumePrevious_FirstStepWarn verifies that resumePrevious on
+// the first step of a phase emits a warning (not a fatal error).
+func TestValidate_ResumePrevious_FirstStepWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning; got: %v", errs)
+	}
+}
+
+// TestValidate_ResumePrevious_SameModelNoWarn verifies that a same-model
+// resumePrevious pair on the second step produces no errors or warnings.
+func TestValidate_ResumePrevious_SameModelNoWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"sonnet","promptFile":"a.md"},
+			{"name":"StepB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors/warnings for same-model resumePrevious; got: %v", errs)
+	}
+}
+

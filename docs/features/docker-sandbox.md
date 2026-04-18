@@ -2,7 +2,7 @@
 
 Executes every Claude CLI step inside an ephemeral Docker container, limiting blast radius to the bind-mounted target repository and a scrubbed process environment.
 
-- **Last Updated:** 2026-04-17
+- **Last Updated:** 2026-04-18
 - **Authors:**
   - River Bailey
 
@@ -68,10 +68,13 @@ docker run                                              \
   docker/sandbox-templates:claude-code                  \
   claude --permission-mode bypassPermissions            \
          --model <MODEL>                                \
+         [--resume <SESSION_ID>]                        \
          -p <PROMPT>                                    \
          --output-format stream-json                    \
          --verbose
 ```
+
+`--resume <SESSION_ID>` is injected only when the step has `resumePrevious: true` **and** all five resume gates (G1–G5) pass. See [Session Resume Gates](workflow-orchestration.md#session-resume-gates-resumeprevious) for gate details. The default workflow ships with `resumePrevious` unset on all steps.
 
 ### Flag rationale
 

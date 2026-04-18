@@ -68,6 +68,7 @@ type Step struct {
     BreakLoopIfEmpty    bool     `json:"breakLoopIfEmpty,omitempty"`    // exit iteration loop when captured output is empty
     SkipIfCaptureEmpty  string   `json:"skipIfCaptureEmpty,omitempty"`  // skip this step when named capture is empty; iteration phase only
     TimeoutSeconds      int      `json:"timeoutSeconds,omitempty"`      // wall-clock cap in seconds; 0 = no timeout
+    ResumePrevious      bool     `json:"resumePrevious,omitempty"`      // claude steps only: attempt --resume <session_id> if G1–G5 gates pass
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.

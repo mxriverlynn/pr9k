@@ -71,6 +71,7 @@ type StepExecutor interface {
     ProjectDir() string
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
     RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
+    SessionBlacklisted(id string) bool
     WasTimedOut() bool
     WriteRunSummary(line string)
 }

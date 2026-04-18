@@ -86,6 +86,7 @@ type vStep struct {
 	BreakLoopIfEmpty   bool     `json:"breakLoopIfEmpty,omitempty"`
 	SkipIfCaptureEmpty *string  `json:"skipIfCaptureEmpty,omitempty"`
 	TimeoutSeconds     *int     `json:"timeoutSeconds,omitempty"`
+	ResumePrevious     *bool    `json:"resumePrevious,omitempty"`
 }
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
@@ -451,6 +452,36 @@ func validatePhase(
 				*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
 			} else if *step.TimeoutSeconds > 86400 {
 				*errs = append(*errs, at("schema", "timeoutSeconds must not exceed 86400 (24 hours)"))
+			}
+		}
+
+		// Schema 2e — resumePrevious: only valid on claude steps. Warn when set
+		// on the first step of a phase (no previous step to resume from). Warn
+		// when the previous step uses a different model (cross-model chains are
+		// technically supported but outside the initial same-model rollout).
+		if step.ResumePrevious != nil && *step.ResumePrevious {
+			if step.IsClaude != nil && !*step.IsClaude {
+				*errs = append(*errs, at("schema", "resumePrevious is only valid on claude steps"))
+			}
+			if i == 0 {
+				*errs = append(*errs, Error{
+					Severity: SeverityWarning,
+					Category: "schema",
+					Phase:    phaseName,
+					StepName: stepName,
+					Problem:  "resumePrevious on the first step of a phase has no previous step to resume from; the runtime will always start a fresh session",
+				})
+			} else if i > 0 {
+				prevModel := steps[i-1].Model
+				if prevModel != "" && step.Model != "" && prevModel != step.Model {
+					*errs = append(*errs, Error{
+						Severity: SeverityWarning,
+						Category: "schema",
+						Phase:    phaseName,
+						StepName: stepName,
+						Problem:  fmt.Sprintf("resumePrevious: previous step uses model %q but this step uses model %q; cross-model resume is supported but outside the validated same-model rollout", prevModel, step.Model),
+					})
+				}
 			}
 		}
 

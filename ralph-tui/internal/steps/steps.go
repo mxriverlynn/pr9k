@@ -39,6 +39,13 @@ type Step struct {
 	// cidfile-driven Terminator path so Docker containers are cleaned up correctly.
 	// Zero means no timeout (the default).
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+	// ResumePrevious, when true, requests that this claude step resume the
+	// previous claude step's session via --resume <session_id>. Five runtime
+	// gates (G1–G5) must all pass; any failure logs the blocking gate and falls
+	// through to a fresh session instead of aborting. Only valid on claude steps.
+	// The default workflow ships with this field unset on all steps — engine
+	// support is present but feature-flagged-off pending Phase C A/B validation.
+	ResumePrevious bool `json:"resumePrevious,omitempty"`
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.

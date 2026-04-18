@@ -362,7 +362,7 @@ func TestBuildStep_NonClaude_CopiesTimeoutSeconds(t *testing.T) {
 	resolved, err := buildStep(
 		workflowDir,
 		steps.Step{IsClaude: false, Command: []string{"true"}, TimeoutSeconds: 300},
-		vt, vars.Iteration, nil, nil, executor,
+		vt, vars.Iteration, nil, nil, executor, "",
 	)
 	if err != nil {
 		t.Fatalf("buildStep: %v", err)
@@ -388,7 +388,7 @@ func TestBuildStep_Claude_CopiesTimeoutSeconds(t *testing.T) {
 	resolved, err := buildStep(
 		workflowDir,
 		steps.Step{Name: "c", IsClaude: true, Model: "sonnet", PromptFile: "p.md", TimeoutSeconds: 300},
-		vt, vars.Iteration, nil, nil, executor,
+		vt, vars.Iteration, nil, nil, executor, "",
 	)
 	if err != nil {
 		t.Fatalf("buildStep: %v", err)

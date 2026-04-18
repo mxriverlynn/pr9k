@@ -28,6 +28,7 @@ func BuildRunArgs(
 	cidfile string,
 	envAllowlist []string,
 	containerEnv map[string]string,
+	resumeSessionID string, // non-empty → appends --resume <id> before -p
 	model, prompt string,
 ) []string {
 	args := []string{
@@ -78,6 +79,11 @@ func BuildRunArgs(
 		"claude",
 		"--permission-mode", "bypassPermissions",
 		"--model", model,
+	)
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	}
+	args = append(args,
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",
