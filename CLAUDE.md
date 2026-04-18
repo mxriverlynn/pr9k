@@ -127,6 +127,7 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 - [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file, navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
 - [`docs/how-to/copying-log-text.md`](docs/how-to/copying-log-text.md) — Mouse drag, keyboard single-line, and keyboard multi-line copy walkthroughs; OSC 52 SSH fallback; Linux `xclip`/`xsel` requirement; terminal native-selection override keys
 - [`docs/how-to/configuring-a-status-line.md`](docs/how-to/configuring-a-status-line.md) — Add a `statusLine` block to `ralph-steps.json`, use the sample script, read stdin JSON with `jq`, tune `refreshIntervalSeconds`, debug via log file, and recover the shortcut bar
+- [`docs/how-to/caching-build-artifacts.md`](docs/how-to/caching-build-artifacts.md) — Use `containerEnv` to redirect Go/Node/Python/Rust cache dirs into `.ralph-cache/` for persistent, writable caches across iterations; language-to-env-var matrix and per-language example blocks
 
 ## Project Discovery
 
