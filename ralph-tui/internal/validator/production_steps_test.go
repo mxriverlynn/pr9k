@@ -12,6 +12,15 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/validator"
 )
 
+func getRalphTUIDir(t *testing.T) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(filename), "..", "..")
+}
+
 // assembleWorkflowDir builds a temp directory that mirrors the workflow bundle
 // layout (ralph-steps.json + prompts/ + scripts/) from source-tree locations:
 //   - ralph-steps.json  lives at ralph-tui/ralph-steps.json
@@ -19,14 +28,8 @@ import (
 //   - scripts/          lives at the repo root
 func assembleWorkflowDir(t *testing.T) string {
 	t.Helper()
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	// test file: ralph-tui/internal/validator/production_steps_test.go
-	// ralph-tui dir: two levels up; repo root: three levels up
-	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
-	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..", "..")
+	ralphTUIDir := getRalphTUIDir(t)
+	repoRoot := filepath.Join(ralphTUIDir, "..")
 
 	dir := t.TempDir()
 
@@ -34,7 +37,7 @@ func assembleWorkflowDir(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read ralph-steps.json: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), data, 0o644); err != nil {
 		t.Fatalf("write ralph-steps.json: %v", err)
 	}
 
@@ -72,13 +75,7 @@ func TestValidate_ProductionStepsJSON(t *testing.T) {
 
 // TP-001: all four Go cache keys are present in the production containerEnv block.
 func TestLoadSteps_ProductionStepsJSON_ContainerEnvKeys(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
-
-	sf, err := steps.LoadSteps(ralphTUIDir)
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
 		t.Fatalf("LoadSteps: %v", err)
 	}
@@ -94,37 +91,32 @@ func TestLoadSteps_ProductionStepsJSON_ContainerEnvKeys(t *testing.T) {
 // TP-002: every production containerEnv value is clean and resolves under the
 // container bind-mount target (/home/agent/workspace/).
 func TestProductionStepsJSON_ContainerEnvValuesUnderBindMount(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
-
-	sf, err := steps.LoadSteps(ralphTUIDir)
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
 		t.Fatalf("LoadSteps: %v", err)
 	}
 
+	t.Run("clean_stable", func(t *testing.T) {
+		for key, val := range sf.ContainerEnv {
+			if filepath.Clean(val) != val {
+				t.Errorf("containerEnv[%q] = %q: filepath.Clean changes it to %q (dot-segments or trailing slash)", key, val, filepath.Clean(val))
+			}
+		}
+	})
+
 	prefix := sandbox.ContainerRepoPath + "/"
-	for key, val := range sf.ContainerEnv {
-		if filepath.Clean(val) != val {
-			t.Errorf("containerEnv[%q] = %q: filepath.Clean changes it to %q (dot-segments or trailing slash)", key, val, filepath.Clean(val))
+	t.Run("under_bind_mount", func(t *testing.T) {
+		for key, val := range sf.ContainerEnv {
+			if !strings.HasPrefix(val, prefix) {
+				t.Errorf("containerEnv[%q] = %q: want prefix %q (must resolve under the container bind-mount)", key, val, prefix)
+			}
 		}
-		if !strings.HasPrefix(val, prefix) {
-			t.Errorf("containerEnv[%q] = %q: want prefix %q (must resolve under the container bind-mount)", key, val, prefix)
-		}
-	}
+	})
 }
 
 // TP-001 (cont.): iteration phase contains "Summarize to issue" wired to the correct script.
 func TestLoadSteps_IterationContainsSummarizeToIssue(t *testing.T) {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	ralphTUIDir := filepath.Join(filepath.Dir(filename), "..", "..")
-
-	sf, err := steps.LoadSteps(ralphTUIDir)
+	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
 		t.Fatalf("LoadSteps: %v", err)
 	}

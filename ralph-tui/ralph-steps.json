@@ -1,9 +1,9 @@
 {
   "env": ["GH_TOKEN"],
   "containerEnv": {
-    "GOPATH":         "/home/agent/workspace/.ralph-cache/go",
-    "GOCACHE":        "/home/agent/workspace/.ralph-cache/go-build",
-    "GOMODCACHE":     "/home/agent/workspace/.ralph-cache/gomod",
+    "GOPATH": "/home/agent/workspace/.ralph-cache/go",
+    "GOCACHE": "/home/agent/workspace/.ralph-cache/go-build",
+    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomod",
     "XDG_CACHE_HOME": "/home/agent/workspace/.ralph-cache/xdg"
   },
   "statusLine": {

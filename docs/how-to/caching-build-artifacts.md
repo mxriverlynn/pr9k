@@ -2,7 +2,7 @@
 
 ## The Problem
 
-By default, each Claude step runs inside an ephemeral Docker container with no persistent build cache. On Go projects this produces a cascade of `permission denied` errors: the Go toolchain tries to write to default cache paths inside the container (typically `/root/.cache/go-build`, `/root/go`) which may be read-only or belong to a different UID, forcing Claude to discover workarounds inline — at the cost of ~88 `permission denied` retries per 8-iteration run (observed on gearjot-v2).
+By default, each Claude step runs inside an ephemeral Docker container with no persistent build cache. On Go projects this produces a cascade of `permission denied` errors: the Go toolchain falls back to `$HOME/.cache/go-build` and `$HOME/go`. Because the container runs with the host user's UID via `-u` and that UID has no `/etc/passwd` entry inside the container, `$HOME` resolves to `/` (or is unset), and the toolchain hits a permissions wall — forcing Claude to discover workarounds inline at the cost of ~88 `permission denied` retries per 8-iteration run (observed on gearjot-v2).
 
 The fix: redirect cache directories to a subdirectory of the bind-mounted project directory via `containerEnv`, so the cache persists across iterations and is always writable.
 
@@ -18,7 +18,7 @@ Add `.ralph-cache/` to your target project's `.gitignore` so the cache is never 
 
 | Language | Env vars |
 | --- | --- |
-| Go | `GOPATH`, `GOCACHE`, `GOMODCACHE` |
+| Go | `GOPATH`, `GOCACHE`, `GOMODCACHE`, `GOTMPDIR` |
 | Node | `NPM_CONFIG_CACHE`, `YARN_CACHE_FOLDER`, `PNPM_STORE_PATH` |
 | Python | `PIP_CACHE_DIR`, `POETRY_CACHE_DIR`, `UV_CACHE_DIR` |
 | Rust | `CARGO_HOME`, `CARGO_TARGET_DIR` |
@@ -28,18 +28,26 @@ Add `.ralph-cache/` to your target project's `.gitignore` so the cache is never 
 
 ### Go
 
+If you are running Ralph against a Go project, the default bundled `ralph-steps.json` already includes these settings — you do not need to add them manually unless you are writing a custom workflow.
+
 ```json
 {
   "containerEnv": {
-    "GOPATH":         "/home/agent/workspace/.ralph-cache/go",
-    "GOCACHE":        "/home/agent/workspace/.ralph-cache/go-build",
-    "GOMODCACHE":     "/home/agent/workspace/.ralph-cache/gomod",
+    "GOPATH": "/home/agent/workspace/.ralph-cache/go",
+    "GOCACHE": "/home/agent/workspace/.ralph-cache/go-build",
+    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomod",
     "XDG_CACHE_HOME": "/home/agent/workspace/.ralph-cache/xdg"
   }
 }
 ```
 
-This is the default shipped in the bundled `ralph-steps.json`.
+`XDG_CACHE_HOME` is included as a defense-in-depth fallback for any auxiliary tool that lands in the container (e.g. linters, formatters, `ko`) that respects XDG paths.
+
+`GOTMPDIR` controls where `go build` stages intermediates. Add it if `/tmp` is read-only or quota-constrained in your container:
+
+```json
+"GOTMPDIR": "/home/agent/workspace/.ralph-cache/gotmp"
+```
 
 ### Node (npm / yarn / pnpm)
 
