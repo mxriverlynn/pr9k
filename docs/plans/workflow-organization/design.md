@@ -1,6 +1,6 @@
 # Workflow Organization — Design
 
-Status: **Implemented** — issues #135 (rename), #136 (config.json), #137 (logs → .pr9k/logs/), #138 (iteration.jsonl → .pr9k/), #139 (bundle layout + resolver), #140 (.gitignore), #141 (doc sweep) all closed.
+Status: **Implemented** — issues #135 (rename), #136 (config.json), #137 (logs → .pr9k/logs/), #138 (iteration.jsonl → .pr9k/), #139 (bundle layout + resolver), #140 (.gitignore), #141 (doc sweep), #145 (workflow source relocation) all closed.
 Target pr9k version: **0.7.0** (breaking — `y` bump per `docs/coding-standards/versioning.md`; the binary is renamed from `ralph-tui` to `pr9k`, the source directory is renamed from `ralph-tui/` to `src/`, the workflow-config filename is renamed from `config.json` to `config.json`, the `--workflow-dir` default changes, `config.json`/`scripts/`/`prompts/` move, and `logs/` relocates).
 
 ## 1. Overview
@@ -198,7 +198,7 @@ cd src && go build -o ../pr9k ./cmd/pr9k
 
 The repo's source-of-truth locations at the repo root (`prompts/`, `scripts/`, `ralph-art.txt`) are unchanged — only the bin layout and the Go source dir are reorganized.
 
-Deferred: whether to relocate the source-of-truth copies of `prompts/`, `scripts/`, and `config.json` into a top-level `.pr9k/workflow/` directory in the repo itself, so the repo ships a working override of its own tooling. Doing that plus the bundle move plus the binary rename plus the `config.json` rename in one release multiplies test surface too far. Post-0.7.0, consider a `.pr9k/workflow/` source tree and update `Makefile` to `cp -r .pr9k/workflow bin/.pr9k/`.
+Deferred at 0.7.0: relocating the source-of-truth copies of `prompts/`, `scripts/`, and `config.json` into a top-level `workflow/` directory in the repo itself. Implemented in issue #145: the files now live at `workflow/config.json`, `workflow/prompts/`, and `workflow/scripts/`. The `Makefile` `build` target copies from `workflow/` rather than the repo root.
 
 ### 4.4 CLI — `src/internal/cli/args.go`: new `resolveWorkflowDir`
 
