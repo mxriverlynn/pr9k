@@ -64,6 +64,7 @@ type Step struct {
     IsClaude         bool     `json:"isClaude"`                   // true = Claude CLI, false = shell command
     Command          []string `json:"command,omitempty"`          // argv for non-Claude steps
     CaptureAs        string   `json:"captureAs,omitempty"`        // store step output under this variable name
+    CaptureMode      string   `json:"captureMode,omitempty"`      // "" or "lastLine" (last non-empty line); "fullStdout" (all stdout, 32 KiB cap)
     BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"` // exit iteration loop when captured output is empty
 }
 

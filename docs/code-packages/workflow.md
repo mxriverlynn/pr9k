@@ -20,7 +20,7 @@ func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.C
 | `ui.CaptureLastLine` (zero) | Last non-empty stdout line, whitespace-trimmed |
 | `ui.CaptureFullStdout` | All stdout lines joined with `"\n"`, capped at 32 KiB |
 
-The 32 KiB cap: content longer than 32 KiB is truncated to 30 KiB verbatim and the following marker is appended: `[...truncated, full content exceeds 32 KiB]`.
+The 32 KiB cap: content longer than 32 KiB is truncated to 30 KiB and the following marker is appended: `[...truncated, full content exceeds 32 KiB]`. The cut point is snapped backward with `utf8.RuneStart` to the nearest rune boundary so that multi-byte sequences are never split.
 
 If the step exits non-zero, `LastCapture()` is always `""` regardless of mode.
 
@@ -34,7 +34,7 @@ If the step exits non-zero, `LastCapture()` is always `""` regardless of mode.
 | `"lastLine"` | `ui.CaptureLastLine` |
 | `"fullStdout"` | `ui.CaptureFullStdout` |
 
-The validator rejects any other value and rejects `captureMode` on claude steps.
+Any other value causes `buildStep` to return an error (defense-in-depth; the validator is the primary gate). The validator also rejects `captureMode` on claude steps.
 
 ### LastCapture
 
