@@ -728,6 +728,7 @@ func TestLoadSteps_CaptureMode_Populated(t *testing.T) {
 
 // TestLoadSteps_CaptureMode_Absent verifies that a step without captureMode
 // deserializes with an empty string (zero value).
+
 // TP-010: TestStep_CaptureMode_JSONRoundTrip verifies that the captureMode
 // field is omitted from JSON when absent (omitempty) and present when set.
 func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"unicode/utf8"
 	"syscall"
 	"time"
 
@@ -584,7 +585,11 @@ func fullStdoutCapture(lines []string) string {
 	const keepBytes = 30 * 1024
 	joined := strings.Join(lines, "\n")
 	if len(joined) > hardCap {
-		return joined[:keepBytes] + "\n[...truncated, full content exceeds 32 KiB]"
+		cut := keepBytes
+		for cut > 0 && !utf8.RuneStart(joined[cut]) {
+			cut--
+		}
+		return joined[:cut] + "\n[...truncated, full content exceeds 32 KiB]"
 	}
 	return joined
 }

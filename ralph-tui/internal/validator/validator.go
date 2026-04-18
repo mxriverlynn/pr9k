@@ -391,7 +391,7 @@ func validatePhase(
 			}
 		}
 
-		// Schema 2 — captureMode: only valid on non-claude steps; value must be
+		// Schema 2a — captureMode: only valid on non-claude steps; value must be
 		// "", "lastLine", or "fullStdout".
 		if step.CaptureMode != nil {
 			cm := *step.CaptureMode
@@ -399,14 +399,14 @@ func validatePhase(
 			case "", "lastLine", "fullStdout":
 				// valid
 			default:
-				*errs = append(*errs, at("schema", fmt.Sprintf("captureMode %q is not valid; use \"lastLine\" or \"fullStdout\"", cm)))
+				*errs = append(*errs, at("schema", fmt.Sprintf("captureMode %q is not valid; use \"lastLine\", \"fullStdout\", or omit the field", cm)))
 			}
 			if step.IsClaude != nil && *step.IsClaude {
 				*errs = append(*errs, at("schema", "captureMode must not be set on claude steps"))
 			}
 		}
 
-		// Schema 2 — breakLoopIfEmpty requires captureAs AND iteration phase.
+		// Schema 2b — breakLoopIfEmpty requires captureAs AND iteration phase.
 		if step.BreakLoopIfEmpty {
 			if step.CaptureAs == nil || *step.CaptureAs == "" {
 				*errs = append(*errs, at("schema", "breakLoopIfEmpty requires captureAs to be set"))

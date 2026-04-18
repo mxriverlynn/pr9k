@@ -464,9 +464,14 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 			CidfilePath: cidfile,
 		}, nil
 	}
-	capMode := ui.CaptureLastLine
-	if s.CaptureMode == "fullStdout" {
+	var capMode ui.CaptureMode
+	switch s.CaptureMode {
+	case "", "lastLine":
+		capMode = ui.CaptureLastLine
+	case "fullStdout":
 		capMode = ui.CaptureFullStdout
+	default:
+		return ui.ResolvedStep{}, fmt.Errorf("workflow: step %q: invalid captureMode %q", s.Name, s.CaptureMode)
 	}
 	return ui.ResolvedStep{
 		Name:        s.Name,
