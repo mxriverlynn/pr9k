@@ -85,7 +85,7 @@ After the 0.3.0 split (`docs/adr/20260413162428-workflow-project-dir-split.md`),
 
 | Token | Expands to | Default source | Override flag |
 |-------|-----------|----------------|---------------|
-| `{{WORKFLOW_DIR}}` | The workflow bundle directory — where `ralph-steps.json`, `prompts/`, `scripts/`, and `ralph-art.txt` live | `os.Executable()` + `filepath.EvalSymlinks` | `--workflow-dir` |
+| `{{WORKFLOW_DIR}}` | The workflow bundle directory — where `config.json`, `prompts/`, `scripts/`, and `ralph-art.txt` live | `os.Executable()` + `filepath.EvalSymlinks` | `--workflow-dir` |
 | `{{PROJECT_DIR}}` | The target repository — the git repo being modified by the workflow | `os.Getwd()` + `filepath.EvalSymlinks` | `--project-dir` |
 
 In the default pr9k install both directories often share a parent (the binary lives under `bin/` inside the pr9k repo), but they are distinct concepts and may point to entirely different locations when pr9k is used from `PATH` or with explicit flags.

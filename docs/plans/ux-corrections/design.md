@@ -17,16 +17,16 @@ Each decision below is self-contained and references earlier decisions by number
 | D1   | Use Glyph as the rendering framework          | `ralph-tui/go.mod`, `cmd/ralph-tui/main.go`                                          | PR2               |
 | D2   | Broad scope — build the complete app          | all                                                                                  | PR1–PR3           |
 | D3a  | Validation runs pre-Glyph (stderr + exit 1)   | `cmd/ralph-tui/main.go`, new `internal/validator/`                                   | PR1               |
-| D3b  | `initialize` array in `ralph-steps.json`      | `ralph-tui/ralph-steps.json`, `bin/ralph-steps.json`, `internal/steps/steps.go`       | PR1               |
+| D3b  | `initialize` array in `config.json`      | `src/config.json`, `bin/config.json`, `internal/steps/steps.go`       | PR1               |
 | D3c  | Narrow principle — ralph-tui facilitates, doesn't define | architectural (touches everything)                                       | PR1               |
 | D4   | `captureAs` — final non-empty stdout line      | `internal/steps/steps.go`, `internal/workflow/workflow.go`                           | PR1               |
 | D5   | Variable scope (Model Y) + built-ins          | new `internal/vars/` or equivalent, `internal/workflow/workflow.go`                  | PR1               |
 | D6   | `breakLoopIfEmpty` + `StepSkipped` state      | `internal/steps/steps.go`, `internal/ui/header.go`, `internal/ui/orchestrate.go`, `internal/workflow/run.go` | PR1 (break) + PR3 (StepSkipped marking) |
 | D7   | Drop `prependVars`; `{{VAR}}` in prompt files | `internal/steps/steps.go`, `prompts/*.md` (Migration B rewrite)                      | PR1               |
 | D8   | Reactive iteration header line                | `internal/ui/header.go`, `internal/workflow/run.go`                                  | PR3               |
-| D9   | Per-iteration prologue → first two iteration steps | `ralph-tui/ralph-steps.json`, `bin/ralph-steps.json`, `internal/workflow/run.go` | PR1               |
+| D9   | Per-iteration prologue → first two iteration steps | `src/config.json`, `bin/config.json`, `internal/workflow/run.go` | PR1               |
 | D10  | Dynamic checkbox row layout                   | `internal/ui/header.go`, `cmd/ralph-tui/main.go`                                     | PR2               |
-| D11  | Move `ralph-art.txt` to repo root + Splash step | `ralph-tui/internal/workflow/ralph-art.txt` → `{repo-root}/ralph-art.txt`, `Makefile`, `internal/workflow/run.go`, `ralph-steps.json` | PR1 |
+| D11  | Move `ralph-art.txt` to repo root + Splash step | `ralph-tui/internal/workflow/ralph-art.txt` → `{repo-root}/ralph-art.txt`, `Makefile`, `internal/workflow/run.go`, `config.json` | PR1 |
 | D12  | Header line formats per phase (mixed)         | `internal/ui/header.go`                                                              | PR3               |
 | D13  | Config validation scope (8 categories)        | new `internal/validator/`                                                            | PR1               |
 | D14  | Keyboard wiring via Glyph + error mode        | `cmd/ralph-tui/main.go`, `internal/ui/ui.go`                                         | PR2               |
@@ -99,12 +99,12 @@ The only production writer to `h.Actions` is the signal handler's `ForceQuit()` 
 - `grep -n 'Valid\|validate\|Validate' ralph-tui/` → zero matches in source or tests.
 - `steps.LoadSteps` at `internal/steps/steps.go:31-44` only does `os.ReadFile` + `json.Unmarshal`. There is no check that `promptFile` values reference files under `prompts/`, no check that `command[0]` paths exist, no check on `model` values, no semantic schema validation.
 
-**Implication:** If `ralph-steps.json` references a missing prompt, the error surfaces mid-loop when `steps.BuildPrompt` fails inside `buildIterationSteps` (`internal/workflow/run.go:141-147`). If a non-claude script path is wrong, the error surfaces when `exec.Command` fails inside `RunStep`.
+**Implication:** If `config.json` references a missing prompt, the error surfaces mid-loop when `steps.BuildPrompt` fails inside `buildIterationSteps` (`internal/workflow/run.go:141-147`). If a non-claude script path is wrong, the error surfaces when `exec.Command` fails inside `RunStep`.
 
 ### A6. Pre-loop phase — **does not exist as a concept**
 
 - `grep -n 'preLoop\|pre_loop\|pre-loop\|PreLoop' ralph-tui/` → zero matches.
-- `ralph-tui/ralph-steps.json` has exactly two top-level arrays: `"iteration"` and `"finalize"`. No third category.
+- `src/config.json` has exactly two top-level arrays: `"iteration"` and `"finalize"`. No third category.
 - `workflow.Run()` at `internal/workflow/run.go:56-92` does three things before entering the loop: (1) `executor.WriteToLog(bannerArt lines)`, (2) `executor.CaptureOutput(get_gh_user script)`, (3) falls straight into `for i := 1; ...`. Neither of those is modeled as a "step" — they have no header state, no step index, no error recovery, no user visibility beyond log output.
 
 The "pre-loop steps" the user expects to see in the header have no representation anywhere in the code.
@@ -147,7 +147,7 @@ The "pre-loop steps" the user expects to see in the header have no representatio
 
 1. `cli.Execute()` parses flags into a `Config` (`main.go:19`).
 2. `logger.NewLogger(cfg.ProjectDir)` opens a timestamped file in `logs/` (`main.go:28`).
-3. `steps.LoadSteps(cfg.ProjectDir)` JSON-parses `ralph-steps.json` — no validation (`main.go:34`).
+3. `steps.LoadSteps(cfg.ProjectDir)` JSON-parses `config.json` — no validation (`main.go:34`).
 4. `workflow.NewRunner(log, cfg.ProjectDir)` creates the runner with an `io.Pipe` (`main.go:41`).
 5. A `StatusHeader` is created but never rendered (`main.go:46-53`).
 6. A `KeyHandler` is created but never receives keyboard input (`main.go:43-44`).
@@ -230,7 +230,7 @@ This plan covers everything needed to land a usable app in one go. Partial imple
 1. **Glyph integration (W1).** Adopt Glyph as the rendering framework. Replace the stdout-drain goroutine with a Glyph app that renders the header, log, and shortcut bar.
 2. **Keyboard input wiring (W1 cont'd).** Wire Glyph's keypress dispatch into `KeyHandler.Handle(...)` so `n`/`q`/`y`/`r`/`c` actually work. Fixes A4 (error recovery dead channel) as a side effect.
 3. **Unhardcode the 8-step cap (W2).** Replace `[4]string`/`[8]string` arrays in `internal/ui/header.go` and `var stepNames [8]string` in `cmd/ralph-tui/main.go` with dynamic sizing so pre-loop + loop + post-loop phases can each hold their own step count.
-4. **Config validation (W3).** Add a startup validation pass that checks `ralph-steps.json` loads, every `promptFile` exists under `prompts/`, and every non-claude `command[0]` is resolvable (either exists as a file under `projectDir` if it contains a `/`, or is resolvable on `PATH` otherwise). Failures print to stderr and exit before Glyph starts.
+4. **Config validation (W3).** Add a startup validation pass that checks `config.json` loads, every `promptFile` exists under `prompts/`, and every non-claude `command[0]` is resolvable (either exists as a file under `projectDir` if it contains a `/`, or is resolvable on `PATH` otherwise). Failures print to stderr and exit before Glyph starts.
 5. **Phase-aware workflow (W4).** Split `workflow.Run()` into distinct pre-loop / loop / post-loop phases, each of which drives a corresponding header state. Pre-loop is a new concept — it did not previously exist.
 6. **Kill the immediate banner print.** Remove `run.go:58-60`. Keep `ralph-tui/internal/workflow/ralph-art.txt` in place; its future use is decided in a later decision below.
 
@@ -254,9 +254,9 @@ Reasons:
 
 **Accepted consequence:** ralph-tui gains exactly one class of error that appears outside the TUI (pre-Glyph validation failures). Every other error — step failures, SIGINT, panics — still goes through the Glyph log panel. This inconsistency is acceptable because validation is categorically a precondition check, not a runtime failure.
 
-### D3b. Pre-loop phase is defined in `ralph-steps.json` as an `"initialize"` array
+### D3b. Pre-loop phase is defined in `config.json` as an `"initialize"` array
 
-The new third phase is named `"initialize"` (not `"preLoop"`), matching the user's edit to `bin/ralph-steps.json`. The array is empty in the current file and will be populated with step definitions for `get_gh_user`, etc., as part of this plan.
+The new third phase is named `"initialize"` (not `"preLoop"`), matching the user's edit to `bin/config.json`. The array is empty in the current file and will be populated with step definitions for `get_gh_user`, etc., as part of this plan.
 
 **Schema shape:**
 
@@ -268,7 +268,7 @@ The new third phase is named `"initialize"` (not `"preLoop"`), matching the user
 }
 ```
 
-**File-copy note:** the user edited `bin/ralph-steps.json` (build output). The source copy at `ralph-tui/ralph-steps.json` still has only `iteration` and `finalize`. The source copy must be synced as part of implementation so the Makefile build output reproduces the correct structure.
+**File-copy note:** the user edited `bin/config.json` (build output). The source copy at `src/config.json` still has only `iteration` and `finalize`. The source copy must be synced as part of implementation so the Makefile build output reproduces the correct structure.
 
 ### D3c. Architectural principle — "narrow" reading: ralph-tui facilitates the workflow, does not define it
 
@@ -283,8 +283,8 @@ The new third phase is named `"initialize"` (not `"preLoop"`), matching the user
 - Generic `{{VAR}}` template substitution inside command argv and inside prompt file contents.
 - Glyph app lifecycle: construct → render → dispatch keypresses → tear down on exit.
 - The status header chrome (iteration counter, step checkboxes, shortcut bar). The *text* of the iteration/finalize counter line may still be hardcoded — the narrow reading does not require templating the header chrome itself, just the steps inside it.
-- Validation of `ralph-steps.json` against the schema above.
-- Config file location (`<projectDir>/ralph-steps.json`).
+- Validation of `config.json` against the schema above.
+- Config file location (`<projectDir>/config.json`).
 
 **What config owns (must move out of Go code):**
 
@@ -299,7 +299,7 @@ The new third phase is named `"initialize"` (not `"preLoop"`), matching the user
 
 - The hardcoded iteration header line format `Iteration N/M — Issue #X` and the completion summary text `Ralph completed after N iteration(s)...`. Technically these embed assumptions about the Ralph workflow, but they're cosmetic chrome and making them config-driven adds complexity without meaningful benefit. If the user later wants to use ralph-tui for a different workflow, this can be revisited.
 
-**Design consequence: ralph-tui becomes a generic config-driven step runner that happens to understand phases, loops, captured-variable substitution, and one loop-exit rule. The Ralph workflow is entirely expressible in `ralph-steps.json`.**
+**Design consequence: ralph-tui becomes a generic config-driven step runner that happens to understand phases, loops, captured-variable substitution, and one loop-exit rule. The Ralph workflow is entirely expressible in `config.json`.**
 
 ### D4. Variable capture: Shape A (`captureAs` field), value is the final non-empty stdout line
 
@@ -542,7 +542,7 @@ Behavior II and Behavior III produce *identical* user-visible output. The only d
 
 ### D9. Per-iteration prologue becomes the first two entries in `iteration`
 
-The two hardcoded prologue calls at `internal/workflow/run.go:72-83` are deleted from Go and moved into `ralph-steps.json` as the first two entries of the `iteration` array. After this change, the `iteration` array grows from 8 entries to 10:
+The two hardcoded prologue calls at `internal/workflow/run.go:72-83` are deleted from Go and moved into `config.json` as the first two entries of the `iteration` array. After this change, the `iteration` array grows from 8 entries to 10:
 
 ```json
 "iteration": [
@@ -706,7 +706,7 @@ VBox(headerChildren...).Border(...).Title("Ralph")
 
 ### D11. `ralph-art.txt` — move to repo root, display via config-driven initialize step
 
-**Location:** the file moves from `ralph-tui/internal/workflow/ralph-art.txt` to `{repo-root}/ralph-art.txt`. It sits alongside `prompts/`, `scripts/`, `ralph-steps.json`, and the other repo-root assets.
+**Location:** the file moves from `ralph-tui/internal/workflow/ralph-art.txt` to `{repo-root}/ralph-art.txt`. It sits alongside `prompts/`, `scripts/`, `config.json`, and the other repo-root assets.
 
 **Embed removal:** `//go:embed ralph-art.txt` at `internal/workflow/run.go:13-14` is deleted. The `bannerArt` variable and the `for _, line := range strings.Split(bannerArt, "\n") { executor.WriteToLog(line) }` block at `run.go:57-60` are deleted. Ralph-tui's source code loses all knowledge of the file's existence.
 
@@ -739,7 +739,7 @@ build:
 	cd ralph-tui && go build -o ../bin/ralph-tui ./cmd/ralph-tui
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
-	cp ralph-tui/ralph-steps.json bin/
+	cp src/config.json bin/
 ```
 
 Updated `build` target adds one line:
@@ -751,7 +751,7 @@ build:
 	cd ralph-tui && go build -o ../bin/ralph-tui ./cmd/ralph-tui
 	cp -r prompts bin/prompts
 	cp -r scripts bin/scripts
-	cp ralph-tui/ralph-steps.json bin/
+	cp src/config.json bin/
 	cp ralph-art.txt bin/
 ```
 
@@ -843,7 +843,7 @@ The validator runs in plain Go at startup, before Glyph is constructed. It colle
 
 **Category 1 — File presence and parseability:**
 
-- **1.1.** `{{PROJECT_DIR}}/ralph-steps.json` exists and is readable.
+- **1.1.** `{{PROJECT_DIR}}/config.json` exists and is readable.
 - **1.2.** The file is valid JSON.
 - **1.3.** The top-level object has `initialize`, `iteration`, and `finalize` keys; each must be a JSON array.
 
@@ -1009,7 +1009,7 @@ Before the Glyph app starts rendering, `main.go` populates the header with the f
 **Startup sequence (ordered, main goroutine):**
 
 1. `cli.Execute()` parses CLI flags into `Config`.
-2. The config validator (D13) runs against `projectDir/ralph-steps.json`. On failure: stderr + exit 1, no Glyph.
+2. The config validator (D13) runs against `projectDir/config.json`. On failure: stderr + exit 1, no Glyph.
 3. `logger.NewLogger(projectDir)` opens the log file.
 4. `steps.LoadSteps(projectDir)` parses the JSON (now already validated).
 5. `maxStepsAcrossPhases := max(len(initialize), len(iteration), len(finalize))`.
@@ -1048,7 +1048,7 @@ The plan ships in three PRs, in order. Each PR ends in a self-consistent, shippa
 
 Scope:
 
-- Add the `initialize` array to the `steps.StepFile` struct and its JSON schema; `ralph-steps.json` (both source copy at `ralph-tui/ralph-steps.json` and the build-output copy at `bin/ralph-steps.json`) gains the new top-level key.
+- Add the `initialize` array to the `steps.StepFile` struct and its JSON schema; `config.json` (both source copy at `src/config.json` and the build-output copy at `bin/config.json`) gains the new top-level key.
 - Add the `captureAs` and `breakLoopIfEmpty` fields to the `steps.Step` struct. Remove the `prependVars` field. Remove the `buildIterationSteps` / `buildFinalizeSteps` functions' `issueID` and `sha` parameters.
 - Implement the variable table (`VarTable` type — scoped per D5) and the `{{VAR}}` substitution engine (used for command argv and prompt file contents per D7). Used by both non-claude and claude steps.
 - Implement the full validator (D13 Categories 1-8). Validator runs in a new `internal/validator` package, called from `cmd/ralph-tui/main.go` immediately after `steps.LoadSteps`.
@@ -1058,7 +1058,7 @@ Scope:
 - Delete `//go:embed ralph-art.txt` and the `bannerArt` variable + the `for _, line := range strings.Split(bannerArt, "\n") { executor.WriteToLog(line) }` block at `run.go:13-14, 57-60`. Move `ralph-tui/internal/workflow/ralph-art.txt` to `{repo-root}/ralph-art.txt`. Update the `Makefile`'s `build` target to copy it into `bin/`.
 - Implement the `breakLoopIfEmpty` runtime check in the orchestrator (when an iteration step with the flag succeeds and its captured value is empty, mark remaining iteration steps as `StepSkipped` — note: `StepSkipped` state is still added in PR3; in PR1 the orchestrator can just `break` out of the iteration loop without marking, since the checkbox UI isn't rendered yet).
 - `ralph-tui` still drains the log pipe to stdout via `fmt.Println` in the same goroutine at `main.go:56-63`. No Glyph yet. No layout. But the workflow is now fully config-driven.
-- **End state:** ugly stdout mode, but with the full config-driven backend working. Every piece of workflow content lives in `ralph-steps.json`. Validation runs at startup and fails fast with actionable messages.
+- **End state:** ugly stdout mode, but with the full config-driven backend working. Every piece of workflow content lives in `config.json`. Validation runs at startup and fails fast with actionable messages.
 
 **PR2 — Glyph integration + dynamic header rendering**
 
@@ -1109,9 +1109,9 @@ Scope:
 
 ---
 
-## Target `ralph-steps.json` (complete example — the end state after PR1)
+## Target `config.json` (complete example — the end state after PR1)
 
-This is the exact shape `ralph-tui/ralph-steps.json` (source) and `bin/ralph-steps.json` (build output) should have after PR1 merges. Both files must be kept in sync; the `make build` target copies the source to `bin/` so the build output reproduces this content.
+This is the exact shape `src/config.json` (source) and `bin/config.json` (build output) should have after PR1 merges. Both files must be kept in sync; the `make build` target copies the source to `bin/` so the build output reproduces this content.
 
 ```json
 {
@@ -1195,8 +1195,8 @@ Every file that needs to be added, modified, deleted, or moved as part of implem
 
 **Modified:**
 
-- `ralph-tui/ralph-steps.json` — add `initialize` array; rewrite `iteration` with two prologue steps + remove `prependVars` from claude steps; align with the target JSON above.
-- `bin/ralph-steps.json` — same changes; kept in sync by `make build`.
+- `src/config.json` — add `initialize` array; rewrite `iteration` with two prologue steps + remove `prependVars` from claude steps; align with the target JSON above.
+- `bin/config.json` — same changes; kept in sync by `make build`.
 - `ralph-tui/internal/steps/steps.go` — add `Step.CaptureAs`, `Step.BreakLoopIfEmpty` fields; add `StepFile.Initialize` field; remove `Step.PrependVars` field; update `BuildPrompt` to run `{{VAR}}` substitution instead of prepending header lines.
 - `ralph-tui/internal/workflow/workflow.go` — update `ResolveCommand` to handle arbitrary `{{VAR}}` tokens (replacing the single-variable `{{ISSUE_ID}}` substitution at `workflow.go:189-206`); add stdout capture buffer for the "last non-empty line" extraction (D4).
 - `ralph-tui/internal/workflow/run.go` — delete the hardcoded `get_gh_user` capture (lines 62-67), `get_next_issue` call (lines 72-78), `git rev-parse HEAD` call (lines 80-83); delete `iterationLabel` helper (lines 131-137) if unused; delete the `//go:embed ralph-art.txt` line (13-14), the `bannerArt` variable, and the banner-to-log loop (lines 57-60); delete the completion-summary log write (lines 124-125) — this string moves to the header line in PR3 but the log write is deleted now; restructure `Run()` to drive the three phases via config and the new variable table.
@@ -1293,11 +1293,11 @@ What I assumed: D14b Option P (exported string field, no mutex) will not trigger
 
 **Note on the "two writers" concern:** there are actually two writer goroutines — the workflow goroutine (normal mode transitions) and the signal-handler goroutine (via `ForceQuit`). This could in principle race write-with-write. But both writers ultimately funnel through `updateShortcutLine`, and the signal handler only writes once per process lifetime (at SIGINT). The probability of a real observable race is low, but the race detector may still flag it. **Plan:** start with Option P; if `-race` flags, fall back to Option Q.
 
-**V3. The `ralph-tui/ralph-steps.json` source copy is stale.**
+**V3. The `src/config.json` source copy is stale.**
 
-What I observed during the audit: `bin/ralph-steps.json` (build output) was edited by the user to add the `initialize: []` key; `ralph-tui/ralph-steps.json` (source) was NOT updated. These two files are normally kept in sync by `make build` (which copies source → bin), but the user edited the bin copy by hand.
+What I observed during the audit: `bin/config.json` (build output) was edited by the user to add the `initialize: []` key; `src/config.json` (source) was NOT updated. These two files are normally kept in sync by `make build` (which copies source → bin), but the user edited the bin copy by hand.
 
-**What to do during PR1:** manually sync the source copy to match the bin copy, then apply the full target JSON from the "Target `ralph-steps.json`" section above. After PR1 merges, any future edits should be made to the source copy only, and `make build` should be run to regenerate bin. Don't edit bin directly.
+**What to do during PR1:** manually sync the source copy to match the bin copy, then apply the full target JSON from the "Target `config.json`" section above. After PR1 merges, any future edits should be made to the source copy only, and `make build` should be run to regenerate bin. Don't edit bin directly.
 
 **V4. Prompt file scan for `ISSUENUMBER` / `STARTINGSHA`.**
 
@@ -1315,9 +1315,9 @@ What I assumed: PR1 implements the `break` semantics (workflow exits the loop wh
 
 What I assumed: the validator rule 2.2 is strict — missing `isClaude` is an error. The target JSON example shows `isClaude: true` explicitly on every claude step for clarity.
 
-**What to verify:** the existing `ralph-steps.json` might omit `isClaude` from the finalize array (the current Go struct tag is `json:"isClaude"` with no `omitempty`, so it should be required, but this isn't actually enforced by the current code). If the existing config omits it, the strict validator will reject the old config on first run after PR1 merges. Two fixes:
+**What to verify:** the existing `config.json` might omit `isClaude` from the finalize array (the current Go struct tag is `json:"isClaude"` with no `omitempty`, so it should be required, but this isn't actually enforced by the current code). If the existing config omits it, the strict validator will reject the old config on first run after PR1 merges. Two fixes:
 
-- **Option A:** update every step in `ralph-steps.json` to include `isClaude` explicitly (what the target JSON shows).
+- **Option A:** update every step in `config.json` to include `isClaude` explicitly (what the target JSON shows).
 - **Option B:** make the validator permissive — if `isClaude` is missing, infer from the presence of `promptFile` (true) or `command` (false).
 
 I'd lean on Option A for explicitness. Implementer's call during PR1.
@@ -1342,7 +1342,7 @@ Each of the following is a piece of information that lives in this doc but might
 
 3. **The three new built-in variables (`STEP_NUM`, `STEP_COUNT`, `STEP_NAME` from D5/D12).** These are available everywhere and phase-scoped, with `STEP_COUNT` meaning "count of steps in the current phase" not "grand total". Easy to get wrong if the implementer doesn't read the scope rule carefully.
 
-4. **The file mismatch warning (V3).** `bin/ralph-steps.json` was edited by hand; the source copy is stale. PR1 must sync them. Don't assume the source copy is correct.
+4. **The file mismatch warning (V3).** `bin/config.json` was edited by hand; the source copy is stale. PR1 must sync them. Don't assume the source copy is correct.
 
 5. **The audit findings (A1–A9).** These document the pre-plan state with evidence. They are what a reviewer would need to know to understand why PR1 deletes so much code — without the audit, the deletions look aggressive.
 

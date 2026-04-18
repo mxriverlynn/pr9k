@@ -162,7 +162,7 @@ After all iterations complete, the orchestration goroutine runs three finalizati
 
 During finalization, the status header switches to show `Finalizing 1/3`, `2/3`, `3/3` instead of an iteration number. The step tracker row is replaced with the three finalization step names.
 
-These finalization steps are defined in the `"finalize"` array of `ralph-steps.json`, alongside the iteration steps in the `"iteration"` array.
+These finalization steps are defined in the `"finalize"` array of `config.json`, alongside the iteration steps in the `"iteration"` array.
 
 ### Directory resolution
 
@@ -172,7 +172,7 @@ The `ralph-tui` executable lives at the repo root alongside `prompts/` and `ralp
 - Scripts: `projectDir/ralph-bash/scripts/<script>`
 - Logs: `projectDir/logs/`
 - Art: `projectDir/ralph-bash/ralph-art.txt`
-- Step definitions: `projectDir/ralph-steps.json`
+- Step definitions: `projectDir/config.json`
 
 ### Command template variables
 
@@ -279,7 +279,7 @@ The TUI must handle SIGINT and SIGTERM gracefully:
 
 ### Step definitions loaded from JSON
 
-Steps are loaded from `ralph-steps.json`. The executable finds `projectDir` (the repo root) at startup using `os.Executable()` (with `filepath.EvalSymlinks` to handle symlinked binaries). All paths — `prompts/`, `scripts/`, `logs/`, and step definitions — are resolved relative to `projectDir`.
+Steps are loaded from `config.json`. The executable finds `projectDir` (the repo root) at startup using `os.Executable()` (with `filepath.EvalSymlinks` to handle symlinked binaries). All paths — `prompts/`, `scripts/`, `logs/`, and step definitions — are resolved relative to `projectDir`.
 
 ```go
 type Step struct {
@@ -300,19 +300,19 @@ func loadSteps(projectDir string) (StepFile, error) {
     // projectDir is the repo root, resolved at startup via os.Executable().
     // Note: os.Executable() returns a temp path when using `go run`.
     // During development, use `go build` or pass the --project-dir flag (see CLI args below).
-    data, err := os.ReadFile(filepath.Join(projectDir, "ralph-steps.json"))
+    data, err := os.ReadFile(filepath.Join(projectDir, "config.json"))
     if err != nil {
-        return StepFile{}, fmt.Errorf("could not read ralph-steps.json: %w", err)
+        return StepFile{}, fmt.Errorf("could not read config.json: %w", err)
     }
     var sf StepFile
     if err := json.Unmarshal(data, &sf); err != nil {
-        return StepFile{}, fmt.Errorf("could not parse ralph-steps.json: %w", err)
+        return StepFile{}, fmt.Errorf("could not parse config.json: %w", err)
     }
     return sf, nil
 }
 ```
 
-**`ralph-steps.json`** (lives in `ralph-tui/`):
+**`config.json`** (lives in `ralph-tui/`):
 
 ```json
 {
@@ -406,7 +406,7 @@ pr9k/                               # repo root (projectDir)
       logger/
         logger.go                   # log file writer
         logger_test.go
-    ralph-steps.json                # step definitions (iteration and finalization)
+    config.json                # step definitions (iteration and finalization)
     go.mod
     go.sum
   prompts/                          # read by both ralph-bash and ralph-tui
@@ -444,7 +444,7 @@ Both flags use POSIX-style parsing via [spf13/cobra](https://github.com/spf13/co
 ### Steps loading (`internal/steps/steps.go`)
 
 **Acceptance criteria:**
-- Loads and parses `ralph-steps.json` from the project directory
+- Loads and parses `config.json` from the project directory
 - Returns an error if the file is missing or contains invalid JSON
 - Each step has a `Name`; claude steps have `Model` and `PromptFile`; non-claude steps have `Command`
 - Resolves symlinked executable paths before determining the directory

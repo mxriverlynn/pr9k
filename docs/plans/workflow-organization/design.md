@@ -1,23 +1,23 @@
 # Workflow Organization — Design
 
 Status: **Design — not implemented**.
-Target pr9k version: **0.7.0** (breaking — `y` bump per `docs/coding-standards/versioning.md`; the binary is renamed from `ralph-tui` to `pr9k`, the source directory is renamed from `ralph-tui/` to `src/`, the workflow-config filename is renamed from `ralph-steps.json` to `config.json`, the `--workflow-dir` default changes, `config.json`/`scripts/`/`prompts/` move, and `logs/` relocates).
+Target pr9k version: **0.7.0** (breaking — `y` bump per `docs/coding-standards/versioning.md`; the binary is renamed from `ralph-tui` to `pr9k`, the source directory is renamed from `ralph-tui/` to `src/`, the workflow-config filename is renamed from `config.json` to `config.json`, the `--workflow-dir` default changes, `config.json`/`scripts/`/`prompts/` move, and `logs/` relocates).
 
 ## 1. Overview
 
 Two coupled changes ship together in this release.
 
-**(a) Name reconciliation.** The project is named "pr9k" (Power-Ralph.9000), but the Go module, source directory, binary, and the workflow-config filename are still named `ralph-tui` / `ralph-steps.json` — a holdover from when the TUI was a subcomponent of a larger would-be toolbox. Every user-visible surface that says "ralph-tui" or that names the workflow config after the tool gets renamed:
+**(a) Name reconciliation.** The project is named "pr9k" (Power-Ralph.9000), but the Go module, source directory, binary, and the workflow-config filename are still named `ralph-tui` / `config.json` — a holdover from when the TUI was a subcomponent of a larger would-be toolbox. Every user-visible surface that says "ralph-tui" or that names the workflow config after the tool gets renamed:
 
 - The binary (`bin/ralph-tui` → `bin/pr9k`).
 - The source directory (`ralph-tui/` → `src/`).
 - The Go module path (`github.com/mxriverlynn/pr9k/ralph-tui` → `github.com/mxriverlynn/pr9k/src`).
 - The cobra command `Use` string and `--version` output (`ralph-tui [flags]` / `ralph-tui version <x>` → `pr9k [flags]` / `pr9k version <x>`).
 - The TUI footer version label (`ralph-tui v0.6.1` → `pr9k v0.7.0`).
-- The workflow-config filename (`ralph-steps.json` → `config.json`). This file is the entry point that pr9k loads — its name should describe what it is to pr9k, not which workflow happens to be inside it. The contents are unchanged; the filename, every Go reference, and every doc reference become `config.json`. See §4.6 for the full surface.
+- The workflow-config filename (`config.json` → `config.json`). This file is the entry point that pr9k loads — its name should describe what it is to pr9k, not which workflow happens to be inside it. The contents are unchanged; the filename, every Go reference, and every doc reference become `config.json`. See §4.6 for the full surface.
 - Every doc, comment, test fixture, and error-message prefix that names the tool.
 
-**(b) Runtime state consolidation under `.pr9k/`.** Today, pr9k reads its workflow definition (`ralph-steps.json` (renamed to `config.json` per (a)), `scripts/`, `prompts/`, `ralph-art.txt`) from the install directory — the folder that holds the binary — and writes logs directly into the target repo at `<projectDir>/logs/`. Both conventions leak pr9k's presence into the target repo and the user's working environment:
+**(b) Runtime state consolidation under `.pr9k/`.** Today, pr9k reads its workflow definition (`config.json` (renamed to `config.json` per (a)), `scripts/`, `prompts/`, `ralph-art.txt`) from the install directory — the folder that holds the binary — and writes logs directly into the target repo at `<projectDir>/logs/`. Both conventions leak pr9k's presence into the target repo and the user's working environment:
 
 - Running pr9k in any repo produces a top-level `logs/` directory that the user has to gitignore.
 - The target repo has no way to ship a custom workflow without replacing the install directory bundle or passing `--workflow-dir` every invocation.
@@ -37,7 +37,7 @@ The rename and the `.pr9k/` consolidation land in the same release because both 
 
 ### Goals
 - **Rename `ralph-tui` to `pr9k` everywhere** — binary, source directory, Go module path, cobra Use string, `--version` output, status-line footer label, and all documentation.
-- **Rename `ralph-steps.json` to `config.json`** — the file pr9k loads at startup is the *pr9k config*, not a "ralph" artifact. The two filename constants in `steps.LoadSteps` and `validator.Validate` change together; the file's JSON shape does not.
+- **Rename `config.json` to `config.json`** — the file pr9k loads at startup is the *pr9k config*, not a "ralph" artifact. The two filename constants in `steps.LoadSteps` and `validator.Validate` change together; the file's JSON shape does not.
 - **Centralize pr9k state** under `.pr9k/` in both the install bundle and the target repo.
 - **Eliminate the top-level `logs/` footprint** in target repos — nothing pr9k writes should sit above `.pr9k/`.
 - **Make per-repo workflow overrides first-class** — a repo can ship its own `.pr9k/workflow/` without flags or environment manipulation.
@@ -48,7 +48,7 @@ The rename and the `.pr9k/` consolidation land in the same release because both 
 - **Keeping the `ralph-tui` directory name with a stub `go.mod` redirect.** Go modules do not have redirects; the rename is atomic.
 - **Renaming internal packages (`internal/workflow`, `internal/ui`, etc.).** The rename stops at the module-path boundary. Everything under `src/internal/` keeps its current package names — touching them is unrelated churn.
 - **Renaming `.pen` files, the MCP server namespace, or the GitHub repo.** Out of scope for code; those are user/infra decisions.
-- **Renaming the `ralph` issue label, `progress.txt`, `deferred.txt`, or `ralph-art.txt`.** These are workflow-content identifiers, not tool-identity identifiers. "Ralph" is still the name of the workflow even after the tool is renamed. (`ralph-steps.json` was previously listed here but is now in scope as `config.json` — see §1 and §4.6 — because it names what pr9k *loads*, not what's inside it.)
+- **Renaming the `ralph` issue label, `progress.txt`, `deferred.txt`, or `ralph-art.txt`.** These are workflow-content identifiers, not tool-identity identifiers. "Ralph" is still the name of the workflow even after the tool is renamed. (`config.json` was previously listed here but is now in scope as `config.json` — see §1 and §4.6 — because it names what pr9k *loads*, not what's inside it.)
 - **Renaming the `ralph-` log-filename prefix, the per-run artifact-directory prefix, and the `ralph-*.cid` tempfile pattern.** All three are produced by pr9k but carry the workflow identity in their basename:
   - `<projectDir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log` (formatted by `logger.go:33`).
   - `<projectDir>/.pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm/` (the per-run artifact directory, derived from `RunStamp()` at `logger.go:34`).
@@ -109,7 +109,7 @@ The `<projectDir>/.pr9k/workflow/` tree is entirely optional. Most consumers wil
 │   ├── internal/             # unchanged
 │   ├── go.mod                # module github.com/mxriverlynn/pr9k/src
 │   ├── go.sum
-│   ├── config.json           # formerly ralph-steps.json
+│   ├── config.json           # formerly config.json
 │   └── tools.go
 ├── prompts/
 ├── scripts/
@@ -252,7 +252,7 @@ If any of these three writers disagree about the prefix, claude-step `.jsonl` fi
 - The stated goal is "centralize state under `.pr9k/`" — splitting iteration.jsonl off into `.ralph-cache/` contradicts that.
 - `preflight.Run` already owns directory creation for the iteration.jsonl parent (`src/internal/preflight/run.go:34`); the change is one constant string in two locations (preflight + iterationlog).
 
-**`.ralph-cache/` story.** `containerEnv` in `ralph-steps.json` writes Go/XDG cache files at paths like `/home/agent/workspace/.ralph-cache/go` inside the container. Because `<projectDir>` is bind-mounted at `/home/agent/workspace` (`src/internal/sandbox/command.go` and the docker-sandbox docs), those container-side writes materialize at `<projectDir>/.ralph-cache/<subdir>/...` on the host. Two consequences for this release:
+**`.ralph-cache/` story.** `containerEnv` in `config.json` writes Go/XDG cache files at paths like `/home/agent/workspace/.ralph-cache/go` inside the container. Because `<projectDir>` is bind-mounted at `/home/agent/workspace` (`src/internal/sandbox/command.go` and the docker-sandbox docs), those container-side writes materialize at `<projectDir>/.ralph-cache/<subdir>/...` on the host. Two consequences for this release:
 
 1. **`.ralph-cache/` does not disappear from the host filesystem.** As long as `containerEnv` paths reference `.ralph-cache/`, the bind mount creates `.ralph-cache/` on the host on first claude-step run. The §2 non-goal "Renaming `.ralph-cache` inside running Docker containers" is unchanged.
 2. **`preflight.Run`'s host-side `os.MkdirAll(.ralph-cache)` call still serves a purpose** — it pre-creates the directory under the host UID before the container runs as the host UID via the sandbox's UID mapping, avoiding a chmod fight when the container writes its first cache file. In this release, leave `preflight.Run`'s `.ralph-cache` MkdirAll **in place** so the cache continues to work; *additionally* MkdirAll the new `.pr9k/` umbrella so iteration.jsonl has a writable parent.
@@ -288,16 +288,16 @@ logs/                # legacy (pre-0.7.0) — kept until users migrate
 .ralph-cache/
 ```
 
-### 4.6 `config.json` — rename from `ralph-steps.json`, no schema changes
+### 4.6 `config.json` — rename from `config.json`, no schema changes
 
-**Filename rename.** `git mv src/ralph-steps.json src/config.json`. The JSON contents are byte-for-byte identical; only the filename moves.
+**Filename rename.** `git mv src/config.json src/config.json`. The JSON contents are byte-for-byte identical; only the filename moves.
 
-**Code constants** — pr9k looks the file up by name in two places (a third reads it by environment variable in tests). Both literal constants change from `"ralph-steps.json"` to `"config.json"`:
+**Code constants** — pr9k looks the file up by name in two places (a third reads it by environment variable in tests). Both literal constants change from `"config.json"` to `"config.json"`:
 
-- `src/internal/steps/steps.go` line 72 — inside `LoadSteps`, `path := filepath.Join(workflowDir, "ralph-steps.json")` becomes `filepath.Join(workflowDir, "config.json")`. Update the function's doc comment to match.
+- `src/internal/steps/steps.go` line 72 — inside `LoadSteps`, `path := filepath.Join(workflowDir, "config.json")` becomes `filepath.Join(workflowDir, "config.json")`. Update the function's doc comment to match.
 - `src/internal/validator/validator.go` line 157 — inside `Validate`, the same join becomes `filepath.Join(workflowDir, "config.json")`. Update surrounding doc comments.
-- `src/internal/validator/production_steps_test.go` lines 26, 36, 38, 40, 41, 57, 63 — the production-config integrity test reads `src/ralph-steps.json` directly to validate the shipped config; rename every literal and doc reference to `config.json`. The helper variable `ralphTUIDir` (line 36) is unrelated to this rename but should be renamed in the §4.1 import-path pass.
-- `src/cmd/pr9k/main_test.go` lines 49, 61, 66, 78, 222, 225, 239, 393, 405, 410, 426 — `writeMinimalStepFile`, `writeInvalidStepFile`, `writeWarningOnlyStepFile`, `writeWarningAndFatalStepFile` all `os.WriteFile` to `filepath.Join(dir, "ralph-steps.json")`; rename to `config.json`. Doc comments referencing "missing ralph-steps.json" become "missing config.json".
+- `src/internal/validator/production_steps_test.go` lines 26, 36, 38, 40, 41, 57, 63 — the production-config integrity test reads `src/config.json` directly to validate the shipped config; rename every literal and doc reference to `config.json`. The helper variable `ralphTUIDir` (line 36) is unrelated to this rename but should be renamed in the §4.1 import-path pass.
+- `src/cmd/pr9k/main_test.go` lines 49, 61, 66, 78, 222, 225, 239, 393, 405, 410, 426 — `writeMinimalStepFile`, `writeInvalidStepFile`, `writeWarningOnlyStepFile`, `writeWarningAndFatalStepFile` all `os.WriteFile` to `filepath.Join(dir, "config.json")`; rename to `config.json`. Doc comments referencing "missing config.json" become "missing config.json".
 
 **`{{WORKFLOW_DIR}}` and script-resolution audit.** The shipped `src/config.json` (post-rename) still uses two conventions that need to be verified post-bundle-move:
 
@@ -305,10 +305,10 @@ logs/                # legacy (pre-0.7.0) — kept until users migrate
 - `scripts/get_next_issue`, `scripts/post_issue_summary`, etc. — today these resolve against `workflowDir`. The workflow runner joins `workflowDir + scripts/foo` before executing (see `src/internal/workflow/workflow_test.go:516-518` after rename). After the move, `workflowDir = <bundle>/.pr9k/workflow`, and `<bundle>/.pr9k/workflow/scripts/foo` is exactly where the `Makefile` (§4.3) places them. No JSON edits required.
 - The `statusLine.command` field (`scripts/statusline`, line 11 of the file) follows the same resolution as other scripts. No edit required; verify via the statusline integration test.
 
-**Comments and prose in non-test Go code that name the file.** The following references to `ralph-steps.json` appear in code comments (not just doc files) and become `config.json`:
+**Comments and prose in non-test Go code that name the file.** The following references to `config.json` appear in code comments (not just doc files) and become `config.json`:
 
-- `src/cmd/pr9k/wiring.go` line 60 — `// in ralph-steps.json), which causes statusline.New …`.
-- `src/internal/sandbox/command.go` — references in package comments to "ralph-steps.json" (audit during the rename pass).
+- `src/cmd/pr9k/wiring.go` line 60 — `// in config.json), which causes statusline.New …`.
+- `src/internal/sandbox/command.go` — references in package comments to "config.json" (audit during the rename pass).
 - `src/internal/statusline/statusline.go` and `src/internal/workflow/{run,workflow}.go` — same audit.
 
 **Note on workflow content.** The internal `ralph` token (issue label, `progress.txt`, `ralph-art.txt`) inside the JSON's command lines is *workflow content*, not a tool-identity reference, and is intentionally left untouched per §2 non-goals.
@@ -342,18 +342,18 @@ Doc surfaces that **are** rewritten in this release:
 - Every file in `docs/code-packages/` — replace `ralph-tui/internal/...` paths in file-path bullets and tables with `src/internal/...`. Specifically: `logger.md` (lines 11, 18–19, 40, 51–52, 73, 77, 125, 178 — including the `logs/ralph-` ASCII art at line 40 and the `logsDir := filepath.Join(projectDir, "logs")` code block at line 77 which becomes `".pr9k", "logs"`), `claudestream.md` (lines 256, 291, 294 — `logs/` paths and the `cmd/ralph-tui/main.go` heading), `vars.md`, `steps.md`, `validator.md`, `statusline.md`, `sandbox.md`, `preflight.md`, `workflow.md`.
 - Every file in `docs/coding-standards/` — grep for `ralph-tui` occurrences; `versioning.md` mentions `ralph-tui` in eight passages (lines 3, 7, 9, 11, 13, 15, 17, 20, 24, 44) including the `ralph-tui/internal/version/version.go` path, the `ralph-tui's "public API"` heading, and the `ralph-tui version <semver>\n` `--version` format. All become `pr9k …` / `src/internal/…` / `pr9k version <semver>\n`.
 
-**`config.json` rename — doc surface.** Every doc that names `ralph-steps.json` becomes `config.json`. Locations to update (audit via `grep -rn ralph-steps.json docs/ CLAUDE.md README.md` after the code rename):
+**`config.json` rename — doc surface.** Every doc that names `config.json` becomes `config.json`. Locations to update (audit via `grep -rn config.json docs/ CLAUDE.md README.md` after the code rename):
 
-- `CLAUDE.md` — every `ralph-steps.json` mention in the Project Overview, Key Design Decisions, ralph-tui section, and code-package summaries.
+- `CLAUDE.md` — every `config.json` mention in the Project Overview, Key Design Decisions, ralph-tui section, and code-package summaries.
 - `docs/architecture.md` — references in the package-layout and configuration-loading prose.
-- `docs/code-packages/{steps,validator,workflow,sandbox,statusline}.md` — file-path bullets (e.g. `ralph-tui/ralph-steps.json` → `src/config.json`) and prose.
+- `docs/code-packages/{steps,validator,workflow,sandbox,statusline}.md` — file-path bullets (e.g. `src/config.json` → `src/config.json`) and prose.
 - `docs/coding-standards/{versioning,go-patterns,testing,documentation}.md` — every prose mention.
 - `docs/features/{docker-sandbox,subprocess-execution,workflow-orchestration,keyboard-input}.md` — every prose mention.
 - `docs/how-to/*.md` — every prose mention; particularly `building-custom-workflows.md`, `variable-output-and-injection.md`, `capturing-step-output.md`, `passing-environment-variables.md`, `breaking-out-of-the-loop.md`, `skipping-steps-conditionally.md`, `setting-step-timeouts.md`, `caching-build-artifacts.md`, `resuming-sessions.md`, `configuring-a-status-line.md`.
 
 Historical plan documents (`docs/plans/*.md`) and ADRs (`docs/adr/*.md`) are *not* rewritten — they remain accurate descriptions of past intent. The new ADR (next bullet) records the rename.
 
-**New ADR.** Add `docs/adr/<datestamp>-pr9k-rename-and-pr9k-layout.md` recording (a) the rename of binary, source dir, and module path; (b) the `.pr9k/` umbrella decision; (c) the `ralph-steps.json` → `config.json` rename and its rationale (filename describes what pr9k loads, not which workflow is inside it); (d) the explicit non-goals from §2; (e) the supersession of the WorkflowDir-resolution and log-path passages in earlier ADRs (`20260413162428-workflow-project-dir-split.md`, `20260413160000-require-docker-sandbox.md`) and of the narrow-reading ADR's claim that "workflow content stays in JSON" — still true, but the *file's name* is now a tool-identity surface, not a workflow-content surface. The new ADR's `Apply when` line: "any change to binary name, source-tree layout, runtime output paths, workflow discovery, or the workflow-config filename."
+**New ADR.** Add `docs/adr/<datestamp>-pr9k-rename-and-pr9k-layout.md` recording (a) the rename of binary, source dir, and module path; (b) the `.pr9k/` umbrella decision; (c) the `config.json` → `config.json` rename and its rationale (filename describes what pr9k loads, not which workflow is inside it); (d) the explicit non-goals from §2; (e) the supersession of the WorkflowDir-resolution and log-path passages in earlier ADRs (`20260413162428-workflow-project-dir-split.md`, `20260413160000-require-docker-sandbox.md`) and of the narrow-reading ADR's claim that "workflow content stays in JSON" — still true, but the *file's name* is now a tool-identity surface, not a workflow-content surface. The new ADR's `Apply when` line: "any change to binary name, source-tree layout, runtime output paths, workflow discovery, or the workflow-config filename."
 
 Per `docs/coding-standards/documentation.md`, feature docs ship with the feature — all doc updates land in the same PRs as the code change, not follow-ups.
 
@@ -369,7 +369,7 @@ Per `docs/coding-standards/versioning.md`, this release changes:
 - The iteration.jsonl location (§4.5). External tooling that reads it must update the path.
 - The Go module path. Anyone who imported packages from `github.com/mxriverlynn/pr9k/ralph-tui/...` (unlikely — pr9k is an app, not a library) must re-import.
 
-- The workflow-config filename (`ralph-steps.json` → `config.json`). Anyone shipping a custom workflow bundle (or whose `--workflow-dir` points at a directory containing the old name) must rename their copy.
+- The workflow-config filename (`config.json` → `config.json`). Anyone shipping a custom workflow bundle (or whose `--workflow-dir` points at a directory containing the old name) must rename their copy.
 
 No CLI flag renames, no JSON *schema* changes inside the renamed `config.json` (only the filename moves), no `{{VAR}}` language changes.
 
@@ -405,7 +405,7 @@ Targeted test additions, matched to the packages already touched:
 - `src/internal/ui/model_test.go` and `src/internal/ui/version_footer_test.go` — update the three `"ralph-tui v..."` fixtures to `"pr9k v..."`.
 - `src/cmd/pr9k/main_test.go` — the top-level startup test that currently exercises `TestStartup_LoadStepsFailure` needs a new variant for "no workflow bundle anywhere" (distinct from "bundle exists but config.json is missing"). The four `writeXXXStepFile` helpers (lines 49, 66, 393, 410) write to `config.json` after the §4.6 rename.
 - `src/cmd/pr9k/doc_integrity_test.go` — update the two `"ralph-tui v"` assertions.
-- Integration: the existing `production_steps_test.go` that validates the shipped workflow config already runs against a relative path — verify the path still resolves after the `src/` rename **and** the `ralph-steps.json` → `config.json` rename, and adjust if needed.
+- Integration: the existing `production_steps_test.go` that validates the shipped workflow config already runs against a relative path — verify the path still resolves after the `src/` rename **and** the `config.json` → `config.json` rename, and adjust if needed.
 
 Race detector must stay on (`go test -race ./...`) per `docs/coding-standards/testing.md`.
 
@@ -414,7 +414,7 @@ Race detector must stay on (`go test -race ./...`) per `docs/coding-standards/te
 The rename and the reorg are coupled enough that sequencing them across many PRs produces more churn than it prevents. The recommended order:
 
 1. **PR 1 — Rename.** `git mv ralph-tui src`, `git mv src/cmd/ralph-tui src/cmd/pr9k`, `go.mod` module path, scripted import-path rewrite, `Makefile` path updates (but **not** the `.pr9k/workflow/` layout yet — only the binary name `-o bin/pr9k`), cobra `Use` string, `main.go` versionLabel, test fixture strings, and all doc renames. `go test -race ./...` must pass end-to-end before merge.
-2. **PR 2 — Layout and config rename.** `Makefile` target builds `bin/.pr9k/workflow/`; CLI resolver switches to the two-candidate rule; logger writes to `.pr9k/logs/`; per-step JSONL artifact directory and `main.go` artifact-dir creation move to `.pr9k/logs/<runStamp>/`; iteration log moves to `.pr9k/iteration.jsonl`; `git mv src/ralph-steps.json src/config.json` and the two literal constants in `steps.LoadSteps` and `validator.Validate` flip; `.gitignore` gains `.pr9k/`; docs for both the layout move and the `config.json` rename land; new ADR lands; `version.Version` → `0.7.0`.
+2. **PR 2 — Layout and config rename.** `Makefile` target builds `bin/.pr9k/workflow/`; CLI resolver switches to the two-candidate rule; logger writes to `.pr9k/logs/`; per-step JSONL artifact directory and `main.go` artifact-dir creation move to `.pr9k/logs/<runStamp>/`; iteration log moves to `.pr9k/iteration.jsonl`; `git mv src/config.json src/config.json` and the two literal constants in `steps.LoadSteps` and `validator.Validate` flip; `.gitignore` gains `.pr9k/`; docs for both the layout move and the `config.json` rename land; new ADR lands; `version.Version` → `0.7.0`.
 3. Doing both in a single PR is also acceptable if the reviewer can handle the diff; the two-PR split is only about reviewability, not correctness.
 
 No in-repo migration script. Users upgrading to 0.7.0 manually delete `<repo>/logs/` and `<repo>/.ralph-cache/` if they want a tidy switch; the new layout populates itself on first run. The binary name change is handled by whatever installer the user uses — there is no automated `ralph-tui` → `pr9k` shim.
@@ -432,13 +432,13 @@ No in-repo migration script. Users upgrading to 0.7.0 manually delete `<repo>/lo
 | External tooling reads `<projectDir>/.ralph-cache/iteration.jsonl` | Documented breaking change in §4.8; update `docs/how-to/debugging-a-run.md`. |
 | `make build` run against an existing `bin/` with the old layout leaves stale files | `Makefile` already runs `rm -rf bin` before rebuilding. |
 | Git history harder to follow after `git mv ralph-tui src` moves all tracked files under that subtree (113 at planning time, 110 of them `.go`) | `git log --follow` still works. The rename is a one-time cost for long-term readability. |
-| User has a workflow bundle named `ralph-steps.json` (in their own `--workflow-dir` or in-repo `.pr9k/workflow/`) and pr9k 0.7.0 silently fails to find it | `steps.LoadSteps` returns a clear error today (`steps: read /<dir>/config.json: no such file or directory`) — surfaced through the same path that `TestStartup_LoadStepsFailure` exercises. Documented as a breaking change in §4.8 with the rename instruction. |
+| User has a workflow bundle named `config.json` (in their own `--workflow-dir` or in-repo `.pr9k/workflow/`) and pr9k 0.7.0 silently fails to find it | `steps.LoadSteps` returns a clear error today (`steps: read /<dir>/config.json: no such file or directory`) — surfaced through the same path that `TestStartup_LoadStepsFailure` exercises. Documented as a breaking change in §4.8 with the rename instruction. |
 
 ## 9. Out of scope / follow-ups
 
 - Moving the repo's source-of-truth `prompts/`, `scripts/`, `config.json` into a top-level `.pr9k/workflow/` tree (§4.3, deferred).
 - Renaming `.ralph-cache` inside containers — requires coordinated edits to `containerEnv` in `config.json` and the docker-sandbox docs.
-- Renaming `ralph-art.txt`, the `ralph` issue label, `progress.txt`, `deferred.txt`, and any other *workflow-identity* artifacts from "ralph" to "pr9k". Intentionally left alone: pr9k is the tool, Ralph is the workflow it runs. (`ralph-steps.json` was on this list pre-iteration — it is now in scope as `config.json` per §4.6, because the filename names what pr9k *loads*, not what the workflow *contains*.)
+- Renaming `ralph-art.txt`, the `ralph` issue label, `progress.txt`, `deferred.txt`, and any other *workflow-identity* artifacts from "ralph" to "pr9k". Intentionally left alone: pr9k is the tool, Ralph is the workflow it runs. (`config.json` was on this list pre-iteration — it is now in scope as `config.json` per §4.6, because the filename names what pr9k *loads*, not what the workflow *contains*.)
 - JSON Schema distribution under `.pr9k/schemas/` for editor autocompletion on `config.json`.
 - `$XDG_CONFIG_HOME`-style global workflow discovery.
 - Renaming the GitHub repo from `pr9k` to something else — not applicable; the repo is already `pr9k`.
@@ -462,7 +462,7 @@ This plan was sharpened through codebase-grounded iterations on 2026-04-18. Find
 - Added §4.4 update to the `--workflow-dir` flag's `Usage` string to reflect the new resolution order.
 
 **Iteration 3 — user-introduced scope addition.**
-- User asked mid-review to also rename `ralph-steps.json` → `config.json`. This contradicted the original §2 non-goal and required propagation across §1 prose, §2 goals/non-goals, §3 layout diagrams, §4.3 Makefile, §4.6 (rewritten), §4.7 doc surface, §4.8 breaking-changes list, §6 testing plan, §7 rollout, §8 risks, and §9 follow-ups. All occurrences updated.
+- User asked mid-review to also rename `config.json` → `config.json`. This contradicted the original §2 non-goal and required propagation across §1 prose, §2 goals/non-goals, §3 layout diagrams, §4.3 Makefile, §4.6 (rewritten), §4.7 doc surface, §4.8 breaking-changes list, §6 testing plan, §7 rollout, §8 risks, and §9 follow-ups. All occurrences updated.
 
 **Iteration 4 — completeness / ambiguity sweep.**
 - Corrected the "134 files" import-path count in §4.1. A fresh `grep -rn github.com/mxriverlynn/pr9k/ralph-tui --include="*.go"` at `fc8b054` returns 87 occurrences across 38 files, all under `ralph-tui/`. Also corrected the corresponding "134 files" reference in the §8 risk row to the actual 113 git-tracked files moved by `git mv ralph-tui src` (110 of them `.go`).

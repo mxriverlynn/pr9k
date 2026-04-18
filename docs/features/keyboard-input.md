@@ -265,7 +265,7 @@ When the workflow finishes all iterations and finalize steps successfully, `Run`
 
 ### Help Mode
 
-Entered by pressing `?` from `ModeNormal`, but only when `StatusLineActive()` returns true (i.e., a `statusLine` command is configured in `ralph-steps.json`). When `StatusLineActive()` is false, `?` is a no-op in every mode and `ModeHelp` is unreachable. The footer shows `HelpModeShortcuts` (`"esc  close"`).
+Entered by pressing `?` from `ModeNormal`, but only when `StatusLineActive()` returns true (i.e., a `statusLine` command is configured in `config.json`). When `StatusLineActive()` is false, `?` is a no-op in every mode and `ModeHelp` is unreachable. The footer shows `HelpModeShortcuts` (`"esc  close"`).
 
 The modal body is drawn by `Model.View()` using one of the four `HelpModal*` constants, each a two-column grid of shortcuts targeting ~67 columns of interior space:
 

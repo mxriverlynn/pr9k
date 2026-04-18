@@ -42,7 +42,7 @@
 ### Architecture Decision Records
 
 - [Cobra CLI Framework](adr/20260409135303-cobra-cli-framework.md) — Decision to use spf13/cobra for CLI argument parsing
-- [Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md) — pr9k is a generic step runner; workflow content lives in `ralph-steps.json`, not Go code
+- [Narrow-Reading Principle](adr/20260410170952-narrow-reading-principle.md) — pr9k is a generic step runner; workflow content lives in `config.json`, not Go code
 - [Bubble Tea TUI Framework](adr/20260411070907-bubble-tea-tui-framework.md) — Decision to migrate from Glyph to Bubble Tea + Lip Gloss + bubbles for dynamic window title, mouse-wheel scrolling, and ecosystem stability
 - [Workflow/Project Dir Split](adr/20260413162428-workflow-project-dir-split.md) — Decision to split `--project-dir` into `--workflow-dir` (workflow bundle) and `--project-dir` (target repo)
 
@@ -62,7 +62,7 @@
 
 ### Configuration
 
-- Step definitions: `src/ralph-steps.json`
+- Step definitions: `src/config.json`
 - Claude Code settings: `.claude/settings.json`, `.claude/settings.local.json`
 - Dependency pinning: `src/tools.go` — blank imports under `//go:build tools` to pin Bubble Tea dependencies before production code imports them; verified via `go vet -tags tools .` (as `make vet` does)
 

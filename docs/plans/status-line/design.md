@@ -89,7 +89,7 @@ quit-confirm flow (consistent with every other mode).
 
 ## Configuration
 
-### Schema change to `ralph-steps.json`
+### Schema change to `config.json`
 
 Add one new, optional top-level key: `statusLine`. The value is an object:
 
@@ -127,7 +127,7 @@ convention as `scripts/get_next_issue`, `scripts/close_gh_issue`, etc.
   reducing surprise for anyone who already knows that feature.
 - Leaves room to add `refreshInterval`, `padding`, or other fields later as
   additive, non-breaking changes. Switching a bare string → object later would
-  be a breaking schema change for every user's `ralph-steps.json`.
+  be a breaking schema change for every user's `config.json`.
 - The D13 validator uses `DisallowUnknownFields` on the strict top-level
   struct (`validator.vFile`), so we get future-schema safety for free.
 
@@ -526,7 +526,7 @@ so they do not outlive the file logger or the Bubble Tea program.
 
 - `refreshInterval: 0` → the timer goroutine is not started at all
   (Start inspects the parsed interval and skips the timer when zero).
-- If `statusLine` is absent from `ralph-steps.json`, `statusRunner` is a
+- If `statusLine` is absent from `config.json`, `statusRunner` is a
   nil-safe no-op runner (`Start`, `Shutdown`, `Trigger`, `LastOutput`,
   `Enabled` all safe to call). This avoids a sprinkle of nil checks at
   every call site.
@@ -723,7 +723,7 @@ func (m keysModel) handleHelp(key tea.KeyMsg) (keysModel, tea.Cmd) {
 Wire it into the `keysModel.Update` switch.
 
 `StatusLineActive()` is a new method on `KeyHandler` (or a plumbed bool on
-`Model`) that returns whether `ralph-steps.json` declared a `statusLine`.
+`Model`) that returns whether `config.json` declared a `statusLine`.
 Storing it on `KeyHandler` is consistent with how other UI-level config
 lives today — `KeyHandler` already holds the cancel func and shortcut line.
 
@@ -822,7 +822,7 @@ the script exits without reading, the parent goroutine blocks on its
 `stdin.Write` call until the pipe closes. Draining stdin is cheap and
 correct.
 
-The `ralph-steps.json` shipped in the repo is **not** updated to reference
+The `config.json` shipped in the repo is **not** updated to reference
 this script by default — out-of-the-box behavior stays exactly as today.
 The sample is there for users who opt in.
 
@@ -846,7 +846,7 @@ The sample is there for users who opt in.
 | `ralph-tui/cmd/ralph-tui/main.go`                         | Construct `statusline.Runner`; wire to Model and program.Send    |
 | `scripts/statusline`                                      | **new** — initial "testing status line" script                   |
 | `Makefile`                                                | No change — `cp -r scripts bin/scripts` already covers it        |
-| `ralph-tui/ralph-steps.json`                              | No change — the default workflow does not opt in                 |
+| `src/config.json`                              | No change — the default workflow does not opt in                 |
 | `docs/features/status-line.md`                            | **new** — feature doc                                            |
 | `docs/features/tui-display.md`                            | Update footer section to describe conditional rendering          |
 | `docs/features/keyboard-input.md`                         | Add `ModeHelp`                                                   |

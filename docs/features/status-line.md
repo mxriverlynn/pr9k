@@ -8,7 +8,7 @@ The status-line feature lets users replace the TUI's default shortcut bar with t
 
 ## Overview
 
-- When a `statusLine` block is present in `ralph-steps.json`, pr9k launches a background `Runner` that executes the configured command on a schedule and after key workflow events
+- When a `statusLine` block is present in `config.json`, pr9k launches a background `Runner` that executes the configured command on a schedule and after key workflow events
 - The command's first non-empty stdout line is sanitized and displayed in the TUI footer, replacing the shortcut bar in Normal mode
 - A `? Help` shortcut appears next to the status text so users can still access the keyboard shortcut modal
 - When no `statusLine` block is configured, the TUI footer shows the default shortcut bar (unchanged behavior)
@@ -27,7 +27,7 @@ See [`docs/code-packages/statusline.md`](../code-packages/statusline.md) for the
 
 ## Configuration
 
-Add an optional `statusLine` block to `ralph-steps.json`:
+Add an optional `statusLine` block to `config.json`:
 
 ```json
 {
@@ -89,7 +89,7 @@ The script receives a single JSON object on stdin:
 | `maxIterations` | int | Maximum iterations (`0` = unbounded) |
 | `step.num` | int | Current step number within phase (1-based) |
 | `step.count` | int | Total step count in phase |
-| `step.name` | string | Step name from `ralph-steps.json` |
+| `step.name` | string | Step name from `config.json` |
 | `mode` | string | Current UI mode: `"normal"`, `"error"`, `"quitconfirm"`, `"nextconfirm"`, `"done"`, `"select"`, `"quitting"`, or `"help"` |
 | `workflowDir` | string | Workflow bundle directory |
 | `projectDir` | string | Target repository directory |
@@ -191,7 +191,7 @@ Log lines from the status-line runner are prefixed with `[statusline]`:
 The following are not provided by this feature:
 
 - **Sandboxing** — the script runs on the host with the full environment. Isolation (if desired) must be implemented in the script itself.
-- **Live config reload** — `SetStatusLineActive` is called once at startup; changes to `ralph-steps.json` require a restart.
+- **Live config reload** — `SetStatusLineActive` is called once at startup; changes to `config.json` require a restart.
 - **Multiple status-line commands** — only one `statusLine` block is supported.
 - **Windows** — SIGTERM/SIGKILL semantics and path resolution assume Unix.
 - **Scrollable / multi-line output** — only the first non-empty line is displayed.

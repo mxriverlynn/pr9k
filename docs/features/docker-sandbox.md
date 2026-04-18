@@ -162,8 +162,8 @@ type SandboxOptions struct {
 Three sources of env vars are combined for every claude step:
 
 1. **Builtin set** (`sandbox.BuiltinEnvAllowlist`): `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`. Always attempted; silently skipped if unset on host.
-2. **User `env` field** (`StepFile.Env`): names listed in the top-level `env` array in `ralph-steps.json`. Merged at build time via `append(sandbox.BuiltinEnvAllowlist, stepFile.Env...)`. Each name is passed as `-e NAME` (no `=VALUE`) so Docker reads the value from the host at container start; unset names are silently skipped.
-3. **User `containerEnv` field** (`StepFile.ContainerEnv`): a key→value map in the top-level `containerEnv` object of `ralph-steps.json`. Each entry is injected as `-e KEY=VALUE` with a literal value — the host environment is not consulted. Entries are emitted in **sorted key order** (deterministic argv) **after** the allowlist entries, so Docker's last-wins rule means `containerEnv` beats a same-named host passthrough.
+2. **User `env` field** (`StepFile.Env`): names listed in the top-level `env` array in `config.json`. Merged at build time via `append(sandbox.BuiltinEnvAllowlist, stepFile.Env...)`. Each name is passed as `-e NAME` (no `=VALUE`) so Docker reads the value from the host at container start; unset names are silently skipped.
+3. **User `containerEnv` field** (`StepFile.ContainerEnv`): a key→value map in the top-level `containerEnv` object of `config.json`. Each entry is injected as `-e KEY=VALUE` with a literal value — the host environment is not consulted. Entries are emitted in **sorted key order** (deterministic argv) **after** the allowlist entries, so Docker's last-wins rule means `containerEnv` beats a same-named host passthrough.
 
 ```json
 {
@@ -229,7 +229,7 @@ The following residual risks are accepted:
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
 - [Config Validation](../code-packages/validator.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)
 - [Step Definitions & Prompt Building](../code-packages/steps.md) — `StepFile.Env` field and `BuildRunArgs` call site in `buildStep`
-- [Passing Environment Variables](../how-to/passing-environment-variables.md) — User-facing guide for declaring env vars in `ralph-steps.json`
+- [Passing Environment Variables](../how-to/passing-environment-variables.md) — User-facing guide for declaring env vars in `config.json`
 - [Variable Output & Injection](../how-to/variable-output-and-injection.md) — Why `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are banned in prompt files
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker a runtime requirement
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Why `PROJECT_DIR` means the target repo (not the workflow bundle)

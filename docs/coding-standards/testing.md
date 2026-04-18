@@ -653,7 +653,7 @@ The same applies to any slice of structs keyed by name: sort by `Name` field bef
 
 ## Test the shipped production configuration file end-to-end
 
-Every project that ships a configuration file (`ralph-steps.json`, `config.yaml`, etc.) must have at least one integration test that loads the real file from the source tree and runs it through the full validation and loading pipeline. This closes the gap between "unit tests pass" and "the config the user actually ships is valid."
+Every project that ships a configuration file (`config.json`, `config.yaml`, etc.) must have at least one integration test that loads the real file from the source tree and runs it through the full validation and loading pipeline. This closes the gap between "unit tests pass" and "the config the user actually ships is valid."
 
 ```go
 // production_steps_test.go — loads from the live source tree

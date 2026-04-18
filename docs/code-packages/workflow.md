@@ -139,7 +139,7 @@ prevIterState = th.lastState         // ui.StepState recorded by trackingOffsetI
 
 When a claude step times out, `RunSandboxedStep` adds its captured `SessionID` to `Runner`'s session blacklist. On the next iteration (or the next step in the same phase), `evaluateResumeGates` calls `executor.SessionBlacklisted(prevStats.SessionID)` — gate G5 fires and the resume is suppressed. This prevents resuming a session whose server-side state is unknown due to the forced kill.
 
-The feature is **shipped engine-off**: the default `ralph-steps.json` omits `resumePrevious` on all steps. Engine support is fully implemented; activation requires setting `"resumePrevious": true` on the desired claude steps in `ralph-steps.json` and A/B validation.
+The feature is **shipped engine-off**: the default `config.json` omits `resumePrevious` on all steps. Engine support is fully implemented; activation requires setting `"resumePrevious": true` on the desired claude steps in `config.json` and A/B validation.
 
 See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious) in the feature doc for the user-facing gate table and skip-chain behavior. See [Resuming Sessions](../how-to/resuming-sessions.md) for usage guidance.
 

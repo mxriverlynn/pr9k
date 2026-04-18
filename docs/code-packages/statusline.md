@@ -8,7 +8,7 @@ The `internal/statusline` package implements a user-configured command that runs
 
 ## Overview
 
-- A status-line command is defined in the optional top-level `statusLine` block in `ralph-steps.json`
+- A status-line command is defined in the optional top-level `statusLine` block in `config.json`
 - The command runs as a subprocess in a background goroutine; it is not sandboxed (it inherits the full host environment)
 - The command receives workflow state as JSON on stdin and writes its output to stdout; the first non-empty line is sanitized and cached
 - Refreshes are triggered at phase boundaries, iteration boundaries, step boundaries, mode changes, and on a configurable timer
@@ -281,7 +281,7 @@ Tests use an `os.Args[0]`-as-script-stub pattern: the test binary re-invokes its
 ## Additional Information
 
 - [Status Line Feature](../features/status-line.md) — User-facing feature doc: config schema, script contract, refresh triggers, help modal, lifecycle, and observability
-- [Step Definitions](steps.md) — `StatusLineConfig` struct loaded from `ralph-steps.json`
+- [Step Definitions](steps.md) — `StatusLineConfig` struct loaded from `config.json`
 - [Config Validation](validator.md) — Validation rules for the `statusLine` block
 - [CLI Configuration & Wiring](../features/cli-configuration.md) — `wiring.go` helpers (`modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `runWithShutdown`) that connect the `Runner` to `main.go`
 - [TUI Display](../features/tui-display.md) — `WithModeTrigger` mode-change choke point that fires `Runner.Trigger()` on every UI mode transition

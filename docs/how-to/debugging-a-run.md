@@ -115,7 +115,7 @@ pr9k writes one JSON record to `<project-dir>/.ralph-cache/iteration.jsonl` afte
 | `schema_version` | Always `1`. Third-party parsers should reject unknown versions. |
 | `issue_id` | The value of `ISSUE_ID` at the time the record was written (empty in initialize/finalize phases). |
 | `iteration_num` | Loop iteration index (1-based). `0` for initialize and finalize phases. |
-| `step_name` | Step name from `ralph-steps.json`. |
+| `step_name` | Step name from `config.json`. |
 | `status` | `"done"`, `"failed"`, `"skipped"`, or `"unknown"` (step never started). |
 | `duration_s` | Wall-clock seconds from step start to finish. For steps that enter error mode, this includes user idle time. |
 | `notes` | Only present on prep failures — contains the `buildStep` error string. |
@@ -223,7 +223,7 @@ If you want to reproduce a bug without running the whole workflow, narrow the sc
 pr9k -n 1
 ```
 
-Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `ralph-steps.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where pr9k looks for `ralph-steps.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
+Combined with `--workflow-dir` pointing at an alternate workflow bundle (a scratch directory with a custom `config.json` that only includes the steps leading up to the failure) and `--project-dir` pointing at the target repo you want to reproduce against, you can get a minimal repro in seconds. `--workflow-dir` controls where pr9k looks for `config.json`, `prompts/`, and `scripts/`; `--project-dir` controls the target repository cwd for all subprocesses.
 
 If the bug is inside a specific step's prompt or script, you can also run that step directly:
 
@@ -258,7 +258,7 @@ For the full file-passing model, see [Variable Output & Injection](variable-outp
 
 If pr9k refuses to start, it's the validator. `validator.Validate(workflowDir)` runs before the TUI and checks:
 
-- `ralph-steps.json` exists and parses
+- `config.json` exists and parses
 - Every step has valid schema (`name`, `isClaude`, required fields per type)
 - Every referenced `promptFile` exists in `prompts/`
 - Every referenced script path exists in `scripts/` or on `PATH`
@@ -267,8 +267,8 @@ If pr9k refuses to start, it's the validator. `validator.Validate(workflowDir)` 
 Validation failures print structured errors to stderr before the TUI starts:
 
 ```
-ralph-steps.json: step "Feature work": promptFile not found: prompts/feature-work.md
-ralph-steps.json: step "Close issue": command[1] references unresolved variable {{ISSUE_ID}} in finalize phase
+config.json: step "Feature work": promptFile not found: prompts/feature-work.md
+config.json: step "Close issue": command[1] references unresolved variable {{ISSUE_ID}} in finalize phase
 ```
 
 Fix the underlying config issue and re-run. See [Config Validation](../code-packages/validator.md) for the full validation rules.

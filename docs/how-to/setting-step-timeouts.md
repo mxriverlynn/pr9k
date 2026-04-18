@@ -13,7 +13,7 @@ A timeout is not a substitute for writing efficient prompts; it is a last-resort
 
 ## Configuration
 
-Add `timeoutSeconds` to any step in `ralph-steps.json`:
+Add `timeoutSeconds` to any step in `config.json`:
 
 ```json
 {

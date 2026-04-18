@@ -16,7 +16,7 @@ language. The name "project-dir" conflates two distinct concepts that
 have coexisted implicitly:
 
 1. **The workflow bundle.** The directory containing the artifacts that
-   define the workflow being run: `ralph-steps.json`, `prompts/`,
+   define the workflow being run: `config.json`, `prompts/`,
    `scripts/`, `ralph-art.txt`. This is what today's flag actually
    resolves to, via `os.Executable()` + `filepath.EvalSymlinks`
    (`args.go:resolveProjectDir`). It is seeded into the VarTable as
@@ -75,9 +75,9 @@ contradicting every other site in the codebase that spells `projectDir`).
   in prompts vs. commands, or different value in sandboxed vs.
   unsandboxed steps) would violate that principle. Two cleanly-named
   tokens with stable meanings do not.
-- **No regression for existing users.** The default `ralph-steps.json`
+- **No regression for existing users.** The default `config.json`
   shipped with pr9k uses `{{PROJECT_DIR}}/ralph-art.txt` at
-  `src/ralph-steps.json:3` to reach a file in the workflow
+  `src/config.json:3` to reach a file in the workflow
   bundle. Whatever names are chosen, the migration path for that file
   — and any user-authored equivalents — must be documented.
 
@@ -202,10 +202,10 @@ follow-up doc updates are recorded in
 - Breaking CLI change. Users with scripts passing `-p` or
   `--project-dir <workflow-bundle>` must update. `0.2.2` → `0.3.0`
   carries this break alongside the sandbox env-requirement break.
-- Users with custom `ralph-steps.json` files using `{{PROJECT_DIR}}`
+- Users with custom `config.json` files using `{{PROJECT_DIR}}`
   to mean "workflow bundle" must rename those tokens to
   `{{WORKFLOW_DIR}}`. The default shipped workflow has one such site
-  (`src/ralph-steps.json:3`) which is migrated as part of the
+  (`src/config.json:3`) which is migrated as part of the
   implementation.
 - Two tokens in the substitution language instead of one. Slightly
   more to learn, but the names are self-describing and the per-token
@@ -234,7 +234,7 @@ follow-up doc updates are recorded in
 | `src/internal/vars/vars.go` | Seeds `WORKFLOW_DIR` and `PROJECT_DIR` persistent-scope variables |
 | `src/internal/validator/validator.go` | Prompt-scan pass rejecting both tokens in claude prompts |
 | `src/internal/workflow/run.go` | `RunConfig.WorkflowDir`; target repo reaches `BuildRunArgs` via `Runner.ProjectDir()` / `StepExecutor.ProjectDir()` per Option B |
-| `src/ralph-steps.json` | Default workflow; line 3's Splash step migrated from `{{PROJECT_DIR}}` to `{{WORKFLOW_DIR}}` |
+| `src/config.json` | Default workflow; line 3's Splash step migrated from `{{PROJECT_DIR}}` to `{{WORKFLOW_DIR}}` |
 
 ### Related Docs
 

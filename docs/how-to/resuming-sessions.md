@@ -2,7 +2,7 @@
 
 pr9k can pass `--resume <session_id>` to a Claude step so it picks up directly from where the previous step left off — sharing the same conversation context rather than starting fresh. This is the `resumePrevious` pattern.
 
-> **Note:** The engine is fully implemented but the **default workflow ships with this feature off** on all steps. Enabling it requires a field change in `ralph-steps.json` and validation that it improves results for your workflow.
+> **Note:** The engine is fully implemented but the **default workflow ships with this feature off** on all steps. Enabling it requires a field change in `config.json` and validation that it improves results for your workflow.
 
 ## When you want it
 

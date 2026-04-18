@@ -98,7 +98,7 @@ type RunConfig struct {
     WorkflowDir     string
     Iterations      int
     // Env is the per-workflow env allowlist loaded from the "env" field of
-    // ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
+    // config.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
     // when building docker run args for claude steps.
     Env             []string
     InitializeSteps []steps.Step  // run once before the iteration loop
@@ -174,7 +174,7 @@ type ResolvedStep struct {
 
 ### Pre-Run Validation
 
-Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `ralph-steps.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
+Before `Run()` is called, `main.go` invokes `validator.Validate(workflowDir)` against `config.json`. This covers all ten D13 validation categories — JSON parseability, schema shape per step, phase size, referenced file existence, variable scope resolution, env passthrough names, and sandbox isolation rules B and C — collecting every error in a single pass. If any errors are found, the process exits 1 and writes all structured errors to stderr before the TUI starts. This ensures every step's config is sound before any subprocess runs.
 
 See [Config Validation](../code-packages/validator.md) for the full list of validation rules.
 
@@ -378,7 +378,7 @@ Per-phase tracking variables (`prevInitStats/State`, `prevIterStats/State`, `pre
 
 Skipped steps (via `skipIfCaptureEmpty`) do **not** reset the resume chain. When a step is skipped, `prevIterStats`/`prevIterState` are not updated. The next `resumePrevious` step therefore evaluates gates against the step **before** the skipped one — the resume chain jumps over the skip.
 
-The feature is **shipped engine-off**: the default `ralph-steps.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `ralph-steps.json` and A/B validation.
+The feature is **shipped engine-off**: the default `config.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `config.json` and A/B validation.
 
 ### The Orchestrate State Machine
 

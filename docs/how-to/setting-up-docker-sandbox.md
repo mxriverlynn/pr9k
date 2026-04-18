@@ -203,7 +203,7 @@ The `-n 1` flag caps the run at one iteration, which is useful for verifying the
 
 On the first run, pr9k's startup preflight checks:
 
-1. `ralph-steps.json` parses and validates
+1. `config.json` parses and validates
 2. Claude profile directory exists
 3. Docker is installed and the daemon is running
 4. Sandbox image is present locally

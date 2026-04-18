@@ -37,7 +37,7 @@ None — all design decisions resolved.
 
 6. **`cli.Execute() (*Config, error)` returns the parsed config.** The cobra `RunE` validates and stores config in a local variable; `Execute` returns it. Most similar to today's `cli.ParseArgs()` call site, no package-level state, no callback ceremony. `main.go` changes from `cli.ParseArgs(os.Args[1:])` to `cli.Execute()`.
 
-7. **`--project-dir` defaults to executable-relative resolution.** Keep the existing `resolveProjectDir()` logic (os.Executable + EvalSymlinks). This is load-bearing: ralph-steps.json, prompts, and scripts all resolve relative to projectDir.
+7. **`--project-dir` defaults to executable-relative resolution.** Keep the existing `resolveProjectDir()` logic (os.Executable + EvalSymlinks). This is load-bearing: config.json, prompts, and scripts all resolve relative to projectDir.
 
 8. **`--project-dir` / `-p` short flag.** Both long and short forms available.
 

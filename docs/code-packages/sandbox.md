@@ -36,7 +36,7 @@ var BuiltinEnvAllowlist = []string{
 }
 ```
 
-These five names are always included when building the env passthrough. The caller passes the union of `BuiltinEnvAllowlist` and the per-workflow `env` array from `ralph-steps.json` to `BuildRunArgs`.
+These five names are always included when building the env passthrough. The caller passes the union of `BuiltinEnvAllowlist` and the per-workflow `env` array from `config.json` to `BuildRunArgs`.
 
 ## HostUIDGID
 

@@ -1,6 +1,6 @@
 # Config Validation
 
-The `internal/validator` package validates `ralph-steps.json` against all ten D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
+The `internal/validator` package validates `config.json` against all ten D13 validation categories before any workflow step runs. It collects every error in a single pass and returns them as a slice, so the operator sees all problems at once rather than stopping at the first failure.
 
 **Package:** `internal/validator/`
 
@@ -8,7 +8,7 @@ The `internal/validator` package validates `ralph-steps.json` against all ten D1
 
 ### Category 1 — File presence and parseability
 
-- `ralph-steps.json` must be readable from the workflow directory.
+- `config.json` must be readable from the workflow directory.
 - The JSON must parse without error.
 - Unknown fields (e.g., stale `prependVars`) are rejected via `json.Decoder.DisallowUnknownFields`.
 - All three top-level array keys — `initialize`, `iteration`, `finalize` — must be present.

@@ -8,7 +8,7 @@ The fix: redirect cache directories to a subdirectory of the bind-mounted projec
 
 ## How It Works
 
-The `containerEnv` block in `ralph-steps.json` sets environment variables inside the Docker container before any Claude step runs. Point cache env vars at `/home/agent/workspace/.ralph-cache/<subdir>` — inside the bind-mounted project directory — and the build toolchain will use paths that are both writable and persistent across iterations.
+The `containerEnv` block in `config.json` sets environment variables inside the Docker container before any Claude step runs. Point cache env vars at `/home/agent/workspace/.ralph-cache/<subdir>` — inside the bind-mounted project directory — and the build toolchain will use paths that are both writable and persistent across iterations.
 
 The parent `.ralph-cache/` directory is created by `preflight.Run` before the first step executes. Subdirectories (`go/`, `go-build/`, `gomod/`, `xdg/`) are created on first use by the respective toolchain.
 
@@ -28,7 +28,7 @@ Add `.ralph-cache/` to your target project's `.gitignore` so the cache is never 
 
 ### Go
 
-If you are running Ralph against a Go project, the default bundled `ralph-steps.json` already includes these settings — you do not need to add them manually unless you are writing a custom workflow.
+If you are running Ralph against a Go project, the default bundled `config.json` already includes these settings — you do not need to add them manually unless you are writing a custom workflow.
 
 ```json
 {

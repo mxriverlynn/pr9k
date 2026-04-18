@@ -87,7 +87,7 @@ Key files:
 // Config holds parsed CLI arguments.
 type Config struct {
     Iterations  int    // number of workflow iterations to run (0 = run until done)
-    WorkflowDir string // install dir: ralph-steps.json, scripts/, prompts/, ralph-art.txt
+    WorkflowDir string // install dir: config.json, scripts/, prompts/, ralph-art.txt
     ProjectDir  string // target repository: subprocess cmd.Dir and log file location
 }
 ```
@@ -210,7 +210,7 @@ func resolveProjectDir() (string, error) {
 
 pr9k distinguishes two directories that are often conflated:
 
-- **WorkflowDir** (install dir) — where pr9k's bundled `ralph-steps.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path by default, or overridden by `--workflow-dir`.
+- **WorkflowDir** (install dir) — where pr9k's bundled `config.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path by default, or overridden by `--workflow-dir`.
 - **ProjectDir** (target repo) — the user's shell CWD captured at startup via `os.Getwd()`. Governs subprocess `cmd.Dir` (so `gh`, `git`, and `claude` run against the target repo) and log file location (so `logs/` land alongside the work). Overridden by `--project-dir`.
 
 Consumers in `main.go`:
@@ -218,8 +218,8 @@ Consumers in `main.go`:
 | Consumer | Dir | Path Resolved |
 |----------|-----|---------------|
 | `logger.NewLogger(projectDir)` | ProjectDir | `{projectDir}/logs/ralph-*.log` |
-| `steps.LoadSteps(workflowDir)` | WorkflowDir | `{workflowDir}/ralph-steps.json` |
-| `validator.Validate(workflowDir)` | WorkflowDir | Validates `ralph-steps.json` relative to `{workflowDir}` |
+| `steps.LoadSteps(workflowDir)` | WorkflowDir | `{workflowDir}/config.json` |
+| `validator.Validate(workflowDir)` | WorkflowDir | Validates `config.json` relative to `{workflowDir}` |
 | `workflow.NewRunner(log, projectDir)` | ProjectDir | Sets `cmd.Dir` for all subprocesses |
 | `workflow.RunConfig.WorkflowDir` | WorkflowDir | Scripts, prompt files, `{{WORKFLOW_DIR}}` variable |
 
@@ -227,7 +227,7 @@ Within the workflow, `WorkflowDir` anchors two path-resolution mechanisms:
 - `{workflowDir}/prompts/{promptFile}` — prompt files via `steps.BuildPrompt` (for Claude steps)
 - Relative script paths from step config — resolved against `workflowDir` by `ResolveCommand` (e.g. `scripts/get_gh_user`, `scripts/close_gh_issue`); not hardcoded in `Run()`
 
-The `{{WORKFLOW_DIR}}` template variable resolves to `WorkflowDir` (install dir) — e.g., `{{WORKFLOW_DIR}}/ralph-art.txt` in `ralph-steps.json` refers to the bundled banner file alongside the binary. The `{{PROJECT_DIR}}` template variable resolves to `ProjectDir` (target repo).
+The `{{WORKFLOW_DIR}}` template variable resolves to `WorkflowDir` (install dir) — e.g., `{{WORKFLOW_DIR}}/ralph-art.txt` in `config.json` refers to the bundled banner file alongside the binary. The `{{PROJECT_DIR}}` template variable resolves to `ProjectDir` (target repo).
 
 ## Error Handling
 
@@ -315,7 +315,7 @@ The two version tests read the expected string from `version.Version` rather tha
 | `TestStartupPreflight_SkippedForSandboxLogin` | `sandbox login` subcommand → root RunE does not fire; preflight is not invoked |
 | `TestStartupPreflight_CollectsAllErrors` | D13 error + missing profile dir + docker unavailable → all errors appear in output |
 | `TestStartup_HappyPath` (TP-001) | Valid step file + passing prober + zero-byte credentials → ok=true, all services wired, credentials warning in output |
-| `TestStartup_LoadStepsFailure` (TP-002) | Missing `ralph-steps.json` → early return: ok=false, svc=nil, no logs/ directory created |
+| `TestStartup_LoadStepsFailure` (TP-002) | Missing `config.json` → early return: ok=false, svc=nil, no logs/ directory created |
 | `TestStartup_LoggerFailure` (TP-003) | Unwritable projectDir → ok=false, svc=nil after validation and preflight pass |
 | `TestStartup_ValidationOnlyErrors` (TP-004) | Invalid step file + passing prober → ok=false; "config error:" and "validation error(s)" in output; no "preflight:" line |
 | `TestStartup_PreflightOnlyErrors` (WARN-005) | Valid step file + failing prober (docker binary unavailable) → ok=false; "preflight:" in output; no "validation error(s)" line |

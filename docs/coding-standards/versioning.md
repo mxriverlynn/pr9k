@@ -15,7 +15,7 @@ The current version lives in exactly one place: `src/internal/version/version.go
 Semver rules apply to backwards-compatible vs. backwards-incompatible changes to a declared public API. pr9k is a CLI application, not a Go library, so its "public API" is specifically:
 
 1. **The CLI surface** — every flag on `pr9k` (name, short alias, type, default, accepted values) and the exit codes it returns. This includes both `--workflow-dir` and `--project-dir` (introduced in 0.3.0). Renaming `--iterations`, changing `-n`'s default, or flipping an exit code from `0` to `1` for the same scenario are all **MAJOR** changes.
-2. **The `ralph-steps.json` schema** — every field name, every required-vs-optional rule, every accepted value for `phase`, `type`, `captureAs`, `breakLoopIfEmpty`, and so on. Any existing user's `ralph-steps.json` that was valid before must still be valid and still produce the same workflow after the upgrade, or it's a **MAJOR** change.
+2. **The `config.json` schema** — every field name, every required-vs-optional rule, every accepted value for `phase`, `type`, `captureAs`, `breakLoopIfEmpty`, and so on. Any existing user's `config.json` that was valid before must still be valid and still produce the same workflow after the upgrade, or it's a **MAJOR** change.
 3. **The `{{VAR}}` substitution language** — the token syntax, the built-in variable names (`{{WORKFLOW_DIR}}`, `{{PROJECT_DIR}}`, `{{MAX_ITER}}`, `{{ITER}}`, `{{STEP_NUM}}`, `{{STEP_COUNT}}`, `{{STEP_NAME}}`), and the persistent-vs-iteration scoping rules documented in `docs/how-to/variable-output-and-injection.md` and `docs/how-to/capturing-step-output.md`.
 4. **The `--version` output format** — `pr9k version <semver>\n` on stdout. Users may script against this; changing the format is **MAJOR**.
 
@@ -33,7 +33,7 @@ When you are about to make a change, ask: "does this break one of the four items
 
 The current release is `0.6.1`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
-- Backwards-incompatible changes to the CLI surface or `ralph-steps.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.6.0` → `0.7.0`), not the major.
+- Backwards-incompatible changes to the CLI surface or `config.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.6.0` → `0.7.0`), not the major.
 - Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.6.0` → `0.6.1`).
 - The first `1.0.0` release is the commitment that the four "public API" items above are stable and will be governed by the full semver rules going forward. Do not bump to `1.0.0` casually — it should be a deliberate decision with a corresponding entry in the repo's plans or ADRs.
 
@@ -56,5 +56,5 @@ If a pre-release suffix is ever needed (release candidates, betas, nightly build
 
 - [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) — The full spec. This standard does not restate it; if a question is not answered above, the answer is in the spec.
 - [`src/internal/version/version.go`](../../src/internal/version/version.go) — The single source of truth for the current version.
-- [Step Definitions](../code-packages/steps.md) — The `ralph-steps.json` schema, one of the four public-API surfaces governed by this standard.
+- [Step Definitions](../code-packages/steps.md) — The `config.json` schema, one of the four public-API surfaces governed by this standard.
 - [CLI Configuration](../features/cli-configuration.md) — The CLI flag surface, another public-API surface governed by this standard.

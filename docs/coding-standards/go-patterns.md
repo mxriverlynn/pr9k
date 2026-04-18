@@ -4,7 +4,7 @@
 
 pr9k resolves two directories at startup — both must go through `filepath.EvalSymlinks` to produce real paths:
 
-**Workflow directory** (install dir — where `ralph-steps.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/pr9k` → `pr9k/bin/pr9k`).
+**Workflow directory** (install dir — where `config.json`, `prompts/`, `scripts/` live): resolved from the compiled binary's location. Skipping `EvalSymlinks` breaks when the binary is installed as a symlink (e.g., `~/bin/pr9k` → `pr9k/bin/pr9k`).
 
 ```go
 exe, err := os.Executable()

@@ -911,7 +911,7 @@ Files that do **not** change: `internal/workflow/run.go`, `internal/ui/orchestra
 
 ## Versioning
 
-Per [`docs/coding-standards/versioning.md`](../coding-standards/versioning.md), ralph-tui's "public API" under semver is the CLI flags, `ralph-steps.json` schema, `{{VAR}}` language, and `--version` output. **The TUI rendering path is explicitly NOT part of the public API.** So this migration does not strictly require a version bump under the letter of the standard.
+Per [`docs/coding-standards/versioning.md`](../coding-standards/versioning.md), ralph-tui's "public API" under semver is the CLI flags, `config.json` schema, `{{VAR}}` language, and `--version` output. **The TUI rendering path is explicitly NOT part of the public API.** So this migration does not strictly require a version bump under the letter of the standard.
 
 However, the change is large enough in spirit — it swaps a whole TUI library and changes keyboard/mouse input behavior — that a **MINOR bump** (currently `0.1.0` → `0.2.0` under the `0.y.z` rules) is appropriate for release-note visibility. Bump `internal/version.Version` as part of the same PR.
 

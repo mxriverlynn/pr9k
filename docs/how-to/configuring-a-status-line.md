@@ -5,13 +5,13 @@ pr9k can display live workflow state in the TUI footer by running a custom scrip
 ## Prerequisites
 
 - pr9k 0.6.1 or later
-- A `ralph-steps.json` in your workflow directory
+- A `config.json` in your workflow directory
 - [`jq`](https://jqlang.github.io/jq/) — required by the sample script to parse stdin JSON
 - `git` (optional) — used by the sample script to display the current branch
 
-## Step 1 — Add a `statusLine` block to `ralph-steps.json`
+## Step 1 — Add a `statusLine` block to `config.json`
 
-Open your `ralph-steps.json` and add a top-level `statusLine` object:
+Open your `config.json` and add a top-level `statusLine` object:
 
 ```json
 {
@@ -135,7 +135,7 @@ If the footer shows the shortcut bar instead of your script's output, the runner
 Two ways to see the full keyboard shortcut reference while the status line is active:
 
 1. **Press `?`** — opens the help modal with a per-mode shortcut grid. Press `esc` to close.
-2. **Remove `statusLine`** from `ralph-steps.json` and restart — the footer returns to the default shortcut bar permanently.
+2. **Remove `statusLine`** from `config.json` and restart — the footer returns to the default shortcut bar permanently.
 
 ## Command path resolution
 

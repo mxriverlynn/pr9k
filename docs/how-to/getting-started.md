@@ -8,7 +8,7 @@ This guide walks you through installing pr9k, pointing it at a target repo, and 
 - **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS/Windows) or Docker Engine (Linux), running. pr9k runs every Claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
 - **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`)
 - **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`). The CLI's credentials are used inside the sandbox container
-- A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `ralph-steps.json`
+- A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `config.json`
 - A Unix-like terminal — pr9k uses `ioctl TIOCGWINSZ` for terminal sizing, so it runs on macOS and Linux but not Windows
 
 ## Installing
@@ -24,7 +24,7 @@ make build
 `make build` produces:
 
 - `bin/pr9k` — the orchestrator binary
-- `bin/ralph-steps.json` — the default workflow config
+- `bin/config.json` — the default workflow config
 - `bin/prompts/` — the default Claude prompt files
 - `bin/scripts/` — helper scripts (`get_next_issue`, `get_gh_user`, `close_gh_issue`, ...)
 - `bin/ralph-art.txt` — ASCII art shown at the first init step
@@ -71,7 +71,7 @@ If your pr9k install lives somewhere other than the current directory's resolved
 /path/to/pr9k/bin/pr9k --workflow-dir /path/to/pr9k/bin
 ```
 
-The workflow directory is where pr9k looks for `ralph-steps.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch pr9k (or can be overridden with `--project-dir`).
+The workflow directory is where pr9k looks for `config.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch pr9k (or can be overridden with `--project-dir`).
 
 ## What the TUI shows on first run
 

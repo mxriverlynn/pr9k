@@ -143,4 +143,4 @@ Adopt **Option 1**: Docker is an unconditional runtime requirement. No
   rationale, threat model (§3), and architectural decisions (§4)
 - [Narrow-Reading Principle ADR](20260410170952-narrow-reading-principle.md) —
   motivates keeping the Docker command hardcoded in Go rather than in
-  `ralph-steps.json`
+  `config.json`

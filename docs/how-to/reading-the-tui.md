@@ -182,7 +182,7 @@ The footer uses a two-tone color scheme: the version label on the right renders 
 
 ### Status-line footer path
 
-When a `statusLine` command is configured in `ralph-steps.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
+When a `statusLine` command is configured in `config.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
 [status text…]                    ? Help | pr9k v0.6.1

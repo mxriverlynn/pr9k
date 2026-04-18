@@ -6,7 +6,7 @@ If you're looking for how `{{VAR}}` tokens get *resolved* against the VarTable, 
 
 ## The basic shape
 
-Every step in `ralph-steps.json` accepts an optional `captureAs` field. When set, pr9k calls `runner.LastCapture()` after the step completes and stores the result in the VarTable under that name.
+Every step in `config.json` accepts an optional `captureAs` field. When set, pr9k calls `runner.LastCapture()` after the step completes and stores the result in the VarTable under that name.
 
 ```json
 {

@@ -491,7 +491,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
   - `TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser` (TP-004) — verifies both builtin env vars (e.g. `ANTHROPIC_API_KEY`) and user-supplied env vars appear as `-e` flags in the resolved command
   - `TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude` (TP-005) — verifies non-claude steps resolve with `IsClaude=false` and empty `CidfilePath`
   - `TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy` (TP-009) — verifies `buildStep` does not mutate `sandbox.BuiltinEnvAllowlist` when appending user-supplied env vars
-  - `TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand` (SUGG-004) — verifies that a claude step with a nil user-env slice (no top-level `env` field in `ralph-steps.json`) produces only builtin `-e` flags and no user-supplied vars
+  - `TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand` (SUGG-004) — verifies that a claude step with a nil user-env slice (no top-level `env` field in `config.json`) produces only builtin `-e` flags and no user-supplied vars
   - `TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath` (TP-003) — verifies a non-nil terminator is auto-constructed via `sandbox.NewTerminator` when `opts.CidfilePath` is set and `opts.Terminator` is nil; cleared to nil after the step exits
   - `TestRunStep_CurrentTerminatorStaysNilDuringExecution` (TP-010) — verifies `currentTerminator` remains nil throughout a `RunStep` call, confirming the `opts==nil` guard in `runCommand` skips terminator installation for non-sandboxed steps
 
