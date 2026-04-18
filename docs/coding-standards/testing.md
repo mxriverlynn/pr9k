@@ -673,6 +673,33 @@ Checklist:
 2. The test must assert zero fatal errors.
 3. The test must be updated whenever the config schema gains a new field that requires a value — a schema change that breaks the production file should fail this test immediately, not after a deploy.
 
+## Commit-SHA keyed tests are fragile — use Skip, not Fatal
+
+Occasionally a test verifies a property of a specific commit (e.g., "this commit only touched files under `docs/adr/`"). These tests are inherently fragile: the SHA disappears in shallow clones, after a squash merge, or after a rebase. Apply three rules when you write one:
+
+1. **Skip, don't fail, when the commit is unreachable.** Use `t.Skipf` so the test is silently bypassed in environments that don't have the full history rather than producing a red build.
+2. **Document the fragility in a comment.** Immediately above the test, note that the test is keyed to a specific SHA and must be updated or deleted if that commit is ever rewritten.
+3. **Prefer property tests over history tests.** Most SHA-keyed tests can be rewritten to assert a file-system property (e.g., "no files other than `docs/adr/*.md` were added by the PR") rather than a specific commit's diff. Prefer that form.
+
+```go
+// TP-008: commit 32b668f only added files under docs/adr/ — none were modified or deleted.
+// Note: this test is keyed to a specific commit SHA. If the commit is rewritten (e.g. squash
+// merge), this test must be updated or deleted.
+func TestDocIntegrity_ADR_ExistingADRsUnmodified(t *testing.T) {
+    if _, err := exec.LookPath("git"); err != nil {
+        t.Skip("git not on $PATH")
+    }
+    root := repoRoot(t)
+    cmd := exec.Command("git", "show", "--name-status", "32b668f")
+    cmd.Dir = root
+    out, err := cmd.Output()
+    if err != nil {
+        t.Skipf("commit 32b668f unreachable: %v", err) // not t.Fatal
+    }
+    // ... assertions ...
+}
+```
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -683,7 +710,7 @@ Checklist:
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Test doubles with shared state (spy patterns with mutexes); newTestKeyHandler as the canonical async signal injection pattern
 - [Workflow Orchestration](../features/workflow-orchestration.md) — continue-on-error recovery tested in TestRun_InitializeBuildErrorContinuesToNextInitStep; positive scope visibility in TestRun_InitializeCaptureAvailableInIteration
 - [Config Validation](../code-packages/validator.md) — Positive and negative scope-visibility tests for variable table phase propagation
-- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage
+- [Go Patterns](go-patterns.md) — Complementary Go-specific patterns including runtime.Caller(0) usage and OS-call injection seam (`...With` convention)
 - [Concurrency](concurrency.md) — Complementary concurrency patterns that tests must verify; channel priming before blocking receives
 - [API Design](api-design.md) — Standards for bounds guards and nil guards that need explicit tests; public accessors over private field access from tests
 - [Error Handling](error-handling.md) — Standards for file I/O errors that need test coverage
