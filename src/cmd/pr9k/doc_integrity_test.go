@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -392,5 +393,62 @@ func TestMakefile_BuildsBinaryNamedPr9k(t *testing.T) {
 	}
 	if !strings.Contains(content, "../bin/pr9k") {
 		t.Error("Makefile does not reference ../bin/pr9k as the output binary")
+	}
+}
+
+// TP-001: .gitignore contains the .pr9k/ entry (line-anchored to reject partial matches).
+func TestGitignore_IgnoresPr9kDir(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, ".gitignore")
+	assertContains(t, content, "\n.pr9k/\n", ".gitignore .pr9k/ entry")
+}
+
+// TP-002: .gitignore preserves the legacy logs/ entry.
+func TestGitignore_PreservesLogsEntry(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, ".gitignore")
+	assertContains(t, content, "\nlogs/\n", ".gitignore logs/ entry")
+}
+
+// TP-003: .gitignore preserves the .ralph-cache/ entry.
+func TestGitignore_PreservesRalphCacheEntry(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, ".gitignore")
+	assertContains(t, content, "\n.ralph-cache/\n", ".gitignore .ralph-cache/ entry")
+}
+
+// TP-004: git actually ignores .pr9k/anything (behavioral pin via git check-ignore).
+func TestGitignore_Pr9kDirIsActuallyIgnoredByGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on $PATH")
+	}
+	root := docTestRepoRoot(t)
+	cmd := exec.Command("git", "check-ignore", "-q", ".pr9k/test-file")
+	cmd.Dir = root
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			t.Error(".pr9k/test-file is NOT ignored by git — check .gitignore for missing or negated .pr9k/ pattern")
+		} else {
+			t.Fatalf("git check-ignore failed unexpectedly: %v", err)
+		}
+	}
+}
+
+// TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
+func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on $PATH")
+	}
+	root := docTestRepoRoot(t)
+	for _, path := range []string{"logs/anything", ".ralph-cache/anything"} {
+		cmd := exec.Command("git", "check-ignore", "-q", path)
+		cmd.Dir = root
+		if err := cmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+				t.Errorf("%q is NOT ignored by git — check .gitignore for missing or negated pattern", path)
+			} else {
+				t.Fatalf("git check-ignore failed unexpectedly for %q: %v", path, err)
+			}
+		}
 	}
 }
