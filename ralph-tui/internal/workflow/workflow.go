@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
@@ -21,6 +22,11 @@ import (
 // terminateGracePeriod is the time Terminate() waits after SIGTERM before
 // escalating to SIGKILL (or calling the terminator with SIGKILL).
 const terminateGracePeriod = 3 * time.Second
+
+// timeoutGracePeriod is the window the per-step timeout goroutine waits after
+// sending SIGTERM before escalating to SIGKILL. 10 s gives the container time
+// to flush output and clean up before a hard kill.
+const timeoutGracePeriod = 10 * time.Second
 
 // Runner executes workflow steps and forwards subprocess output to the TUI via
 // a caller-supplied sendLine callback. The io.Pipe from the earlier architecture
@@ -43,6 +49,21 @@ type Runner struct {
 	// terminateGraceOverride, when non-zero, replaces terminateGracePeriod in
 	// Terminate(). Used in tests to avoid waiting the full 3 seconds.
 	terminateGraceOverride time.Duration
+
+	// timeoutFired is set by the per-step timeout goroutine when the step's
+	// wall-clock deadline is exceeded. Protected by processMu. Reset at the
+	// start of each RunStepFull / RunSandboxedStep call.
+	timeoutFired bool
+
+	// timeoutGraceOverride, when non-zero, replaces timeoutGracePeriod in the
+	// per-step timeout goroutine. Used in tests to avoid waiting 10 seconds.
+	timeoutGraceOverride time.Duration
+
+	// sessionBlacklist records timed-out claude session IDs. Populated when a
+	// claude step times out and the claudestream pipeline produced a partial
+	// session_id. Protected by processMu. A future issue wires a session-resume
+	// gate that consults this list. Access via SessionBlacklisted / BlacklistedSessions.
+	sessionBlacklist map[string]bool
 
 	// lastCapture holds the last non-empty stdout line from the most recent
 	// successful RunStep call. Empty string if the last step failed or produced
@@ -81,6 +102,9 @@ type SandboxOptions struct {
 	// activates the claudestream pipeline (D6). Zero value (CaptureLastLine)
 	// preserves current non-pipeline behaviour.
 	CaptureMode ui.CaptureMode
+	// TimeoutSeconds, when positive, limits the wall-clock time for this step.
+	// Zero means no timeout.
+	TimeoutSeconds int
 }
 
 // NewRunner creates a Runner that streams subprocess output through the sendLine
@@ -94,8 +118,9 @@ type SandboxOptions struct {
 // RunStep) fail loudly rather than silently dropping all output.
 func NewRunner(log *logger.Logger, projectDir string) *Runner {
 	return &Runner{
-		log:        log,
-		projectDir: projectDir,
+		log:              log,
+		projectDir:       projectDir,
+		sessionBlacklist: make(map[string]bool),
 		sendLine: func(string) {
 			panic("workflow.Runner: sendLine not set — call SetSender before running steps")
 		},
@@ -133,6 +158,35 @@ func (r *Runner) WasTerminated() bool {
 	return r.terminated
 }
 
+// WasTimedOut reports whether the most recent RunStep was ended by a per-step
+// timeout goroutine. Returns false once the next RunStep begins (the flag is
+// reset at the start of each RunStepFull / RunSandboxedStep call).
+func (r *Runner) WasTimedOut() bool {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	return r.timeoutFired
+}
+
+// SessionBlacklisted reports whether id is in the session blacklist. Safe for
+// concurrent use; acquires processMu internally.
+func (r *Runner) SessionBlacklisted(id string) bool {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	return r.sessionBlacklist[id]
+}
+
+// BlacklistedSessions returns a snapshot of all blacklisted session IDs. Safe
+// for concurrent use; acquires processMu internally.
+func (r *Runner) BlacklistedSessions() []string {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	out := make([]string, 0, len(r.sessionBlacklist))
+	for id := range r.sessionBlacklist {
+		out = append(out, id)
+	}
+	return out
+}
+
 // Terminate sends SIGTERM to the currently running subprocess (or invokes the
 // installed terminator for sandboxed steps). If the process has not exited
 // within the grace period, SIGKILL is sent. Safe to call when no subprocess is
@@ -143,7 +197,15 @@ func (r *Runner) Terminate() {
 	proc := r.currentProc
 	term := r.currentTerminator
 	done := r.procDone
-	r.terminated = true
+	// WARN-002: Only set terminated if the timeout goroutine has not already
+	// claimed the step. First flag to fire wins; prevents contradictory
+	// status="done" + notes="timed out after Ns" in the iteration log.
+	if !r.timeoutFired {
+		r.terminated = true
+	}
+	// SUGG-004: Clear timeoutFired so WasTimedOut() accurately reflects that
+	// the user (not the timer) ended the step. Safe because terminated is now set.
+	r.timeoutFired = false
 	r.processMu.Unlock()
 
 	if proc == nil {
@@ -163,11 +225,14 @@ func (r *Runner) Terminate() {
 			_ = term(syscall.SIGKILL)
 		}
 	} else {
-		_ = proc.Signal(syscall.SIGTERM)
+		// WARN-006: Signal the process group (negative PID) so grandchildren that
+		// called setsid/nohup are included. Setpgid is set in runCommand for host
+		// steps, making the child's pgid == child's pid.
+		_ = syscall.Kill(-proc.Pid, syscall.SIGTERM)
 		select {
 		case <-done:
 		case <-time.After(grace):
-			_ = proc.Kill()
+			_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
 		}
 	}
 }
@@ -182,15 +247,25 @@ func (r *Runner) Terminate() {
 // RunStep returns an error if command is empty rather than panicking, so callers
 // that build commands dynamically get a clear failure instead of a runtime panic.
 func (r *Runner) RunStep(stepName string, command []string) error {
+	return r.RunStepFull(stepName, command, ui.CaptureLastLine, 0)
+}
+
+// RunStepFull is like RunStep but accepts an explicit captureMode and timeoutSeconds.
+// Use CaptureFullStdout to bind the complete stdout payload (up to 32 KiB)
+// instead of only the last non-empty line. When timeoutSeconds > 0 the step is
+// terminated (SIGTERM then SIGKILL) if it exceeds the deadline; WasTimedOut()
+// returns true after such a step.
+func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error {
 	if len(command) == 0 {
 		return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
 	}
 
 	r.processMu.Lock()
 	r.terminated = false
+	r.timeoutFired = false
 	r.processMu.Unlock()
 
-	return r.runCommand(stepName, command, nil, nil, nil)
+	return r.runCommand(stepName, command, nil, nil, nil, captureMode, timeoutSeconds)
 }
 
 // RunSandboxedStep executes command inside a Docker sandbox. An explicit empty
@@ -215,6 +290,7 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 
 	r.processMu.Lock()
 	r.terminated = false
+	r.timeoutFired = false
 	r.processMu.Unlock()
 
 	// Reset lastStats so LastStats() returns a zero value if no pipeline is used.
@@ -227,7 +303,7 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	}()
 
 	if opts.CaptureMode != ui.CaptureResult {
-		return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil)
+		return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil, ui.CaptureLastLine, opts.TimeoutSeconds)
 	}
 
 	// Construct the claudestream pipeline (D14, D15, D6).
@@ -265,12 +341,24 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 		r.processMu.Unlock()
 	}()
 
-	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
+	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline, ui.CaptureLastLine, opts.TimeoutSeconds)
 
 	// Fold stats into lastStats (D21) — always, regardless of error.
+	stats := pipeline.Aggregator().Stats()
 	r.mu.Lock()
-	r.lastStats = pipeline.Aggregator().Stats()
+	r.lastStats = stats
 	r.mu.Unlock()
+
+	// Populate the session-resume blacklist when this step timed out and the
+	// pipeline captured a partial session_id. A future issue wires the consumer.
+	r.processMu.Lock()
+	if r.timeoutFired && stats.SessionID != "" {
+		if r.sessionBlacklist == nil {
+			r.sessionBlacklist = make(map[string]bool)
+		}
+		r.sessionBlacklist[stats.SessionID] = true
+	}
+	r.processMu.Unlock()
 
 	// D15: check aggregator error before subprocess exit code.
 	if aggErr := pipeline.Aggregator().Err(); aggErr != nil {
@@ -323,11 +411,13 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 //     with "[stderr] " before being sent to sendLine and the file logger (D27).
 //
 // When pipeline is nil, both stdout and stderr use the existing 256KB-scanner
-// path unchanged (D9).
+// path unchanged (D9). captureMode controls how lastCapture is set:
+//   - CaptureLastLine (zero value): last non-empty stdout line (default).
+//   - CaptureFullStdout: all stdout lines joined with "\n", capped at 32 KiB.
 //
 // lastCapture is NOT set by runCommand when pipeline is non-nil; the caller
 // (RunSandboxedStep) sets it after inspecting the aggregator.
-func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions, pipeline *claudestream.Pipeline) error {
+func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions, pipeline *claudestream.Pipeline, captureMode ui.CaptureMode, timeoutSeconds int) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.projectDir
 	if stdin != nil {
@@ -352,6 +442,12 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 		} else if opts.CidfilePath != "" {
 			terminator = sandbox.NewTerminator(cmd, opts.CidfilePath)
 		}
+	} else {
+		// WARN-006: For host (non-sandbox) steps, place the child in its own
+		// process group so that grandchildren that call setsid/nohup can still be
+		// reached by the process-group SIGTERM/SIGKILL path in Terminate() and the
+		// timeout goroutine below.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -376,6 +472,87 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 		r.currentProc = nil
 		r.processMu.Unlock()
 	}()
+
+	// isHostStep tracks whether the child was started with Setpgid=true (host
+	// steps only). Only host steps use process-group signaling in the goroutine.
+	isHostStep := opts == nil
+
+	// Per-step timeout goroutine: fires SIGTERM after the deadline, then SIGKILL
+	// after the grace window if the process has not exited. Does not set
+	// r.terminated (which is reserved for user-initiated skips via Terminate()).
+	// Sets r.timeoutFired so callers can detect the cause and log a timeout note.
+	if timeoutSeconds > 0 {
+		go func() {
+			grace := timeoutGracePeriod
+			if r.timeoutGraceOverride > 0 {
+				grace = r.timeoutGraceOverride
+			}
+			// WARN-007/SUGG-008: Use time.NewTimer so the timer is stopped (and its
+			// goroutine slot freed) when the step exits normally — time.After leaks
+			// the timer for the full timeoutSeconds after the done branch is taken.
+			timer := time.NewTimer(time.Duration(timeoutSeconds) * time.Second)
+			defer timer.Stop()
+			select {
+			case <-done:
+				// Step completed normally; timeout goroutine exits cleanly.
+				return
+			case <-timer.C:
+				// WARN-003/SEC-005: The process may have exited concurrently with the
+				// timer. Go's select chooses randomly when both cases are ready, so
+				// re-check done before committing the flag to avoid marking a
+				// successful step as timed out.
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
+
+			r.processMu.Lock()
+			// WARN-002: Only claim timeoutFired if Terminate() has not already set
+			// terminated. First flag to fire wins, preventing contradictory state.
+			if !r.terminated {
+				r.timeoutFired = true
+			}
+			term := r.currentTerminator
+			proc := r.currentProc
+			procDone := r.procDone
+			r.processMu.Unlock()
+
+			if !r.timeoutFired {
+				return // Terminate() got there first; let it drive the kill sequence.
+			}
+
+			if term != nil {
+				_ = term(syscall.SIGTERM)
+			} else if proc != nil {
+				if isHostStep {
+					// WARN-006: Signal the process group so grandchildren that called
+					// setsid/nohup are included (Setpgid is set for host steps above).
+					_ = syscall.Kill(-proc.Pid, syscall.SIGTERM)
+				} else {
+					_ = proc.Signal(syscall.SIGTERM)
+				}
+			}
+			select {
+			case <-procDone:
+			case <-time.After(grace):
+				r.processMu.Lock()
+				term = r.currentTerminator
+				proc = r.currentProc
+				r.processMu.Unlock()
+				if term != nil {
+					_ = term(syscall.SIGKILL)
+				} else if proc != nil {
+					if isHostStep {
+						_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
+					} else {
+						_ = proc.Kill()
+					}
+				}
+			}
+		}()
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -492,7 +669,11 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 
 		r.mu.Lock()
 		if waitErr == nil {
-			r.lastCapture = lastNonEmptyLine(capturedLines)
+			if captureMode == ui.CaptureFullStdout {
+				r.lastCapture = fullStdoutCapture(capturedLines)
+			} else {
+				r.lastCapture = lastNonEmptyLine(capturedLines)
+			}
 		} else {
 			r.lastCapture = ""
 		}
@@ -561,6 +742,23 @@ func lastNonEmptyLine(lines []string) string {
 		}
 	}
 	return ""
+}
+
+// fullStdoutCapture joins lines with "\n". If the result exceeds 32 KiB, the
+// first 30 KiB are kept verbatim and a truncation marker is appended so callers
+// can detect the truncation. Returns "" when lines is empty.
+func fullStdoutCapture(lines []string) string {
+	const hardCap = 32 * 1024
+	const keepBytes = 30 * 1024
+	joined := strings.Join(lines, "\n")
+	if len(joined) > hardCap {
+		cut := keepBytes
+		for cut > 0 && !utf8.RuneStart(joined[cut]) {
+			cut--
+		}
+		return joined[:cut] + "\n[...truncated, full content exceeds 32 KiB]"
+	}
+	return joined
 }
 
 // WriteToLog writes a single line directly via the sendLine callback, without

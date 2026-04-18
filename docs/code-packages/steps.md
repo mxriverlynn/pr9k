@@ -64,7 +64,11 @@ type Step struct {
     IsClaude         bool     `json:"isClaude"`                   // true = Claude CLI, false = shell command
     Command          []string `json:"command,omitempty"`          // argv for non-Claude steps
     CaptureAs        string   `json:"captureAs,omitempty"`        // store step output under this variable name
-    BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"` // exit iteration loop when captured output is empty
+    CaptureMode         string   `json:"captureMode,omitempty"`         // "" or "lastLine" (last non-empty line); "fullStdout" (all stdout, 32 KiB cap)
+    BreakLoopIfEmpty    bool     `json:"breakLoopIfEmpty,omitempty"`    // exit iteration loop when captured output is empty
+    SkipIfCaptureEmpty  string   `json:"skipIfCaptureEmpty,omitempty"`  // skip this step when named capture is empty; iteration phase only
+    TimeoutSeconds      int      `json:"timeoutSeconds,omitempty"`      // wall-clock cap in seconds; 0 = no timeout
+    ResumePrevious      bool     `json:"resumePrevious,omitempty"`      // claude steps only: attempt --resume <session_id> if G1–G5 gates pass
 }
 
 // StatusLineConfig holds the optional status-line configuration from ralph-steps.json.
@@ -77,11 +81,12 @@ type StatusLineConfig struct {
 
 // StepFile holds the three groups of steps loaded from ralph-steps.json.
 type StepFile struct {
-    Env        []string          `json:"env,omitempty"`
-    Initialize []Step            `json:"initialize"`
-    Iteration  []Step            `json:"iteration"`
-    Finalize   []Step            `json:"finalize"`
-    StatusLine *StatusLineConfig `json:"statusLine,omitempty"`
+    Env          []string          `json:"env,omitempty"`
+    ContainerEnv map[string]string `json:"containerEnv,omitempty"`
+    Initialize   []Step            `json:"initialize"`
+    Iteration    []Step            `json:"iteration"`
+    Finalize     []Step            `json:"finalize"`
+    StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
 }
 ```
 
@@ -112,22 +117,27 @@ Two steps run once before the iteration loop begins:
 
 ### Iteration Steps
 
-The 10 iteration steps run in sequence for each GitHub issue:
+The 15 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | captureAs |
-|---|------|------|-------|-----------|
-| 1 | Get next issue | Shell | — | `ISSUE_ID` |
-| 2 | Get starting SHA | Shell | — | `STARTING_SHA` |
-| 3 | Feature work | Claude | sonnet | — |
-| 4 | Test planning | Claude | opus | — |
-| 5 | Test writing | Claude | sonnet | — |
-| 6 | Code review | Claude | opus | — |
-| 7 | Fix review items | Claude | sonnet | — |
-| 8 | Close issue | Shell | — | — |
-| 9 | Update docs | Claude | sonnet | — |
-| 10 | Git push | Shell | — | — |
+| # | Name | Type | Model | captureAs | captureMode | skipIfCaptureEmpty | timeoutSeconds |
+|---|------|------|-------|-----------|-------------|--------------------|----|
+| 1 | Get next issue | Shell | — | `ISSUE_ID` | lastLine | — | — |
+| 2 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine | — | — |
+| 3 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout | — | — |
+| 4 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout | — | — |
+| 5 | Feature work | Claude | sonnet | — | — | — | — |
+| 6 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout | — | — |
+| 7 | Test planning | Claude | opus | — | — | — | — |
+| 8 | Test writing | Claude | sonnet | — | — | — | 900 |
+| 9 | Code review | Claude | opus | — | — | — | — |
+| 10 | Check review verdict | Shell | — | `REVIEW_HAS_FIXES` | lastLine | — | — |
+| 11 | Fix review items | Claude | sonnet | — | — | `REVIEW_HAS_FIXES` | — |
+| 12 | Summarize to issue | Shell | — | — | — | — | — |
+| 13 | Close issue | Shell | — | — | — | — | — |
+| 14 | Update docs | Claude | sonnet | — | — | — | — |
+| 15 | Git push | Shell | — | — | — | — | — |
 
-"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 3, 4, and 6 use `captureMode: "fullStdout"` to capture multi-line output. "Fix review items" has `skipIfCaptureEmpty: "REVIEW_HAS_FIXES"` — when `scripts/review_verdict` emits empty stdout (sentinel: no fixes needed), the step is skipped. "Test writing" has `timeoutSeconds: 900` (15 min) — a conservative cap that lets normal runs complete while cutting the long tail of runaway iterations. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 
@@ -176,6 +186,7 @@ All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` 
 | Path traversal attempt | `"steps: prompt path escapes prompts directory: {promptFile}"` | Returned to caller |
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 | Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
+| Negative `timeoutSeconds` | `"steps: step {name}: timeoutSeconds must not be negative"` | Returned to caller |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 
@@ -196,5 +207,6 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [ralph-tui Plan](../plans/ralph-tui.md) — Original specification including step definition design
+- [Passing Environment Variables](../how-to/passing-environment-variables.md) — How to forward host env vars via `env` and inject literal values via `containerEnv` in `ralph-steps.json`
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

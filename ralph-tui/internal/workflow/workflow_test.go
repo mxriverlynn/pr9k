@@ -13,6 +13,8 @@ import (
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/steps"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
@@ -659,6 +661,37 @@ func TestResolveCommand_UsesWorkflowDir(t *testing.T) {
 	// Confirm the resolved path does NOT start with projectDir.
 	if strings.HasPrefix(got[0], projectDir) {
 		t.Errorf("ResolveCommand must not join against projectDir: got %q", got[0])
+	}
+}
+
+// TP-002: the production "Get issue body" argv survives ResolveCommand intact.
+// {{{{.title}}}} must collapse to {{.title}} (one escape level consumed), and
+// {{ISSUE_ID}} must be substituted, while the literal \n characters remain.
+func TestResolveCommand_PreservesGhTemplateEscape(t *testing.T) {
+	workflowDir := "/workflow"
+	// Matches the production argv from ralph-steps.json "Get issue body" step,
+	// with \n as real newlines (JSON \n is 0x0A, same as Go \n in a string literal).
+	cmd := []string{
+		"gh", "issue", "view", "{{ISSUE_ID}}",
+		"--json", "title,body",
+		"-t", "{{{{.title}}}}\n\n{{{{.body}}}}",
+	}
+	vt := newIterVT(workflowDir, "42")
+
+	got := ResolveCommand(workflowDir, cmd, vt, vars.Iteration)
+
+	want := []string{
+		"gh", "issue", "view", "42",
+		"--json", "title,body",
+		"-t", "{{.title}}\n\n{{.body}}",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len mismatch: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("element %d: got %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
@@ -2099,5 +2132,372 @@ func TestRunner_HeartbeatSilence_InactiveAfterClear(t *testing.T) {
 	_, active = r.HeartbeatSilence()
 	if active {
 		t.Error("expected active=false after pipeline cleared")
+	}
+}
+
+// --- captureMode tests ---
+
+// TestRunStepFull_FullStdout_MultiLine verifies that CaptureFullStdout joins all
+// stdout lines with "\n" rather than returning only the last non-empty line.
+func TestRunStepFull_FullStdout_MultiLine(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureFullStdout, 0); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	got := r.LastCapture()
+	want := "line1\nline2\nline3"
+	if got != want {
+		t.Errorf("LastCapture() = %q, want %q", got, want)
+	}
+}
+
+// TestRunStepFull_LastLine_PreservesExistingBehavior verifies that CaptureLastLine
+// (the zero value) returns only the last non-empty stdout line.
+func TestRunStepFull_LastLine_PreservesExistingBehavior(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureLastLine, 0); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	got := r.LastCapture()
+	if got != "line3" {
+		t.Errorf("LastCapture() = %q, want %q", got, "line3")
+	}
+}
+
+// TestRunStepFull_FullStdout_EmptyOutput verifies that CaptureFullStdout returns
+// "" when the command produces no stdout.
+func TestRunStepFull_FullStdout_EmptyOutput(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "true"}, ui.CaptureFullStdout, 0); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	if got := r.LastCapture(); got != "" {
+		t.Errorf("LastCapture() = %q, want %q", got, "")
+	}
+}
+
+// TestRunStepFull_FullStdout_FailedStep verifies that LastCapture is "" when the
+// step exits non-zero, regardless of captureMode.
+func TestRunStepFull_FullStdout_FailedStep(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunStepFull("test-step", []string{"sh", "-c", "echo output; exit 1"}, ui.CaptureFullStdout, 0)
+	if err == nil {
+		t.Fatal("expected non-zero exit error, got nil")
+	}
+	if got := r.LastCapture(); got != "" {
+		t.Errorf("LastCapture() after failure = %q, want %q", got, "")
+	}
+}
+
+// TestFullStdoutCapture_TruncatesAt32KiB verifies the 32 KiB hard cap: content
+// longer than 32 KiB is kept to 30 KiB verbatim and a truncation marker is
+// appended.
+func TestFullStdoutCapture_TruncatesAt32KiB(t *testing.T) {
+	// Build a payload that is definitively over 32 KiB.
+	line := strings.Repeat("x", 512)
+	lines := make([]string, 70) // 70 * 512 = 35 840 bytes when joined — > 32 KiB
+	for i := range lines {
+		lines[i] = line
+	}
+
+	got := fullStdoutCapture(lines)
+
+	const keepBytes = 30 * 1024
+	const marker = "\n[...truncated, full content exceeds 32 KiB]"
+	if len(got) != keepBytes+len(marker) {
+		t.Errorf("len(got) = %d, want %d", len(got), keepBytes+len(marker))
+	}
+	if !strings.HasSuffix(got, marker) {
+		t.Errorf("got does not end with truncation marker; suffix = %q", got[len(got)-len(marker):])
+	}
+}
+
+// TP-006: TestFullStdoutCapture_BoundaryAt32KiB verifies off-by-one behaviour at
+// the 32 KiB hard cap: content exactly 32 KiB is returned verbatim with no
+// truncation marker; content of 32 KiB + 1 byte is truncated to 30 KiB and the
+// marker is appended.
+func TestFullStdoutCapture_BoundaryAt32KiB(t *testing.T) {
+	const hardCap = 32 * 1024
+	const keepBytes = 30 * 1024
+	const marker = "\n[...truncated, full content exceeds 32 KiB]"
+
+	// Helper: build a single-line payload of exactly n bytes (no trailing newline).
+	makePayload := func(n int) []string {
+		return []string{strings.Repeat("x", n)}
+	}
+
+	t.Run("exactly 32 KiB — no truncation", func(t *testing.T) {
+		got := fullStdoutCapture(makePayload(hardCap))
+		if strings.Contains(got, "truncated") {
+			t.Errorf("expected no truncation marker for exactly %d bytes, got %q…", hardCap, got[:80])
+		}
+		if len(got) != hardCap {
+			t.Errorf("len(got) = %d, want %d", len(got), hardCap)
+		}
+	})
+
+	t.Run("32 KiB + 1 byte — truncated", func(t *testing.T) {
+		got := fullStdoutCapture(makePayload(hardCap + 1))
+		if !strings.HasSuffix(got, marker) {
+			t.Errorf("expected truncation marker suffix; last %d bytes: %q", len(marker), got[len(got)-len(marker):])
+		}
+		if len(got) != keepBytes+len(marker) {
+			t.Errorf("len(got) = %d, want %d", len(got), keepBytes+len(marker))
+		}
+	})
+}
+
+// TP-007: TestFullStdoutCapture_EdgeCases verifies the helper's contract for
+// nil input, a single blank line, and blank lines embedded in multi-line output.
+func TestFullStdoutCapture_EdgeCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []string
+		want  string
+	}{
+		{"nil", nil, ""},
+		{"single empty string", []string{""}, ""},
+		{"embedded blank lines", []string{"a", "", "b"}, "a\n\nb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := fullStdoutCapture(tc.input)
+			if got != tc.want {
+				t.Errorf("fullStdoutCapture(%v) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TP-008: TestRun_BreakLoopIfEmpty_WithFullStdout verifies the interaction
+// between breakLoopIfEmpty and captureMode="fullStdout". When the command
+// produces no stdout, fullStdoutCapture returns "" and the loop must exit.
+// When the command produces only whitespace, fullStdout capture is non-empty
+// and the loop must NOT break (unlike lastLine which trims whitespace).
+func TestRun_BreakLoopIfEmpty_WithFullStdout(t *testing.T) {
+	t.Run("empty stdout exits loop", func(t *testing.T) {
+		runner, log, _ := newCapturingRunner(t)
+		defer func() { _ = log.Close() }()
+
+		header := &fakeRunHeader{}
+		kh := newTestKeyHandler()
+
+		cfg := RunConfig{
+			WorkflowDir: t.TempDir(),
+			Iterations:  3,
+			Steps: []steps.Step{
+				{
+					Name:             "get-issue",
+					IsClaude:         false,
+					Command:          []string{"sh", "-c", "true"},
+					CaptureAs:        "X",
+					CaptureMode:      "fullStdout",
+					BreakLoopIfEmpty: true,
+				},
+				{
+					Name:     "work",
+					IsClaude: false,
+					Command:  []string{"echo", "running"},
+				},
+			},
+		}
+
+		result := Run(runner, header, kh, cfg)
+
+		// Loop must exit after iter 1 because fullStdout of "true" is "".
+		if result.IterationsRun != 1 {
+			t.Errorf("IterationsRun = %d, want 1 (loop should break on empty fullStdout)", result.IterationsRun)
+		}
+	})
+
+	t.Run("whitespace-only stdout does not exit loop", func(t *testing.T) {
+		runner, log, _ := newCapturingRunner(t)
+		defer func() { _ = log.Close() }()
+
+		header := &fakeRunHeader{}
+		kh := newTestKeyHandler()
+
+		cfg := RunConfig{
+			WorkflowDir: t.TempDir(),
+			Iterations:  2,
+			Steps: []steps.Step{{
+				Name:             "get-issue",
+				IsClaude:         false,
+				Command:          []string{"sh", "-c", "printf '   '"},
+				CaptureAs:        "X",
+				CaptureMode:      "fullStdout",
+				BreakLoopIfEmpty: true,
+			}},
+		}
+
+		result := Run(runner, header, kh, cfg)
+
+		// fullStdout of "   " is "   " (non-empty), so breakLoopIfEmpty must NOT fire.
+		if result.IterationsRun != 2 {
+			t.Errorf("IterationsRun = %d, want 2 (whitespace is non-empty under fullStdout)", result.IterationsRun)
+		}
+	})
+}
+
+// --- Per-step timeout tests ---
+
+// TestTimeout_StepCompletesBeforeDeadline verifies that when a step finishes
+// before its timeout fires, RunStepFull returns nil, the timeout goroutine is
+// canceled, and WasTimedOut() returns false.
+func TestTimeout_StepCompletesBeforeDeadline(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+
+	if err := r.RunStepFull("fast-step", []string{"echo", "ok"}, ui.CaptureLastLine, 10); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	if r.WasTimedOut() {
+		t.Error("WasTimedOut should be false when step completed before deadline")
+	}
+	_ = log.Close()
+}
+
+// TestTimeout_SIGTERMSentOnDeadline verifies that a step exceeding its timeout
+// is terminated (SIGTERM arrives, process exits), RunStepFull returns an error,
+// and WasTimedOut() returns true.
+func TestTimeout_SIGTERMSentOnDeadline(t *testing.T) {
+	r, log, drain := newCapturingRunner(t)
+	// Use a 1-second timeout and a script that traps SIGTERM (so we can confirm
+	// it was received) and then exits.
+	r.timeoutGraceOverride = 500 * time.Millisecond
+	script := `trap 'echo received-sigterm; exit 1' TERM; while true; do sleep 0.05; done`
+
+	err := r.RunStepFull("slow-step", []string{"sh", "-c", script}, ui.CaptureLastLine, 1)
+	if err == nil {
+		t.Fatal("RunStepFull: expected non-nil error for timed-out step, got nil")
+	}
+	if !r.WasTimedOut() {
+		t.Error("WasTimedOut should be true after timeout fired")
+	}
+	lines := drain()
+	_ = log.Close()
+	found := false
+	for _, l := range lines {
+		if l == "received-sigterm" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'received-sigterm' in output, confirming SIGTERM delivery; got %v", lines)
+	}
+}
+
+// TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored verifies that when a step
+// ignores SIGTERM, the timeout goroutine escalates to SIGKILL after the grace
+// period. Uses a recording+forwarding terminator (SUGG-006) to pin the signal
+// sequence [SIGTERM, SIGKILL] so regressions that skip SIGKILL would be caught.
+func TestTimeout_SIGKILLEscalationWhenSIGTERMIgnored(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+	r.timeoutGraceOverride = 200 * time.Millisecond
+
+	var sigsLock sync.Mutex
+	var sigs []syscall.Signal
+
+	// Recording+forwarding terminator: records every signal and forwards it to
+	// the process so the step actually receives the kills.
+	terminator := func(sig syscall.Signal) error {
+		sigsLock.Lock()
+		sigs = append(sigs, sig)
+		sigsLock.Unlock()
+		r.processMu.Lock()
+		proc := r.currentProc
+		r.processMu.Unlock()
+		if proc != nil {
+			return proc.Signal(sig)
+		}
+		return nil
+	}
+
+	// Script ignores SIGTERM; only SIGKILL terminates it.
+	script := `trap '' TERM; while true; do sleep 0.05; done`
+	err := r.RunSandboxedStep("kill-step", []string{"sh", "-c", script}, SandboxOptions{
+		Terminator:     terminator,
+		TimeoutSeconds: 1,
+	})
+	if err == nil {
+		t.Error("expected non-nil error after SIGKILL, got nil")
+	}
+	if !r.WasTimedOut() {
+		t.Error("WasTimedOut should be true after timeout+SIGKILL")
+	}
+
+	sigsLock.Lock()
+	gotSigs := make([]syscall.Signal, len(sigs))
+	copy(gotSigs, sigs)
+	sigsLock.Unlock()
+
+	if len(gotSigs) < 2 {
+		t.Fatalf("expected at least 2 signals [SIGTERM, SIGKILL], got %v", gotSigs)
+	}
+	if gotSigs[0] != syscall.SIGTERM {
+		t.Errorf("signal[0]: want SIGTERM, got %v", gotSigs[0])
+	}
+	if gotSigs[1] != syscall.SIGKILL {
+		t.Errorf("signal[1]: want SIGKILL, got %v", gotSigs[1])
+	}
+}
+
+// TestTimeout_IterationLogNote verifies that a timed-out step records
+// status:"failed" and a "timed out after Ns" note in the iteration log.
+func TestTimeout_IterationLogNote(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir:    projectDir,
+		runStepErrors: []error{fmt.Errorf("killed: signal: killed")},
+		wasTimedOut:   true,
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "slow-step", IsClaude: false, Command: []string{"sleep", "900"}, TimeoutSeconds: 900},
+		},
+	}
+
+	actions := make(chan ui.StepAction, 10)
+	khErr := ui.NewKeyHandler(func() {}, actions)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, khErr, cfg)
+	}()
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	var found bool
+	for _, rec := range recs {
+		if rec.StepName == "slow-step" {
+			found = true
+			if rec.Status != "failed" {
+				t.Errorf("Status: want %q, got %q", "failed", rec.Status)
+			}
+			if rec.Notes != "timed out after 900s" {
+				t.Errorf("Notes: want %q, got %q", "timed out after 900s", rec.Notes)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for slow-step")
 	}
 }

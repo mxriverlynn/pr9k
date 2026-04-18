@@ -33,14 +33,17 @@ The `VarTable` is created at the start of `Run` and carries two categories of va
 > (Rule B) rejects both tokens in any prompt file referenced by a claude step. Shell command steps,
 > which run on the host and see host paths, may use both tokens freely.
 
-- **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration and cleared at the start of the next:
+- **Iteration-scoped variables** — bound by the orchestrator at the start of each iteration (or by capture steps) and cleared at the start of the next:
 
   | Variable | Value |
   |----------|-------|
   | `ISSUE_ID` | Current GitHub issue number |
   | `STARTING_SHA` | HEAD commit SHA at the start of the iteration |
+  | `ISSUE_BODY` | GitHub issue title and body (captured by "Get issue body" step via `captureAs` + `fullStdout`) |
+  | `PROJECT_CARD` | Short project summary from `scripts/project_card` (captured by "Get project card" step) |
+  | `PRE_REVIEW_DIFF` | `git diff --stat` output since iteration start (captured by "Get post-feature diff" step) |
 
-The SHA is not refreshed on retry — a retried step uses the same `STARTING_SHA` from when the iteration started.
+`STARTING_SHA` is not refreshed on retry — a retried step uses the same SHA from when the iteration started. `ISSUE_BODY`, `PROJECT_CARD`, and `PRE_REVIEW_DIFF` are captured via the standard `captureAs` mechanism and are available to all steps that run after the capturing step.
 
 **Resolution order:** During iteration steps, `VarTable` checks the iteration table first, then the persistent table. During finalize steps, only the persistent table is visible.
 
@@ -164,6 +167,30 @@ To inject iteration context into a custom Claude prompt:
 To use iteration variables in a custom shell command:
 
 1. Use `{{ISSUE_ID}}` or any other `{{VAR_NAME}}` in the command array: `["my-script", "{{ISSUE_ID}}"]`
+
+### Example: precomputed context variables
+
+The default workflow precomputes three context variables before the first Claude step so each prompt has full context without needing to re-query GitHub or git:
+
+```json
+{ "name": "Get issue body", "isClaude": false,
+  "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"],
+  "captureAs": "ISSUE_BODY", "captureMode": "fullStdout" },
+{ "name": "Get project card", "isClaude": false,
+  "command": ["scripts/project_card"],
+  "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" }
+```
+
+`{{{{.title}}}}` uses ralph's escape rule (`{{{{` → `{{`) so the gh `-t` template token survives variable substitution and reaches the `gh` binary intact. The `\n` sequences in the JSON string are real newlines by the time `gh` receives the argument — JSON parsing happens before ralph sees the value, so `gh` gets a literal newline, not the two-character sequence `\n`.
+
+Once captured, the variables are injected into prompt files:
+
+```
+# Context
+Issue #{{ISSUE_ID}}: {{ISSUE_BODY}}
+Project card:
+{{PROJECT_CARD}}
+```
 
 To pass data between custom steps:
 

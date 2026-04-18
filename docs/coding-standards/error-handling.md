@@ -138,6 +138,65 @@ This is the caller-side complement to the "track goroutine write errors" standar
 
 The log message should match the naming pattern of nearby I/O error messages (e.g., `[artifact] open failed: ...` and `[artifact] write error: ...` are in the same family and share a prefix).
 
+## Use errors.As for type-checking errors, not type assertions
+
+When inspecting whether an error (or a wrapped error) is a specific type, use `errors.As` rather than a direct type assertion (`err.(*T)`). Type assertions only match the outermost error — they return `false` for any error wrapped with `fmt.Errorf("%w", ...)`. `errors.As` traverses the full chain.
+
+```go
+// Bad — assertion misses wrapped *exec.ExitError
+exitErr, ok := err.(*exec.ExitError)
+if !ok {
+    return -1
+}
+
+// Good — unwraps the chain; works even when err is wrapped
+var exitErr *exec.ExitError
+if errors.As(err, &exitErr) {
+    return exitErr.ExitCode()
+}
+```
+
+Apply to every error type check in production code and test helpers. Direct assertions are acceptable only when you control the error source and know it is never wrapped (rare).
+
+## Distinguish fatal and non-fatal findings in validators
+
+When a validator collects multiple findings, separate them by severity rather than failing on the first one. A startup gate that blocks on warnings forces users to fix cosmetic issues before they can run at all.
+
+Recommended pattern:
+- **Fatal** (`IsFatal() == true`): structurally invalid config; the process cannot run correctly. Block startup and print all fatal errors.
+- **Warning / Info**: sub-optimal or risky config; the process can run. Print to stderr and continue.
+
+```go
+type Severity int
+const (
+    SeverityError Severity = iota // fatal
+    SeverityWarning
+    SeverityInfo
+)
+
+type Error struct {
+    Severity Severity
+    // ...
+}
+
+func (e Error) IsFatal() bool { return e.Severity == SeverityError }
+
+// In main: gate startup only on fatals
+errs := validator.Validate(cfg)
+for _, e := range errs {
+    if e.IsFatal() {
+        fmt.Fprintln(os.Stderr, e.Error())
+    } else {
+        fmt.Fprintln(os.Stderr, "warning: "+e.Error())
+    }
+}
+if validator.FatalErrorCount(errs) > 0 {
+    os.Exit(1)
+}
+```
+
+Apply to any validator that collects findings rather than returning on the first error. The pattern prevents a class of "validator blocks everything" regressions when a new warning rule is added.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -150,3 +209,5 @@ The log message should match the naming pattern of nearby I/O error messages (e.
 - [Concurrency](concurrency.md) — Complementary standards for goroutine error handling
 - [Testing](testing.md) — Standards for testing all file I/O error paths
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `pipeline.WriteErr()` check after `pipeline.Close()` as the canonical accumulated-error accessor example (issue #91)
+- [Docker Sandbox](../features/docker-sandbox.md) — `errors.As` for `*exec.ExitError` in bash-subprocess test helpers (issues #127, #128)
+- [Config Validation](../code-packages/validator.md) — `IsFatal` / `FatalErrorCount` / `Severity` model as the canonical non-fatal severity tier implementation (issue #122)

@@ -43,6 +43,9 @@ code-review.md
 # Runtime logs
 logs/
 
+# Build artifact cache (populated by containerEnv Go cache vars)
+.ralph-cache/
+
 # Local Go module cache
 .gopath/
 .gopath-rw/

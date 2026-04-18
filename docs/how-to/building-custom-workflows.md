@@ -26,7 +26,11 @@ Each step object has the following fields:
 | `promptFile` | string | Claude steps | Filename in `prompts/` directory (e.g., `"feature-work.md"`) |
 | `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
 | `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
+| `captureMode` | string | optional | `"lastLine"` (default) or `"fullStdout"` — controls how stdout is bound when `captureAs` is set. Only valid on non-claude steps. See [Capturing Step Output](capturing-step-output.md). |
 | `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
+| `skipIfCaptureEmpty` | string | optional | Skip this step when the named capture variable is empty |
+| `timeoutSeconds` | int | optional | Cap wall-clock time for this step; SIGTERM then SIGKILL if exceeded |
+| `resumePrevious` | bool | optional | (Claude steps only) Attempt to resume the previous claude step's session via `--resume <session_id>`. Five runtime gates (G1–G5) must all pass; any failure falls through to a fresh session without aborting. See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious). **Default workflow ships with this unset on all steps** — engine support is present but feature-flagged-off. |
 | `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../code-packages/validator.md) for allowed names) |
 
 ## Claude Steps
@@ -71,16 +75,22 @@ Relative paths containing a `/` separator are resolved against the workflow dire
 
 ## The Default Workflow
 
-The default iteration workflow has 8 steps:
+The default iteration workflow has 14 steps:
 
-1. **Feature work** (sonnet) — Implements the GitHub issue
-2. **Test planning** (opus) — Creates a test plan
-3. **Test writing** (sonnet) — Writes tests from the plan
-4. **Code review** (opus) — Reviews changes since the starting SHA
-5. **Fix review items** (sonnet) — Implements review findings
-6. **Close issue** (shell) — Closes the GitHub issue via `gh`
-7. **Update docs** (sonnet) — Updates project documentation
-8. **Git push** (shell) — Pushes all commits
+1. **Get next issue** (shell) — Finds the lowest-numbered open GitHub issue labeled "ralph" assigned to the user; exits the loop when none remain
+2. **Get starting SHA** (shell) — Records `HEAD` as `{{STARTING_SHA}}` for later diff references
+3. **Get issue body** (shell) — Fetches the issue title and body via `gh` and captures them as `{{ISSUE_BODY}}` (fullStdout)
+4. **Get project card** (shell) — Runs `scripts/project_card` to probe build-config files and captures a short project summary as `{{PROJECT_CARD}}` (fullStdout)
+5. **Feature work** (sonnet) — Implements the GitHub issue
+6. **Get post-feature diff** (shell) — Captures `git diff {{STARTING_SHA}}..HEAD --stat` as `{{PRE_REVIEW_DIFF}}` (fullStdout) for use in later review prompts
+7. **Test planning** (opus) — Creates a test plan
+8. **Test writing** (sonnet) — Writes tests from the plan
+9. **Code review** (opus) — Reviews changes since the starting SHA
+10. **Fix review items** (sonnet) — Implements review findings
+11. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
+12. **Close issue** (shell) — Closes the GitHub issue via `gh`
+13. **Update docs** (sonnet) — Updates project documentation
+14. **Git push** (shell) — Pushes all commits
 
 The default finalization workflow has 3 steps:
 

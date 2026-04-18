@@ -11,6 +11,10 @@ const (
 	// CaptureResult binds the Aggregator.Result() value from the
 	// claudestream pipeline (D6: used for all isClaude steps).
 	CaptureResult
+	// CaptureFullStdout joins all stdout lines with "\n" (capped at 32 KiB)
+	// and binds the result. Used for non-claude steps that emit multi-line
+	// payloads (e.g. issue body, git diff).
+	CaptureFullStdout
 )
 
 // StepRunner is the workflow execution interface for running steps, writing to
@@ -42,6 +46,9 @@ type ResolvedStep struct {
 	// CaptureMode selects how LastCapture is populated after the step succeeds.
 	// Zero value (CaptureLastLine) preserves current non-claude behaviour.
 	CaptureMode CaptureMode
+	// TimeoutSeconds, when positive, limits the wall-clock time for this step.
+	// Zero means no timeout.
+	TimeoutSeconds int
 }
 
 // Orchestrate runs steps in sequence. On step failure (non-zero exit, not

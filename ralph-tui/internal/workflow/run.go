@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/preflight"
@@ -68,6 +69,15 @@ type StepExecutor interface {
 	LastStats() claudestream.StepStats
 	ProjectDir() string
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+	RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
+	// SessionBlacklisted reports whether id is in the session blacklist (timed-out
+	// sessions). Used by evaluateResumeGates (G5). The zero-value implementation
+	// (returning false for every id) is safe and correct for test doubles that
+	// do not need to exercise G5.
+	SessionBlacklisted(id string) bool
+	// WasTimedOut reports whether the most recent step was ended by a timeout
+	// goroutine. Returns false once the next step begins.
+	WasTimedOut() bool
 	// WriteRunSummary writes line to both the TUI and the file logger. Used for
 	// the run-level cumulative summary (D13 2c) so it is visible in the TUI and
 	// persisted to disk, unlike WriteToLog which only sends to the TUI.
@@ -115,24 +125,41 @@ type stepDispatcher struct {
 	// prevFailed tracks whether the last RunSandboxedStep call ended in error
 	// so we know whether the next call is a retry (for runStats.retries).
 	prevFailed bool
+	// capturedStats holds the StepStats from the most recent RunSandboxedStep
+	// call. Captured here (rather than calling LastStats again later) so that
+	// Run can read per-step stats for IterationRecord without a second call.
+	capturedStats claudestream.StepStats
+	// onTimeoutRetry, when non-nil, is called at the start of RunStep whenever
+	// the previous call timed out. Run uses this to emit an IterationRecord for
+	// the timed-out attempt before the retry begins (WARN-001).
+	onTimeoutRetry func()
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
+	// WARN-001: If the previous attempt timed out, emit a record for it before
+	// the retry resets timeoutFired. WasTimedOut() is still true here because
+	// RunStepFull/RunSandboxedStep reset the flag only at their entry.
+	if d.exec.WasTimedOut() && d.onTimeoutRetry != nil {
+		d.onTimeoutRetry()
+	}
 	if d.current.IsClaude {
 		err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
-			CidfilePath:  d.current.CidfilePath,
-			ArtifactPath: d.current.ArtifactPath,
-			CaptureMode:  d.current.CaptureMode,
+			CidfilePath:    d.current.CidfilePath,
+			ArtifactPath:   d.current.ArtifactPath,
+			CaptureMode:    d.current.CaptureMode,
+			TimeoutSeconds: d.current.TimeoutSeconds,
 		})
-		// Fold stats regardless of outcome — D21: the spend was real.
+		// Capture stats once — both for D21 accounting and for IterationRecord.
+		s := d.exec.LastStats()
+		d.capturedStats = s
 		if d.stats != nil {
-			d.stats.add(d.exec.LastStats(), d.prevFailed)
+			d.stats.add(s, d.prevFailed)
 		}
 		d.prevFailed = err != nil
 		return err
 	}
 	d.prevFailed = false
-	return d.exec.RunStep(name, command)
+	return d.exec.RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)
 }
 
 func (d *stepDispatcher) WasTerminated() bool    { return d.exec.WasTerminated() }
@@ -155,7 +182,12 @@ type RunConfig struct {
 	// Env is the per-workflow env allowlist loaded from the "env" field of
 	// ralph-steps.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
 	// when building docker run args for claude steps.
-	Env             []string
+	Env []string
+	// ContainerEnv is the per-workflow literal env map from the "containerEnv"
+	// field of ralph-steps.json. Each entry is injected as -e KEY=VALUE into
+	// the Docker command. Emitted after Env allowlist entries so containerEnv
+	// wins on collision (Docker last-wins).
+	ContainerEnv    map[string]string
 	InitializeSteps []steps.Step
 	Steps           []steps.Step
 	FinalizeSteps   []steps.Step
@@ -174,11 +206,75 @@ type RunConfig struct {
 	Runner StatusRunner
 }
 
-// noopHeader satisfies ui.StepHeader with no-op methods. Used for phases (e.g.
-// initialize) that do not update the TUI step-checkbox display.
-type noopHeader struct{}
+// stateTracker is a ui.StepHeader that records the last StepState set without
+// any visible TUI output. Used by the initialize phase so AppendIterationRecord
+// can determine step success or failure after Orchestrate returns.
+type stateTracker struct {
+	lastState ui.StepState
+}
 
-func (noopHeader) SetStepState(int, ui.StepState) {}
+func (s *stateTracker) SetStepState(_ int, state ui.StepState) {
+	s.lastState = state
+}
+
+// stepStatus converts a ui.StepState to the IterationRecord Status string.
+func stepStatus(state ui.StepState) string {
+	switch state {
+	case ui.StepDone, ui.StepActive:
+		return "done"
+	case ui.StepFailed:
+		return "failed"
+	case ui.StepSkipped:
+		return "skipped"
+	case ui.StepPending:
+		return "unknown"
+	default:
+		return "done"
+	}
+}
+
+// setTimeoutNote sets rec.Notes to the standard timeout message when the executor
+// reports that the most recent step was ended by a per-step timeout goroutine.
+// SUGG-001: extracted from three near-identical inline blocks in Run.
+func setTimeoutNote(rec *IterationRecord, executor StepExecutor, s steps.Step) {
+	if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+		rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
+	}
+}
+
+// resumeInputTokenLimit is the G4 gate ceiling. Steps whose prior input token
+// count meets or exceeds this value start a fresh session to prevent unbounded
+// context growth.
+const resumeInputTokenLimit = 200_000
+
+// evaluateResumeGates checks the five gates that must pass before a step's
+// --resume flag is issued. Returns the session ID to resume (non-empty = all
+// gates passed) and the gate label that blocked (empty string if all passed).
+//
+// G1: previous step produced a non-empty session ID.
+// G2: previous step ended as StepDone (not StepFailed, not timed-out).
+// G3: implicitly satisfied by G2 — is_error=true causes StepFailed, which blocks G2, so a separate Aggregator.Err() check is unnecessary.
+// G4: previous step's input token count is below resumeInputTokenLimit to prevent unbounded session growth.
+// G5: session ID is NOT in the timeout blacklist (a timed-out session's state is unknown and must not be resumed).
+func evaluateResumeGates(
+	prevStats claudestream.StepStats,
+	prevState ui.StepState,
+	blacklisted func(string) bool,
+) (sessionID string, gate string) {
+	if prevStats.SessionID == "" {
+		return "", "G1: previous step has no session ID"
+	}
+	if prevState != ui.StepDone {
+		return "", "G2: previous step did not complete successfully"
+	}
+	if prevStats.InputTokens >= resumeInputTokenLimit {
+		return "", fmt.Sprintf("G4: previous step context too large (%d input tokens >= 200,000)", prevStats.InputTokens)
+	}
+	if blacklisted(prevStats.SessionID) {
+		return "", "G5: previous step session is blacklisted (was timed out)"
+	}
+	return prevStats.SessionID, ""
+}
 
 // trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
 // iteration step at absolute index idx. It also records the last StepState
@@ -288,12 +384,30 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	if len(cfg.InitializeSteps) > 0 {
 		writePhaseBanner("Initializing")
 	}
+	// prevInitStats / prevInitState track the immediately preceding step for
+	// resumePrevious gate evaluation (G1–G5). Zero values cause G1 to fail on
+	// the first step, which safely falls through to a fresh session.
+	var prevInitStats claudestream.StepStats
+	var prevInitState ui.StepState
 	for j, s := range cfg.InitializeSteps {
 		vt.SetStep(j+1, len(cfg.InitializeSteps), s.Name)
 		push(vars.Initialize)
-		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, executor)
+		var resumeSID string
+		if s.ResumePrevious {
+			var gate string
+			resumeSID, gate = evaluateResumeGates(prevInitStats, prevInitState, executor.SessionBlacklisted)
+			if gate != "" {
+				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
+			}
+		}
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Initialize, cfg.Env, cfg.ContainerEnv, executor, resumeSID)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing initialize step: %v", err))
+			prepRec := newIterationRecord("", 0, s, "failed")
+			prepRec.Notes = err.Error()
+			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+			}
 			continue
 		}
 		if resolved.IsClaude {
@@ -302,7 +416,36 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 		header.RenderInitializeLine(j+1, len(cfg.InitializeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
+		st := &stateTracker{}
+		// WARN-001: capture step/iteration context for potential timeout-before-retry record.
+		capturedS := s
+		disp := &stepDispatcher{
+			exec:    executor,
+			current: resolved,
+			stats:   rs,
+			onTimeoutRetry: func() {
+				timeoutRec := newIterationRecord("", 0, capturedS, "failed")
+				timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+				if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
+			},
+		}
+		stepStart := time.Now()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, st, keyHandler)
+		rec := newIterationRecord("", 0, s, stepStatus(st.lastState))
+		rec.DurationS = time.Since(stepStart).Seconds()
+		rec.InputTokens = disp.capturedStats.InputTokens
+		rec.OutputTokens = disp.capturedStats.OutputTokens
+		rec.SessionID = disp.capturedStats.SessionID
+		setTimeoutNote(&rec, executor, s)
+		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+		}
+		// Update prev-step tracking for resumePrevious gate evaluation in the
+		// next initialize step (if any).
+		prevInitStats = disp.capturedStats
+		prevInitState = st.lastState
 		if action == ui.ActionQuit {
 			return RunResult{}
 		}
@@ -337,13 +480,59 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		emitBlank()
 		executor.WriteToLog(ui.StepSeparator(fmt.Sprintf("Iteration %d", i)))
 
+		// captureStates maps each captureAs variable name to the final StepState
+		// of the step that produced it. Used by skipIfCaptureEmpty to verify the
+		// source step succeeded (StepDone) before applying the skip.
+		captureStates := make(map[string]ui.StepState)
+		// prevIterStats / prevIterState track the immediately preceding step in
+		// this iteration for resumePrevious gate evaluation. Reset each iteration
+		// so resume cannot bridge across iteration boundaries.
+		var prevIterStats claudestream.StepStats
+		var prevIterState ui.StepState
 		breakOuter := false
 		for j, s := range cfg.Steps {
 			vt.SetStep(j+1, len(cfg.Steps), s.Name)
 			push(vars.Iteration)
-			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, executor)
+
+			// skipIfCaptureEmpty: skip this step when the named capture is empty
+			// AND the step that produced it completed successfully (StepDone).
+			// If the source step failed, we fall through and run this step normally
+			// so the failure is not silently swallowed.
+			if s.SkipIfCaptureEmpty != "" {
+				val, ok := vt.GetInPhase(vars.Iteration, s.SkipIfCaptureEmpty)
+				if !ok {
+					executor.WriteToLog(fmt.Sprintf("warning: skipIfCaptureEmpty %q not found in iteration scope; step will run", s.SkipIfCaptureEmpty))
+				}
+				if val == "" && captureStates[s.SkipIfCaptureEmpty] == ui.StepDone {
+					header.SetStepState(j, ui.StepSkipped)
+					executor.WriteToLog(fmt.Sprintf("Step skipped (capture %q is empty)", s.SkipIfCaptureEmpty))
+					issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+					skipRec := newIterationRecord(issueID, i, s, "skipped")
+					skipRec.Notes = fmt.Sprintf("capture %q empty", s.SkipIfCaptureEmpty)
+					if logErr := AppendIterationRecord(executor.ProjectDir(), skipRec); logErr != nil {
+						executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+					}
+					continue
+				}
+			}
+
+			var resumeSID string
+			if s.ResumePrevious {
+				var gate string
+				resumeSID, gate = evaluateResumeGates(prevIterStats, prevIterState, executor.SessionBlacklisted)
+				if gate != "" {
+					executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
+				}
+			}
+			resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Iteration, cfg.Env, cfg.ContainerEnv, executor, resumeSID)
 			if err != nil {
 				executor.WriteToLog(fmt.Sprintf("Error preparing steps: %v", err))
+				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				prepRec := newIterationRecord(issueID, i, s, "failed")
+				prepRec.Notes = err.Error()
+				if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
 				breakOuter = true
 				break
 			}
@@ -353,7 +542,39 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			}
 			emitBlank()
 			th := &trackingOffsetIterHeader{h: header, idx: j}
-			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
+			// WARN-001: snapshot issueID and step at dispatcher construction time for
+			// the timeout-before-retry record. issueID may be empty if not yet bound.
+			issueIDAtDispatch, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+			iterNum := i
+			capturedS := s
+			disp := &stepDispatcher{
+				exec:    executor,
+				current: resolved,
+				stats:   rs,
+				onTimeoutRetry: func() {
+					timeoutRec := newIterationRecord(issueIDAtDispatch, iterNum, capturedS, "failed")
+					timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+					if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+						executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+					}
+				},
+			}
+			stepStart := time.Now()
+			action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
+			issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+			rec := newIterationRecord(issueID, i, s, stepStatus(th.lastState))
+			rec.DurationS = time.Since(stepStart).Seconds()
+			rec.InputTokens = disp.capturedStats.InputTokens
+			rec.OutputTokens = disp.capturedStats.OutputTokens
+			rec.SessionID = disp.capturedStats.SessionID
+			setTimeoutNote(&rec, executor, s)
+			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+			}
+			// Update prev-step tracking for resumePrevious gate evaluation in the
+			// next iteration step (if any).
+			prevIterStats = disp.capturedStats
+			prevIterState = th.lastState
 			if action == ui.ActionQuit {
 				return RunResult{IterationsRun: iterationsRun}
 			}
@@ -361,9 +582,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			if s.CaptureAs != "" {
 				vt.Bind(vars.Iteration, s.CaptureAs, captured)
 				push(vars.Iteration)
-				issueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-				header.RenderIterationLine(i, cfg.Iterations, issueID)
+				// Re-read issueID after the bind so that if this step captured
+				// ISSUE_ID, the header shows the freshly bound value.
+				updatedIssueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
+				header.RenderIterationLine(i, cfg.Iterations, updatedIssueID)
 				writeCaptureLog(s.CaptureAs, captured)
+				// Record the final state so skipIfCaptureEmpty checks can verify
+				// the source step completed successfully (StepDone) before skipping.
+				captureStates[s.CaptureAs] = th.lastState
 			}
 			// BreakLoopIfEmpty fires only on successful completion (StepDone).
 			// If the step failed (non-zero exit), the check is skipped so that
@@ -393,12 +619,31 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	if len(cfg.FinalizeSteps) > 0 {
 		writePhaseBanner("Finalizing")
 	}
+	// prevFinalStats / prevFinalState track the immediately preceding step for
+	// resumePrevious gate evaluation. Zero values cause G1 to fail on the first
+	// finalize step, safely falling through to a fresh session.
+	var prevFinalStats claudestream.StepStats
+	var prevFinalState ui.StepState
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
 		push(vars.Finalize)
-		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, executor)
+		var resumeSID string
+		if s.ResumePrevious {
+			var gate string
+			resumeSID, gate = evaluateResumeGates(prevFinalStats, prevFinalState, executor.SessionBlacklisted)
+			if gate != "" {
+				executor.WriteToLog(fmt.Sprintf("resume gate blocked (%s) -- starting fresh session for step %q", gate, s.Name))
+			}
+		}
+		resolved, err := buildStep(cfg.WorkflowDir, s, vt, vars.Finalize, cfg.Env, cfg.ContainerEnv, executor, resumeSID)
 		if err != nil {
 			executor.WriteToLog(fmt.Sprintf("Error preparing finalize step: %v", err))
+			issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+			prepRec := newIterationRecord(issueID, 0, s, "failed")
+			prepRec.Notes = err.Error()
+			if logErr := AppendIterationRecord(executor.ProjectDir(), prepRec); logErr != nil {
+				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+			}
 			continue
 		}
 		if resolved.IsClaude {
@@ -407,7 +652,38 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		}
 		header.RenderFinalizeLine(j+1, len(cfg.FinalizeSteps), s.Name)
 		emitBlank()
-		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &trackingOffsetIterHeader{h: header, idx: j}, keyHandler)
+		th := &trackingOffsetIterHeader{h: header, idx: j}
+		// WARN-001: snapshot issueID and step at dispatcher construction time.
+		issueIDAtDispatch, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+		capturedS := s
+		disp := &stepDispatcher{
+			exec:    executor,
+			current: resolved,
+			stats:   rs,
+			onTimeoutRetry: func() {
+				timeoutRec := newIterationRecord(issueIDAtDispatch, 0, capturedS, "failed")
+				timeoutRec.Notes = fmt.Sprintf("timed out after %ds", capturedS.TimeoutSeconds)
+				if logErr := AppendIterationRecord(executor.ProjectDir(), timeoutRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
+			},
+		}
+		stepStart := time.Now()
+		action := ui.Orchestrate([]ui.ResolvedStep{resolved}, disp, th, keyHandler)
+		issueID, _ := vt.GetInPhase(vars.Finalize, "ISSUE_ID")
+		rec := newIterationRecord(issueID, 0, s, stepStatus(th.lastState))
+		rec.DurationS = time.Since(stepStart).Seconds()
+		rec.InputTokens = disp.capturedStats.InputTokens
+		rec.OutputTokens = disp.capturedStats.OutputTokens
+		rec.SessionID = disp.capturedStats.SessionID
+		setTimeoutNote(&rec, executor, s)
+		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
+			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+		}
+		// Update prev-step tracking for resumePrevious gate evaluation in the
+		// next finalize step (if any).
+		prevFinalStats = disp.capturedStats
+		prevFinalState = th.lastState
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
 		}
@@ -433,8 +709,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 // buildStep resolves a single step into a runnable ResolvedStep using vt for
 // {{VAR}} substitution in the given phase. env is the per-workflow env
 // allowlist (StepFile.Env) appended to sandbox.BuiltinEnvAllowlist for claude
-// steps. executor provides ProjectDir for the docker bind-mount.
-func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
+// steps. containerEnv is passed as literal key=value pairs (StepFile.ContainerEnv).
+// executor provides ProjectDir for the docker bind-mount. resumeSessionID, when
+// non-empty, embeds --resume <id> into the docker argv for claude steps so the
+// step resumes the previous step's claude session; pass "" for a fresh session.
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, containerEnv map[string]string, executor StepExecutor, resumeSessionID string) (ui.ResolvedStep, error) {
 	if s.IsClaude {
 		prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
 		if err != nil {
@@ -449,17 +728,29 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		projectDir := executor.ProjectDir()
 		envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
 		envAllowlist = append(envAllowlist, env...)
-		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
+		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, prompt)
 		return ui.ResolvedStep{
-			Name:        s.Name,
-			Command:     argv,
-			IsClaude:    true,
-			CidfilePath: cidfile,
+			Name:           s.Name,
+			Command:        argv,
+			IsClaude:       true,
+			CidfilePath:    cidfile,
+			TimeoutSeconds: s.TimeoutSeconds,
 		}, nil
 	}
+	var capMode ui.CaptureMode
+	switch s.CaptureMode {
+	case "", "lastLine":
+		capMode = ui.CaptureLastLine
+	case "fullStdout":
+		capMode = ui.CaptureFullStdout
+	default:
+		return ui.ResolvedStep{}, fmt.Errorf("workflow: step %q: invalid captureMode %q", s.Name, s.CaptureMode)
+	}
 	return ui.ResolvedStep{
-		Name:    s.Name,
-		Command: ResolveCommand(workflowDir, s.Command, vt, phase),
+		Name:           s.Name,
+		Command:        ResolveCommand(workflowDir, s.Command, vt, phase),
+		CaptureMode:    capMode,
+		TimeoutSeconds: s.TimeoutSeconds,
 	}, nil
 }
 

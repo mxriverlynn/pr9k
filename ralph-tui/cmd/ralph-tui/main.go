@@ -53,19 +53,26 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 	}
 
 	validationErrs := validator.Validate(cfg.WorkflowDir)
-	preflightResult := preflight.Run(profileDir, prober)
+	preflightResult := preflight.Run(projectDir, profileDir, prober)
 
-	if len(validationErrs) > 0 || len(preflightResult.Errors) > 0 {
+	fatalCount := validator.FatalErrorCount(validationErrs)
+	// fatal path: print all validation findings (fatal + non-fatal) so no finding is swallowed.
+	if fatalCount > 0 || len(preflightResult.Errors) > 0 {
 		for _, ve := range validationErrs {
 			_, _ = fmt.Fprintln(stderr, ve.Error())
 		}
-		if len(validationErrs) > 0 {
-			_, _ = fmt.Fprintf(stderr, "%d validation error(s)\n", len(validationErrs))
+		if fatalCount > 0 {
+			_, _ = fmt.Fprintf(stderr, "%d validation error(s)\n", fatalCount)
 		}
 		for _, e := range preflightResult.Errors {
 			_, _ = fmt.Fprintln(stderr, e.Error())
 		}
 		return nil, false
+	}
+	// Print non-fatal validation findings (warnings, info notices) after passing
+	// the fatal-error gate so they appear alongside preflight warnings.
+	for _, ve := range validationErrs {
+		_, _ = fmt.Fprintln(stderr, ve.Error())
 	}
 
 	for _, w := range preflightResult.Warnings {

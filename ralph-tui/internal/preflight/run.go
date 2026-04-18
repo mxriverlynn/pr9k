@@ -1,5 +1,11 @@
 package preflight
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 // Result holds the collected warnings and errors from a preflight run.
 // All checks run before returning — no short-circuit on failure.
 type Result struct {
@@ -7,18 +13,28 @@ type Result struct {
 	Errors   []error
 }
 
-// Run performs all preflight checks against profileDir using p as the
-// docker prober. All errors and warnings are collected before returning.
+// Run performs all preflight checks against projectDir and profileDir using
+// p as the docker prober. All errors and warnings are collected before returning.
 //
 // Sequence:
-//  1. CheckProfileDir(profileDir)
-//  2. CheckDocker(p)
-//  3. CheckCredentials(profileDir) — warnings only, not fatal; only run
+//  1. os.MkdirAll(projectDir+"/.ralph-cache") — creates the cache dir on the host
+//     so Docker bind-mount subpaths exist before the container starts.
+//  2. CheckProfileDir(profileDir)
+//  3. CheckDocker(p)
+//  4. CheckCredentials(profileDir) — warnings only, not fatal; only run
 //     when CheckProfileDir succeeds, so that a missing profile directory
 //     produces a single clear error rather than both an error and a
 //     redundant "credentials file missing" warning.
-func Run(profileDir string, p Prober) Result {
+func Run(projectDir, profileDir string, p Prober) Result {
 	var result Result
+
+	// Create .ralph-cache inside the project dir so the Docker bind-mount
+	// subpath exists on the host before any Claude step runs. Without this,
+	// the container cannot write cache files even when the parent mount is rw.
+	cacheDir := filepath.Join(projectDir, ".ralph-cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		result.Errors = append(result.Errors, fmt.Errorf("preflight: could not create .ralph-cache in %s: %w", projectDir, err))
+	}
 
 	profileErr := CheckProfileDir(profileDir)
 	if profileErr != nil {

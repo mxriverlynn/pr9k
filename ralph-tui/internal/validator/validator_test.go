@@ -575,6 +575,171 @@ func TestValidate_BreakLoopIfEmptyRejectedInFinalize(t *testing.T) {
 	requireError(t, errs, "only valid in the iteration phase")
 }
 
+// TestValidate_SkipIfCaptureEmpty_ValidReference verifies that referencing a
+// capture bound by an earlier iteration step is accepted.
+func TestValidate_SkipIfCaptureEmpty_ValidReference(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"VERDICT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"VERDICT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("expected no fatal errors, got: %v", errs)
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_UnknownCapture verifies that referencing a
+// name not bound by any earlier captureAs is rejected.
+func TestValidate_SkipIfCaptureEmpty_UnknownCapture(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"NONEXISTENT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
+// TestValidate_SkipIfCaptureEmpty_ForwardReference verifies that a step cannot
+// reference a capture defined by a *later* step (scope is incremental).
+func TestValidate_SkipIfCaptureEmpty_ForwardReference(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"VERDICT"},
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"VERDICT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
+// TestValidate_SkipIfCaptureEmpty_InFinalize verifies that skipIfCaptureEmpty
+// is rejected in the finalize phase.
+func TestValidate_SkipIfCaptureEmpty_InFinalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "s")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": [
+			{"name":"Check","isClaude":false,"command":["scripts/s"],"captureAs":"OUT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"OUT"}
+		]
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "only valid in the iteration phase")
+}
+
+// TestValidate_SkipIfCaptureEmpty_EmptyString verifies that setting
+// skipIfCaptureEmpty to an empty string is rejected with the dedicated error
+// and does NOT also fire the "not bound by any earlier captureAs" branch.
+func TestValidate_SkipIfCaptureEmpty_EmptyString(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":""}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "skipIfCaptureEmpty must not be empty when set")
+	if hasError(errs, "not bound by any earlier captureAs") {
+		t.Error("expected no 'not bound by any earlier captureAs' error for empty-string case")
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_InInitialize verifies that skipIfCaptureEmpty
+// is rejected in the initialize phase (symmetric to the finalize test).
+func TestValidate_SkipIfCaptureEmpty_InInitialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "setup")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Setup","isClaude":false,"command":["scripts/setup"],"captureAs":"OUT"},
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"OUT"}
+		],
+		"iteration": [
+			{"name":"Work","isClaude":false,"command":["echo"]}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "only valid in the iteration phase")
+}
+
+// TestValidate_SkipIfCaptureEmpty_MultipleReferents verifies that multiple steps
+// may reference the same captured variable without triggering scope errors.
+func TestValidate_SkipIfCaptureEmpty_MultipleReferents(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "verdict")
+	writePrompt(t, dir, "fix1.md", "fix 1")
+	writePrompt(t, dir, "fix2.md", "fix 2")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Check","isClaude":false,"command":["scripts/verdict"],"captureAs":"OUT"},
+			{"name":"Fix1","isClaude":true,"model":"sonnet","promptFile":"fix1.md","skipIfCaptureEmpty":"OUT"},
+			{"name":"Fix2","isClaude":true,"model":"sonnet","promptFile":"fix2.md","skipIfCaptureEmpty":"OUT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("expected no fatal errors, got: %v", errs)
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_InitializeCapture verifies that referencing a
+// capture bound in the initialize phase is rejected. The runtime captureStates
+// map is populated per-iteration only, so an initialize-phase capture would
+// silently never trigger the skip.
+func TestValidate_SkipIfCaptureEmpty_InitializeCapture(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "setup")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"Setup","isClaude":false,"command":["scripts/setup"],"captureAs":"INIT_OUT"}
+		],
+		"iteration": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"INIT_OUT"}
+		],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
+}
+
 // ----------------------------------------------------------------------------
 // Category 3 — phase-size checks
 // ----------------------------------------------------------------------------
@@ -1772,4 +1937,696 @@ func TestValidate_StatusLine_BareCommandInPath(t *testing.T) {
 	writeStepsJSON(t, dir, minimalWithStatusLine(`"statusLine":{"command":"echo"}`))
 	errs := validator.Validate(dir)
 	requireNoErrors(t, errs)
+}
+
+// ----------------------------------------------------------------------------
+// containerEnv validation
+// ----------------------------------------------------------------------------
+
+// TestValidate_ContainerEnv_Valid verifies that a well-formed containerEnv block
+// produces no errors.
+func TestValidate_ContainerEnv_Valid(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GOPATH": "/tmp/go", "GOCACHE": "/tmp/gocache"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_ContainerEnv_RejectsCLAUDE_CONFIG_DIR verifies that using the
+// sandbox-reserved key "CLAUDE_CONFIG_DIR" is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsCLAUDE_CONFIG_DIR(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"CLAUDE_CONFIG_DIR": "/foo"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, `"CLAUDE_CONFIG_DIR" is reserved by the sandbox`)
+	for _, e := range errs {
+		if !e.IsFatal() {
+			continue
+		}
+		if strings.Contains(e.Error(), "CLAUDE_CONFIG_DIR") {
+			return
+		}
+	}
+	t.Error("expected CLAUDE_CONFIG_DIR rejection to be a fatal error")
+}
+
+// TestValidate_ContainerEnv_RejectsKeyWithEquals verifies that a key containing
+// "=" is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsKeyWithEquals(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"BAD=KEY": "value"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "must not contain '='")
+}
+
+// TestValidate_ContainerEnv_RejectsValueWithNewline verifies that a value
+// containing a newline character is rejected as a fatal error.
+func TestValidate_ContainerEnv_RejectsValueWithNewline(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"MYVAR": "line1\nline2"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "newline or NUL")
+}
+
+// TestValidate_ContainerEnv_RejectsValueWithNUL verifies that a value
+// containing a NUL character is rejected as a fatal error. A NUL byte in a
+// JSON string is invalid JSON, so the rejection may come from the JSON parser
+// ("malformed JSON") or from the containerEnv validator ("newline or NUL").
+// Either is an acceptable fatal rejection.
+func TestValidate_ContainerEnv_RejectsValueWithNUL(t *testing.T) {
+	dir := tempProject(t)
+	content := "{\"containerEnv\":{\"MYVAR\":\"val\x00ue\"},\"initialize\":[],\"iteration\":[{\"name\":\"S\",\"isClaude\":false,\"command\":[\"echo\",\"ok\"]}],\"finalize\":[]}"
+	writeStepsJSON(t, dir, content)
+	errs := validator.Validate(dir)
+	// The NUL byte is either rejected by the JSON parser or the containerEnv validator.
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "newline or NUL") || strings.Contains(e.Error(), "malformed JSON") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'newline or NUL' or 'malformed JSON' error; got: %v", errs)
+	}
+	if validator.FatalErrorCount(errs) == 0 {
+		t.Errorf("expected at least one fatal error for NUL in value; got: %v", errs)
+	}
+}
+
+// TestValidate_ContainerEnv_EnvCollisionEmitsInfo verifies that a containerEnv
+// key that also appears in the env allowlist emits an INFO notice, not a fatal error.
+func TestValidate_ContainerEnv_EnvCollisionEmitsInfo(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"env": ["MY_TOKEN"],
+		"containerEnv": {"MY_TOKEN": "forced-value"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	// Must not produce a fatal error.
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("env+containerEnv collision must not produce a fatal error; got %d fatal error(s): %v", validator.FatalErrorCount(errs), errs)
+	}
+	// Must produce an info notice.
+	found := false
+	for _, e := range errs {
+		if e.Severity == validator.SeverityInfo && strings.Contains(e.Error(), "MY_TOKEN") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an INFO notice for env+containerEnv collision on MY_TOKEN; got: %v", errs)
+	}
+}
+
+// TestValidate_ContainerEnv_SecretLookingNameEmitsWarning verifies that a
+// containerEnv key ending in _TOKEN, _KEY, or _SECRET emits a warning (non-fatal).
+func TestValidate_ContainerEnv_SecretLookingNameEmitsWarning(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GITHUB_TOKEN": "ghp_literal", "DB_KEY": "abc", "SIGNING_SECRET": "xyz"},
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	// Must not produce any fatal errors.
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("secret-looking names must not produce fatal errors; got: %v", errs)
+	}
+	// Must produce exactly 3 warnings (one per secret-looking key).
+	warnCount := 0
+	for _, e := range errs {
+		if e.Severity == validator.SeverityWarning {
+			warnCount++
+		}
+	}
+	if warnCount != 3 {
+		t.Errorf("expected 3 warnings for secret-looking keys, got %d: %v", warnCount, errs)
+	}
+}
+
+// TestValidate_ContainerEnv_UnknownFieldRejected verifies that an unknown top-level
+// field adjacent to containerEnv is rejected by the strict decoder.
+func TestValidate_ContainerEnv_UnknownFieldRejected(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"containerEnv": {"GOPATH": "/tmp"},
+		"unknownField": "bad",
+		"initialize": [],
+		"iteration": [{"name":"S","isClaude":false,"command":["echo","ok"]}],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "malformed JSON")
+}
+
+// --- TP-006: Error.IsFatal ---
+
+func TestError_IsFatal(t *testing.T) {
+	cases := []struct {
+		severity string
+		want     bool
+	}{
+		{"", true},
+		{validator.SeverityError, true},
+		{validator.SeverityWarning, false},
+		{validator.SeverityInfo, false},
+	}
+	for _, tc := range cases {
+		e := validator.Error{Severity: tc.severity, Category: "test", Phase: "config", Problem: "p"}
+		got := e.IsFatal()
+		if got != tc.want {
+			t.Errorf("severity=%q: IsFatal()=%v, want %v", tc.severity, got, tc.want)
+		}
+	}
+}
+
+// --- TP-007: FatalErrorCount ---
+
+func TestFatalErrorCount(t *testing.T) {
+	t.Run("mixed severities counts only fatal", func(t *testing.T) {
+		errs := []validator.Error{
+			{Severity: "", Category: "test", Phase: "p", Problem: "a"},
+			{Severity: validator.SeverityError, Category: "test", Phase: "p", Problem: "b"},
+			{Severity: validator.SeverityWarning, Category: "test", Phase: "p", Problem: "c"},
+			{Severity: validator.SeverityInfo, Category: "test", Phase: "p", Problem: "d"},
+		}
+		got := validator.FatalErrorCount(errs)
+		if got != 2 {
+			t.Errorf("FatalErrorCount = %d, want 2", got)
+		}
+	})
+	t.Run("nil slice returns 0", func(t *testing.T) {
+		got := validator.FatalErrorCount(nil)
+		if got != 0 {
+			t.Errorf("FatalErrorCount(nil) = %d, want 0", got)
+		}
+	})
+}
+
+// --- TP-008: Error.Error() prefix and contents (file-level and step-level, all severities) ---
+
+func TestError_ErrorString(t *testing.T) {
+	cases := []struct {
+		name         string
+		e            validator.Error
+		wantPrefix   string
+		wantContains []string
+	}{
+		{
+			name:         "error file-level",
+			e:            validator.Error{Severity: validator.SeverityError, Category: "file", Phase: "config", Problem: "missing"},
+			wantPrefix:   "config error:",
+			wantContains: []string{"file", "config", "missing"},
+		},
+		{
+			name:         "error step-level",
+			e:            validator.Error{Severity: validator.SeverityError, Category: "schema", Phase: "iteration", StepName: "My Step", Problem: "bad field"},
+			wantPrefix:   "config error:",
+			wantContains: []string{"schema", "iteration", "My Step", "bad field"},
+		},
+		{
+			name:         "warning file-level",
+			e:            validator.Error{Severity: validator.SeverityWarning, Category: "containerEnv", Phase: "config", Problem: "looks like a secret"},
+			wantPrefix:   "config warning:",
+			wantContains: []string{"containerEnv", "config", "looks like a secret"},
+		},
+		{
+			name:         "warning step-level",
+			e:            validator.Error{Severity: validator.SeverityWarning, Category: "containerEnv", Phase: "config", StepName: "Feature work", Problem: "something"},
+			wantPrefix:   "config warning:",
+			wantContains: []string{"containerEnv", "config", "Feature work", "something"},
+		},
+		{
+			name:         "info file-level",
+			e:            validator.Error{Severity: validator.SeverityInfo, Category: "containerEnv", Phase: "config", Problem: "also in allowlist"},
+			wantPrefix:   "config info:",
+			wantContains: []string{"containerEnv", "config", "also in allowlist"},
+		},
+		{
+			name:         "info step-level",
+			e:            validator.Error{Severity: validator.SeverityInfo, Category: "env", Phase: "iteration", StepName: "Deploy", Problem: "notice"},
+			wantPrefix:   "config info:",
+			wantContains: []string{"env", "iteration", "Deploy", "notice"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.e.Error()
+			if !strings.HasPrefix(got, tc.wantPrefix) {
+				t.Errorf("Error() = %q, want prefix %q", got, tc.wantPrefix)
+			}
+			for _, sub := range tc.wantContains {
+				if !strings.Contains(got, sub) {
+					t.Errorf("Error() = %q, want contains %q", got, sub)
+				}
+			}
+		})
+	}
+}
+
+// --- captureMode validation tests ---
+
+// TestValidate_CaptureMode_InvalidValue verifies that an unrecognized captureMode
+// value (anything other than "", "lastLine", "fullStdout") is rejected.
+func TestValidate_CaptureMode_InvalidValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "get-thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Fetch","isClaude":false,"command":["scripts/get-thing"],"captureAs":"THING","captureMode":"bogus"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "captureMode") {
+		t.Errorf("expected captureMode rejection error, got: %v", errs)
+	}
+	if !hasError(errs, "bogus") {
+		t.Errorf("expected error to mention the invalid value %q, got: %v", "bogus", errs)
+	}
+}
+
+// TestValidate_CaptureMode_OnClaudeStep verifies that setting captureMode on a
+// claude step is rejected (they route through the claudestream aggregator).
+func TestValidate_CaptureMode_OnClaudeStep(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "work.md", "do the thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"work.md","captureMode":"fullStdout"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "captureMode") {
+		t.Errorf("expected captureMode-on-claude error, got: %v", errs)
+	}
+}
+
+// TP-004: TestValidate_CaptureMode_InvalidValue_StepNameAttribution verifies
+// that a captureMode validation error carries correct StepName, Category,
+// Phase, and IsFatal attributes, and that Error() includes the quoted step name.
+func TestValidate_CaptureMode_InvalidValue_StepNameAttribution(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "get-thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Fetch","isClaude":false,"command":["scripts/get-thing"],"captureAs":"THING","captureMode":"bogus"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+
+	var captureErr *validator.Error
+	for i := range errs {
+		if errs[i].Category == "schema" && strings.Contains(errs[i].Problem, "captureMode") {
+			captureErr = &errs[i]
+			break
+		}
+	}
+	if captureErr == nil {
+		t.Fatalf("expected a schema captureMode error, got: %v", errs)
+	}
+	if captureErr.StepName != "Fetch" {
+		t.Errorf("StepName = %q, want %q", captureErr.StepName, "Fetch")
+	}
+	if captureErr.Category != "schema" {
+		t.Errorf("Category = %q, want %q", captureErr.Category, "schema")
+	}
+	if captureErr.Phase != "iteration" {
+		t.Errorf("Phase = %q, want %q", captureErr.Phase, "iteration")
+	}
+	if !captureErr.IsFatal() {
+		t.Errorf("IsFatal() = false, want true")
+	}
+	got := captureErr.Error()
+	if !strings.Contains(got, `"Fetch"`) {
+		t.Errorf("Error() = %q, want quoted step name \"Fetch\"", got)
+	}
+}
+
+// TP-005: TestValidate_CaptureMode_InvalidOnClaudeStep_CollectsBoth verifies
+// that both the "invalid value" and the "must not be set on claude steps"
+// errors are collected rather than short-circuited.
+func TestValidate_CaptureMode_InvalidOnClaudeStep_CollectsBoth(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "x.md", "do the thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"x.md","captureMode":"garbage"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+
+	if !hasError(errs, "not valid") {
+		t.Errorf("expected 'not valid' captureMode error; got: %v", errs)
+	}
+	if !hasError(errs, "must not be set on claude") {
+		t.Errorf("expected 'must not be set on claude' captureMode error; got: %v", errs)
+	}
+}
+
+// --- TP-012: step-level Error() includes quoted step name ---
+
+func TestError_StepLevel_QuotedStepName(t *testing.T) {
+	e := validator.Error{
+		Severity: validator.SeverityWarning,
+		Category: "containerEnv",
+		Phase:    "config",
+		StepName: "Feature work",
+		Problem:  "literal value committed to repo",
+	}
+	got := e.Error()
+	if !strings.HasPrefix(got, "config warning:") {
+		t.Errorf("Error() = %q, want prefix %q", got, "config warning:")
+	}
+	if !strings.Contains(got, `"Feature work"`) {
+		t.Errorf("Error() = %q, want quoted step name \"Feature work\"", got)
+	}
+}
+
+// --- timeoutSeconds validation ---
+
+// TestValidate_TimeoutSeconds_AcceptsPositiveValue verifies that a positive
+// timeoutSeconds value passes validation without error.
+func TestValidate_TimeoutSeconds_AcceptsPositiveValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":900}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TestValidate_TimeoutSeconds_RejectsNegativeValue verifies that a negative
+// timeoutSeconds value is rejected.
+func TestValidate_TimeoutSeconds_RejectsNegativeValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":-1}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
+}
+
+// TP-015: Absent timeoutSeconds key decodes to a nil pointer and the validator
+// short-circuits correctly — no segfault and no spurious error.
+func TestValidate_TimeoutSeconds_AbsentKeyIsValid(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireNoErrors(t, errs)
+}
+
+// TP-016: An explicit zero value for timeoutSeconds is rejected. Zero means
+// "no timeout" and must be expressed by omitting the key entirely.
+func TestValidate_TimeoutSeconds_ZeroIsRejected(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Step","isClaude":false,"command":["scripts/run"],"timeoutSeconds":0}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "timeoutSeconds must be a positive integer when set")
+}
+
+// ----------------------------------------------------------------------------
+// resumePrevious validation
+// ----------------------------------------------------------------------------
+
+// TestValidate_ResumePrevious_OnNonClaudeStep verifies that resumePrevious on a
+// non-claude step is rejected with a fatal error.
+func TestValidate_ResumePrevious_OnNonClaudeStep(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"],"resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	requireError(t, errs, "resumePrevious is only valid on claude steps")
+}
+
+// TestValidate_ResumePrevious_CrossModelWarn verifies that when the previous
+// step uses a different model, a warning (not a fatal error) is emitted.
+func TestValidate_ResumePrevious_CrossModelWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"StepB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning; got: %v", errs)
+	}
+}
+
+// TestValidate_ResumePrevious_FirstStepWarn verifies that resumePrevious on
+// the first step of a phase emits a warning (not a fatal error).
+func TestValidate_ResumePrevious_FirstStepWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning; got: %v", errs)
+	}
+}
+
+// TestValidate_ResumePrevious_SameModelNoWarn verifies that a same-model
+// resumePrevious pair on the second step produces no errors or warnings.
+func TestValidate_ResumePrevious_SameModelNoWarn(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"StepA","isClaude":true,"model":"sonnet","promptFile":"a.md"},
+			{"name":"StepB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if len(errs) > 0 {
+		t.Errorf("expected no errors/warnings for same-model resumePrevious; got: %v", errs)
+	}
+}
+
+// TP-007a: TestValidate_ResumePrevious_FirstStepWarn_Initialize verifies that
+// resumePrevious on the first step of the initialize phase emits a warning.
+func TestValidate_ResumePrevious_FirstStepWarn_Initialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"InitA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious in initialize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning in initialize phase; got: %v", errs)
+	}
+}
+
+// TP-007b: TestValidate_ResumePrevious_FirstStepWarn_Finalize verifies that
+// resumePrevious on the first step of the finalize phase emits a warning.
+func TestValidate_ResumePrevious_FirstStepWarn_Finalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": [
+			{"name":"FinalA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		]
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious in finalize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning in finalize phase; got: %v", errs)
+	}
+}
+
+// TP-007c: TestValidate_ResumePrevious_CrossModelWarn_Initialize verifies that
+// a cross-model resumePrevious pair in the initialize phase emits a warning.
+func TestValidate_ResumePrevious_CrossModelWarn_Initialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"InitA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"InitB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious in initialize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning in initialize phase; got: %v", errs)
+	}
+}
+
+// TP-007d: TestValidate_ResumePrevious_CrossModelWarn_Finalize verifies that
+// a cross-model resumePrevious pair in the finalize phase emits a warning.
+func TestValidate_ResumePrevious_CrossModelWarn_Finalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": [
+			{"name":"FinalA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"FinalB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		]
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious in finalize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning in finalize phase; got: %v", errs)
+	}
+}
+
+// TP-008: TestValidate_ResumePrevious_NoPrevModel_NoCrossModelWarn verifies
+// that when a claude step follows a non-claude step (which has no model field),
+// resumePrevious does not emit a spurious cross-model warning.
+func TestValidate_ResumePrevious_NoPrevModel_NoCrossModelWarn(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"]},
+			{"name":"Claude","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "cross-model resume") {
+			t.Errorf("should not emit cross-model warning when prev step has no model: %v", e)
+		}
+	}
+}
+
+// TestValidate_ResumePrevious_NonClaudePrev_WarnsFastFeedback verifies that
+// when a claude step with resumePrevious follows a non-claude step, the
+// validator emits a warning explaining that G1 will always fall through at
+// runtime (non-claude steps produce no session ID).
+func TestValidate_ResumePrevious_NonClaudePrev_WarnsFastFeedback(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"]},
+			{"name":"Claude","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	var found bool
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "non-claude") && strings.Contains(e.Error(), "G1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about non-claude previous step falling through G1; got: %v", errs)
+	}
 }

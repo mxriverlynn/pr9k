@@ -2,7 +2,7 @@
 
 Drives the entire ralph-tui workflow: running initialize steps, iterating over GitHub issues, sequencing steps with error recovery, running finalization tasks, and writing structured chrome into the log body (phase banners, step banners, capture logs, completion summary).
 
-- **Last Updated:** 2026-04-17
+- **Last Updated:** 2026-04-18
 - **Authors:**
   - River Bailey
 
@@ -321,25 +321,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 
 ### Step Resolution
 
-`buildStep` converts a single `Step` into a `ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution:
+`buildStep` converts a single `Step` into a `ResolvedStep` by either building a Claude CLI command or resolving a shell command. Both paths use the `VarTable` for `{{VAR}}` substitution. An optional `resumeSessionID` parameter (non-empty when the five resume gates pass) is forwarded to `sandbox.BuildRunArgs` so the resulting docker command includes `--resume <id>` before `-p`:
 
 ```go
-func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, executor StepExecutor) (ui.ResolvedStep, error) {
+func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.Phase, env []string, containerEnv map[string]string, executor StepExecutor, resumeSessionID string) (ui.ResolvedStep, error) {
     if s.IsClaude {
         prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
-        if err != nil {
-            return ui.ResolvedStep{}, fmt.Errorf("step %q: %w", s.Name, err)
-        }
-        uid, gid := sandbox.HostUIDGID()
-        cidfile, err := sandbox.Path()
-        if err != nil {
-            return ui.ResolvedStep{}, fmt.Errorf("step %q: cidfile: %w", s.Name, err)
-        }
-        profileDir := preflight.ResolveProfileDir()
-        projectDir := executor.ProjectDir()
-        envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
-        envAllowlist = append(envAllowlist, env...)
-        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, s.Model, prompt)
+        ...
+        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, prompt)
         return ui.ResolvedStep{
             Name:        s.Name,
             Command:     argv,
@@ -372,6 +361,24 @@ if resolved.IsClaude {
 Phase prefixes: `"initialize-"`, `"iter<NN>-"` (1-indexed iteration), `"finalize-"`. Returns `""` when `cfg.RunStamp == ""` (persistence disabled) or the step is not a claude step.
 
 The `VarTable` is created once at the start of `Run` and carries iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) alongside persistent built-ins (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`) and any values bound by initialize-phase `captureAs` steps. At the start of each iteration, the table is reset and the new iteration's values are bound before step resolution runs.
+
+### Session Resume Gates (resumePrevious)
+
+When a step has `resumePrevious: true`, `Run` calls `evaluateResumeGates` before `buildStep`. All five gates must pass for `--resume <sessionID>` to be injected; any single failure causes the step to start a fresh session instead (fail-open, never abort):
+
+| Gate | Condition checked | Failure action |
+|------|-------------------|----------------|
+| G1 | Previous step's `SessionID` is non-empty | Fresh session; log "G1: previous step has no session ID" |
+| G2 | Previous step ended as `StepDone` | Fresh session; log "G2: previous step did not complete successfully" |
+| G3 | *(implicitly satisfied by G2)* `is_error=true` sets `StepFailed`, which blocks G2 | — |
+| G4 | Previous step's `InputTokens < 200 000` | Fresh session; log "G4: previous step context too large (N input tokens >= 200,000)" |
+| G5 | Session ID is NOT in the timeout blacklist | Fresh session; log "G5: previous step session is blacklisted (was timed out)" |
+
+Per-phase tracking variables (`prevInitStats/State`, `prevIterStats/State`, `prevFinalStats/State`) are reset when entering a new phase and the iteration variables are reset at the start of each iteration loop so resume cannot bridge across phase or iteration boundaries. The first step of each phase always starts a fresh session (G1 fails because `prevStats.SessionID` is the zero value `""`).
+
+Skipped steps (via `skipIfCaptureEmpty`) do **not** reset the resume chain. When a step is skipped, `prevIterStats`/`prevIterState` are not updated. The next `resumePrevious` step therefore evaluates gates against the step **before** the skipped one — the resume chain jumps over the skip.
+
+The feature is **shipped engine-off**: the default `ralph-steps.json` sets `resumePrevious: false` (or omits it) on every step. Engine support is fully implemented and gated; activation requires a field change in `ralph-steps.json` and A/B validation.
 
 ### The Orchestrate State Machine
 

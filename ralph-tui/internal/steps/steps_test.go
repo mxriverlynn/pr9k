@@ -1,6 +1,7 @@
 package steps_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -29,8 +30,8 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 10 {
-		t.Errorf("expected 10 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 15 {
+		t.Errorf("expected 15 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
@@ -77,11 +78,16 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 	wantNames := []string{
 		"Get next issue",
 		"Get starting SHA",
+		"Get issue body",
+		"Get project card",
 		"Feature work",
+		"Get post-feature diff",
 		"Test planning",
 		"Test writing",
 		"Code review",
+		"Check review verdict",
 		"Fix review items",
+		"Summarize to issue",
 		"Close issue",
 		"Update docs",
 		"Git push",
@@ -107,14 +113,25 @@ func TestLoadSteps_FinalizeOrder(t *testing.T) {
 	}
 }
 
+// findIterStep returns the first iteration step with the given name, or fails the test.
+func findIterStep(t *testing.T, sf steps.StepFile, name string) steps.Step {
+	t.Helper()
+	for _, s := range sf.Iteration {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("no iteration step named %q", name)
+	panic("unreachable")
+}
+
 func TestLoadSteps_IterationClaudeFieldsPopulated(t *testing.T) {
 	got, err := steps.LoadSteps(projectRoot(t))
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Feature work" is a claude step (index 2; preceded by two non-claude data-gathering steps)
-	s := got.Iteration[2]
+	s := findIterStep(t, got, "Feature work")
 	if !s.IsClaude {
 		t.Error("Feature work: expected IsClaude=true")
 	}
@@ -132,8 +149,7 @@ func TestLoadSteps_IterationNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" is a non-claude step (index 9; two new steps prepended)
-	s := got.Iteration[9]
+	s := findIterStep(t, got, "Git push")
 	if s.IsClaude {
 		t.Error("Git push: expected IsClaude=false")
 	}
@@ -356,14 +372,12 @@ func TestLoadSteps_CommandValues(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Git push" command should be ["git", "push"] (index 9; two new steps prepended)
-	gitPush := got.Iteration[9]
+	gitPush := findIterStep(t, got, "Git push")
 	if len(gitPush.Command) != 2 || gitPush.Command[0] != "git" || gitPush.Command[1] != "push" {
 		t.Errorf("Git push: expected command [git push], got %v", gitPush.Command)
 	}
 
-	// "Close issue" command should contain "close_gh_issue" (index 7; two new steps prepended)
-	closeIssue := got.Iteration[7]
+	closeIssue := findIterStep(t, got, "Close issue")
 	found := false
 	for _, part := range closeIssue.Command {
 		if strings.Contains(part, "close_gh_issue") {
@@ -643,4 +657,225 @@ func TestLoadSteps_StatusLineRefreshIntervalAbsentIsNilPointer(t *testing.T) {
 	if got.StatusLine.RefreshIntervalSeconds != nil {
 		t.Errorf("expected RefreshIntervalSeconds to be nil when absent, got %d", *got.StatusLine.RefreshIntervalSeconds)
 	}
+}
+
+// --- TP-009: ContainerEnv JSON deserialization ---
+
+// TestLoadSteps_ContainerEnvPopulated verifies that a populated containerEnv map
+// is correctly deserialized from ralph-steps.json.
+func TestLoadSteps_ContainerEnvPopulated(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"containerEnv":{"K":"V"},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 1 {
+		t.Fatalf("expected ContainerEnv length 1, got %d: %v", len(got.ContainerEnv), got.ContainerEnv)
+	}
+	if got.ContainerEnv["K"] != "V" {
+		t.Errorf(`ContainerEnv["K"] = %q, want "V"`, got.ContainerEnv["K"])
+	}
+}
+
+// TestLoadSteps_ContainerEnvAbsentIsNil verifies that an absent containerEnv key
+// deserializes to a nil/empty map.
+func TestLoadSteps_ContainerEnvAbsentIsNil(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 0 {
+		t.Errorf("expected ContainerEnv nil/empty when absent from JSON, got %v", got.ContainerEnv)
+	}
+}
+
+// TestLoadSteps_ContainerEnvEmptyMap verifies that an explicit empty containerEnv
+// object deserializes to an empty map without error.
+func TestLoadSteps_ContainerEnvEmptyMap(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"containerEnv":{},"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.ContainerEnv) != 0 {
+		t.Errorf("expected ContainerEnv empty for explicit {}, got %v", got.ContainerEnv)
+	}
+}
+
+// TestLoadSteps_CaptureMode_Populated verifies that captureMode is correctly
+// deserialized from JSON into the Step struct.
+func TestLoadSteps_CaptureMode_Populated(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Fetch","isClaude":false,"command":["echo"],"captureAs":"OUT","captureMode":"fullStdout"}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Iteration) != 1 {
+		t.Fatalf("expected 1 iteration step, got %d", len(got.Iteration))
+	}
+	if got.Iteration[0].CaptureMode != "fullStdout" {
+		t.Errorf("CaptureMode = %q, want %q", got.Iteration[0].CaptureMode, "fullStdout")
+	}
+}
+
+// TestLoadSteps_CaptureMode_Absent verifies that a step without captureMode
+// deserializes with an empty string (zero value).
+
+// TP-010: TestStep_CaptureMode_JSONRoundTrip verifies that the captureMode
+// field is omitted from JSON when absent (omitempty) and present when set.
+func TestStep_CaptureMode_JSONRoundTrip(t *testing.T) {
+	t.Run("absent when zero value", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"]}],"finalize":[]}`
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonBytes, err := json.Marshal(got.Iteration[0])
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(jsonBytes), "captureMode") {
+			t.Errorf("expected captureMode absent from JSON when zero value, got: %s", jsonBytes)
+		}
+	})
+
+	t.Run("present when fullStdout", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `{"iteration":[{"name":"x","isClaude":false,"command":["echo"],"captureMode":"fullStdout"}],"finalize":[]}`
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonBytes, err := json.Marshal(got.Iteration[0])
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if !strings.Contains(string(jsonBytes), `"captureMode":"fullStdout"`) {
+			t.Errorf("expected captureMode:fullStdout in JSON, got: %s", jsonBytes)
+		}
+	})
+}
+
+func TestLoadSteps_CaptureMode_Absent(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Iteration) != 1 {
+		t.Fatalf("expected 1 iteration step, got %d", len(got.Iteration))
+	}
+	if got.Iteration[0].CaptureMode != "" {
+		t.Errorf("CaptureMode = %q, want %q", got.Iteration[0].CaptureMode, "")
+	}
+}
+
+// TestStep_SkipIfCaptureEmpty_JSONRoundtrip guards the JSON field tag for
+// skipIfCaptureEmpty: parse with value, parse without, and omitempty on marshal.
+func TestStep_SkipIfCaptureEmpty_JSONRoundtrip(t *testing.T) {
+	t.Run("present", func(t *testing.T) {
+		data := []byte(`{"name":"a","isClaude":false,"command":["echo"],"skipIfCaptureEmpty":"X"}`)
+		var s steps.Step
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if s.SkipIfCaptureEmpty != "X" {
+			t.Errorf("SkipIfCaptureEmpty: want %q, got %q", "X", s.SkipIfCaptureEmpty)
+		}
+	})
+
+	t.Run("absent", func(t *testing.T) {
+		data := []byte(`{"name":"a","isClaude":false,"command":["echo"]}`)
+		var s steps.Step
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if s.SkipIfCaptureEmpty != "" {
+			t.Errorf("SkipIfCaptureEmpty: want empty, got %q", s.SkipIfCaptureEmpty)
+		}
+	})
+
+	t.Run("omitempty_on_marshal", func(t *testing.T) {
+		s := steps.Step{Name: "a", IsClaude: false, Command: []string{"echo"}}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		if strings.Contains(string(data), "skipIfCaptureEmpty") {
+			t.Errorf("expected skipIfCaptureEmpty to be omitted when empty; got %s", data)
+		}
+	})
+}
+
+// TP-017: TimeoutSeconds JSON tag round-trip — verifies the field is populated
+// from the "timeoutSeconds" key and that absence of the key yields zero.
+func TestStep_TimeoutSeconds_RoundTrip(t *testing.T) {
+	t.Run("absent_key_yields_zero", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+			"initialize":[],
+			"iteration":[{"name":"Step","isClaude":false,"command":["echo"]}],
+			"finalize":[]
+		}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		sf, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("LoadSteps: %v", err)
+		}
+		if sf.Iteration[0].TimeoutSeconds != 0 {
+			t.Errorf("absent timeoutSeconds: want 0, got %d", sf.Iteration[0].TimeoutSeconds)
+		}
+	})
+
+	t.Run("present_key_900_is_loaded", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(`{
+			"initialize":[],
+			"iteration":[{"name":"Step","isClaude":false,"command":["echo"],"timeoutSeconds":900}],
+			"finalize":[]
+		}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		sf, err := steps.LoadSteps(dir)
+		if err != nil {
+			t.Fatalf("LoadSteps: %v", err)
+		}
+		if sf.Iteration[0].TimeoutSeconds != 900 {
+			t.Errorf("timeoutSeconds:900: want 900, got %d", sf.Iteration[0].TimeoutSeconds)
+		}
+	})
 }

@@ -22,7 +22,11 @@ Each step is checked for:
 - Claude steps (`isClaude: true`) must have a non-empty `promptFile` and `model`, and must not have a `command`.
 - Non-Claude steps (`isClaude: false`) must have a non-empty `command` array, and must not have a `promptFile`.
 - `captureAs`, when set, must be non-empty and must not shadow any built-in variable name (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`).
+- `captureMode`, when set, must be one of `""`, `"lastLine"`, or `"fullStdout"`. Any other value is a fatal error. Setting `captureMode` on a claude step (`isClaude: true`) is also a fatal error — claude steps always capture via the stream-json Aggregator result.
 - `breakLoopIfEmpty` requires `captureAs` to be set and is only valid in the iteration phase.
+- `skipIfCaptureEmpty`, when set, must be a non-empty string naming a `captureAs` value bound by a strictly earlier step in the same phase, and is only valid in the iteration phase. Initialize-phase captures are excluded because the runtime `captureStates` map is populated per-iteration; referencing a cross-phase capture would silently never fire.
+- `timeoutSeconds`, when set, must be a positive integer (> 0) and must not exceed `86400` (24 hours). Zero is the sentinel for "no timeout" and is represented by omitting the field (`omitempty`). The 86400 cap prevents integer overflow when the value is converted to `time.Duration` — values above ~9.2e9 seconds would wrap and fire immediately.
+- `resumePrevious`, when `true`, must be on a claude step (`isClaude: true`); setting it on a non-claude step is a **fatal error**. Three advisory **warnings** (non-fatal) are also emitted: (1) if this is the first step in its phase (no previous step to resume from — the runtime gate G1 will always block), (2) if the previous step is non-claude (non-claude steps produce no session ID — G1 will always block at runtime), and (3) if the previous step uses a different model (cross-model resume is technically supported but outside the validated same-model rollout).
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).
 
@@ -59,6 +63,20 @@ The optional top-level `env` array lists host environment variable names that ra
 
 Duplicates within the `env` array and overlap with built-in variable names are harmless and produce no errors. Env validation runs before the scope walk; errors here do not block phase validation.
 
+### containerEnv validation
+
+The optional top-level `containerEnv` object injects literal `KEY=VALUE` pairs into the container. Each entry is validated independently; all errors are collected before returning.
+
+| Rule | Severity | Condition |
+|------|----------|-----------|
+| `CLAUDE_CONFIG_DIR` key | fatal error | Key equals `CLAUDE_CONFIG_DIR` — reserved for the sandbox mount point |
+| Key contains `=` | fatal error | A `=` in a key would corrupt the `-e KEY=VALUE` docker argument |
+| Value contains `\n` or NUL | fatal error | Newline or NUL in a value cannot be safely embedded in a docker `-e` argument |
+| Secret-suffix key | warning | Key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY` — secret-like names should come from the host `env` passthrough, not be committed to the JSON file |
+| Env collision | info | Key also appears in the `env` allowlist — Docker last-wins means containerEnv wins; the info notice makes the precedence explicit |
+
+containerEnv validation runs in the same pass as env validation, before the scope walk.
+
 ### statusLine block (Category "statusline")
 
 The optional top-level `statusLine` object configures a status-line command displayed by the TUI. Validation runs before the phase walk; errors use `Category="statusline"`, `Phase="config"`, no `StepName`.
@@ -88,20 +106,47 @@ Even though dir tokens are valid in command argv (Rule B does not apply to shell
 `Error` is a structured type that implements the `error` interface:
 
 ```go
+const (
+    SeverityError   = "error"
+    SeverityWarning = "warning"
+    SeverityInfo    = "info"
+)
+
 type Error struct {
-    Category string  // e.g. "schema", "file", "variable", "phase-size", "parse"
+    Severity string  // "error", "warning", or "info"
+    Category string  // e.g. "schema", "file", "variable", "phase-size", "parse", "containerenv"
     Phase    string  // e.g. "initialize", "iteration", "finalize", "config"
     StepName string  // empty for file-level errors
     Problem  string  // human-readable description
 }
 ```
 
-Formatted output:
+### IsFatal
+
+```go
+func (e Error) IsFatal() bool
+```
+
+Returns `true` when `e.Severity == SeverityError`. Warnings and info notices are non-fatal.
+
+### FatalErrorCount
+
+```go
+func FatalErrorCount(errs []Error) int
+```
+
+Returns the count of `Error` entries where `IsFatal()` is true. Used by `main.go` to decide whether to abort startup.
+
+### Formatted output
+
+The `Error()` string method prefixes the message with the severity:
 
 ```
 config error: schema: iteration step "get-issue": isClaude is required
 config error: file: config: missing required top-level array "finalize"
 config error: variable: finalize step "push": unresolved variable reference {{ITER}}
+config warning: containerenv: config: containerEnv key "DEPLOY_TOKEN" looks like a secret; use env passthrough instead
+config info: containerenv: config: containerEnv key "GOCACHE" is also in env; containerEnv wins (Docker last-wins)
 ```
 
 ## Entry point
@@ -116,4 +161,7 @@ Scope walk is skipped if any of the three required top-level arrays are missing,
 
 ## Wiring
 
-Wired into `main.go` immediately after `steps.LoadSteps`; validation failures exit 1 with structured errors on stderr before the TUI starts.
+Wired into `main.go` immediately after `steps.LoadSteps`. `FatalErrorCount` determines whether startup is blocked:
+
+- **Fatal errors** (`Severity == "error"`)  — all findings are printed to stderr and the process exits 1 before the TUI starts.
+- **Non-fatal findings** (`Severity == "warning"` or `"info"`) — printed to stderr but startup continues. The TUI launches normally.

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,14 +23,16 @@ import (
 // --- Test doubles ---
 
 type fakeExecutor struct {
-	runStepCalls           []runStepCall
-	runStepErrors          []error  // per-call errors; nil entries mean success
-	runStepCaptures        []string // per-call LastCapture values (indexed by call order)
-	lastCapture            string
-	logLines               []string
-	projectDir             string
-	runSandboxedStepCalls  []runSandboxedStepCall
-	runSandboxedStepErrors []error // per-call errors; nil entries mean success
+	runStepCalls            []runStepCall
+	runStepErrors           []error          // per-call errors; nil entries mean success
+	runStepCaptures         []string         // per-call LastCapture values (indexed by call order)
+	runStepFullCaptureModes []ui.CaptureMode // per-call captureMode passed to RunStepFull
+	runStepFullTimeouts     []int            // per-call timeoutSeconds passed to RunStepFull
+	lastCapture             string
+	logLines                []string
+	projectDir              string
+	runSandboxedStepCalls   []runSandboxedStepCall
+	runSandboxedStepErrors  []error // per-call errors; nil entries mean success
 	// lastStatsReturn holds per-call return values for LastStats(). Index 0 is
 	// returned on the first call, index 1 on the second, etc. If the call index
 	// exceeds the slice length, a zero StepStats is returned.
@@ -44,6 +47,10 @@ type fakeExecutor struct {
 	onLog func(line string)
 	// writeRunSummaryCalls counts how many times WriteRunSummary has been called.
 	writeRunSummaryCalls int
+	// wasTimedOut controls the value returned by WasTimedOut().
+	wasTimedOut bool
+	// sessionBlacklist is the set of session IDs returned as blacklisted.
+	sessionBlacklist map[string]bool
 }
 
 type runStepCall struct {
@@ -58,8 +65,14 @@ type runSandboxedStepCall struct {
 }
 
 func (f *fakeExecutor) RunStep(name string, command []string) error {
+	return f.RunStepFull(name, command, ui.CaptureLastLine, 0)
+}
+
+func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error {
 	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
+	f.runStepFullCaptureModes = append(f.runStepFullCaptureModes, captureMode)
+	f.runStepFullTimeouts = append(f.runStepFullTimeouts, timeoutSeconds)
 	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {
 		f.lastCapture = ""
 		return f.runStepErrors[idx]
@@ -72,7 +85,9 @@ func (f *fakeExecutor) RunStep(name string, command []string) error {
 	return nil
 }
 
-func (f *fakeExecutor) WasTerminated() bool { return false }
+func (f *fakeExecutor) WasTerminated() bool               { return false }
+func (f *fakeExecutor) WasTimedOut() bool                 { return f.wasTimedOut }
+func (f *fakeExecutor) SessionBlacklisted(id string) bool { return f.sessionBlacklist[id] }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
 	idx := len(f.runSandboxedStepCalls)
@@ -889,7 +904,7 @@ func TestBuildStep_ClaudeStepIteration(t *testing.T) {
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -945,7 +960,7 @@ func TestBuildStep_ClaudeStepWithVarSubstitution(t *testing.T) {
 	vt.Bind(vars.Iteration, "ISSUE_ID", "42")
 	vt.Bind(vars.Iteration, "STARTING_SHA", "abc123")
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -975,7 +990,7 @@ func TestBuildStep_ClaudeStepMissingPromptFile(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
-	_, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	_, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1005,7 +1020,7 @@ func TestBuildStep_ClaudeStepFinalize(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Finalize)
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Finalize, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Finalize, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1042,7 +1057,7 @@ func TestBuildStep_ClaudeStep_SandboxBindMount(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: projectDir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1077,7 +1092,7 @@ func TestBuildStep_ClaudeStep_SandboxOptionsCidfile(t *testing.T) {
 	vt := vars.New(dir, dir, 0)
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1116,7 +1131,7 @@ func TestBuildStep_ClaudeStep_EnvPassthrough(t *testing.T) {
 
 	// With GITHUB_TOKEN set: expect -e GITHUB_TOKEN in command.
 	t.Setenv("GITHUB_TOKEN", "tok123")
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1129,7 +1144,7 @@ func TestBuildStep_ClaudeStep_EnvPassthrough(t *testing.T) {
 	if err := os.Unsetenv("GITHUB_TOKEN"); err != nil {
 		t.Fatalf("os.Unsetenv: %v", err)
 	}
-	resolved2, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, exec)
+	resolved2, err := buildStep(dir, step, vt, vars.Iteration, []string{"GITHUB_TOKEN"}, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2682,7 +2697,7 @@ func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR"}, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR"}, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2709,7 +2724,7 @@ func TestBuildStep_NonClaudeStep_ZeroValuesCidfileAndIsClaude(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2835,7 +2850,7 @@ func TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	if _, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR", "ANOTHER_VAR"}, exec); err != nil {
+	if _, err := buildStep(dir, step, vt, vars.Iteration, []string{"CUSTOM_VAR", "ANOTHER_VAR"}, nil, exec, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -2849,6 +2864,128 @@ func TestBuildStep_ClaudeStep_EnvAllowlistDefensiveCopy(t *testing.T) {
 		}
 	}
 }
+
+// TP-001: TestBuildStep_NonClaudeStep_CaptureModeMapping verifies that the
+// string captureMode field on a non-claude Step is correctly mapped to the
+// ui.CaptureMode enum in the returned ResolvedStep.
+func TestBuildStep_NonClaudeStep_CaptureModeMapping(t *testing.T) {
+	cases := []struct {
+		input string
+		want  ui.CaptureMode
+	}{
+		{"fullStdout", ui.CaptureFullStdout},
+		{"lastLine", ui.CaptureLastLine},
+		{"", ui.CaptureLastLine},
+	}
+	for _, tc := range cases {
+		t.Run("captureMode="+tc.input, func(t *testing.T) {
+			dir := t.TempDir()
+			step := steps.Step{
+				Name:        "s",
+				IsClaude:    false,
+				Command:     []string{"echo", "x"},
+				CaptureMode: tc.input,
+			}
+			vt := vars.New(dir, dir, 0)
+			vt.SetPhase(vars.Iteration)
+			exec := &fakeExecutor{projectDir: dir}
+
+			resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
+			if err != nil {
+				t.Fatalf("buildStep: %v", err)
+			}
+			if resolved.CaptureMode != tc.want {
+				t.Errorf("CaptureMode = %v, want %v", resolved.CaptureMode, tc.want)
+			}
+		})
+	}
+}
+
+// TP-002: TestStepDispatcher_NonClaudeStep_ThreadsCaptureMode verifies that
+// stepDispatcher.RunStep passes d.current.CaptureMode through to the underlying
+// executor's RunStepFull for non-claude steps.
+func TestStepDispatcher_NonClaudeStep_ThreadsCaptureMode(t *testing.T) {
+	cases := []struct {
+		name string
+		mode ui.CaptureMode
+	}{
+		{"fullStdout", ui.CaptureFullStdout},
+		{"lastLine (zero)", ui.CaptureLastLine},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := &fakeExecutor{}
+			current := ui.ResolvedStep{
+				Name:        "shell-step",
+				IsClaude:    false,
+				Command:     []string{"echo", "hi"},
+				CaptureMode: tc.mode,
+			}
+			d := &stepDispatcher{exec: exec, current: current}
+
+			if err := d.RunStep("shell-step", current.Command); err != nil {
+				t.Fatalf("RunStep: %v", err)
+			}
+
+			if len(exec.runStepFullCaptureModes) != 1 {
+				t.Fatalf("expected 1 RunStepFull call, got %d", len(exec.runStepFullCaptureModes))
+			}
+			if exec.runStepFullCaptureModes[0] != tc.mode {
+				t.Errorf("captureMode = %v, want %v", exec.runStepFullCaptureModes[0], tc.mode)
+			}
+		})
+	}
+}
+
+// TP-003: TestRun_FullStdout_CaptureAsBindsMultiLine verifies the headline
+// feature: a step with captureMode="fullStdout" and captureAs="OUT" binds the
+// full multi-line stdout payload (not just the last line) into the var table.
+// Verified via LastCapture() after the run and the capture log written to the
+// log stream.
+func TestRun_FullStdout_CaptureAsBindsMultiLine(t *testing.T) {
+	runner, log, drain := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{{
+			Name:        "capture-step",
+			IsClaude:    false,
+			Command:     []string{"sh", "-c", "printf 'a\\nb\\nc'"},
+			CaptureAs:   "OUT",
+			CaptureMode: "fullStdout",
+		}},
+	}
+
+	Run(runner, header, kh, cfg)
+
+	got := runner.LastCapture()
+	want := "a\nb\nc"
+	if got != want {
+		t.Errorf("LastCapture() = %q, want %q", got, want)
+	}
+
+	// writeCaptureLog should have emitted the bound value to the log stream.
+	lines := drain()
+	captureLogged := false
+	for _, l := range lines {
+		if strings.Contains(l, "OUT") && strings.Contains(l, "a") {
+			captureLogged = true
+			break
+		}
+	}
+	if !captureLogged {
+		t.Errorf("expected capture log entry for OUT in log stream; got lines: %v", lines)
+	}
+}
+
+// TP-009: Compile-time assertion that *Runner satisfies StepExecutor.
+// Mirrors the existing ui.HeartbeatReader assertion in workflow.go.
+var _ StepExecutor = (*Runner)(nil)
 
 // TP-010: TestRunStep_CurrentTerminatorStaysNilDuringExecution verifies that
 // RunStep installs no terminator — currentTerminator remains nil throughout
@@ -3331,7 +3468,7 @@ func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 	vt.SetPhase(vars.Iteration)
 	exec := &fakeExecutor{projectDir: dir}
 
-	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, exec)
+	resolved, err := buildStep(dir, step, vt, vars.Iteration, nil, nil, exec, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4736,5 +4873,267 @@ func TestRun_StatusRunner_FinalizeOnlyPhase(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected a finalize push with StepName=only-final")
+	}
+}
+
+// --- TP-001: buildStep delivers containerEnv to docker argv (iteration phase) ---
+
+// TestBuildStep_ContainerEnvDelivered_IterationPhase (TP-001) verifies end-to-end
+// that a non-nil containerEnv map flows through buildStep into the docker argv as
+// consecutive -e KEY=VALUE pairs in sorted key order, placed after CLAUDE_CONFIG_DIR.
+func TestBuildStep_ContainerEnvDelivered_IterationPhase(t *testing.T) {
+	workflowDir := t.TempDir()
+	promptsDir := filepath.Join(workflowDir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "step.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
+
+	exec := &fakeExecutor{projectDir: t.TempDir()}
+	vt := vars.New(workflowDir, exec.projectDir, 3)
+	vt.SetPhase(vars.Iteration)
+	vt.SetIteration(1)
+	vt.SetStep(1, 1, "step1")
+
+	s := steps.Step{
+		Name:       "step1",
+		IsClaude:   true,
+		Model:      "sonnet",
+		PromptFile: "step.txt",
+	}
+	containerEnv := map[string]string{"GOCACHE": "/tmp/gc", "GOPATH": "/tmp/go"}
+
+	resolved, err := buildStep(workflowDir, s, vt, vars.Iteration, nil, containerEnv, exec, "")
+	if err != nil {
+		t.Fatalf("buildStep error: %v", err)
+	}
+
+	// Both entries must appear as -e KEY=VALUE pairs.
+	gcacheIdx := findConsecutive(resolved.Command, "-e", "GOCACHE=/tmp/gc")
+	gopathIdx := findConsecutive(resolved.Command, "-e", "GOPATH=/tmp/go")
+	if gcacheIdx < 0 {
+		t.Fatal("-e GOCACHE=/tmp/gc not found in command")
+	}
+	if gopathIdx < 0 {
+		t.Fatal("-e GOPATH=/tmp/go not found in command")
+	}
+	// GOCACHE < GOPATH alphabetically — sorted order.
+	if gcacheIdx >= gopathIdx {
+		t.Errorf("GOCACHE (idx %d) must come before GOPATH (idx %d) in sorted order", gcacheIdx, gopathIdx)
+	}
+	// containerEnv must appear after CLAUDE_CONFIG_DIR.
+	claudeConfigIdx := findConsecutivePrefix(resolved.Command, "-e", "CLAUDE_CONFIG_DIR=")
+	if claudeConfigIdx < 0 {
+		t.Fatal("CLAUDE_CONFIG_DIR not found in command")
+	}
+	if claudeConfigIdx >= gcacheIdx {
+		t.Errorf("CLAUDE_CONFIG_DIR (idx %d) must come before containerEnv GOCACHE (idx %d)", claudeConfigIdx, gcacheIdx)
+	}
+}
+
+// --- TP-002: containerEnv reaches all three phases ---
+
+// TestBuildStep_ContainerEnvDelivered_AllPhases (TP-002) verifies that a non-nil
+// containerEnv map is threaded through buildStep for all three phase call sites
+// (initialize, iteration, finalize), so a regression dropping the parameter from
+// any phase is caught.
+func TestBuildStep_ContainerEnvDelivered_AllPhases(t *testing.T) {
+	workflowDir := t.TempDir()
+	promptsDir := filepath.Join(workflowDir, "prompts")
+	if err := os.MkdirAll(promptsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptsDir, "step.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	profileDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", profileDir)
+
+	exec := &fakeExecutor{projectDir: t.TempDir()}
+	containerEnv := map[string]string{"MY_KEY": "my_value"}
+	s := steps.Step{
+		Name:       "step",
+		IsClaude:   true,
+		Model:      "sonnet",
+		PromptFile: "step.txt",
+	}
+
+	phaseTests := []struct {
+		name  string
+		phase vars.Phase
+	}{
+		{"Initialize", vars.Initialize},
+		{"Iteration", vars.Iteration},
+		{"Finalize", vars.Finalize},
+	}
+
+	for _, tc := range phaseTests {
+		t.Run(tc.name, func(t *testing.T) {
+			vt := vars.New(workflowDir, exec.projectDir, 3)
+			vt.SetPhase(tc.phase)
+			if tc.phase == vars.Iteration {
+				vt.SetIteration(1)
+			}
+			vt.SetStep(1, 1, s.Name)
+
+			resolved, err := buildStep(workflowDir, s, vt, tc.phase, nil, containerEnv, exec, "")
+			if err != nil {
+				t.Fatalf("buildStep error: %v", err)
+			}
+
+			if findConsecutive(resolved.Command, "-e", "MY_KEY=my_value") < 0 {
+				t.Errorf("phase %s: -e MY_KEY=my_value not found in command %v", tc.name, resolved.Command)
+			}
+		})
+	}
+}
+
+// findConsecutive returns the index of flag in args where args[i]==flag and
+// args[i+1]==value, or -1 if not found.
+func findConsecutive(args []string, flag, value string) int {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && args[i+1] == value {
+			return i
+		}
+	}
+	return -1
+}
+
+// findConsecutivePrefix returns the index where args[i]==flag and
+// strings.HasPrefix(args[i+1], prefix), or -1 if not found.
+func findConsecutivePrefix(args []string, flag, prefix string) int {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == flag && strings.HasPrefix(args[i+1], prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+// --- Iteration log integration tests ---
+
+// makeCacheDir creates a .ralph-cache subdirectory inside dir and returns dir.
+func makeCacheDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// readIterationLog reads all IterationRecords from <dir>/.ralph-cache/iteration.jsonl.
+func readIterationLog(t *testing.T, dir string) []IterationRecord {
+	t.Helper()
+	path := filepath.Join(dir, ".ralph-cache", "iteration.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read iteration log: %v", err)
+	}
+	var recs []IterationRecord
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		var r IterationRecord
+		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			t.Fatalf("unmarshal line %q: %v", line, err)
+		}
+		recs = append(recs, r)
+	}
+	return recs
+}
+
+// TestRun_IterationLog_SuccessfulStep verifies that after a successful
+// iteration step the log contains a record with status "done".
+func TestRun_IterationLog_SuccessfulStep(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("my-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	r := recs[0]
+	if r.StepName != "my-step" {
+		t.Errorf("step_name: want %q, got %q", "my-step", r.StepName)
+	}
+	if r.Status != "done" {
+		t.Errorf("status: want %q, got %q", "done", r.Status)
+	}
+	if r.IterationNum != 1 {
+		t.Errorf("iteration_num: want 1, got %d", r.IterationNum)
+	}
+	if r.SchemaVersion != 1 {
+		t.Errorf("schema_version: want 1, got %d", r.SchemaVersion)
+	}
+}
+
+// TestRun_IterationLog_FailedStep verifies that after a failed iteration
+// step the log contains a record with status "failed".
+func TestRun_IterationLog_FailedStep(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	actions := make(chan ui.StepAction, 10)
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		projectDir:    projectDir,
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("my-step"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		Run(executor, header, kh, cfg)
+	}()
+
+	// Send ActionContinue to unblock the error-mode wait in Orchestrate.
+	time.Sleep(30 * time.Millisecond)
+	actions <- ui.ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not complete after ActionContinue")
+	}
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) == 0 {
+		t.Fatal("want at least 1 record in iteration log, got 0")
+	}
+	var found bool
+	for _, r := range recs {
+		if r.StepName == "my-step" {
+			found = true
+			if r.Status != "failed" {
+				t.Errorf("status: want %q, got %q", "failed", r.Status)
+			}
+		}
+	}
+	if !found {
+		t.Error("no record found for my-step")
 	}
 }

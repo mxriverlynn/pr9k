@@ -11,7 +11,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 ## Repository Structure
 
 - `ralph-tui/` — Go TUI orchestrator. See "ralph-tui" section below.
-- `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`)
+- `scripts/` — Helper scripts (`get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
 - `prompts/` — Prompt files consumed by the orchestrator. Each prompt is passed to `claude -p`. Prompts use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other `{{VAR}}` tokens that are substituted at runtime.
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
 - `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans
@@ -20,7 +20,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 Each iteration:
 1. Find next open issue assigned to user with label "ralph" (lowest number first)
-2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Code review (opus) → Fix review items (sonnet) → Close issue → Update docs (sonnet) → Git push
+2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Code review (opus) → Fix review items (sonnet) → Summarize to issue → Close issue → Update docs (sonnet) → Git push
 
 After all iterations, three finalization steps run:
 1. Deferred work — creates issues from `deferred.txt`
@@ -83,11 +83,12 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 - [`docs/code-packages/steps.md`](docs/code-packages/steps.md) — `internal/steps`: JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/code-packages/logger.md`](docs/code-packages/logger.md) — `internal/logger`: Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
 - [`docs/code-packages/vars.md`](docs/code-packages/vars.md) — `internal/vars`: `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
-- [`docs/code-packages/validator.md`](docs/code-packages/validator.md) — `internal/validator`: D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), sandbox isolation rules B and C, statusLine block validation, and structured error collection
+- [`docs/code-packages/validator.md`](docs/code-packages/validator.md) — `internal/validator`: D13 config validator for ralph-steps.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), containerEnv validation, captureMode validation, sandbox isolation rules B and C, statusLine block validation, severity-based error collection (`IsFatal`, `FatalErrorCount`), and non-fatal warning/info handling
 - [`docs/code-packages/statusline.md`](docs/code-packages/statusline.md) — `internal/statusline`: `Runner` goroutine lifecycle, `State` snapshot, `BuildPayload` stdin JSON, `Sanitize` ANSI output filtering, single-flight exec, 8 KB stdout limit, full-env trust model, and cold-start / shutdown ordering
 - [`docs/code-packages/sandbox.md`](docs/code-packages/sandbox.md) — `internal/sandbox`: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
 - [`docs/code-packages/preflight.md`](docs/code-packages/preflight.md) — `internal/preflight`: `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation)
 - [`docs/code-packages/claudestream.md`](docs/code-packages/claudestream.md) — `internal/claudestream`: Parser (NDJSON line → typed Event), Renderer (events → TUI display lines, tool summary, Finalize), Aggregator (StepStats, captureAs result, is_error detection), RawWriter (per-step .jsonl persistence with O_TRUNC retry semantics), Slug (kebab filename generation), and Pipeline (single Observe entry point, atomic LastEventAt, crash-resilience sentinel)
+- [`docs/code-packages/workflow.md`](docs/code-packages/workflow.md) — `internal/workflow`: `Runner` subprocess executor, `RunStep`/`RunStepFull` with `captureMode` (lastLine vs fullStdout with 32 KiB cap), `StepExecutor` interface, `stepDispatcher`, the `Run` loop, `IterationRecord`/`AppendIterationRecord` for the structured iteration log, and session resume gates (`evaluateResumeGates`, G1–G5) with per-phase trackers and session blacklist
 
 ## ADRs
 
@@ -118,14 +119,18 @@ Problem-focused guides for users running ralph-tui against their own projects. W
 - [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (checkbox grid, iteration line, log panel, shortcut footer with version label) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
 - [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
-- [`docs/how-to/capturing-step-output.md`](docs/how-to/capturing-step-output.md) — How to use `captureAs` to bind a step's stdout to a variable for use in later steps, including initialize-vs-iteration scoping
-- [`docs/how-to/passing-environment-variables.md`](docs/how-to/passing-environment-variables.md) — How to forward host environment variables into the Docker sandbox via the `env` field in `ralph-steps.json`
+- [`docs/how-to/capturing-step-output.md`](docs/how-to/capturing-step-output.md) — How to use `captureAs` (and `captureMode: "fullStdout"` for multi-line output) to bind a step's stdout to a variable for use in later steps, including initialize-vs-iteration scoping
+- [`docs/how-to/passing-environment-variables.md`](docs/how-to/passing-environment-variables.md) — How to forward host environment variables into the Docker sandbox via the `env` field, and how to inject literal values via `containerEnv`, in `ralph-steps.json`
 - [`docs/how-to/breaking-out-of-the-loop.md`](docs/how-to/breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically when a capture step returns nothing
+- [`docs/how-to/skipping-steps-conditionally.md`](docs/how-to/skipping-steps-conditionally.md) — Using `skipIfCaptureEmpty` to bypass a step when an earlier iteration-phase step produced empty output, with fail-safe defaults and validator constraints
+- [`docs/how-to/setting-step-timeouts.md`](docs/how-to/setting-step-timeouts.md) — Using `timeoutSeconds` to cap the wall-clock time for a step, SIGTERM/SIGKILL escalation, and the advisory prompt budget pattern
 - [`docs/how-to/recovering-from-step-failures.md`](docs/how-to/recovering-from-step-failures.md) — Error mode keyboard controls (`c` continue, `r` retry, `q` quit) and when to use each
 - [`docs/how-to/quitting-gracefully.md`](docs/how-to/quitting-gracefully.md) — The `q`/`y` confirmation flow, Escape cancel, SIGINT/SIGTERM, `Quitting...` feedback, and exit codes
-- [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file, navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
+- [`docs/how-to/debugging-a-run.md`](docs/how-to/debugging-a-run.md) — Reading the persisted log file and iteration log (`.ralph-cache/iteration.jsonl`), navigating by chrome landmarks, tracing capture values, and reproducing failures with `-n 1`
 - [`docs/how-to/copying-log-text.md`](docs/how-to/copying-log-text.md) — Mouse drag, keyboard single-line, and keyboard multi-line copy walkthroughs; OSC 52 SSH fallback; Linux `xclip`/`xsel` requirement; terminal native-selection override keys
 - [`docs/how-to/configuring-a-status-line.md`](docs/how-to/configuring-a-status-line.md) — Add a `statusLine` block to `ralph-steps.json`, use the sample script, read stdin JSON with `jq`, tune `refreshIntervalSeconds`, debug via log file, and recover the shortcut bar
+- [`docs/how-to/caching-build-artifacts.md`](docs/how-to/caching-build-artifacts.md) — Use `containerEnv` to redirect Go/Node/Python/Rust cache dirs into `.ralph-cache/` for persistent, writable caches across iterations; language-to-env-var matrix and per-language example blocks
+- [`docs/how-to/resuming-sessions.md`](docs/how-to/resuming-sessions.md) — Using `resumePrevious` to continue a prior Claude step's conversation via `--resume`, the five runtime gates (G1–G5), skip-chain interaction, and how to verify resume via `iteration.jsonl`
 
 ## Project Discovery
 

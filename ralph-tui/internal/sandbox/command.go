@@ -3,6 +3,7 @@ package sandbox
 import (
 	"fmt"
 	"os"
+	"sort"
 )
 
 // HostUIDGID returns the current process's UID and GID.
@@ -18,11 +19,16 @@ func HostUIDGID() (int, int) {
 // Unset host vars (os.LookupEnv returns ok=false) are silently skipped.
 // CLAUDE_CONFIG_DIR is always set to the container mount point; callers
 // must NOT include it in envAllowlist.
+// containerEnv entries are injected as literal -e KEY=VALUE pairs in sorted
+// key order (deterministic argv). They are emitted AFTER the envAllowlist
+// entries so Docker's last-wins rule means containerEnv wins on collision.
 func BuildRunArgs(
 	projectDir, profileDir string,
 	uid, gid int,
 	cidfile string,
 	envAllowlist []string,
+	containerEnv map[string]string,
+	resumeSessionID string, // non-empty → appends --resume <id> before -p
 	model, prompt string,
 ) []string {
 	args := []string{
@@ -50,11 +56,34 @@ func BuildRunArgs(
 		}
 	}
 
+	// containerEnv: literal key=value injection in sorted key order.
+	// Sorted for deterministic argv (testable). Emitted after envAllowlist so
+	// Docker's last-wins rule means containerEnv wins when the same name appears
+	// in both (e.g. a host-passthrough var that is also given a literal value).
+	if len(containerEnv) > 0 {
+		keys := make([]string, 0, len(containerEnv))
+		for k := range containerEnv {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if k == "CLAUDE_CONFIG_DIR" {
+				continue
+			}
+			args = append(args, "-e", k+"="+containerEnv[k])
+		}
+	}
+
 	args = append(args,
 		ImageTag,
 		"claude",
 		"--permission-mode", "bypassPermissions",
 		"--model", model,
+	)
+	if resumeSessionID != "" {
+		args = append(args, "--resume", resumeSessionID)
+	}
+	args = append(args,
 		"-p", prompt,
 		"--output-format", "stream-json",
 		"--verbose",

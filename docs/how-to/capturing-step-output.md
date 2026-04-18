@@ -25,7 +25,7 @@ The captured value depends on the step type.
 
 ### Non-claude steps (`isClaude: false`)
 
-`LastCapture()` returns the **last non-empty stdout line** from the most recent step, with leading/trailing whitespace trimmed. Specifically:
+By default (and when `captureMode` is `"lastLine"` or absent), `LastCapture()` returns the **last non-empty stdout line** from the most recent step, with leading/trailing whitespace trimmed. Specifically:
 
 - Only `stdout` is captured — `stderr` is discarded for this purpose (but still streamed to the TUI log)
 - Only the **last** non-empty line is kept — earlier output is visible in the log but not available as the capture value
@@ -33,6 +33,43 @@ The captured value depends on the step type.
 - If the step fails (non-zero exit or user-terminated), the capture value is reset to `""`
 
 This means you should design capture scripts to print the captured value **last** — for example, a script that prints debug info to stderr and the result to stdout. Don't print the result first and then print progress messages.
+
+#### Capturing multi-line output with `captureMode: "fullStdout"`
+
+When a step emits a multi-line payload — such as a GitHub issue body or a git diff — set `captureMode` to `"fullStdout"`:
+
+```json
+{
+  "name": "Get issue body",
+  "isClaude": false,
+  "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"],
+  "captureAs": "ISSUE_BODY",
+  "captureMode": "fullStdout"
+}
+```
+
+Note the `{{{{.title}}}}` escape: ralph's variable substitution runs first on command arguments, so any literal `{{` that should reach the subprocess must be written as `{{{{` (ralph's escape for a literal `{{`). Also note that the `\n` sequences in the JSON string are real newlines by the time `gh` receives the argument — JSON parsing occurs before ralph sees the value. This step captures the full issue title and body into `{{ISSUE_BODY}}` for later steps.
+
+The default workflow also captures a project card and post-feature diff the same way:
+
+```json
+{ "name": "Get project card", "isClaude": false,
+  "command": ["scripts/project_card"],
+  "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" },
+{ "name": "Get post-feature diff", "isClaude": false,
+  "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"],
+  "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" }
+```
+
+> **Note:** `Get post-feature diff` compares `{{STARTING_SHA}}` against `HEAD`, so it is only meaningful after the Feature work step has committed its changes. If Feature work only stages or modifies files without committing, `HEAD` still points to `STARTING_SHA` and the diff will be empty.
+
+With `captureMode: "fullStdout"`, all stdout lines are joined with `"\n"` and bound to the variable. A hard cap of **32 KiB** applies: if the joined content exceeds 32 KiB, the first 30 KiB are kept verbatim and the following marker is appended:
+
+```
+[...truncated, full content exceeds 32 KiB]
+```
+
+Valid `captureMode` values: `""` (or absent), `"lastLine"`, `"fullStdout"`. Any other value is rejected at config-load time by the validator. Setting `captureMode` on a claude step is also rejected — claude steps always use the `claudestream` aggregator path.
 
 ### Claude steps (`isClaude: true`)
 

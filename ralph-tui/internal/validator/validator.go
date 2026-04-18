@@ -18,23 +18,57 @@ import (
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
-// Error represents a single config validation failure.
+// Severity constants for Error entries.
+const (
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+	SeverityInfo    = "info"
+)
+
+// Error represents a single config validation finding.
+// Severity is "error" (fatal, default), "warning", or "info" (non-fatal).
 // Category, Phase, and StepName identify where the problem was found;
 // Problem is a human-readable description of what is wrong.
 type Error struct {
+	Severity string // "" or SeverityError = fatal; SeverityWarning/SeverityInfo = non-fatal
 	Category string
 	Phase    string
 	StepName string
 	Problem  string
 }
 
-// Error implements the error interface. Step-level errors include the step name;
-// file-level errors (no step name) omit it.
-func (e Error) Error() string {
-	if e.StepName == "" {
-		return fmt.Sprintf("config error: %s: %s: %s", e.Category, e.Phase, e.Problem)
+// IsFatal reports whether this entry represents a fatal error that should
+// block startup. Entries with empty or SeverityError severity are fatal.
+func (e Error) IsFatal() bool {
+	return e.Severity == "" || e.Severity == SeverityError
+}
+
+// FatalErrorCount returns the number of fatal errors in errs.
+func FatalErrorCount(errs []Error) int {
+	n := 0
+	for _, e := range errs {
+		if e.IsFatal() {
+			n++
+		}
 	}
-	return fmt.Sprintf("config error: %s: %s step %q: %s", e.Category, e.Phase, e.StepName, e.Problem)
+	return n
+}
+
+// Error implements the error interface. Non-error entries use "config warning:"
+// or "config info:" as the prefix so callers can distinguish them in output.
+// Step-level entries include the step name; file-level entries omit it.
+func (e Error) Error() string {
+	prefix := "config error"
+	switch e.Severity {
+	case SeverityWarning:
+		prefix = "config warning"
+	case SeverityInfo:
+		prefix = "config info"
+	}
+	if e.StepName == "" {
+		return fmt.Sprintf("%s: %s: %s: %s", prefix, e.Category, e.Phase, e.Problem)
+	}
+	return fmt.Sprintf("%s: %s: %s step %q: %s", prefix, e.Category, e.Phase, e.StepName, e.Problem)
 }
 
 // vStep is the strict per-step struct used during validation.
@@ -42,13 +76,17 @@ func (e Error) Error() string {
 // CaptureAs uses *string to distinguish absent (nil → not set) from explicit
 // empty string (pointer to "" → error).
 type vStep struct {
-	Name             string   `json:"name"`
-	Model            string   `json:"model,omitempty"`
-	PromptFile       string   `json:"promptFile,omitempty"`
-	IsClaude         *bool    `json:"isClaude"`
-	Command          []string `json:"command,omitempty"`
-	CaptureAs        *string  `json:"captureAs,omitempty"`
-	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
+	Name               string   `json:"name"`
+	Model              string   `json:"model,omitempty"`
+	PromptFile         string   `json:"promptFile,omitempty"`
+	IsClaude           *bool    `json:"isClaude"`
+	Command            []string `json:"command,omitempty"`
+	CaptureAs          *string  `json:"captureAs,omitempty"`
+	CaptureMode        *string  `json:"captureMode,omitempty"`
+	BreakLoopIfEmpty   bool     `json:"breakLoopIfEmpty,omitempty"`
+	SkipIfCaptureEmpty *string  `json:"skipIfCaptureEmpty,omitempty"`
+	TimeoutSeconds     *int     `json:"timeoutSeconds,omitempty"`
+	ResumePrevious     *bool    `json:"resumePrevious,omitempty"`
 }
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
@@ -64,12 +102,14 @@ type vStatusLine struct {
 // Env uses *[]string; absent key (nil) is treated as empty list. A non-array
 // value (e.g. "env": "FOO") or a non-string element (e.g. [123]) will fail
 // JSON decode and be reported as a "malformed JSON" parse error.
+// ContainerEnv uses *map[string]string so that absent (nil) is treated as empty.
 type vFile struct {
-	Env        *[]string    `json:"env"`
-	Initialize *[]vStep     `json:"initialize"`
-	Iteration  *[]vStep     `json:"iteration"`
-	Finalize   *[]vStep     `json:"finalize"`
-	StatusLine *vStatusLine `json:"statusLine,omitempty"`
+	Env          *[]string          `json:"env"`
+	ContainerEnv *map[string]string `json:"containerEnv,omitempty"`
+	Initialize   *[]vStep           `json:"initialize"`
+	Iteration    *[]vStep           `json:"iteration"`
+	Finalize     *[]vStep           `json:"finalize"`
+	StatusLine   *vStatusLine       `json:"statusLine,omitempty"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -166,6 +206,54 @@ func Validate(workflowDir string) []Error {
 		}
 	}
 
+	// containerEnv validation.
+	if vf.ContainerEnv != nil {
+		// Build a set of names already in the env allowlist for collision detection.
+		envSet := make(map[string]bool)
+		if vf.Env != nil {
+			for _, name := range *vf.Env {
+				envSet[name] = true
+			}
+		}
+		for key, val := range *vf.ContainerEnv {
+			// Reject reserved sandbox key.
+			if key == "CLAUDE_CONFIG_DIR" {
+				errs = append(errs, cfgErr("containerEnv", "config", "", `containerEnv key "CLAUDE_CONFIG_DIR" is reserved by the sandbox`))
+				continue
+			}
+			// Reject keys containing "=" (would be parsed as key=val by the shell).
+			if strings.Contains(key, "=") {
+				errs = append(errs, cfgErr("containerEnv", "config", "", fmt.Sprintf("containerEnv key %q must not contain '='", key)))
+				continue
+			}
+			// Reject values containing newline or NUL.
+			if strings.ContainsAny(val, "\n\x00") {
+				errs = append(errs, cfgErr("containerEnv", "config", "", fmt.Sprintf("containerEnv value for key %q must not contain newline or NUL characters", key)))
+				continue
+			}
+			// Warn when the key looks like a secret committed to the repo.
+			if strings.HasSuffix(key, "_TOKEN") || strings.HasSuffix(key, "_KEY") || strings.HasSuffix(key, "_SECRET") ||
+				strings.HasSuffix(key, "_PASSWORD") || strings.HasSuffix(key, "_PASSPHRASE") ||
+				strings.HasSuffix(key, "_CREDENTIAL") || strings.HasSuffix(key, "_APIKEY") {
+				errs = append(errs, Error{
+					Severity: SeverityWarning,
+					Category: "containerEnv",
+					Phase:    "config",
+					Problem:  fmt.Sprintf("containerEnv key %q looks like a secret; literal values in ralph-steps.json are committed to the repo — consider using the env allowlist to pass it from the host instead", key),
+				})
+			}
+			// INFO notice when key also appears in the env allowlist (containerEnv wins).
+			if envSet[key] {
+				errs = append(errs, Error{
+					Severity: SeverityInfo,
+					Category: "containerEnv",
+					Phase:    "config",
+					Problem:  fmt.Sprintf("containerEnv key %q also appears in env allowlist; the literal containerEnv value wins (Docker last-wins)", key),
+				})
+			}
+		}
+	}
+
 	// statusLine validation.
 	if vf.StatusLine != nil {
 		sl := vf.StatusLine
@@ -235,6 +323,11 @@ func validatePhase(
 	seenNames := make(map[string]bool)
 	seenCaptureAs := make(map[string]bool)
 	scope := copyScope(initialScope)
+	// ownCaptures tracks only captureAs names bound within this phase (not
+	// inherited from initialScope). skipIfCaptureEmpty must reference one of
+	// these so the runtime captureStates map — which is populated per-iteration
+	// — can always resolve the source step.
+	ownCaptures := make(map[string]bool)
 	var captures []string
 
 	for i, step := range steps {
@@ -306,13 +399,97 @@ func validatePhase(
 			}
 		}
 
-		// Schema 2 — breakLoopIfEmpty requires captureAs AND iteration phase.
+		// Schema 2a — captureMode: only valid on non-claude steps; value must be
+		// "", "lastLine", or "fullStdout".
+		if step.CaptureMode != nil {
+			cm := *step.CaptureMode
+			switch cm {
+			case "", "lastLine", "fullStdout":
+				// valid
+			default:
+				*errs = append(*errs, at("schema", fmt.Sprintf("captureMode %q is not valid; use \"lastLine\", \"fullStdout\", or omit the field", cm)))
+			}
+			if step.IsClaude != nil && *step.IsClaude {
+				*errs = append(*errs, at("schema", "captureMode must not be set on claude steps"))
+			}
+		}
+
+		// Schema 2b — breakLoopIfEmpty requires captureAs AND iteration phase.
 		if step.BreakLoopIfEmpty {
 			if step.CaptureAs == nil || *step.CaptureAs == "" {
 				*errs = append(*errs, at("schema", "breakLoopIfEmpty requires captureAs to be set"))
 			}
 			if phase != vars.Iteration {
 				*errs = append(*errs, at("schema", "breakLoopIfEmpty is only valid in the iteration phase"))
+			}
+		}
+
+		// Schema 2c — skipIfCaptureEmpty must reference a capture bound by a
+		// strictly earlier step in the iteration phase (not initialize-phase
+		// captures), and is only valid in the iteration phase. The runtime
+		// captureStates map is populated per-iteration, so initialize-phase
+		// captures are never present there and the skip would silently never fire.
+		if step.SkipIfCaptureEmpty != nil {
+			ref := *step.SkipIfCaptureEmpty
+			if ref == "" {
+				*errs = append(*errs, at("schema", "skipIfCaptureEmpty must not be empty when set"))
+			} else {
+				if !ownCaptures[ref] {
+					*errs = append(*errs, at("schema", fmt.Sprintf("skipIfCaptureEmpty %q is not bound by any earlier captureAs in this phase", ref)))
+				}
+				if phase != vars.Iteration {
+					*errs = append(*errs, at("schema", "skipIfCaptureEmpty is only valid in the iteration phase"))
+				}
+			}
+		}
+
+		// Schema 2d — timeoutSeconds: must be a positive integer when set, and
+		// must not exceed 86400 (24 h). Values above ~9.2e9 overflow time.Duration
+		// when multiplied by time.Second, causing the timer to fire immediately
+		// and kill every step on start-up (SEC-001 / WARN-005).
+		if step.TimeoutSeconds != nil {
+			if *step.TimeoutSeconds <= 0 {
+				*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
+			} else if *step.TimeoutSeconds > 86400 {
+				*errs = append(*errs, at("schema", "timeoutSeconds must not exceed 86400 (24 hours)"))
+			}
+		}
+
+		// Schema 2e — resumePrevious: only valid on claude steps. Warn when set
+		// on the first step of a phase (no previous step to resume from). Warn
+		// when the previous step uses a different model (cross-model chains are
+		// technically supported but outside the initial same-model rollout).
+		if step.ResumePrevious != nil && *step.ResumePrevious {
+			if step.IsClaude != nil && !*step.IsClaude {
+				*errs = append(*errs, at("schema", "resumePrevious is only valid on claude steps"))
+			}
+			if i == 0 {
+				*errs = append(*errs, Error{
+					Severity: SeverityWarning,
+					Category: "schema",
+					Phase:    phaseName,
+					StepName: stepName,
+					Problem:  "resumePrevious on the first step of a phase has no previous step to resume from; the runtime will always start a fresh session",
+				})
+			} else if i > 0 {
+				prevModel := steps[i-1].Model
+				if prevModel == "" {
+					*errs = append(*errs, Error{
+						Severity: SeverityWarning,
+						Category: "schema",
+						Phase:    phaseName,
+						StepName: stepName,
+						Problem:  "resumePrevious: previous step is non-claude and has no session ID; the runtime will always fall through G1 and start a fresh session",
+					})
+				} else if step.Model != "" && prevModel != step.Model {
+					*errs = append(*errs, Error{
+						Severity: SeverityWarning,
+						Category: "schema",
+						Phase:    phaseName,
+						StepName: stepName,
+						Problem:  fmt.Sprintf("resumePrevious: previous step uses model %q but this step uses model %q; cross-model resume is supported but outside the validated same-model rollout", prevModel, step.Model),
+					})
+				}
 			}
 		}
 
@@ -399,11 +576,12 @@ func validatePhase(
 
 		// Extend scope with this step's captureAs for subsequent steps.
 		// Add to scope even if invalid (to reduce cascading errors), but only
-		// track non-reserved first-time names in captures.
+		// track non-reserved first-time names in captures and ownCaptures.
 		if step.CaptureAs != nil && *step.CaptureAs != "" {
 			ca := *step.CaptureAs
 			if !scope[ca] {
 				scope[ca] = true
+				ownCaptures[ca] = true
 				if !reservedBuiltins[ca] {
 					captures = append(captures, ca)
 				}

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Prefers .ralph-cache/iteration.jsonl over progress.txt when present. Falls
+# back to progress.txt for back-compat with runs where the jsonl doesn't exist.
+# Phase-A limitation: progress.txt accumulates across iterations in a
+# multi-iteration run, so issue N's comment may include iterations 1..N.
+# Replaced by a per-iteration jsonl filter in workflow-optimization §3.6.
+set -euo pipefail
+
+ISSUE_ID="${1:?Usage: post_issue_summary <issue-id>}"
+JSONL_FILE=".ralph-cache/iteration.jsonl"
+PROGRESS_FILE="progress.txt"
+
+if [[ -s "$JSONL_FILE" ]]; then
+    # Build a human-readable summary from the structured JSONL log.
+    # Each line: "- <step_name> [<status>] — <notes>"
+    summary="$(jq -r '"- \(.step_name) [\(.status)]\(if .notes != "" and .notes != null then " — \(.notes)" else "" end)"' "$JSONL_FILE")"
+    body="### Ralph iteration summary
+
+$summary"
+elif [[ -s "$PROGRESS_FILE" ]]; then
+    body="### Ralph iteration summary
+
+$(cat "$PROGRESS_FILE")"
+else
+    exit 0
+fi
+
+# Truncate to stay within GitHub's 65 536-byte comment limit.
+max_bytes=60000
+if [[ ${#body} -gt $max_bytes ]]; then
+    body="${body:0:$max_bytes}
+...(truncated)"
+fi
+
+gh issue comment "$ISSUE_ID" --body "$body"

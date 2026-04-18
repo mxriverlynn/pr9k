@@ -76,6 +76,7 @@ func buildRunConfig(cfg *cli.Config, stepFile steps.StepFile, statusRunner workf
 		WorkflowDir:     cfg.WorkflowDir,
 		Iterations:      cfg.Iterations,
 		Env:             stepFile.Env,
+		ContainerEnv:    stepFile.ContainerEnv,
 		InitializeSteps: stepFile.Initialize,
 		Steps:           stepFile.Iteration,
 		FinalizeSteps:   stepFile.Finalize,

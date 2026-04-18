@@ -2,7 +2,7 @@
 
 Executes every Claude CLI step inside an ephemeral Docker container, limiting blast radius to the bind-mounted target repository and a scrubbed process environment.
 
-- **Last Updated:** 2026-04-13
+- **Last Updated:** 2026-04-18
 - **Authors:**
   - River Bailey
 
@@ -11,7 +11,7 @@ Executes every Claude CLI step inside an ephemeral Docker container, limiting bl
 - Every `isClaude: true` step runs via `docker run` against the `docker/sandbox-templates:claude-code` image; shell command steps continue to run on the host
 - The target repo (`--project-dir`) is bind-mounted at `/home/agent/workspace`; the Claude profile directory is bind-mounted at `/home/agent/.claude`
 - The workflow bundle (`--workflow-dir`) is NOT mounted — prompts and scripts are interpolated on the host before the container starts
-- Environment variables are passed through a layered allowlist: five sandbox-plumbing builtins plus any names listed in the top-level `env` field of `ralph-steps.json`; unlisted host vars are invisible to claude
+- Environment variables are passed through two mechanisms: a host-forwarding allowlist (`env` field) and a literal key=value injection map (`containerEnv` field). Five sandbox-plumbing builtins are always attempted. Unlisted host vars and vars not in `containerEnv` are invisible to claude
 - Each step runs as the invoking host user (`-u $(id -u):$(id -g)`) so files written to the bind-mounted repo are host-owned
 - `--cidfile` captures the container ID so `Terminate()` can issue a real `docker kill` rather than signaling the host docker CLI (which would orphan the container)
 
@@ -64,13 +64,17 @@ docker run                                              \
   [-e HTTP_PROXY]                                       \
   [-e NO_PROXY]                                         \
   [-e <EACH_ENTRY_FROM_RALPH_STEPS_JSON_ENV>]           \
+  [-e <KEY>=<VALUE_FROM_RALPH_STEPS_JSON_CONTAINER_ENV>] \
   docker/sandbox-templates:claude-code                  \
   claude --permission-mode bypassPermissions            \
          --model <MODEL>                                \
+         [--resume <SESSION_ID>]                        \
          -p <PROMPT>                                    \
          --output-format stream-json                    \
          --verbose
 ```
+
+`--resume <SESSION_ID>` is injected only when the step has `resumePrevious: true` **and** all five resume gates (G1–G5) pass. See [Session Resume Gates](workflow-orchestration.md#session-resume-gates-resumeprevious) for gate details. The default workflow ships with `resumePrevious` unset on all steps.
 
 ### Flag rationale
 
@@ -153,16 +157,28 @@ type SandboxOptions struct {
 }
 ```
 
-## Environment Allowlist Behavior
+## Environment Injection Behavior
 
-Two sources of env var names are merged into the allowlist for every claude step:
+Three sources of env vars are combined for every claude step:
 
-1. **Builtin set** (`sandbox.BuiltinEnvAllowlist`): `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`. Always attempted.
-2. **User `env` field** (`StepFile.Env`): names listed in the top-level `env` array in `ralph-steps.json`. Merged at build time via `append(sandbox.BuiltinEnvAllowlist, stepFile.Env...)`.
+1. **Builtin set** (`sandbox.BuiltinEnvAllowlist`): `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`. Always attempted; silently skipped if unset on host.
+2. **User `env` field** (`StepFile.Env`): names listed in the top-level `env` array in `ralph-steps.json`. Merged at build time via `append(sandbox.BuiltinEnvAllowlist, stepFile.Env...)`. Each name is passed as `-e NAME` (no `=VALUE`) so Docker reads the value from the host at container start; unset names are silently skipped.
+3. **User `containerEnv` field** (`StepFile.ContainerEnv`): a key→value map in the top-level `containerEnv` object of `ralph-steps.json`. Each entry is injected as `-e KEY=VALUE` with a literal value — the host environment is not consulted. Entries are emitted in **sorted key order** (deterministic argv) **after** the allowlist entries, so Docker's last-wins rule means `containerEnv` beats a same-named host passthrough.
 
-Each name is passed as `-e NAME` (no `=VALUE`). Docker reads the value from the host environment at container start. If `os.LookupEnv(name)` returns `ok=false` (variable is not set on the host), the `-e NAME` flag is still added to argv — Docker itself silently omits unset variables. The `-e CLAUDE_CONFIG_DIR=...` entry is always written with an explicit value (the mount point), not a passthrough.
+```json
+{
+  "env": ["ANTHROPIC_API_KEY"],
+  "containerEnv": {
+    "GOPATH":     "/home/agent/workspace/.ralph-cache/go",
+    "GOCACHE":    "/home/agent/workspace/.ralph-cache/gocache",
+    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomodcache"
+  }
+}
+```
 
-Variables NOT in the allowlist are invisible inside the container: `PATH`, `HOME`, `USER`, and all other host env vars are excluded by default.
+`containerEnv` values are committed to the repo — do not store secrets in this field. Use the `env` passthrough for secrets that live on the host. The validator warns when a key ends in `_TOKEN`, `_KEY`, or `_SECRET`.
+
+Variables NOT in either allowlist are invisible inside the container: `PATH`, `HOME`, `USER`, and all other host env vars are excluded by default. `CLAUDE_CONFIG_DIR` is always set to the container mount point and cannot be overridden via `containerEnv` (the validator rejects it).
 
 ## Cidfile-Driven Termination
 
