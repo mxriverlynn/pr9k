@@ -476,7 +476,12 @@ func forEachLiveDocFile(t *testing.T, root string, fn func(rel, content string))
 // frozen historical plan link are stripped before the check.
 func TestDocSweep_NoLegacyToolNameInLiveDocs(t *testing.T) {
 	root := docTestRepoRoot(t)
-	exempt := []string{legacyName + "-screenshot.png", "docs/plans/" + legacyName + ".md"}
+	exempt := []string{
+		legacyName + "-screenshot.png",
+		"docs/plans/" + legacyName + ".md",
+		// ADR index entry in CLAUDE.md documents the rename; the arrow context is intentional.
+		legacyName + "` → `pr9k`",
+	}
 	var offenders []string
 	forEachLiveDocFile(t, root, func(rel, content string) {
 		s := content
@@ -496,9 +501,12 @@ func TestDocSweep_NoLegacyToolNameInLiveDocs(t *testing.T) {
 // TP-002 (HIGH): No legacy config filename in live docs.
 func TestDocSweep_NoLegacyConfigNameInLiveDocs(t *testing.T) {
 	root := docTestRepoRoot(t)
+	// The ADR index entry in CLAUDE.md documents the rename; the arrow context is intentional.
+	configExempt := legacyConfigName + "` → `config.json`"
 	var offenders []string
 	forEachLiveDocFile(t, root, func(rel, content string) {
-		if strings.Contains(content, legacyConfigName) {
+		s := strings.ReplaceAll(content, configExempt, "")
+		if strings.Contains(s, legacyConfigName) {
 			offenders = append(offenders, rel)
 		}
 	})
@@ -678,6 +686,169 @@ func TestDocSweep_WorkflowOrgDesign_ScreenshotExemptionDocumented(t *testing.T) 
 	content := readFile(t, root, "docs/plans/workflow-organization/design.md")
 	assertContains(t, content, legacyName+"-screenshot.png",
 		"workflow-organization/design.md: screenshot filename exemption in non-goals")
+}
+
+// TP-001 (HIGH): the renamed ADR file exists at the exact path referenced in CLAUDE.md.
+func TestDocIntegrity_ADR_Pr9kRenameFileExists(t *testing.T) {
+	root := docTestRepoRoot(t)
+	assertFileExists(t, filepath.Join(root, "docs", "adr", "20260418175134-pr9k-rename-and-pr9k-layout.md"))
+}
+
+// TP-002 (HIGH): CLAUDE.md's ## ADRs section lists the new ADR with required tokens.
+func TestDocIntegrity_CLAUDEmd_IndexesNewPr9kRenameADR(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "CLAUDE.md")
+
+	adrsIdx := strings.Index(content, "## ADRs")
+	if adrsIdx == -1 {
+		t.Fatal("CLAUDE.md: could not find '## ADRs' section")
+	}
+	nextSection := strings.Index(content[adrsIdx+len("## ADRs"):], "\n## ")
+	var adrsSection string
+	if nextSection == -1 {
+		adrsSection = content[adrsIdx:]
+	} else {
+		adrsSection = content[adrsIdx : adrsIdx+len("## ADRs")+nextSection]
+	}
+	assertContains(t, adrsSection, "20260418175134-pr9k-rename-and-pr9k-layout.md", "CLAUDE.md ## ADRs section")
+	assertContains(t, adrsSection, "Apply when", "CLAUDE.md ## ADRs section")
+}
+
+// TP-003 (HIGH): the ADR body contains identifying tokens for all four sub-decisions.
+func TestDocIntegrity_ADR_CoversAllFourDecisions(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md")
+
+	// Decision 1: binary rename
+	assertContains(t, content, legacyName, "ADR decision 1: legacy name")
+	assertContains(t, content, "pr9k", "ADR decision 1: new name")
+	// Decision 2: .pr9k/ layout
+	assertContains(t, content, ".pr9k/", "ADR decision 2: .pr9k/ layout")
+	// Decision 3: two-candidate resolveWorkflowDir
+	assertContains(t, content, "resolveWorkflowDir", "ADR decision 3: resolveWorkflowDir")
+	assertContains(t, content, "two-candidate", "ADR decision 3: two-candidate rule")
+	// Decision 4: config.json rename
+	assertContains(t, content, legacyConfigName, "ADR decision 4: legacy config name")
+	assertContains(t, content, "config.json", "ADR decision 4: new config name")
+}
+
+// TP-004 (HIGH): ADR Supersedes section names all three prior ADRs and each file exists.
+func TestDocIntegrity_ADR_SupersedesSectionReferencesPriorADRs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md")
+
+	supersedesIdx := strings.Index(content, "## Supersedes")
+	if supersedesIdx == -1 {
+		t.Fatal("ADR: could not find '## Supersedes' section")
+	}
+	applyWhenIdx := strings.Index(content[supersedesIdx:], "## Apply when")
+	var supersedesSection string
+	if applyWhenIdx == -1 {
+		supersedesSection = content[supersedesIdx:]
+	} else {
+		supersedesSection = content[supersedesIdx : supersedesIdx+applyWhenIdx]
+	}
+
+	priorADRs := []string{
+		"20260413162428-workflow-project-dir-split.md",
+		"20260413160000-require-docker-sandbox.md",
+		"20260410170952-narrow-reading-principle.md",
+	}
+	for _, adr := range priorADRs {
+		assertContains(t, supersedesSection, adr, "ADR Supersedes section")
+		assertFileExists(t, filepath.Join(root, "docs", "adr", adr))
+	}
+}
+
+// TP-005 (HIGH): ADR contains an ## Apply when section header.
+func TestDocIntegrity_ADR_HasApplyWhenSection(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md")
+	assertContains(t, content, "## Apply when", "ADR Apply when section")
+}
+
+// TP-006 (MED): ADR Non-goals section exists and lists the .ralph-cache/ and ralph- exemptions.
+func TestDocIntegrity_ADR_NonGoalsListPresent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md")
+	assertContains(t, content, "## Non-goals", "ADR Non-goals section header")
+	assertContains(t, content, ".ralph-cache/", "ADR Non-goals: .ralph-cache/ exemption")
+	assertContains(t, content, "ralph-", "ADR Non-goals: ralph- prefix exemption")
+}
+
+// TP-007 (MED): CLAUDE.md index entry for the new ADR names all four decisions.
+func TestDocIntegrity_CLAUDEmd_IndexEntryCoversAllDecisions(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "CLAUDE.md")
+
+	lineIdx := strings.Index(content, "20260418175134-pr9k-rename-and-pr9k-layout.md")
+	if lineIdx == -1 {
+		t.Fatal("CLAUDE.md: could not find line referencing 20260418175134-pr9k-rename-and-pr9k-layout.md")
+	}
+	lineEnd := strings.IndexByte(content[lineIdx:], '\n')
+	var line string
+	if lineEnd == -1 {
+		line = content[lineIdx:]
+	} else {
+		line = content[lineIdx : lineIdx+lineEnd]
+	}
+
+	assertContains(t, line, legacyName, "CLAUDE.md ADR index entry")
+	assertContains(t, line, "pr9k", "CLAUDE.md ADR index entry")
+	assertContains(t, line, ".pr9k/", "CLAUDE.md ADR index entry")
+	assertContains(t, line, "resolveWorkflowDir", "CLAUDE.md ADR index entry")
+	assertContains(t, line, legacyConfigName, "CLAUDE.md ADR index entry")
+	assertContains(t, line, "config.json", "CLAUDE.md ADR index entry")
+}
+
+// TP-008 (MED): commit 32b668f only added files under docs/adr/ — none were modified or deleted.
+// Note: this test is keyed to a specific commit SHA. If the commit is rewritten (e.g. squash
+// merge), this test must be updated or deleted.
+func TestDocIntegrity_ADR_ExistingADRsUnmodifiedByPr9kRenameCommit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on $PATH")
+	}
+	root := docTestRepoRoot(t)
+	cmd := exec.Command("git", "show", "--name-status", "32b668f")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("commit 32b668f unreachable: %v", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, "docs/adr/") {
+			continue
+		}
+		if !strings.HasPrefix(line, "A") {
+			t.Errorf("expected commit 32b668f to only ADD docs/adr/ files, got: %s", line)
+		}
+	}
+}
+
+// TP-009 (LOW): ADR filename matches the 14-digit timestamp convention.
+func TestDocIntegrity_ADR_Pr9kRenameFilenameConvention(t *testing.T) {
+	root := docTestRepoRoot(t)
+	adrDir := filepath.Join(root, "docs", "adr")
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		t.Fatalf("ReadDir %s: %v", adrDir, err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Name() == "20260418175134-pr9k-rename-and-pr9k-layout.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("docs/adr/: no file named 20260418175134-pr9k-rename-and-pr9k-layout.md found")
+	}
+}
+
+// TP-010 (LOW): ADR is marked Status: accepted.
+func TestDocIntegrity_ADR_StatusAccepted(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md")
+	assertContains(t, content, "Status:** accepted", "ADR status line")
 }
 
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
