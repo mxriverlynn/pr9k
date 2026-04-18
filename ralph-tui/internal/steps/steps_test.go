@@ -703,3 +703,45 @@ func TestLoadSteps_ContainerEnvEmptyMap(t *testing.T) {
 		t.Errorf("expected ContainerEnv empty for explicit {}, got %v", got.ContainerEnv)
 	}
 }
+
+// TestLoadSteps_CaptureMode_Populated verifies that captureMode is correctly
+// deserialized from JSON into the Step struct.
+func TestLoadSteps_CaptureMode_Populated(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Fetch","isClaude":false,"command":["echo"],"captureAs":"OUT","captureMode":"fullStdout"}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Iteration) != 1 {
+		t.Fatalf("expected 1 iteration step, got %d", len(got.Iteration))
+	}
+	if got.Iteration[0].CaptureMode != "fullStdout" {
+		t.Errorf("CaptureMode = %q, want %q", got.Iteration[0].CaptureMode, "fullStdout")
+	}
+}
+
+// TestLoadSteps_CaptureMode_Absent verifies that a step without captureMode
+// deserializes with an empty string (zero value).
+func TestLoadSteps_CaptureMode_Absent(t *testing.T) {
+	dir := t.TempDir()
+	content := `{"iteration":[{"name":"Work","isClaude":false,"command":["echo"]}],"finalize":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "ralph-steps.json"), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := steps.LoadSteps(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got.Iteration) != 1 {
+		t.Fatalf("expected 1 iteration step, got %d", len(got.Iteration))
+	}
+	if got.Iteration[0].CaptureMode != "" {
+		t.Errorf("CaptureMode = %q, want %q", got.Iteration[0].CaptureMode, "")
+	}
+}

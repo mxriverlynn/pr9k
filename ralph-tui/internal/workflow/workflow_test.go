@@ -13,6 +13,7 @@ import (
 
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/claudestream"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/logger"
+	"github.com/mxriverlynn/pr9k/ralph-tui/internal/ui"
 	"github.com/mxriverlynn/pr9k/ralph-tui/internal/vars"
 )
 
@@ -2099,5 +2100,90 @@ func TestRunner_HeartbeatSilence_InactiveAfterClear(t *testing.T) {
 	_, active = r.HeartbeatSilence()
 	if active {
 		t.Error("expected active=false after pipeline cleared")
+	}
+}
+
+// --- captureMode tests ---
+
+// TestRunStepFull_FullStdout_MultiLine verifies that CaptureFullStdout joins all
+// stdout lines with "\n" rather than returning only the last non-empty line.
+func TestRunStepFull_FullStdout_MultiLine(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureFullStdout); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	got := r.LastCapture()
+	want := "line1\nline2\nline3"
+	if got != want {
+		t.Errorf("LastCapture() = %q, want %q", got, want)
+	}
+}
+
+// TestRunStepFull_LastLine_PreservesExistingBehavior verifies that CaptureLastLine
+// (the zero value) returns only the last non-empty stdout line.
+func TestRunStepFull_LastLine_PreservesExistingBehavior(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "printf 'line1\nline2\nline3\n'"}, ui.CaptureLastLine); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	got := r.LastCapture()
+	if got != "line3" {
+		t.Errorf("LastCapture() = %q, want %q", got, "line3")
+	}
+}
+
+// TestRunStepFull_FullStdout_EmptyOutput verifies that CaptureFullStdout returns
+// "" when the command produces no stdout.
+func TestRunStepFull_FullStdout_EmptyOutput(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	if err := r.RunStepFull("test-step", []string{"sh", "-c", "true"}, ui.CaptureFullStdout); err != nil {
+		t.Fatalf("RunStepFull: %v", err)
+	}
+	if got := r.LastCapture(); got != "" {
+		t.Errorf("LastCapture() = %q, want %q", got, "")
+	}
+}
+
+// TestRunStepFull_FullStdout_FailedStep verifies that LastCapture is "" when the
+// step exits non-zero, regardless of captureMode.
+func TestRunStepFull_FullStdout_FailedStep(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+
+	err := r.RunStepFull("test-step", []string{"sh", "-c", "echo output; exit 1"}, ui.CaptureFullStdout)
+	if err == nil {
+		t.Fatal("expected non-zero exit error, got nil")
+	}
+	if got := r.LastCapture(); got != "" {
+		t.Errorf("LastCapture() after failure = %q, want %q", got, "")
+	}
+}
+
+// TestFullStdoutCapture_TruncatesAt32KiB verifies the 32 KiB hard cap: content
+// longer than 32 KiB is kept to 30 KiB verbatim and a truncation marker is
+// appended.
+func TestFullStdoutCapture_TruncatesAt32KiB(t *testing.T) {
+	// Build a payload that is definitively over 32 KiB.
+	line := strings.Repeat("x", 512)
+	lines := make([]string, 70) // 70 * 512 = 35 840 bytes when joined — > 32 KiB
+	for i := range lines {
+		lines[i] = line
+	}
+
+	got := fullStdoutCapture(lines)
+
+	const keepBytes = 30 * 1024
+	const marker = "\n[...truncated, full content exceeds 32 KiB]"
+	if len(got) != keepBytes+len(marker) {
+		t.Errorf("len(got) = %d, want %d", len(got), keepBytes+len(marker))
+	}
+	if !strings.HasSuffix(got, marker) {
+		t.Errorf("got does not end with truncation marker; suffix = %q", got[len(got)-len(marker):])
 	}
 }

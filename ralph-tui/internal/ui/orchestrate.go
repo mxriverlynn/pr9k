@@ -11,6 +11,10 @@ const (
 	// CaptureResult binds the Aggregator.Result() value from the
 	// claudestream pipeline (D6: used for all isClaude steps).
 	CaptureResult
+	// CaptureFullStdout joins all stdout lines with "\n" (capped at 32 KiB)
+	// and binds the result. Used for non-claude steps that emit multi-line
+	// payloads (e.g. issue body, git diff).
+	CaptureFullStdout
 )
 
 // StepRunner is the workflow execution interface for running steps, writing to

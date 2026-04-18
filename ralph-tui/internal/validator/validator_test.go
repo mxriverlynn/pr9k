@@ -2052,6 +2052,45 @@ func TestError_ErrorString(t *testing.T) {
 	}
 }
 
+// --- captureMode validation tests ---
+
+// TestValidate_CaptureMode_InvalidValue verifies that an unrecognized captureMode
+// value (anything other than "", "lastLine", "fullStdout") is rejected.
+func TestValidate_CaptureMode_InvalidValue(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "get-thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Fetch","isClaude":false,"command":["scripts/get-thing"],"captureAs":"THING","captureMode":"bogus"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "captureMode") {
+		t.Errorf("expected captureMode rejection error, got: %v", errs)
+	}
+	if !hasError(errs, "bogus") {
+		t.Errorf("expected error to mention the invalid value %q, got: %v", "bogus", errs)
+	}
+}
+
+// TestValidate_CaptureMode_OnClaudeStep verifies that setting captureMode on a
+// claude step is rejected (they route through the claudestream aggregator).
+func TestValidate_CaptureMode_OnClaudeStep(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "work.md", "do the thing")
+	writeStepsJSON(t, dir, `{
+		"initialize":[],
+		"iteration":[{"name":"Work","isClaude":true,"model":"sonnet","promptFile":"work.md","captureMode":"fullStdout"}],
+		"finalize":[]
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "captureMode") {
+		t.Errorf("expected captureMode-on-claude error, got: %v", errs)
+	}
+}
+
 // --- TP-012: step-level Error() includes quoted step name ---
 
 func TestError_StepLevel_QuotedStepName(t *testing.T) {

@@ -58,6 +58,10 @@ type runSandboxedStepCall struct {
 }
 
 func (f *fakeExecutor) RunStep(name string, command []string) error {
+	return f.RunStepFull(name, command, ui.CaptureLastLine)
+}
+
+func (f *fakeExecutor) RunStepFull(name string, command []string, _ ui.CaptureMode) error {
 	idx := len(f.runStepCalls)
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
 	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {

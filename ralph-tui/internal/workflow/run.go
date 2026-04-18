@@ -68,6 +68,7 @@ type StepExecutor interface {
 	LastStats() claudestream.StepStats
 	ProjectDir() string
 	RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+	RunStepFull(stepName string, command []string, captureMode ui.CaptureMode) error
 	// WriteRunSummary writes line to both the TUI and the file logger. Used for
 	// the run-level cumulative summary (D13 2c) so it is visible in the TUI and
 	// persisted to disk, unlike WriteToLog which only sends to the TUI.
@@ -132,7 +133,7 @@ func (d *stepDispatcher) RunStep(name string, command []string) error {
 		return err
 	}
 	d.prevFailed = false
-	return d.exec.RunStep(name, command)
+	return d.exec.RunStepFull(name, command, d.current.CaptureMode)
 }
 
 func (d *stepDispatcher) WasTerminated() bool    { return d.exec.WasTerminated() }
@@ -463,9 +464,14 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 			CidfilePath: cidfile,
 		}, nil
 	}
+	capMode := ui.CaptureLastLine
+	if s.CaptureMode == "fullStdout" {
+		capMode = ui.CaptureFullStdout
+	}
 	return ui.ResolvedStep{
-		Name:    s.Name,
-		Command: ResolveCommand(workflowDir, s.Command, vt, phase),
+		Name:        s.Name,
+		Command:     ResolveCommand(workflowDir, s.Command, vt, phase),
+		CaptureMode: capMode,
 	}, nil
 }
 

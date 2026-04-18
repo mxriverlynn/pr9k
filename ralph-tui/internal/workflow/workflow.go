@@ -182,6 +182,13 @@ func (r *Runner) Terminate() {
 // RunStep returns an error if command is empty rather than panicking, so callers
 // that build commands dynamically get a clear failure instead of a runtime panic.
 func (r *Runner) RunStep(stepName string, command []string) error {
+	return r.RunStepFull(stepName, command, ui.CaptureLastLine)
+}
+
+// RunStepFull is like RunStep but accepts an explicit captureMode.
+// Use CaptureFullStdout to bind the complete stdout payload (up to 32 KiB)
+// instead of only the last non-empty line.
+func (r *Runner) RunStepFull(stepName string, command []string, captureMode ui.CaptureMode) error {
 	if len(command) == 0 {
 		return fmt.Errorf("workflow: RunStep %q: empty command", stepName)
 	}
@@ -190,7 +197,7 @@ func (r *Runner) RunStep(stepName string, command []string) error {
 	r.terminated = false
 	r.processMu.Unlock()
 
-	return r.runCommand(stepName, command, nil, nil, nil)
+	return r.runCommand(stepName, command, nil, nil, nil, captureMode)
 }
 
 // RunSandboxedStep executes command inside a Docker sandbox. An explicit empty
@@ -227,7 +234,7 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 	}()
 
 	if opts.CaptureMode != ui.CaptureResult {
-		return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil)
+		return r.runCommand(stepName, command, bytes.NewReader(nil), &opts, nil, ui.CaptureLastLine)
 	}
 
 	// Construct the claudestream pipeline (D14, D15, D6).
@@ -265,7 +272,7 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 		r.processMu.Unlock()
 	}()
 
-	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline)
+	cmdErr := r.runCommand(stepName, command, bytes.NewReader(nil), &opts, pipeline, ui.CaptureLastLine)
 
 	// Fold stats into lastStats (D21) — always, regardless of error.
 	r.mu.Lock()
@@ -323,11 +330,13 @@ func (r *Runner) RunSandboxedStep(stepName string, command []string, opts Sandbo
 //     with "[stderr] " before being sent to sendLine and the file logger (D27).
 //
 // When pipeline is nil, both stdout and stderr use the existing 256KB-scanner
-// path unchanged (D9).
+// path unchanged (D9). captureMode controls how lastCapture is set:
+//   - CaptureLastLine (zero value): last non-empty stdout line (default).
+//   - CaptureFullStdout: all stdout lines joined with "\n", capped at 32 KiB.
 //
 // lastCapture is NOT set by runCommand when pipeline is non-nil; the caller
 // (RunSandboxedStep) sets it after inspecting the aggregator.
-func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions, pipeline *claudestream.Pipeline) error {
+func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, opts *SandboxOptions, pipeline *claudestream.Pipeline, captureMode ui.CaptureMode) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Dir = r.projectDir
 	if stdin != nil {
@@ -492,7 +501,11 @@ func (r *Runner) runCommand(stepName string, command []string, stdin io.Reader, 
 
 		r.mu.Lock()
 		if waitErr == nil {
-			r.lastCapture = lastNonEmptyLine(capturedLines)
+			if captureMode == ui.CaptureFullStdout {
+				r.lastCapture = fullStdoutCapture(capturedLines)
+			} else {
+				r.lastCapture = lastNonEmptyLine(capturedLines)
+			}
 		} else {
 			r.lastCapture = ""
 		}
@@ -561,6 +574,19 @@ func lastNonEmptyLine(lines []string) string {
 		}
 	}
 	return ""
+}
+
+// fullStdoutCapture joins lines with "\n". If the result exceeds 32 KiB, the
+// first 30 KiB are kept verbatim and a truncation marker is appended so callers
+// can detect the truncation. Returns "" when lines is empty.
+func fullStdoutCapture(lines []string) string {
+	const hardCap = 32 * 1024
+	const keepBytes = 30 * 1024
+	joined := strings.Join(lines, "\n")
+	if len(joined) > hardCap {
+		return joined[:keepBytes] + "\n[...truncated, full content exceeds 32 KiB]"
+	}
+	return joined
 }
 
 // WriteToLog writes a single line directly via the sendLine callback, without

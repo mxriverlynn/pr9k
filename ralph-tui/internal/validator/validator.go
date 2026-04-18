@@ -82,6 +82,7 @@ type vStep struct {
 	IsClaude         *bool    `json:"isClaude"`
 	Command          []string `json:"command,omitempty"`
 	CaptureAs        *string  `json:"captureAs,omitempty"`
+	CaptureMode      *string  `json:"captureMode,omitempty"`
 	BreakLoopIfEmpty bool     `json:"breakLoopIfEmpty,omitempty"`
 }
 
@@ -387,6 +388,21 @@ func validatePhase(
 					*errs = append(*errs, at("schema", fmt.Sprintf("duplicate captureAs %q in phase", ca)))
 				}
 				seenCaptureAs[ca] = true
+			}
+		}
+
+		// Schema 2 — captureMode: only valid on non-claude steps; value must be
+		// "", "lastLine", or "fullStdout".
+		if step.CaptureMode != nil {
+			cm := *step.CaptureMode
+			switch cm {
+			case "", "lastLine", "fullStdout":
+				// valid
+			default:
+				*errs = append(*errs, at("schema", fmt.Sprintf("captureMode %q is not valid; use \"lastLine\" or \"fullStdout\"", cm)))
+			}
+			if step.IsClaude != nil && *step.IsClaude {
+				*errs = append(*errs, at("schema", "captureMode must not be set on claude steps"))
 			}
 		}
 

@@ -25,7 +25,7 @@ The captured value depends on the step type.
 
 ### Non-claude steps (`isClaude: false`)
 
-`LastCapture()` returns the **last non-empty stdout line** from the most recent step, with leading/trailing whitespace trimmed. Specifically:
+By default (and when `captureMode` is `"lastLine"` or absent), `LastCapture()` returns the **last non-empty stdout line** from the most recent step, with leading/trailing whitespace trimmed. Specifically:
 
 - Only `stdout` is captured — `stderr` is discarded for this purpose (but still streamed to the TUI log)
 - Only the **last** non-empty line is kept — earlier output is visible in the log but not available as the capture value
@@ -33,6 +33,28 @@ The captured value depends on the step type.
 - If the step fails (non-zero exit or user-terminated), the capture value is reset to `""`
 
 This means you should design capture scripts to print the captured value **last** — for example, a script that prints debug info to stderr and the result to stdout. Don't print the result first and then print progress messages.
+
+#### Capturing multi-line output with `captureMode: "fullStdout"`
+
+When a step emits a multi-line payload — such as a GitHub issue body or a git diff — set `captureMode` to `"fullStdout"`:
+
+```json
+{
+  "name": "Get issue body",
+  "isClaude": false,
+  "command": ["scripts/get_issue_body", "{{ISSUE_ID}}"],
+  "captureAs": "ISSUE_BODY",
+  "captureMode": "fullStdout"
+}
+```
+
+With `captureMode: "fullStdout"`, all stdout lines are joined with `"\n"` and bound to the variable. A hard cap of **32 KiB** applies: if the joined content exceeds 32 KiB, the first 30 KiB are kept verbatim and the following marker is appended:
+
+```
+[...truncated, full content exceeds 32 KiB]
+```
+
+Valid `captureMode` values: `""` (or absent), `"lastLine"`, `"fullStdout"`. Any other value is rejected at config-load time by the validator. Setting `captureMode` on a claude step is also rejected — claude steps always use the `claudestream` aggregator path.
 
 ### Claude steps (`isClaude: true`)
 
