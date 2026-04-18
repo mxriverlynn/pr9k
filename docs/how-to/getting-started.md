@@ -23,11 +23,16 @@ make build
 
 `make build` produces:
 
-- `bin/pr9k` — the orchestrator binary
-- `bin/config.json` — the default workflow config
-- `bin/prompts/` — the default Claude prompt files
-- `bin/scripts/` — helper scripts (`get_next_issue`, `get_gh_user`, `close_gh_issue`, ...)
-- `bin/ralph-art.txt` — ASCII art shown at the first init step
+```
+bin/
+├── pr9k                          # the orchestrator binary
+└── .pr9k/
+    └── workflow/
+        ├── config.json           # default workflow config
+        ├── ralph-art.txt         # ASCII art shown at the first init step
+        ├── prompts/              # default Claude prompt files
+        └── scripts/              # helper scripts (get_next_issue, get_gh_user, close_gh_issue, ...)
+```
 
 `bin/` is self-contained — you can copy it elsewhere or symlink `bin/pr9k` into your `PATH`.
 
@@ -65,10 +70,17 @@ To check which version you are running without launching the workflow:
 
 ## Pointing at a different workflow bundle
 
-If your pr9k install lives somewhere other than the current directory's resolved binary path — for example, if you're testing a feature branch of pr9k itself — pass `--workflow-dir` to override the workflow directory:
+pr9k resolves its workflow bundle automatically in two steps:
+
+1. `<projectDir>/.pr9k/workflow/` — checked first (in-repo override; useful for per-repo custom workflows)
+2. `<executableDir>/.pr9k/workflow/` — fallback (the standard shipped bundle from `make build`)
+
+To use a custom bundle in your target repo, create `.pr9k/workflow/` with at least a `config.json` and the required `scripts/` and `prompts/` directories. pr9k picks it up with no flags needed.
+
+To override both candidates explicitly — for example, when testing a feature branch of pr9k — pass `--workflow-dir`:
 
 ```bash
-/path/to/pr9k/bin/pr9k --workflow-dir /path/to/pr9k/bin
+/path/to/pr9k/bin/pr9k --workflow-dir /path/to/pr9k/bin/.pr9k/workflow
 ```
 
 The workflow directory is where pr9k looks for `config.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch pr9k (or can be overridden with `--project-dir`).

@@ -32,7 +32,7 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 ## Key Design Decisions
 
 - Two distinct directories, captured separately at startup:
-  - **WorkflowDir (install dir)** — where pr9k's bundled `config.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved from the executable path via `os.Executable()` + `filepath.EvalSymlinks`, or overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
+  - **WorkflowDir (install dir)** — where pr9k's bundled `config.json`, `scripts/`, `prompts/`, and `ralph-art.txt` live. Resolved via two-candidate search: `<projectDir>/.pr9k/workflow/` first (in-repo override), then `<executableDir>/.pr9k/workflow/` (shipped bundle from `make build`). Overridden with `--workflow-dir`. Anchors `{{WORKFLOW_DIR}}` template substitution and relative script-path resolution.
   - **ProjectDir (target repo)** — the user's shell CWD captured via `os.Getwd()` at startup, or overridden with `--project-dir`. Governs subprocess `cmd.Dir` (so `gh`, `git`, `claude` operate against the target repo), the `logs/` output location, and `{{PROJECT_DIR}}` substitution.
 - The `get_next_issue` script sorts open issues and picks the lowest number
 - Claude steps run inside an ephemeral Docker container (image `docker/sandbox-templates:claude-code`) via `RunSandboxedStep`, with the target repo and Claude profile directory bind-mounted. Non-claude steps run directly on the host.
