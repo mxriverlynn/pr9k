@@ -2489,3 +2489,125 @@ func TestValidate_ResumePrevious_SameModelNoWarn(t *testing.T) {
 	}
 }
 
+// TP-007a: TestValidate_ResumePrevious_FirstStepWarn_Initialize verifies that
+// resumePrevious on the first step of the initialize phase emits a warning.
+func TestValidate_ResumePrevious_FirstStepWarn_Initialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"InitA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious in initialize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning in initialize phase; got: %v", errs)
+	}
+}
+
+// TP-007b: TestValidate_ResumePrevious_FirstStepWarn_Finalize verifies that
+// resumePrevious on the first step of the finalize phase emits a warning.
+func TestValidate_ResumePrevious_FirstStepWarn_Finalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": [
+			{"name":"FinalA","isClaude":true,"model":"sonnet","promptFile":"a.md","resumePrevious":true}
+		]
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("first-step resumePrevious in finalize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "no previous step to resume from") {
+		t.Errorf("expected first-step warning in finalize phase; got: %v", errs)
+	}
+}
+
+// TP-007c: TestValidate_ResumePrevious_CrossModelWarn_Initialize verifies that
+// a cross-model resumePrevious pair in the initialize phase emits a warning.
+func TestValidate_ResumePrevious_CrossModelWarn_Initialize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [
+			{"name":"InitA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"InitB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious in initialize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning in initialize phase; got: %v", errs)
+	}
+}
+
+// TP-007d: TestValidate_ResumePrevious_CrossModelWarn_Finalize verifies that
+// a cross-model resumePrevious pair in the finalize phase emits a warning.
+func TestValidate_ResumePrevious_CrossModelWarn_Finalize(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "a.md", "do a")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Iter","isClaude":false,"command":["scripts/run"]}
+		],
+		"finalize": [
+			{"name":"FinalA","isClaude":true,"model":"opus","promptFile":"a.md"},
+			{"name":"FinalB","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		]
+	}`)
+	errs := validator.Validate(dir)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("cross-model resumePrevious in finalize should warn, not error; got: %v", errs)
+	}
+	if !hasError(errs, "cross-model resume") {
+		t.Errorf("expected cross-model warning in finalize phase; got: %v", errs)
+	}
+}
+
+// TP-008: TestValidate_ResumePrevious_NoPrevModel_NoCrossModelWarn verifies
+// that when a claude step follows a non-claude step (which has no model field),
+// resumePrevious does not emit a spurious cross-model warning.
+func TestValidate_ResumePrevious_NoPrevModel_NoCrossModelWarn(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "run")
+	writePrompt(t, dir, "b.md", "do b")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Shell","isClaude":false,"command":["scripts/run"]},
+			{"name":"Claude","isClaude":true,"model":"sonnet","promptFile":"b.md","resumePrevious":true}
+		],
+		"finalize": []
+	}`)
+	errs := validator.Validate(dir)
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "cross-model resume") {
+			t.Errorf("should not emit cross-model warning when prev step has no model: %v", e)
+		}
+	}
+}

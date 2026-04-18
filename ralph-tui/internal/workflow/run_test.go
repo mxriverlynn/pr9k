@@ -85,8 +85,8 @@ func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui
 	return nil
 }
 
-func (f *fakeExecutor) WasTerminated() bool          { return false }
-func (f *fakeExecutor) WasTimedOut() bool             { return f.wasTimedOut }
+func (f *fakeExecutor) WasTerminated() bool               { return false }
+func (f *fakeExecutor) WasTimedOut() bool                 { return f.wasTimedOut }
 func (f *fakeExecutor) SessionBlacklisted(id string) bool { return f.sessionBlacklist[id] }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {
