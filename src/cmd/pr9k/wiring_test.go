@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
@@ -209,22 +210,28 @@ func TestRunWithShutdown_OrderIsRunThenShutdown(t *testing.T) {
 
 func TestRunWithShutdown_WaitsForWorkflowDone(t *testing.T) {
 	workflowDone := make(chan struct{})
-	released := make(chan struct{})
 
 	fakeProg := &fakeTeaProgram{}
 	fakeRunner := &fakeShutdowner{}
 
+	returned := make(chan struct{})
 	go func() {
-		close(workflowDone)
-		close(released)
+		_ = runWithShutdown(fakeProg, fakeRunner, workflowDone)
+		close(returned)
 	}()
 
-	_ = runWithShutdown(fakeProg, fakeRunner, workflowDone)
+	select {
+	case <-returned:
+		t.Fatal("runWithShutdown returned before workflowDone was closed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(workflowDone)
 
 	select {
-	case <-released:
-	default:
-		t.Error("runWithShutdown returned before workflowDone was closed")
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("runWithShutdown did not return after workflowDone was closed")
 	}
 }
 
