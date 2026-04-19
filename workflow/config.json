@@ -24,15 +24,15 @@
     { "name": "Get post-feature diff", "isClaude": false, "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"], "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" },
     { "name": "Test planning",         "isClaude": true,  "model": "opus",   "promptFile": "test-planning.md" },
     { "name": "Test writing",     "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md", "timeoutSeconds": 900 },
-    { "name": "Code review",          "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
-    { "name": "Check review verdict", "isClaude": false, "command": ["scripts/review_verdict"], "captureAs": "REVIEW_HAS_FIXES", "captureMode": "lastLine" },
-    { "name": "Fix review items",     "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md", "skipIfCaptureEmpty": "REVIEW_HAS_FIXES" },
     { "name": "Summarize to issue", "isClaude": false, "command": ["scripts/post_issue_summary", "{{ISSUE_ID}}"] },
     { "name": "Close issue",      "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"] },
-    { "name": "Update docs",      "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
     { "name": "Git push",         "isClaude": false, "command": ["git", "push"] }
   ],
   "finalize": [
+    { "name": "Code review",          "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
+    { "name": "Check review verdict", "isClaude": false, "command": ["scripts/review_verdict"], "captureAs": "REVIEW_HAS_FIXES", "captureMode": "lastLine" },
+    { "name": "Fix review items",     "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md", "skipIfCaptureEmpty": "REVIEW_HAS_FIXES" },
+    { "name": "Update docs",      "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
     { "name": "Deferred work",   "isClaude": true,  "model": "sonnet", "promptFile": "deferred-work.md" },
     { "name": "Lessons learned", "isClaude": true,  "model": "sonnet", "promptFile": "lessons-learned.md" },
     { "name": "Final git push",  "isClaude": false, "command": ["git", "push"] }
