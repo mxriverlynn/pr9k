@@ -148,16 +148,23 @@ func TestPrompts_NumberedStepsConsecutive(t *testing.T) {
 	}
 }
 
-// TP-005: all six iteration-phase prompts reference {{ISSUE_BODY}} and {{PROJECT_CARD}};
-// four of them also reference {{PRE_REVIEW_DIFF}}; feature-work.md and test-planning.md
-// must NOT reference {{PRE_REVIEW_DIFF}} (those run before the feature commit exists).
+// TP-005: iteration-phase prompts reference {{ISSUE_BODY}} and {{PROJECT_CARD}};
+// test-writing.md also references {{PRE_REVIEW_DIFF}}; feature-work.md and
+// test-planning.md must NOT reference {{PRE_REVIEW_DIFF}} (those run before
+// the feature commit exists). Finalize-phase prompts (code review, fixes,
+// update docs) operate on the full branch and must not reference any iteration
+// variables — those are cleared by the time finalize runs.
 func TestPrompts_IterationPhase_ReferencesContextVars(t *testing.T) {
 	dir := promptsDir(t)
 
-	// Prompts that should contain both ISSUE_BODY and PROJECT_CARD (but NOT PRE_REVIEW_DIFF).
+	// Iteration prompts that should contain both ISSUE_BODY and PROJECT_CARD
+	// (but NOT PRE_REVIEW_DIFF).
 	preFeaturePrompts := []string{"feature-work.md", "test-planning.md"}
-	// Prompts that should contain ISSUE_BODY, PROJECT_CARD, and PRE_REVIEW_DIFF.
-	postFeaturePrompts := []string{"test-writing.md", "code-review-changes.md", "code-review-fixes.md", "update-docs.md"}
+	// Iteration prompts that should contain ISSUE_BODY, PROJECT_CARD, and
+	// PRE_REVIEW_DIFF.
+	postFeaturePrompts := []string{"test-writing.md"}
+	// Finalize prompts must not reference iteration-scoped variables.
+	finalizePrompts := []string{"code-review-changes.md", "code-review-fixes.md", "update-docs.md"}
 
 	readPrompt := func(t *testing.T, name string) string {
 		t.Helper()
@@ -196,6 +203,19 @@ func TestPrompts_IterationPhase_ReferencesContextVars(t *testing.T) {
 			}
 			if !strings.Contains(body, "{{PRE_REVIEW_DIFF}}") {
 				t.Errorf("missing {{PRE_REVIEW_DIFF}}")
+			}
+		})
+	}
+
+	iterOnlyVars := []string{"{{ISSUE_ID}}", "{{ISSUE_BODY}}", "{{PROJECT_CARD}}", "{{PRE_REVIEW_DIFF}}", "{{STARTING_SHA}}"}
+	for _, name := range finalizePrompts {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			body := readPrompt(t, name)
+			for _, v := range iterOnlyVars {
+				if strings.Contains(body, v) {
+					t.Errorf("finalize prompt must not reference iteration-scoped variable %s", v)
+				}
 			}
 		})
 	}

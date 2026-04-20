@@ -199,14 +199,14 @@ Appends one JSON line to `<projectDir>/.pr9k/iteration.jsonl`. Safe for concurre
 
 ### captureStates and skipIfCaptureEmpty
 
-`Run` maintains a `captureStates map[string]ui.StepState` for the iteration phase. After each step in an iteration, the map records the `StepState` of every step that has a `captureAs` name. The map is reset at the start of each iteration so captures from one iteration do not influence skip decisions in the next.
+`Run` maintains a separate `captureStates map[string]ui.StepState` for each phase that supports conditional skip — one for the iteration phase (reset at the start of each iteration) and one for the finalize phase (populated as finalize steps run; finalize executes once per run). Each map records the `StepState` of every step in that phase that has a `captureAs` name.
 
-Before executing an iteration step that has `SkipIfCaptureEmpty` set, `Run` checks two conditions:
+Before executing a step in either phase that has `SkipIfCaptureEmpty` set, `Run` checks two conditions:
 
 1. The named capture's current value in the VarTable is the empty string.
-2. The source step's state in `captureStates` is `StepDone` (success).
+2. The source step's state in the phase's `captureStates` is `StepDone` (success).
 
-If both conditions hold, the step is marked `StepSkipped`, a log line `"Step skipped (capture %q is empty)"` is emitted, an `IterationRecord` with `status: "skipped"` is appended to `iteration.jsonl`, and the iteration loop continues to the next step. If the source step failed (`StepFailed`) the skip logic does not apply — the step runs normally, guarding against silently ignoring a crash.
+If both conditions hold, the step is marked `StepSkipped`, a log line `"Step skipped (capture %q is empty)"` is emitted, an `IterationRecord` with `status: "skipped"` is appended to `iteration.jsonl`, and the loop continues to the next step. If the source step failed (`StepFailed`) the skip logic does not apply — the step runs normally, guarding against silently ignoring a crash.
 
 See [Skipping Steps Conditionally](../how-to/skipping-steps-conditionally.md) for usage examples and the fail-safe semantics.
 

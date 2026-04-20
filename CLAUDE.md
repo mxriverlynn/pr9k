@@ -19,12 +19,13 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 Each iteration:
 1. Find next open issue assigned to user with label "ralph" (lowest number first)
-2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Code review (opus) → Fix review items (sonnet) → Summarize to issue → Close issue → Update docs (sonnet) → Git push
+2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Summarize to issue → Close issue → Git push
 
-After all iterations, three finalization steps run:
-1. Deferred work — creates issues from `deferred.txt`
-2. Lessons learned — codifies from `progress.txt`
-3. Final git push
+After all iterations, finalization steps run (once per run, against the full set of branch changes):
+1. Code review (opus) → Check review verdict → Fix review items (sonnet, skipped when the reviewer finds nothing) → Update docs (sonnet)
+2. Deferred work — creates issues from `deferred.txt`
+3. Lessons learned — codifies from `progress.txt`
+4. Final git push
 
 Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) are created in the **target repo's working directory**, never committed, and consumed/deleted by later steps.
 

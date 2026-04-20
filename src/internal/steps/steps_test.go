@@ -29,8 +29,8 @@ func TestLoadSteps_IterationCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Iteration) != 15 {
-		t.Errorf("expected 15 iteration steps, got %d", len(got.Iteration))
+	if len(got.Iteration) != 11 {
+		t.Errorf("expected 11 iteration steps, got %d", len(got.Iteration))
 	}
 }
 
@@ -63,8 +63,8 @@ func TestLoadSteps_FinalizeCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Finalize) != 3 {
-		t.Errorf("expected 3 finalization steps, got %d", len(got.Finalize))
+	if len(got.Finalize) != 7 {
+		t.Errorf("expected 7 finalization steps, got %d", len(got.Finalize))
 	}
 }
 
@@ -83,12 +83,8 @@ func TestLoadSteps_IterationOrder(t *testing.T) {
 		"Get post-feature diff",
 		"Test planning",
 		"Test writing",
-		"Code review",
-		"Check review verdict",
-		"Fix review items",
 		"Summarize to issue",
 		"Close issue",
-		"Update docs",
 		"Git push",
 	}
 	for i, want := range wantNames {
@@ -104,7 +100,15 @@ func TestLoadSteps_FinalizeOrder(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	wantNames := []string{"Deferred work", "Lessons learned", "Final git push"}
+	wantNames := []string{
+		"Code review",
+		"Check review verdict",
+		"Fix review items",
+		"Update docs",
+		"Deferred work",
+		"Lessons learned",
+		"Final git push",
+	}
 	for i, want := range wantNames {
 		if got.Finalize[i].Name != want {
 			t.Errorf("step[%d]: expected name %q, got %q", i, want, got.Finalize[i].Name)
@@ -169,16 +173,19 @@ func TestLoadSteps_FinalizeClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Deferred work" is a finalization claude step
+	// "Code review" is a finalization claude step at index 0.
 	s := got.Finalize[0]
+	if s.Name != "Code review" {
+		t.Fatalf("expected first finalize step to be %q, got %q", "Code review", s.Name)
+	}
 	if !s.IsClaude {
-		t.Error("Deferred work: expected IsClaude=true")
+		t.Error("Code review: expected IsClaude=true")
 	}
 	if s.Model == "" {
-		t.Error("Deferred work: expected non-empty Model")
+		t.Error("Code review: expected non-empty Model")
 	}
 	if s.PromptFile == "" {
-		t.Error("Deferred work: expected non-empty PromptFile")
+		t.Error("Code review: expected non-empty PromptFile")
 	}
 }
 
@@ -188,8 +195,11 @@ func TestLoadSteps_FinalizeNonClaudeFieldsPopulated(t *testing.T) {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
 
-	// "Final git push" is a non-claude step
-	s := got.Finalize[2]
+	// "Final git push" is a non-claude step, appears last in the finalize phase.
+	s := got.Finalize[len(got.Finalize)-1]
+	if s.Name != "Final git push" {
+		t.Fatalf("expected last finalize step to be %q, got %q", "Final git push", s.Name)
+	}
 	if s.IsClaude {
 		t.Error("Final git push: expected IsClaude=false")
 	}

@@ -276,14 +276,34 @@ func TestBind_panicOnReservedNameInIterationPhase(t *testing.T) {
 	vt.Bind(vars.Iteration, "ITER", "99")
 }
 
-func TestBind_panicInFinalizePhase(t *testing.T) {
+func TestBind_finalizePhaseInFinalizeTable(t *testing.T) {
+	vt := newTable()
+	vt.SetPhase(vars.Finalize)
+	vt.Bind(vars.Finalize, "REVIEW_HAS_FIXES", "yes")
+	v, ok := vt.Get("REVIEW_HAS_FIXES")
+	if !ok || v != "yes" {
+		t.Errorf("expected REVIEW_HAS_FIXES=yes in finalize phase, got %q ok=%v", v, ok)
+	}
+}
+
+func TestBind_finalizeNotVisibleInIteration(t *testing.T) {
+	vt := newTable()
+	vt.Bind(vars.Finalize, "REVIEW_HAS_FIXES", "yes")
+
+	_, ok := vt.GetInPhase(vars.Iteration, "REVIEW_HAS_FIXES")
+	if ok {
+		t.Error("finalize-scoped variable must not be visible in iteration phase")
+	}
+}
+
+func TestBind_panicOnReservedNameInFinalizePhase(t *testing.T) {
 	vt := newTable()
 	defer func() {
 		if r := recover(); r == nil {
-			t.Error("expected panic when binding any variable in finalize phase")
+			t.Error("expected panic when binding reserved name WORKFLOW_DIR in finalize phase")
 		}
 	}()
-	vt.Bind(vars.Finalize, "MY_VAR", "value")
+	vt.Bind(vars.Finalize, "WORKFLOW_DIR", "bad")
 }
 
 // --- GetInPhase ---
@@ -299,14 +319,26 @@ func TestGetInPhase_iterationPhaseResolvesIterationFirst(t *testing.T) {
 	}
 }
 
-func TestGetInPhase_finalizePhaseOnlyPersistent(t *testing.T) {
+func TestGetInPhase_finalizePhaseResolvesFinalizeFirst(t *testing.T) {
+	vt := newTable()
+	vt.Bind(vars.Initialize, "FOO", "persistent")
+	vt.Bind(vars.Iteration, "FOO", "iteration")
+	vt.Bind(vars.Finalize, "FOO", "finalize")
+
+	v, ok := vt.GetInPhase(vars.Finalize, "FOO")
+	if !ok || v != "finalize" {
+		t.Errorf("GetInPhase(Finalize) should return finalize value; got %q ok=%v", v, ok)
+	}
+}
+
+func TestGetInPhase_finalizePhaseFallsBackToPersistent(t *testing.T) {
 	vt := newTable()
 	vt.Bind(vars.Initialize, "FOO", "persistent")
 	vt.Bind(vars.Iteration, "FOO", "iteration")
 
 	v, ok := vt.GetInPhase(vars.Finalize, "FOO")
 	if !ok || v != "persistent" {
-		t.Errorf("GetInPhase(Finalize) should return persistent value; got %q ok=%v", v, ok)
+		t.Errorf("GetInPhase(Finalize) should fall back to persistent; got %q ok=%v", v, ok)
 	}
 }
 
@@ -378,12 +410,14 @@ func TestAllCaptures_ReservedNamesFiltered(t *testing.T) {
 	}
 }
 
-// TP-003: AllCaptures respects iteration-shadows-persistent for Iteration phase
-// and returns only persistent for Initialize/Finalize.
+// TP-003: AllCaptures respects iteration-shadows-persistent for Iteration phase,
+// finalize-shadows-persistent for Finalize phase, and returns only persistent
+// for Initialize.
 func TestAllCaptures_IterationShadowsPersistent(t *testing.T) {
 	vt := vars.New("/wf", "/pj", 1)
 	vt.Bind(vars.Initialize, "K", "p")
 	vt.Bind(vars.Iteration, "K", "i")
+	vt.Bind(vars.Finalize, "K", "f")
 
 	if got := vt.AllCaptures(vars.Iteration)["K"]; got != "i" {
 		t.Errorf("AllCaptures(Iteration)[K]: want %q, got %q", "i", got)
@@ -391,8 +425,8 @@ func TestAllCaptures_IterationShadowsPersistent(t *testing.T) {
 	if got := vt.AllCaptures(vars.Initialize)["K"]; got != "p" {
 		t.Errorf("AllCaptures(Initialize)[K]: want %q, got %q", "p", got)
 	}
-	if got := vt.AllCaptures(vars.Finalize)["K"]; got != "p" {
-		t.Errorf("AllCaptures(Finalize)[K]: want %q, got %q", "p", got)
+	if got := vt.AllCaptures(vars.Finalize)["K"]; got != "f" {
+		t.Errorf("AllCaptures(Finalize)[K]: want %q, got %q", "f", got)
 	}
 }
 

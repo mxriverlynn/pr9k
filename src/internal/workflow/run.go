@@ -624,9 +624,33 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	// finalize step, safely falling through to a fresh session.
 	var prevFinalStats claudestream.StepStats
 	var prevFinalState ui.StepState
+	// finalizeCaptureStates mirrors the iteration captureStates map: it tracks
+	// the final StepState of the step that produced each finalize-scoped capture,
+	// so skipIfCaptureEmpty can verify the source step succeeded before skipping.
+	finalizeCaptureStates := make(map[string]ui.StepState)
 	for j, s := range cfg.FinalizeSteps {
 		vt.SetStep(j+1, len(cfg.FinalizeSteps), s.Name)
 		push(vars.Finalize)
+
+		// skipIfCaptureEmpty in finalize phase: skip this step when the named
+		// capture is empty AND the step that produced it completed successfully.
+		if s.SkipIfCaptureEmpty != "" {
+			val, ok := vt.GetInPhase(vars.Finalize, s.SkipIfCaptureEmpty)
+			if !ok {
+				executor.WriteToLog(fmt.Sprintf("warning: skipIfCaptureEmpty %q not found in finalize scope; step will run", s.SkipIfCaptureEmpty))
+			}
+			if val == "" && finalizeCaptureStates[s.SkipIfCaptureEmpty] == ui.StepDone {
+				header.SetStepState(j, ui.StepSkipped)
+				executor.WriteToLog(fmt.Sprintf("Step skipped (capture %q is empty)", s.SkipIfCaptureEmpty))
+				skipRec := newIterationRecord("", 0, s, "skipped")
+				skipRec.Notes = fmt.Sprintf("capture %q empty", s.SkipIfCaptureEmpty)
+				if logErr := AppendIterationRecord(executor.ProjectDir(), skipRec); logErr != nil {
+					executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
+				}
+				continue
+			}
+		}
+
 		var resumeSID string
 		if s.ResumePrevious {
 			var gate string
@@ -686,6 +710,15 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevFinalState = th.lastState
 		if action == ui.ActionQuit {
 			return RunResult{IterationsRun: iterationsRun}
+		}
+		captured := executor.LastCapture()
+		if s.CaptureAs != "" {
+			vt.Bind(vars.Finalize, s.CaptureAs, captured)
+			push(vars.Finalize)
+			writeCaptureLog(s.CaptureAs, captured)
+			// Record the final state so skipIfCaptureEmpty checks can verify
+			// the source step completed successfully (StepDone) before skipping.
+			finalizeCaptureStates[s.CaptureAs] = th.lastState
 		}
 	}
 

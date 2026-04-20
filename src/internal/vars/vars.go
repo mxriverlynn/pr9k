@@ -44,11 +44,17 @@ var reservedNames = map[string]bool{
 // cleared at the start of each iteration via ResetIteration. It is not visible
 // during the finalize phase.
 //
+// The finalize table is written by finalize-phase captureAs bindings. Finalize
+// runs once, so its entries are never cleared. It is visible only during the
+// finalize phase.
+//
 // Resolution order during an iteration step: iteration table → persistent table.
-// During finalize (or initialize): persistent table only.
+// During finalize: finalize table → persistent table.
+// During initialize: persistent table only.
 type VarTable struct {
 	persistent map[string]string
 	iteration  map[string]string
+	finalize   map[string]string
 	phase      Phase
 }
 
@@ -60,6 +66,7 @@ func New(workflowDir, projectDir string, maxIter int) *VarTable {
 	vt := &VarTable{
 		persistent: make(map[string]string),
 		iteration:  make(map[string]string),
+		finalize:   make(map[string]string),
 		phase:      Initialize,
 	}
 	vt.persistent["WORKFLOW_DIR"] = workflowDir
@@ -84,10 +91,16 @@ func (vt *VarTable) Get(name string) (string, bool) {
 
 // GetInPhase looks up a variable using the resolution order for the given phase.
 // During Iteration: checks the iteration table first, then the persistent table.
-// During Initialize or Finalize: checks only the persistent table.
+// During Finalize: checks the finalize table first, then the persistent table.
+// During Initialize: checks only the persistent table.
 func (vt *VarTable) GetInPhase(phase Phase, name string) (string, bool) {
-	if phase == Iteration {
+	switch phase {
+	case Iteration:
 		if v, ok := vt.iteration[name]; ok {
+			return v, true
+		}
+	case Finalize:
+		if v, ok := vt.finalize[name]; ok {
 			return v, true
 		}
 	}
@@ -98,7 +111,7 @@ func (vt *VarTable) GetInPhase(phase Phase, name string) (string, bool) {
 // Bind records a captureAs variable binding for the given phase.
 // For Initialize, the value is stored in the persistent table.
 // For Iteration, the value is stored in the iteration table.
-// For Finalize, captureAs bindings are not valid and Bind panics.
+// For Finalize, the value is stored in the finalize table.
 // Bind panics if name is a reserved built-in name.
 func (vt *VarTable) Bind(phase Phase, name, value string) {
 	if reservedNames[name] {
@@ -110,7 +123,7 @@ func (vt *VarTable) Bind(phase Phase, name, value string) {
 	case Iteration:
 		vt.iteration[name] = value
 	case Finalize:
-		panic(fmt.Sprintf("vars: captureAs binding %q is not valid in the finalize phase", name))
+		vt.finalize[name] = value
 	}
 }
 
@@ -138,8 +151,9 @@ func (vt *VarTable) SetStep(num, count int, name string) {
 // AllCaptures returns a defensive copy of all non-built-in variables visible
 // in the given phase. During Iteration, both the iteration and persistent
 // tables contribute (iteration entries shadow persistent ones). During
-// Initialize or Finalize, only the persistent table is included. Reserved
-// built-in names are excluded from the result.
+// Finalize, both the finalize and persistent tables contribute (finalize
+// entries shadow persistent ones). During Initialize, only the persistent
+// table is included. Reserved built-in names are excluded from the result.
 func (vt *VarTable) AllCaptures(phase Phase) map[string]string {
 	result := make(map[string]string)
 	for k, v := range vt.persistent {
@@ -147,8 +161,15 @@ func (vt *VarTable) AllCaptures(phase Phase) map[string]string {
 			result[k] = v
 		}
 	}
-	if phase == Iteration {
+	switch phase {
+	case Iteration:
 		for k, v := range vt.iteration {
+			if !reservedNames[k] {
+				result[k] = v
+			}
+		}
+	case Finalize:
+		for k, v := range vt.finalize {
 			if !reservedNames[k] {
 				result[k] = v
 			}
