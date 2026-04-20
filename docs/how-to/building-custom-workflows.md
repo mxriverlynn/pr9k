@@ -75,28 +75,29 @@ Relative paths containing a `/` separator are resolved against the workflow dire
 
 ## The Default Workflow
 
-The default iteration workflow has 14 steps:
+The default iteration workflow has 11 steps:
 
 1. **Get next issue** (shell) — Finds the lowest-numbered open GitHub issue labeled "ralph" assigned to the user; exits the loop when none remain
 2. **Get starting SHA** (shell) — Records `HEAD` as `{{STARTING_SHA}}` for later diff references
 3. **Get issue body** (shell) — Fetches the issue title and body via `gh` and captures them as `{{ISSUE_BODY}}` (fullStdout)
 4. **Get project card** (shell) — Runs `scripts/project_card` to probe build-config files and captures a short project summary as `{{PROJECT_CARD}}` (fullStdout)
 5. **Feature work** (sonnet) — Implements the GitHub issue
-6. **Get post-feature diff** (shell) — Captures `git diff {{STARTING_SHA}}..HEAD --stat` as `{{PRE_REVIEW_DIFF}}` (fullStdout) for use in later review prompts
+6. **Get post-feature diff** (shell) — Captures `git diff {{STARTING_SHA}}..HEAD --stat` as `{{PRE_REVIEW_DIFF}}` (fullStdout) for use in the test-writing prompt
 7. **Test planning** (opus) — Creates a test plan
 8. **Test writing** (sonnet) — Writes tests from the plan
-9. **Code review** (opus) — Reviews changes since the starting SHA
-10. **Fix review items** (sonnet) — Implements review findings
-11. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
-12. **Close issue** (shell) — Closes the GitHub issue via `gh`
-13. **Update docs** (sonnet) — Updates project documentation
-14. **Git push** (shell) — Pushes all commits
+9. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
+10. **Close issue** (shell) — Closes the GitHub issue via `gh`
+11. **Git push** (shell) — Pushes all commits
 
-The default finalization workflow has 3 steps:
+The default finalization workflow has 7 steps — these run once per pr9k run against the full set of branch changes, not per issue:
 
-1. **Deferred work** (sonnet) — Creates issues from accumulated `deferred.txt`
-2. **Lessons learned** (sonnet) — Updates coding standards from `progress.txt`
-3. **Final git push** (shell) — Pushes finalization commits
+1. **Code review** (opus) — Reviews every change on the branch; writes findings (or the `NOTHING-TO-FIX` sentinel) to `code-review.md`
+2. **Check review verdict** (shell) — `scripts/review_verdict` reads `code-review.md` and captures `REVIEW_HAS_FIXES` (empty when the sentinel is present)
+3. **Fix review items** (sonnet) — Implements the review findings; `skipIfCaptureEmpty: REVIEW_HAS_FIXES` skips this step when the reviewer found nothing
+4. **Update docs** (sonnet) — Updates project documentation for the whole branch
+5. **Deferred work** (sonnet) — Creates issues from accumulated `deferred.txt`
+6. **Lessons learned** (sonnet) — Updates coding standards from `progress.txt`
+7. **Final git push** (shell) — Pushes finalization commits
 
 ## Creating a Custom Workflow
 

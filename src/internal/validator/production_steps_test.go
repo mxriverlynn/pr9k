@@ -181,14 +181,16 @@ func TestProductionStepsJSON_StartingShaDiffInvariant(t *testing.T) {
 	}
 }
 
-// TP-007: shape assertions for the three new capture steps added in issue #127.
+// TP-007: shape assertions for capture steps — iteration-phase captures are
+// checked in the iteration list; finalize-phase captures are checked in the
+// finalize list.
 func TestLoadSteps_IterationCaptureSteps_Shape(t *testing.T) {
 	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
 		t.Fatalf("LoadSteps: %v", err)
 	}
 
-	cases := []struct {
+	iterCases := []struct {
 		name          string
 		wantCmd0      string
 		wantCapture   string
@@ -198,34 +200,53 @@ func TestLoadSteps_IterationCaptureSteps_Shape(t *testing.T) {
 		{"Get issue body", "gh", "ISSUE_BODY", "fullStdout", true},
 		{"Get project card", "scripts/project_card", "PROJECT_CARD", "fullStdout", true},
 		{"Get post-feature diff", "git", "PRE_REVIEW_DIFF", "fullStdout", true},
+	}
+	finalCases := []struct {
+		name          string
+		wantCmd0      string
+		wantCapture   string
+		wantMode      string
+		wantNonClaude bool
+	}{
 		{"Check review verdict", "scripts/review_verdict", "REVIEW_HAS_FIXES", "lastLine", true},
 	}
 
-	for _, tc := range cases {
+	assertStep := func(t *testing.T, list []steps.Step, name, wantCmd0, wantCapture, wantMode string, wantNonClaude bool) {
+		t.Helper()
+		var found *steps.Step
+		for i := range list {
+			if list[i].Name == name {
+				found = &list[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("no step named %q", name)
+		}
+		if wantNonClaude && found.IsClaude {
+			t.Errorf("IsClaude = true, want false")
+		}
+		if len(found.Command) == 0 || found.Command[0] != wantCmd0 {
+			t.Errorf("Command[0] = %q, want %q", found.Command[0], wantCmd0)
+		}
+		if found.CaptureAs != wantCapture {
+			t.Errorf("CaptureAs = %q, want %q", found.CaptureAs, wantCapture)
+		}
+		if found.CaptureMode != wantMode {
+			t.Errorf("CaptureMode = %q, want %q", found.CaptureMode, wantMode)
+		}
+	}
+
+	for _, tc := range iterCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			var found *steps.Step
-			for i := range sf.Iteration {
-				if sf.Iteration[i].Name == tc.name {
-					found = &sf.Iteration[i]
-					break
-				}
-			}
-			if found == nil {
-				t.Fatalf("no iteration step named %q", tc.name)
-			}
-			if tc.wantNonClaude && found.IsClaude {
-				t.Errorf("IsClaude = true, want false")
-			}
-			if len(found.Command) == 0 || found.Command[0] != tc.wantCmd0 {
-				t.Errorf("Command[0] = %q, want %q", found.Command[0], tc.wantCmd0)
-			}
-			if found.CaptureAs != tc.wantCapture {
-				t.Errorf("CaptureAs = %q, want %q", found.CaptureAs, tc.wantCapture)
-			}
-			if found.CaptureMode != tc.wantMode {
-				t.Errorf("CaptureMode = %q, want %q", found.CaptureMode, tc.wantMode)
-			}
+			assertStep(t, sf.Iteration, tc.name, tc.wantCmd0, tc.wantCapture, tc.wantMode, tc.wantNonClaude)
+		})
+	}
+	for _, tc := range finalCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			assertStep(t, sf.Finalize, tc.name, tc.wantCmd0, tc.wantCapture, tc.wantMode, tc.wantNonClaude)
 		})
 	}
 
@@ -267,12 +288,13 @@ func TestLoadSteps_IterationContainsSummarizeToIssue(t *testing.T) {
 
 // TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty pins that "Fix review items"
 // has skipIfCaptureEmpty: "REVIEW_HAS_FIXES", wiring it to "Check review verdict".
+// Both steps now live in the finalize phase.
 func TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty(t *testing.T) {
 	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
 		t.Fatalf("LoadSteps: %v", err)
 	}
-	for _, step := range sf.Iteration {
+	for _, step := range sf.Finalize {
 		if step.Name == "Fix review items" {
 			if step.SkipIfCaptureEmpty != "REVIEW_HAS_FIXES" {
 				t.Errorf("SkipIfCaptureEmpty = %q, want %q", step.SkipIfCaptureEmpty, "REVIEW_HAS_FIXES")
@@ -280,12 +302,13 @@ func TestLoadSteps_FixReviewItems_SkipIfCaptureEmpty(t *testing.T) {
 			return
 		}
 	}
-	t.Fatal(`iteration phase has no step named "Fix review items"`)
+	t.Fatal(`finalize phase has no step named "Fix review items"`)
 }
 
 // TestLoadSteps_ReviewVerdictAdjacency pins that "Check review verdict" appears
 // immediately between "Code review" and "Fix review items". A future insertion
 // between these three steps would silently invalidate the capture dependency.
+// All three steps now live in the finalize phase.
 func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
 	sf, err := steps.LoadSteps(getRalphTUIDir(t))
 	if err != nil {
@@ -293,7 +316,7 @@ func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
 	}
 
 	crIdx, crvIdx, friIdx := -1, -1, -1
-	for i, step := range sf.Iteration {
+	for i, step := range sf.Finalize {
 		switch step.Name {
 		case "Code review":
 			crIdx = i
@@ -304,13 +327,13 @@ func TestLoadSteps_ReviewVerdictAdjacency(t *testing.T) {
 		}
 	}
 	if crIdx < 0 {
-		t.Fatal(`no iteration step named "Code review"`)
+		t.Fatal(`no finalize step named "Code review"`)
 	}
 	if crvIdx < 0 {
-		t.Fatal(`no iteration step named "Check review verdict"`)
+		t.Fatal(`no finalize step named "Check review verdict"`)
 	}
 	if friIdx < 0 {
-		t.Fatal(`no iteration step named "Fix review items"`)
+		t.Fatal(`no finalize step named "Fix review items"`)
 	}
 
 	if crIdx >= crvIdx || crvIdx >= friIdx {

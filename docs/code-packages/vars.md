@@ -1,18 +1,18 @@
 # Variable State Management
 
-Owns and resolves runtime variable state for a pr9k run, providing two scoped tables (persistent and iteration) plus a set of built-in variables seeded from CLI flags and updated by the orchestrator.
+Owns and resolves runtime variable state for a pr9k run, providing three scoped tables (persistent, iteration, finalize) plus a set of built-in variables seeded from CLI flags and updated by the orchestrator.
 
-- **Last Updated:** 2026-04-17
+- **Last Updated:** 2026-04-20
 - **Authors:**
   - River Bailey
 
 ## Overview
 
 - `VarTable` holds all runtime variable state for a single run
-- Variables belong to one of two scopes: persistent (survives the whole run) or iteration (cleared at the start of each iteration)
+- Variables belong to one of three scopes: persistent (survives the whole run), iteration (cleared at the start of each iteration), or finalize (written during finalize and visible only in finalize)
 - Seven built-in variables are seeded or updated by the orchestrator: `WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`
 - `captureAs` bindings from step output are routed to the correct scope based on the active workflow phase
-- Resolution order during an iteration step: iteration table → persistent table; during initialize or finalize: persistent table only
+- Resolution order during an iteration step: iteration table → persistent table; during finalize: finalize table → persistent table; during initialize: persistent table only
 
 Key files:
 - `src/internal/vars/vars.go` — `VarTable`, `Phase`, built-in constants, all public methods
@@ -35,12 +35,17 @@ Key files:
 │    iteration-phase captureAs bindings                   │
 │    cleared by ResetIteration() each new iteration       │
 │                                                         │
+│  finalize   map[string]string                           │
+│    finalize-phase captureAs bindings                    │
+│    written once; visible only during Finalize           │
+│                                                         │
 │  phase  Phase  (Initialize | Iteration | Finalize)      │
 └─────────────────────────────────────────────────────────┘
 
 Resolution (Get):
   Iteration phase  →  iteration map → persistent map
-  Initialize/Finalize  →  persistent map only
+  Finalize phase   →  finalize map → persistent map
+  Initialize phase →  persistent map only
 ```
 
 ## Core Types
@@ -83,7 +88,7 @@ For non-claude steps (`isClaude: false`), `captureAs` binds to the **last non-em
 
 For claude steps (`isClaude: true`), `captureAs` binds to **`result.result`** — the `result` field of the `ResultEvent` emitted by `claude -p --output-format stream-json --verbose`. This is the authoritative final answer text, parsed from the NDJSON stream by the `claudestream.Aggregator`. The raw JSON on stdout is never meaningful for binding; `result.result` is.
 
-The `captureAs` variable scoping rules (phase routing to persistent vs. iteration table) apply identically to both step types.
+The `captureAs` variable scoping rules (phase routing to persistent, iteration, or finalize table) apply identically to both step types.
 
 See [Capturing Step Output](../how-to/capturing-step-output.md) for usage examples.
 
@@ -123,7 +128,7 @@ func (vt *VarTable) Bind(phase Phase, name, value string)
 Records a `captureAs` binding for the given phase:
 - `Initialize` → writes to persistent table
 - `Iteration` → writes to iteration table
-- `Finalize` → panics (captureAs is not valid in the finalize phase)
+- `Finalize` → writes to finalize table
 
 Panics if `name` is a reserved built-in name.
 
@@ -154,7 +159,8 @@ Returns a defensive copy of all non-built-in (user-defined) variables visible in
 
 Resolution mirrors `Get`:
 - During `Iteration`: both the persistent and iteration tables contribute; iteration entries shadow persistent ones.
-- During `Initialize` or `Finalize`: only the persistent table is included.
+- During `Finalize`: both the persistent and finalize tables contribute; finalize entries shadow persistent ones.
+- During `Initialize`: only the persistent table is included.
 
 Used by `workflow.buildState` to populate the `Captures` field of `statusline.State` before each `PushState` call. Callers own the returned map — mutations do not affect the VarTable.
 
@@ -183,18 +189,17 @@ func ExtractReferences(input string) []string
 |-------|-------------|----------|
 | Initialize | persistent | persistent only |
 | Iteration | iteration | iteration → persistent |
-| Finalize | panics | persistent only |
+| Finalize | finalize | finalize → persistent |
 
 ## Error Handling
 
-`Bind` panics (rather than returning an error) for two precondition violations:
+`Bind` panics (rather than returning an error) when a `captureAs` binding attempts to overwrite a reserved built-in name:
 
 | Violation | Panic Message |
 |-----------|---------------|
 | Reserved name | `"vars: attempt to bind reserved variable %q via captureAs"` |
-| Finalize-phase captureAs | `"vars: captureAs binding %q is not valid in the finalize phase"` |
 
-These are programming errors, not runtime conditions — the step validator (issue #40) should catch them before execution. The panics are a defense-in-depth guard.
+This is a programming error, not a runtime condition — the step validator (issue #40) should catch it before execution. The panic is a defense-in-depth guard.
 
 ## Testing
 

@@ -633,7 +633,9 @@ func TestValidate_SkipIfCaptureEmpty_ForwardReference(t *testing.T) {
 }
 
 // TestValidate_SkipIfCaptureEmpty_InFinalize verifies that skipIfCaptureEmpty
-// is rejected in the finalize phase.
+// is accepted in the finalize phase when the referenced capture is bound by an
+// earlier finalize step. Finalize runs once and captures a skipIfCaptureEmpty
+// source within the same phase, so the skip can fire reliably.
 func TestValidate_SkipIfCaptureEmpty_InFinalize(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "s")
@@ -650,7 +652,30 @@ func TestValidate_SkipIfCaptureEmpty_InFinalize(t *testing.T) {
 	}`)
 
 	errs := validator.Validate(dir)
-	requireError(t, errs, "only valid in the iteration phase")
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("expected no fatal errors for skipIfCaptureEmpty in finalize phase, got: %v", errs)
+	}
+}
+
+// TestValidate_SkipIfCaptureEmpty_InFinalize_UnknownCapture verifies that a
+// finalize step referencing an iteration-phase capture is rejected — iteration
+// captures are cleared by the time finalize runs.
+func TestValidate_SkipIfCaptureEmpty_InFinalize_UnknownCapture(t *testing.T) {
+	dir := tempProject(t)
+	writeScript(t, dir, "s")
+	writePrompt(t, dir, "fix.md", "fix it")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [
+			{"name":"Check","isClaude":false,"command":["scripts/s"],"captureAs":"OUT"}
+		],
+		"finalize": [
+			{"name":"Fix","isClaude":true,"model":"sonnet","promptFile":"fix.md","skipIfCaptureEmpty":"OUT"}
+		]
+	}`)
+
+	errs := validator.Validate(dir)
+	requireError(t, errs, "not bound by any earlier captureAs")
 }
 
 // TestValidate_SkipIfCaptureEmpty_EmptyString verifies that setting
@@ -675,7 +700,7 @@ func TestValidate_SkipIfCaptureEmpty_EmptyString(t *testing.T) {
 }
 
 // TestValidate_SkipIfCaptureEmpty_InInitialize verifies that skipIfCaptureEmpty
-// is rejected in the initialize phase (symmetric to the finalize test).
+// is rejected in the initialize phase.
 func TestValidate_SkipIfCaptureEmpty_InInitialize(t *testing.T) {
 	dir := tempProject(t)
 	writeScript(t, dir, "setup")
@@ -692,7 +717,7 @@ func TestValidate_SkipIfCaptureEmpty_InInitialize(t *testing.T) {
 	}`)
 
 	errs := validator.Validate(dir)
-	requireError(t, errs, "only valid in the iteration phase")
+	requireError(t, errs, "only valid in the iteration or finalize phase")
 }
 
 // TestValidate_SkipIfCaptureEmpty_MultipleReferents verifies that multiple steps

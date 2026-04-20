@@ -425,10 +425,10 @@ func validatePhase(
 		}
 
 		// Schema 2c — skipIfCaptureEmpty must reference a capture bound by a
-		// strictly earlier step in the iteration phase (not initialize-phase
-		// captures), and is only valid in the iteration phase. The runtime
-		// captureStates map is populated per-iteration, so initialize-phase
-		// captures are never present there and the skip would silently never fire.
+		// strictly earlier step in the same phase (not initialize-phase captures),
+		// and is valid in the iteration and finalize phases. The runtime
+		// captureStates map is populated per-phase, so initialize-phase captures
+		// are never present there and the skip would silently never fire.
 		if step.SkipIfCaptureEmpty != nil {
 			ref := *step.SkipIfCaptureEmpty
 			if ref == "" {
@@ -437,8 +437,8 @@ func validatePhase(
 				if !ownCaptures[ref] {
 					*errs = append(*errs, at("schema", fmt.Sprintf("skipIfCaptureEmpty %q is not bound by any earlier captureAs in this phase", ref)))
 				}
-				if phase != vars.Iteration {
-					*errs = append(*errs, at("schema", "skipIfCaptureEmpty is only valid in the iteration phase"))
+				if phase != vars.Iteration && phase != vars.Finalize {
+					*errs = append(*errs, at("schema", "skipIfCaptureEmpty is only valid in the iteration or finalize phase"))
 				}
 			}
 		}

@@ -68,8 +68,8 @@ echo "yes"  # non-empty stdout → skip does not fire
 
 ## Constraints
 
-- `skipIfCaptureEmpty` is **only valid in the iteration phase** — not in initialize or finalize.
-- It must reference a `captureAs` name bound by an **earlier step in the same iteration phase**. Initialize-phase captures are not allowed: they are not tracked in the per-iteration state map, so the skip would silently never fire.
+- `skipIfCaptureEmpty` is valid in the **iteration** and **finalize** phases — not in initialize.
+- It must reference a `captureAs` name bound by an **earlier step in the same phase**. Initialize-phase captures and iteration-phase captures are not allowed in a finalize step: per-phase `captureStates` maps mean cross-phase references would silently never fire.
 - The field value must be non-empty when set (omit the field entirely to disable the check).
 
 The validator enforces all three constraints at config-load time and reports an error if any is violated.
