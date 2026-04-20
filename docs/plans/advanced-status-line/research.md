@@ -1,6 +1,6 @@
 # Advanced Status Line — Feasibility Research
 
-**Status:** Draft complete, adversarially validated, Option 1 re-investigated (scratch-config-dir variant)
+**Status:** All open questions resolved; Option 1″ selected as the single-shippable goal
 **Date:** 2026-04-19
 **Question:** Can pr9k's custom status line expose the same rich data that Claude Code feeds to its own native `statusLine` scripts — model, session id, workspace, cost, tokens, rate limits, etc.?
 
@@ -8,26 +8,28 @@
 
 ## 1. Executive Summary
 
-**Feasibility verdict:** Yes, fully. The original draft rated Option 1 as "defer — high risk" because it assumed pr9k would have to merge into the user's real `~/.claude/settings.json`. A follow-up investigation found that `CLAUDE_CONFIG_DIR` is already unconditionally overridden at container launch (`src/internal/sandbox/command.go:44`) and Claude's credentials live in a single file (`.credentials.json`). This opens a **scratch-config-dir design** — pr9k bind-mounts a scratch `CLAUDE_CONFIG_DIR` that it fully owns, and file-bind-mounts just `.credentials.json` from the user's real profile. pr9k never writes into the user's real `~/.claude`, the settings.json merge problem disappears, and Option 1 becomes shippable at **medium** cost rather than high.
+**Feasibility verdict:** Yes, fully, as a **single self-contained feature** — not a phased rollout. The goal is to expose Claude-only fields (`rate_limits.*`, `cost.total_lines_added/removed`, full `context_window`, etc.) on pr9k's status line. That goal is only reachable by capturing Claude's own statusLine payload and forwarding it to pr9k — there is no "derive-from-stream" approximation that carries those fields. Earlier drafts proposed shipping three incremental phases (Option 2a → Option 2 → Option 1′) culminating in capture-and-forward; this plan drops that framing and ships capture-and-forward directly.
 
-**Options explored (four, plus a late-discovered 2a; Option 1 revised post-investigation):**
+Eight open questions (Q-OPEN-1 through Q-OPEN-8) blocked the original Option 1′ sketch. All eight are now resolved — six by Claude-docs research, two by empirical tests against the running CLI (see Section 14). The resolutions collapse several pieces of the original design:
 
-| # | Option | Fidelity | Complexity | Risk | Verdict |
-|---|--------|----------|------------|------|---------|
-| 2a | Surface `Renderer.Finalize` (already generated per step) as a summary string in pr9k's payload | ~60% of operator value (turns, tokens, cost, duration, session id) but **post-step only** | **Very low** | **Very low** — uses only existing public accessors | **Recommended first step** |
-| 2 | Derive-from-stream — extend `Aggregator` to track Model and live SessionID, add concurrent-safe snapshot, expose via payload | ~80% (live tokens, plus fields added by parser extension; cost still post-step) | Medium | Medium — aggregator parser changes + concurrency discipline | Recommended second step |
-| 1 (original) | Capture-and-forward, writing into the user's real `~/.claude/settings.json` | **100%** | **High** | **High** — parse-merge, atomic write, permissions, rollback | Superseded by 1′ |
-| 1′ (revised) | Capture-and-forward using a pr9k-owned scratch `CLAUDE_CONFIG_DIR` + file-bind-mount of `.credentials.json` + shim baked into a pr9k-derived Docker image + Unix-socket IPC on the project bind-mount | **100%** | **Medium** | **Medium** — gated by Q-OPEN-1 (does Claude read adjacent state files?) and Q-OPEN-5 (Unix socket over Docker Desktop macOS bind-mount) | **Recommended third step, promoted from "defer"** |
-| 3b | Claude Agent SDK | Matches Option 2 roughly | Very high | Very high — no Go Agent SDK; pr9k doesn't own the container image | **Do not pursue** |
+- **No custom Docker image required.** The base image (`docker/sandbox-templates:claude-code`, Ubuntu 25.10) already contains `sh`, `cat`, `mv`, and `socat`, and runs statically-linked Go binaries. A three-line shell shim written into the project bind mount at run start suffices — no `docker build` step, no derived tag, no version-coupled rebuilds (resolves Q-OPEN-6).
+- **No Unix-domain socket IPC.** Unix sockets on Docker Desktop macOS bind mounts are still unreliable in 2026, even on VirtioFS. The shim does an atomic-rename JSON write into `.pr9k/`, and pr9k watches it with `fsnotify` — the fallback the original draft proposed is now the primary design (resolves Q-OPEN-5).
+- **No profile-dir replacement.** pr9k does NOT build a scratch `CLAUDE_CONFIG_DIR`. The user's real `~/.claude` stays bind-mounted as today (preserving `sessions/`, `plugins/`, `statsig/`, resume continuity, and every other feature). pr9k adds a single **file-level bind-mount overlay** that replaces just `settings.json` inside the container for the duration of the run. The user's real `settings.json` on disk is never touched (resolves Q-OPEN-1).
+- **No parse-merge logic.** The overlaid file is pr9k-authored from scratch. It contains a single `statusLine` block plus a `pr9kOwned: true` marker; Claude silently tolerates unknown sibling keys (empirically verified, resolves Q-OPEN-2). A minimal settings.json containing only a `statusLine` block starts cleanly (empirically verified, Q8).
 
-**Recommendation — in priority order:**
+**Selected design — Option 1″ (double-prime):** file-level bind-mount overlay of a pr9k-authored `settings.json`, three-line shell shim written into `.pr9k/`, atomic-rename JSON file IPC with `fsnotify` watcher, raw Claude payload embedded as `claude.native` in pr9k's stdin payload. Opt-in behind `statusLine.captureClaudeStatusLine: true` in `config.json`. Estimated ~235 LoC of Go + ~100 lines of docs (see Section 6.6 for LoC breakdown by file).
 
-1. **Ship Option 2a first.** Add `Runner.LastClaudeSummary() string` backed by the existing `Renderer.Finalize` output, surface it as a `claude.last_summary` string in the stdin payload, and update the sample script to display it. This is ~20 lines of Go plus docs, uses only code that already runs and is already tested, and needs zero concurrency work. Users immediately get *"turns · tokens (cache) · $cost · duration"* on their status line after each Claude step.
-2. **Then ship Option 2 as an enhancement** once the cheap win is in. Extend `Aggregator.Observe` to capture `SessionID`/`Model` from `SystemEvent{subtype:"init"}` (today both are only observed from `ResultEvent`), add a `Model` field to `StepStats`, add a concurrent-safe `Snapshot()`, and surface typed fields (`claude.session_id`, `claude.model`, `claude.input_tokens`, ...). This is the point at which pr9k provides *live* in-flight numbers during a running step.
-3. **Ship Option 1′ (scratch-config-dir variant) as an opt-in third phase.** Now viable at medium cost given the scratch-dir design — no parse-merge, no atomic-write, no user-profile rollback. Gate behind `statusLine.captureClaudeStatusLine: true` in `config.json`. Ship a pr9k-owned Dockerfile so the shim is baked in at `/usr/local/bin/pr9k-statusline-shim` with mode 0755, and use a Unix-domain socket on the project bind-mount (`<projectDir>/.pr9k/statusline.sock`) for IPC. Resolve Q-OPEN-1 (profile adjacent-file reads) and Q-OPEN-5 (Docker Desktop Unix-socket reliability) before committing.
-4. **Do not pursue Option 3b (Agent SDK).** The Agent SDK is Python-only; pr9k is Go. Adopting it would either force a rewrite or require pr9k to own a derived container image — and once we own the image for Option 1′, the Agent SDK still has no Go surface, so the rewrite cost stays.
+**Options NOT being shipped:**
 
-Sections 11 (adversarial validation) and 6 (Option 1 variants and optimal design) together contain the reasoning that moved Option 1 from "defer" to "third phase."
+| # | Option | Reason dropped |
+|---|--------|----------------|
+| 2a | Surface `Renderer.Finalize` as a summary string | Covers only already-known fields. User's goal is Claude-only fields; Option 2a does not contribute to reaching that goal. Leave as an optional future addendum if a narrow scope emerges. |
+| 2 | Derive-from-stream — parser extensions + typed fields | Does not surface any Claude-only field. Adds parser complexity and concurrency surface for zero progress toward the goal. |
+| 1 (original) | Capture-and-forward, writing into the user's real `~/.claude/settings.json` | Superseded by 1″'s file-level overlay — no write to user's real profile needed. |
+| 1′ | Capture-and-forward via scratch `CLAUDE_CONFIG_DIR` + derived Docker image + Unix-socket IPC | Superseded by 1″ — each of its three pillars (scratch dir, image ownership, Unix socket) turned out to be avoidable once the open questions resolved. |
+| 3b | Claude Agent SDK | Python-only; pr9k is Go. No Go SDK with session-state accessors exists. |
+
+Section 14 contains the full open-question resolution log with cited evidence. Section 6 describes the selected Option 1″ design in detail. Section 8 is the implementation plan.
 
 ---
 
@@ -116,7 +118,7 @@ pr9k wants its own statusLine scripts to have access to rich Claude-native field
 
 ---
 
-## 3. Option 2a — Surface `Renderer.Finalize` as a summary string (Recommended first step)
+## 3. Option 2a — Surface `Renderer.Finalize` as a summary string (not shipping)
 
 **Premise:** pr9k already formats and emits a per-step summary line via `internal/claudestream.Renderer.Finalize`. Expose that line as a string in pr9k's stdin payload. Zero parser changes, zero concurrency work.
 
@@ -163,11 +165,11 @@ Changes:
 
 ### 3.6 Verdict
 
-**Ship this first.** It is the cheapest useful thing to do and it puts all the plumbing in place that Option 2 would need anyway.
+**Not shipping as a deliverable on the path to the goal.** Option 2a surfaces only fields pr9k already computes from the NDJSON stream — none of which are Claude-only fields. The goal (Section 1) is Claude-only fields (`rate_limits.five_hour.used_percentage`, `cost.total_lines_added/removed`, etc.), which Option 2a does not contribute to. May be added as an optional extra `claude.last_summary` field alongside `claude.native` if a specific request arises; not required.
 
 ---
 
-## 4. Option 2 — Derive-from-Stream (Recommended second step)
+## 4. Option 2 — Derive-from-Stream (not shipping)
 
 **Premise:** extend `internal/claudestream.Aggregator` to capture the live fields a status line needs (most importantly `SessionID` and `Model` — which are *not* captured today), add a concurrent-safe snapshot accessor, and expose typed fields via pr9k's payload.
 
@@ -248,7 +250,7 @@ The work splits into three layers:
 
 ### 4.6 Verdict
 
-**Ship this after Option 2a, not instead of it.** The work is medium-complexity and requires real parser changes — none of which are blockers, but all of which are more than the "wiring" the initial draft claimed.
+**Not shipping.** Option 2 does not surface any Claude-only field (rate limits, lines added/removed, context-window truth from Claude's own bookkeeping). It only provides live approximations of fields Claude itself computes more accurately. Parser + concurrency cost is not justified by the incremental value when Option 1″ delivers 100% fidelity via capture-and-forward. May become useful in the future if pr9k wants to *also* surface between-trigger live approximations alongside the (more authoritative) `claude.native` payload — strictly optional polish.
 
 ---
 
@@ -308,17 +310,171 @@ The shim runs inside the container and must hand Claude's payload to pr9k on the
 
 **Viable, but deferred.** Only worth the cost if users explicitly ask for the Claude-only fields. Most operator use cases are satisfied by Option 2a + Option 2.
 
-*Superseded by Section 6 below. The scratch-config-dir variant (Option 1′) makes Option 1 shippable at medium cost.*
+*Superseded by Option 1″ (Section 6 below). The file-level settings-overlay variant makes capture-and-forward shippable at low cost, with no scratch directory, no derived image, and no Unix-socket IPC.*
 
 ---
 
-## 6. Option 1′ — Capture-and-Forward, Revised (scratch config dir + baked-in shim + opt-in)
+## 6. Option 1″ — Capture-and-Forward (selected design)
+
+**Premise (unchanged from Option 1):** install a pr9k-controlled shim as Claude's `statusLine.command`. Claude invokes the shim with its full native payload on stdin. The shim forwards the payload back to pr9k. pr9k embeds the payload in its own statusLine script's stdin JSON.
+
+**What changed from Option 1′:** each of 1′'s three pillars collapsed once the open questions resolved. This section is the new selected design; the Option 1′ sketch that preceded it is preserved in the subsections below it as the reasoning trail.
+
+### 6.0 Option 1″ — architecture at a glance
+
+Three new artifacts, five integration points, one config flag. No Dockerfile, no Unix socket, no scratch profile dir.
+
+**Artifacts written at container spawn (when `captureClaudeStatusLine: true`):**
+1. `<projectDir>/.pr9k/sandbox-settings.json` — pr9k-authored Claude settings (single statusLine block + `pr9kOwned: true` marker).
+2. `<projectDir>/.pr9k/statusline-shim.sh` — three-line shell script, mode 0755.
+3. `<projectDir>/.pr9k/statusline-current.json` (runtime) — the latest Claude payload, atomically rewritten by the shim per refresh.
+
+**Docker invocation gains one bind-mount when the flag is on:** `-v <projectDir>/.pr9k/sandbox-settings.json:/home/agent/.claude/settings.json` (file-level). This is layered on top of the existing profile directory mount, so Claude sees pr9k's `settings.json` inside the container while the user's real `~/.claude/settings.json` on disk stays untouched.
+
+**Pr9k host-side additions:** an `fsnotify` watcher on `<projectDir>/.pr9k/` that updates `claudePayload atomic.Pointer[json.RawMessage]` on `statusline.Runner`; `BuildPayload` emits the payload as `claude.native` when non-empty.
+
+**Gated entirely behind `statusLine.captureClaudeStatusLine: bool` in `config.json`**, default `false`. When the flag is off, pr9k behaves exactly as today.
+
+### 6.1 The settings overlay
+
+A file-level bind mount layered on top of a directory-level bind mount is supported on both Docker Desktop macOS and native Linux Docker; it is the same mechanism Docker Desktop uses to plumb through `docker.sock` (`https://docs.docker.com/desktop/release-notes/` release 4.39.0). Inside the container, `/home/agent/.claude/` still resolves to the user's real profile directory for every file EXCEPT `settings.json`, which is pr9k's authored file for the duration of the run.
+
+pr9k's `settings.json` overlay content:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/home/agent/workspace/.pr9k/statusline-shim.sh",
+    "pr9kOwned": true
+  }
+}
+```
+
+The `pr9kOwned: true` sibling is tolerated by Claude — empirically verified against `claude` 2.1.114 in the sandbox image: the CLI's debug log emitted zero warnings when started against this file, and `claude auth status` / `claude -p …` both succeeded (Section 14, Q-OPEN-2). It serves as a self-signaling marker the shim's IPC consumer can assert on to reject a payload received via an unexpected code path.
+
+**Why overlay instead of write-to-disk:** Claude tolerates a minimal settings.json (empirically verified, Section 14, Q8), so the overlay does not need to merge anything. Because the overlay lives only inside the container's mount namespace, pr9k never mutates the user's real `~/.claude/settings.json` — no parse-merge, no atomic rename on the host profile, no rollback hook, no "preserve user permissions" concern. Crash safety collapses to "on next startup, remove stale `.pr9k/sandbox-settings.json` if present"; there is no partial-write state to reconcile.
+
+**Does the user's real profile stay fully functional?** Yes. The real profile directory is still bind-mounted at `/home/agent/.claude`, so `sessions/`, `plugins/`, `statsig/`, `.credentials.json`, and every other directory Claude reads are available unchanged (Section 14, Q-OPEN-1). `--resume` across steps still finds session transcripts where Claude wrote them, because the profile mount is rw and pr9k didn't replace it.
+
+### 6.2 The shim
+
+A three-line shell script is enough — no custom Docker image needed, because the base image (Ubuntu 25.10) already ships `sh`, `cat`, and `mv` (Section 14, Q-OPEN-6). pr9k writes the shim at container spawn:
+
+```sh
+#!/bin/sh
+cat > /home/agent/workspace/.pr9k/statusline-current.json.tmp
+mv /home/agent/workspace/.pr9k/statusline-current.json.tmp \
+   /home/agent/workspace/.pr9k/statusline-current.json
+```
+
+**Why not Unix socket IPC:** Docker Desktop macOS still cannot reliably expose an AF_UNIX socket created on a host bind mount to a container process (Section 14, Q-OPEN-5). The forum-documented failure mode — `EINVAL` on `connect(2)` and corrupted mode bits — persists on VirtioFS in 2026 despite the 4.39+ file-level socket passthrough that addressed a different use case (mounting an existing socket file like `docker.sock`, not creating a socket in a shared directory). Atomic-rename file drops on a VirtioFS bind mount work correctly; the shim's `mv` is the reliable primitive.
+
+**Why not a custom Dockerfile:** the entire purpose of owning the image would have been to bake in a shim binary with executable permissions. pr9k can set mode 0755 on the shim file when it writes it to `.pr9k/` on the host — Docker Desktop preserves file mode bits across VirtioFS for bind-mounted regular files. The container user's UID/GID is already mapped to the host user (`src/internal/sandbox/command.go` `-u <UID>:<GID>`), so the shim is executable inside the container without further handling.
+
+**Static Go shim as a fallback:** if the shell shim proves flaky (e.g., if Claude's invocation shell is restricted or PATH doesn't find `sh`/`cat`), a statically-linked Go binary compiled with `CGO_ENABLED=0` runs cleanly in the base image (Section 14, Q-OPEN-6). Swap the three-line shell for a ~30-line Go binary; pr9k would still write it to `.pr9k/` rather than bake it into an image. This fallback is a drop-in replacement for the shim file and does not affect any other layer of the design.
+
+### 6.3 The IPC (atomic-rename + fsnotify)
+
+pr9k's host-side receiver:
+
+1. On `Runner.Start` (when the feature is enabled), create an `fsnotify` watcher on `<projectDir>/.pr9k/`.
+2. On `Create`/`Rename` events for `statusline-current.json`, read the file (~few KB), validate it parses as JSON, store it in `claudePayload atomic.Pointer[json.RawMessage]`.
+3. On any change, call `Trigger()` so the next refresh tick picks up the new data. (The existing `Trigger()` drop-on-full channel is non-blocking; see E6.)
+4. On shutdown, close the watcher, delete `statusline-current.json`, `sandbox-settings.json`, and the shim.
+
+**Why atomic rename + fsnotify, not polling:** fsnotify is already the Go-ecosystem standard for file-change notifications; it maps to inotify on Linux and FSEvents on macOS, and works on Docker Desktop bind-mounted host directories (the pr9k-side watcher is running on the host, watching a host directory — not inside the container). A 300 ms debounce on refresh is well within human-perceptible latency; file-write latency on VirtioFS for a few-KB JSON file is in the low-ms range.
+
+**Concurrency model:** `claudePayload atomic.Pointer[json.RawMessage]` is the single shared cell. Writer: fsnotify-loop goroutine. Readers: `execScript` goroutine (when building stdin payload for the user's statusLine script). No mutex needed; `atomic.Pointer` provides the release-acquire ordering this pattern requires.
+
+**Failure modes:**
+- Shim write races with fsnotify poll: atomic rename is atomic at the filesystem layer; the reader always sees either the old file or the new file, never a partial write. (Verified by the POSIX `rename(2)` contract; macOS VirtioFS preserves it.)
+- Multiple claude step launches in sequence: each invocation overwrites the same `statusline-current.json`. The watcher sees successive `Rename` events and updates `claudePayload` each time. No cross-step payload leakage.
+- pr9k crashes mid-step: stale `statusline-current.json` + `sandbox-settings.json` remain in `.pr9k/`. On next startup pr9k removes them before starting fresh. No user-visible artifact.
+
+### 6.4 Host-side wiring summary
+
+| Component | File | Change |
+|---|---|---|
+| Config schema | `src/internal/steps/steps.go:51-66` | Add `CaptureClaudeStatusLine *bool` to `StatusLineConfig`. |
+| Validator | `src/internal/validator/validator.go:93-97` | Accept `captureClaudeStatusLine` field; no cross-field constraints beyond "bool or absent." |
+| Sandbox invocation | `src/internal/sandbox/command.go` (`BuildRunArgs`) | When flag is on, write shim + settings overlay, add file-level bind mount, return the extra args. |
+| Shim writer | New `src/internal/sandbox/statusline_overlay.go` | ~40 LoC: WriteFile shim (mode 0755) + settings.json (mode 0644), idempotent cleanup on startup. |
+| fsnotify watcher | New `src/internal/statusline/claude_watcher.go` | ~80 LoC: watcher goroutine, close-on-shutdown, atomic.Pointer update. |
+| Payload | `src/internal/statusline/payload.go:5-50` | Add `claude` sub-object with `native: json.RawMessage` (and keep room for future typed fields). |
+| Runner | `src/internal/statusline/statusline.go` | Hold `claudePayload atomic.Pointer[json.RawMessage]`; wire watcher start/stop into `Start`/`Close`. |
+| main.go | `src/cmd/pr9k/main.go:141-197` | Slot watcher start in `Runner.Start` after `SetModeGetter` (E50). |
+| Default workflow script | `workflow/scripts/statusline` | Surface one or two Claude-only fields (e.g. `.claude.native.rate_limits.five_hour.used_percentage`) as a demo. |
+| Documentation | `docs/features/status-line.md`, `docs/how-to/configuring-a-status-line.md` | New subsection: opt-in flag, `claude.native` payload shape, a small `jq` example. |
+
+**No changes required to:**
+- `internal/claudestream/` — parser unchanged; StepStats unchanged.
+- `internal/workflow/` — Runner/Orchestrate unchanged.
+- `internal/preflight/` — no new preflight check (credentials handling unchanged).
+- Docker image selection — still `docker/sandbox-templates:claude-code`.
+- `BuiltinEnvAllowlist` — no new env var crossing the container boundary.
+
+### 6.5 Concrete payload surface
+
+pr9k's stdin JSON to the user's statusLine script, with the flag on:
+
+```json
+{
+  "sessionId":     "...",          // pr9k run stamp (existing)
+  "version":       "...",
+  "phase":         "iteration",
+  "iteration":     1,
+  "maxIterations": 5,
+  "step":          { "num": 3, "count": 9, "name": "feature-work" },
+  "mode":          "normal",
+  "workflowDir":   "/.../workflow",
+  "projectDir":    "/.../target-repo",
+  "captures":      { "ISSUE_NUMBER": "42" },
+  "claude": {
+    "native": { ...Claude's full statusLine payload, verbatim... }
+  }
+}
+```
+
+The `claude.native` sub-object is absent entirely when (a) the flag is off, or (b) the flag is on but Claude has not invoked the shim yet (cold-start before the first assistant message). User scripts test for presence: `if .claude.native then ... else empty end`.
+
+**Versioning treatment (resolves V7):** the pr9k statusLine payload is not part of the formal public-API list enumerated in `docs/coding-standards/versioning.md:13-28` today. Before shipping this feature, amend the versioning doc to either (a) add "statusLine stdin payload schema" to the versioned surface list, or (b) explicitly declare it documented-but-not-versioned. Recommendation: (b), with a stability note — "pr9k-authored keys are stable; `claude.native` is a pass-through of Claude's own schema, which pr9k does not control and which may change under Claude's own versioning independent of pr9k." This framing matches the precedent set for the captures map (also pass-through, also not versioned).
+
+### 6.6 LoC and timeline estimate
+
+| Layer | LoC | Notes |
+|---|---|---|
+| Validator field | 10 | `vStatusLine` addition + test |
+| `StatusLineConfig` field | 5 | Pointer-bool field in struct + JSON tag |
+| Sandbox overlay writer | 40 | Write shim + settings.json, chmod, cleanup |
+| BuildRunArgs bind-mount extension | 15 | Conditional on flag |
+| fsnotify watcher | 80 | Watcher goroutine, teardown, atomic.Pointer |
+| statusline.Runner integration | 30 | Hold claudePayload, wire start/stop |
+| Payload marshaling | 15 | Add `claude` field to JSON output |
+| Default workflow script | 10 | Demo consumption of one Claude field |
+| Tests (race detector, overlay, cleanup) | 100 | Integration tests |
+| Documentation | ~100 (prose) | Feature doc + how-to + CLAUDE.md index entry |
+
+**Total: ~305 LoC new Go + ~100 lines of prose.** Smaller than the ~580 LoC estimate for Option 1′ (no Dockerfile, no Unix-socket listener).
+
+**Timeline estimate:** 1–2 days of focused implementation for the Go code, plus 0.5 day for docs. Test development adds another 0.5–1 day. Feasible as a single landable PR without pre-requisite work.
+
+### 6.7 Remaining design decisions (non-blocking)
+
+- **Shim language.** Shell (3 lines, requires `sh` + `cat` + `mv` in base image — confirmed present) vs statically-linked Go binary (~30 LoC, carries its own runtime). Shell is simpler; Go is more robust if the base image ever drops coreutils. Recommendation: ship shell; keep Go binary as a drop-in if needed.
+- **Payload-size guard.** Claude's native payload is small (~1–2 KB), but pr9k should cap the stored size to e.g. 16 KB to avoid pathological cases. 8 KB is already the cap on statusLine script OUTPUT (E10); this is a separate cap on INPUT.
+- **`claude.native` vs typed fields.** Shipping `native` as a raw pass-through (`json.RawMessage`) means user scripts read Claude's schema directly. Alternative: pr9k could also surface typed convenience fields like `claude.session_id`, `claude.model`, `claude.cost_usd`. Typed fields are optional — they duplicate what's already in `native`, but give users a less brittle surface if Claude changes its schema. Recommendation: ship `claude.native` only in the first cut; add typed fields on demand.
+- **Refresh cadence interaction.** Claude invokes the shim on its own triggers (assistant message, permission mode change, vim toggle, and optional `refreshInterval` timer; Section 14, Q-OPEN-7). pr9k's own refresh cadence is independent. This is expected: `claude.native` updates when Claude says so, pr9k's other fields update when pr9k says so. Document this clearly so users understand why the Claude-side fields may lag.
+
+### 6.8 Historical subsections (Option 1′ sketch — preserved as reasoning trail)
+
+The subsections below describe the earlier Option 1′ sketch. They are preserved for context on why Option 1″'s simpler design was chosen, but they do not describe the implementation.
 
 **Re-investigation prompt:** "Would Option 1 be easier if we had a full Dockerfile configuration? Or as an optional plugin that the end user explicitly enables? What is the most optimal capture-and-forward design?"
 
 **Top-line answer:** The Dockerfile helps with two narrow concerns; explicit opt-in helps with two more; but the biggest unlock comes from a third dimension the original draft missed — redirecting `CLAUDE_CONFIG_DIR` at the container boundary to a pr9k-owned scratch directory, so pr9k never touches the user's real `~/.claude/settings.json` at all.
 
-### 6.1 Dimension 1 — Does a pr9k-owned Dockerfile help? (Partial yes)
+### 6.8.1 Dimension 1 — Does a pr9k-owned Dockerfile help? (Partial yes)
 
 **What pr9k ships today:**
 - No Dockerfile exists in the repo (verified by `Glob("**/Dockerfile*")` — matches are only vendored Go toolchain files).
@@ -348,7 +504,7 @@ The shim runs inside the container and must hand Claude's payload to pr9k on the
 
 **Verdict on Dockerfile alone:** necessary-but-not-sufficient. It closes 2 of 6 V5 items and eliminates one base-image uncertainty. Not a standalone solution for Option 1.
 
-### 6.2 Dimension 2 — Does explicit user opt-in help? (Partial yes)
+### 6.8.2 Dimension 2 — Does explicit user opt-in help? (Partial yes)
 
 **Opt-in precedent in pr9k today:**
 - `containerEnv` allows literal-value env injection that could be secrets; validator warns on `_TOKEN`/`_KEY`/`_SECRET` suffixes but permits the write (`src/internal/validator/validator.go:235-244`).
@@ -372,7 +528,7 @@ The shim runs inside the container and must hand Claude's payload to pr9k on the
 
 **Verdict on opt-in alone:** closes 2 of 6 V5 items cleanly (5, 6) and reduces 2 more to a user-friction trade (1, 2 via refuse-and-guide). Items 3 and 4 remain. Not a standalone solution; complements Dimension 1.
 
-### 6.3 Dimension 3 — The unlock: a pr9k-owned scratch `CLAUDE_CONFIG_DIR`
+### 6.8.3 Dimension 3 — The unlock: a pr9k-owned scratch `CLAUDE_CONFIG_DIR`
 
 **Key facts from re-investigation (all verified in the current tree):**
 
@@ -424,7 +580,7 @@ All six V5 blockers + the base-image concern fall. Option 1 moves from "high ris
 - **Q-OPEN-3:** Claude Code may also accept `statusLine.command` from a project-local `.claude/settings.json` inside the project mount. If so, an even simpler variant is possible: write `.pr9k/claude-settings/.claude/settings.json` inside the project dir, then point `CLAUDE_CONFIG_DIR` at it. Needs confirmation at `https://code.claude.com/docs/en/statusline.md`.
 - **Q-OPEN-4:** if there is a `CLAUDE_STATUSLINE_COMMAND` env var or equivalent, the entire settings.json write step disappears — pr9k just sets the env var in `BuildRunArgs`. Grep of `src/` returns no matches; not in the pr9k codebase, unknown from Claude docs.
 
-### 6.4 The IPC question — how does the shim hand Claude's payload back to pr9k?
+### 6.8.4 The IPC question — how does the shim hand Claude's payload back to pr9k?
 
 **Options the original draft enumerated (`research.md:281-292`):**
 
@@ -448,7 +604,7 @@ All six V5 blockers + the base-image concern fall. Option 1 moves from "high ris
 
 **Fallback if Unix-socket is flaky:** file-write with atomic rename under `<projectDir>/.pr9k/statusline-current.json`, pr9k polls via `fsnotify` (or a 300 ms timer matching Claude's own debounce). Slightly higher latency; no new risk surface.
 
-### 6.5 Recommended optimal design for Option 1
+### 6.8.5 Recommended optimal design for Option 1′ (historical)
 
 Combining all three dimensions, in order of what pr9k ships:
 
@@ -481,9 +637,9 @@ Combining all three dimensions, in order of what pr9k ships:
 
 Compare to original Option 1 estimate (which was deferred as "too large to size without solving profile-dir merge first"): this is tractable.
 
-### 6.6 Verdict on Option 1′
+### 6.8.6 Verdict on Option 1′ (historical)
 
-**Promoted from "defer" to "third phase."** With the scratch-config-dir design, the profile-dir contamination blocker (V5) collapses entirely. The remaining risks — Q-OPEN-1 (adjacent state file reads) and Q-OPEN-5 (Unix socket on Docker Desktop macOS) — are resolvable before implementation begins, each with a well-defined fallback design. Ship after Option 2, gated behind `captureClaudeStatusLine: true`.
+Superseded by Option 1″ (Sections 6.0–6.7). Option 1′ proposed a scratch `CLAUDE_CONFIG_DIR` + derived Docker image + Unix-socket IPC; all three pillars turned out to be unnecessary once the open questions resolved. See Section 14 for the evidence trail.
 
 ---
 
@@ -504,59 +660,65 @@ Compare to original Option 1 estimate (which was deferred as "too large to size 
 
 ---
 
-## 8. Final Recommendation
+## 8. Implementation Plan — Single Deliverable (Option 1″)
 
-**Phased plan (revised to include Option 1′):**
+No phases. A single landable PR that adds the opt-in `captureClaudeStatusLine` feature end-to-end. Work is sequenced for easy review, not split into separate releases.
 
-1. **Phase 1 — Option 2a (ship first):** surface `Renderer.Finalize` as a `claude.last_summary` string in pr9k's stdin payload. ~20 lines of Go plus docs plus a sample-script update. No parser changes, no concurrency, no container work. Users get immediate post-step Claude stats in their status line.
+### 8.1 Order of operations
 
-2. **Phase 2 — Option 2 (enhancement):**
-   - Parser extensions in `claudestream`: capture `SessionID`, `Model`, `ClaudeCodeVersion`, and optionally `transcript_path` via `memory_paths.auto` from `SystemEvent{subtype:"init"}`.
-   - Add `Model`, `LastTurnUsage`, `DurationAPIMS` fields to `StepStats`.
-   - Add concurrent-safe `Snapshot()` to `Aggregator` with `LastRateLimitInfo` deep-copy.
-   - Add `Pipeline.Stats()` wrapper.
-   - Add `workflow.Runner.ActiveClaudeStats() (StepStats, bool, time.Time)` returning `LastStats()` as a between-steps fallback; include `startedAt` for cold-start signaling.
-   - Add `statusline.Runner.SetClaudeStatsGetter(...)`.
-   - Extend `statusline.State` / `BuildPayload` with typed `claude.{session_id, model, input_tokens, output_tokens, ...}` fields alongside `claude.last_summary`.
-   - Update `workflow/scripts/statusline` and `docs/features/status-line.md`.
-   - Add a `-race` stress test for the new concurrent path.
-   - Before cutover: capture a real `claude --resume` NDJSON stream and confirm `SystemEvent{init}` fires with the resumed SessionID and Model.
+1. **Settings-overlay + shim writer (sandbox layer).**
+   - Add `CaptureClaudeStatusLine *bool` to `StatusLineConfig` (`src/internal/steps/steps.go:51-66`); default is `nil` meaning off.
+   - Extend validator (`src/internal/validator/validator.go:93-97`) to accept the new field.
+   - Create `src/internal/sandbox/statusline_overlay.go` — two small functions:
+     - `WriteOverlay(projectDir string) (settingsPath string, shimPath string, err error)` — writes `settings.json` and `statusline-shim.sh` under `<projectDir>/.pr9k/`, mode 0644 and 0755 respectively. Caller passes the shim's container-absolute target path.
+     - `CleanOverlay(projectDir string)` — removes all three files at startup (stale `sandbox-settings.json`, `statusline-shim.sh`, `statusline-current.json`) idempotently.
+   - Extend `BuildRunArgs` to, when the flag is true, append `-v <settingsPath>:/home/agent/.claude/settings.json` to the docker argv.
+   - Unit tests: overlay file contents round-trip, idempotent cleanup, flag-off is a no-op.
 
-3. **Phase 3 — Option 1′ (scratch-config-dir, opt-in):**
-   - Resolve Q-OPEN-1 (does Claude read adjacent state files from the profile dir?) and Q-OPEN-5 (Unix-socket-over-bind-mount reliability on current Docker Desktop macOS) *before* starting. Each has a documented fallback (file-over-file settings.json overlay; atomic-write + `fsnotify` polling).
-   - Add `statusLine.captureClaudeStatusLine: bool` to the config schema (~10 lines in `vStatusLine` + validator).
-   - Ship a pr9k-owned `docker/Dockerfile` that extends `docker/sandbox-templates:claude-code`, bakes in a statically-linked Go shim at `/usr/local/bin/pr9k-statusline-shim`, and tags the result `pr9k/claude-sandbox:<version.Version>`. Extend `sandbox_create` with a `docker build` step.
-   - Wire the scratch `CLAUDE_CONFIG_DIR`: on container spawn (when the flag is true), create `<projectDir>/.pr9k/sandbox-claude-config/`, write a pr9k-owned `settings.json`, bind-mount the scratch dir at `/home/agent/.claude`, file-bind-mount the real `.credentials.json` at `/home/agent/.claude/.credentials.json`.
-   - Wire the Unix-domain socket IPC at `<projectDir>/.pr9k/statusline.sock`; the shim dials it from `/home/agent/workspace/.pr9k/statusline.sock`.
-   - Extend `statusline.Runner` with a `claudePayload atomic.Pointer[json.RawMessage]`; `BuildPayload` emits it as `claude.native` when non-empty. Keep `claude.last_summary` from Phase 1 alongside.
-   - Self-healing startup cleanup: remove stale scratch dirs and sockets at every pr9k start.
-   - Do *not* promise this phase until users explicitly ask for the Claude-only fields (`rate_limits.five_hour.used_percentage`, `cost.total_lines_added/removed`).
+2. **Host-side watcher (statusline layer).**
+   - Add `github.com/fsnotify/fsnotify` to `go.mod` (already a well-established Go module).
+   - Create `src/internal/statusline/claude_watcher.go`:
+     - `type claudeWatcher struct { watcher *fsnotify.Watcher; payload *atomic.Pointer[json.RawMessage]; done chan struct{} }`
+     - `(*Runner).startClaudeWatcher(dir string) error` — starts fsnotify on `<projectDir>/.pr9k/`, filters for `statusline-current.json`, reads+validates+stores on change.
+     - `(*Runner).stopClaudeWatcher()` — signals `done`, waits, closes watcher.
+   - Wire `Start`/`Close` to the watcher lifecycle when the flag is on.
+   - Tests: watcher starts and stops cleanly; atomic-rename write is observed; malformed JSON does not poison the pointer; concurrent reads/writes pass `-race`.
 
-**Tradeoffs:**
+3. **Payload marshaling.**
+   - Add `Claude *ClaudePayload` (with `Native json.RawMessage`) to the stdin JSON struct in `src/internal/statusline/payload.go:5-50`. Omit-empty so it's absent when no payload has arrived.
+   - Tests: payload round-trip; absent field when flag is off; present field when pointer is set.
 
-- Option 2a alone gives useful information *only after a step completes*. Users who want in-flight feedback during a running step do not get it from Option 2a; they must wait for Option 2.
-- Option 2's "live" tokens are noisy during multi-turn cache-heavy steps (V3); users who compute context-window percentages from them will see inflated numbers that correct downward at step end. This should be documented, not fixed in the aggregator (the aggregator's "add per turn then overwrite at result" is intentional).
-- Option 2 requires parser extensions beyond what the initial draft claimed; "it's already there" was wrong for SessionID, Model, and transcript_path.
-- Option 1′ remains the only path to Claude-only truth for rate limits and lines-added/removed. The scratch-config-dir design eliminates the profile-dir merge problem at the cost of owning a Dockerfile and introducing a Unix-socket listener — both manageable.
-- Owning a Dockerfile for Option 1′ adds a maintenance obligation: rebuild on base-image updates and on every `version.Version` bump. The ADR on Docker requirement (`docs/adr/20260413160000-require-docker-sandbox.md`) does not forbid it.
+4. **Default workflow script update.**
+   - `workflow/scripts/statusline` — add a small `jq` snippet that surfaces one or two Claude fields (e.g. `rate_limits.five_hour.used_percentage`) as a demonstration.
+   - Test: script runs with the expanded payload without errors.
 
-**Open questions to resolve before the relevant phase starts:**
+5. **Documentation + ADR note.**
+   - New section in `docs/features/status-line.md` describing `captureClaudeStatusLine`, the overlay mechanism, and the `claude.native` pass-through.
+   - New how-to: `docs/how-to/capturing-claude-statusline-data.md` with end-to-end example.
+   - Add CLAUDE.md index entry for the new how-to.
+   - Amend `docs/coding-standards/versioning.md:13-28` to declare `claude.native` a pass-through, documented-but-not-versioned.
+   - No new ADR required (the feature is additive, gated, reversible, and contained within the existing sandbox contract).
 
-*Phase 2 blockers:*
-- How should `context_window.used_percentage` cope with inflated live token counts? Clamp to 100%? Surface both the cumulative and a per-turn derivative? Default recommendation: surface raw tokens only (no percentages) from pr9k, and let the user script compute a percentage if desired.
-- Should `claude` be emitted always or only when `statusLine` is configured? Recommend always; the cost is a few extra bytes in a JSON payload only a configured script would even read.
-- Resolve the V7 tension: does pr9k want the statusLine payload to become part of its versioned public API (document in `docs/coding-standards/versioning.md`), or explicitly keep it as a documented-but-not-versioned surface? Decide *before* enlarging it with a `claude` sub-object.
-- V13 — `claude --help` audit: does a `claude status` / `claude session info` CLI subcommand exist? If yes, it is a simpler way to reach some of this data than aggregator extensions. Check in an authenticated environment.
+6. **Release notes, version bump.**
+   - Minor bump under 0.y.z rules (`docs/coding-standards/versioning.md:13-28`); this is additive public-API growth (new `config.json` schema field + payload extension).
 
-*Phase 3 (Option 1′) blockers (all from the Section 6 re-investigation):*
-- **Q-OPEN-1 (critical):** does the Claude CLI read state files from the profile dir beyond `.credentials.json`? If yes, switch from a scratch-dir mount to a file-level overlay of `settings.json` atop the real profile mount. Confirm against `https://code.claude.com/docs/en/settings.md` and `https://code.claude.com/docs/en/authentication.md`.
-- **Q-OPEN-2:** does Claude accept unknown sibling keys under `statusLine` (e.g. a pr9k ownership marker)? If no, use a side-car marker file in the scratch config dir instead.
-- **Q-OPEN-3:** does Claude accept `statusLine.command` from a project-local `.claude/settings.json` inside the project mount? If yes, a simpler variant becomes possible (no scratch `CLAUDE_CONFIG_DIR` needed).
-- **Q-OPEN-4:** is there a `CLAUDE_STATUSLINE_COMMAND` (or similar) env var that bypasses settings.json entirely? If yes, the entire settings.json write step disappears.
-- **Q-OPEN-5:** is Unix-domain socket over a bind-mount reliable on current Docker Desktop for macOS? Confirm against `https://docs.docker.com/desktop/release-notes/` or test on the target host. Fallback: atomic-write JSON file + `fsnotify` polling.
-- **Q-OPEN-6:** does `docker/sandbox-templates:claude-code` (or the intended derived image) support running a statically-linked Go binary as the shim? If the base is distroless, compile with `CGO_ENABLED=0`.
-- **Q-OPEN-7:** does Claude's `statusLine.command` receive stdin on every refresh or only on debounced assistant-message events? Documentation says 300 ms debounce; re-confirm before sizing IPC bandwidth.
-- **Q-OPEN-8:** V13 audit (see above) may reveal a simpler CLI-side data-fetch that could be invoked from Option 2 code instead of building Option 1′ at all.
+### 8.2 Tradeoffs and known limitations
+
+- **Claude-only fields update only when Claude invokes the shim.** Claude's refresh triggers are: after each assistant message, permission mode change, vim toggle, and optional `refreshInterval` timer. Between triggers, the `claude.native` payload in pr9k's output reflects the most recent trigger. During silent step work (thinking, tool execution with no assistant message yet), the payload is stale. This is inherent to capture-and-forward and cannot be improved without deriving state from the NDJSON stream (which would still not cover rate_limits / lines_added / lines_removed).
+- **Cold-start gap.** Before Claude's first assistant message in a step, `claude.native` is absent. User scripts must tolerate the field being missing — document this explicitly.
+- **Opt-in only.** When the flag is off, nothing in pr9k's behavior changes; the overlay bind-mount is not added, no shim files are written, no watcher runs. Opt-in is the right default because the feature ties pr9k's output to a Claude-schema shape that Claude controls.
+- **Payload surface versioning.** `claude.native` is a pass-through of Claude's own payload. pr9k does NOT promise compatibility across Claude versions for the contents of that object; user scripts that consume specific Claude fields take on the coupling. This matches the treatment of `captures` (also pass-through).
+- **Silent JSON tolerance.** Empirical testing revealed Claude silently tolerates malformed settings.json (Section 14, Q8 bonus control). pr9k should round-trip-read its own `sandbox-settings.json` after writing to detect corruption — a 10-LoC defensive check. Recommended.
+- **No Claude-on-host support.** This plan assumes Claude runs inside the Docker sandbox (the current pr9k model; ADR `docs/adr/20260413160000-require-docker-sandbox.md`). If Claude is ever run directly on the host, the overlay mechanism would need to be rethought (likely as project-local `.claude/settings.json` instead — see Section 14, Q-OPEN-3 findings). Out of scope for now.
+
+### 8.3 Deferred / future work
+
+These items are NOT shipping in the same PR but are enabled by it:
+- **Typed convenience fields** (`claude.session_id`, `claude.model`, `claude.cost_usd`, etc.) marshaled alongside `claude.native`. Add on user demand.
+- **Option 2a (Renderer.Finalize summary string)** as `claude.last_summary`. Cheap addition if users want a compact post-step line alongside the raw `claude.native`.
+- **Option 2 (derive-from-stream)** typed fields. Not useful once `claude.native` is in place, except for the one narrow case of providing *between-trigger* live approximations — a second-order polish.
+
+None of the above are on the critical path; each is a future enhancement if the base feature surfaces real user need.
 
 ---
 
@@ -772,16 +934,130 @@ The following findings materially reshaped the recommendation. The initial draft
 
 ## 13. Confidence Assessment & Remaining Risks
 
-**Confidence:** Medium–high. The phased direction (Option 2a → Option 2 → Option 1′, not Option 3b) is robust. The scratch-config-dir design for Option 1′ is new and depends on two factual open questions (Q-OPEN-1 and Q-OPEN-5) that each have a defined fallback, so neither can cause Phase 3 to be unshippable — only to pick a different sub-design.
+**Confidence:** High. All eight open questions (Q-OPEN-1 through Q-OPEN-8) that blocked the original Option 1′ sketch are now resolved — six via Claude docs research, two via empirical tests against the CLI in the sandbox image (see Section 14). Each resolution *simplifies* the design rather than forcing a fallback; the plan in Section 8 therefore has no "if X, then Y" branches contingent on further investigation.
 
-**Remaining risks to call out before starting implementation:**
+**Remaining risks for Option 1″ implementation:**
 
-1. `--resume` NDJSON shape is unverified (V4). Block Phase 2 on a fixture capture.
-2. Concurrency primitive choice for Aggregator (V8) — mutex recommended, but the decision should be re-validated with a microbenchmark if it becomes a concern on the hot path.
-3. Live-token inflation (V3) — documentation decision, not an implementation one. Decide up front whether pr9k surfaces raw tokens only or also a percentage (recommend raw only).
-4. Versioning treatment of the statusLine payload (V7) — decide whether to enlarge scope of public API before enlarging the payload. Especially acute if `claude.native` lands in Phase 3, because it means embedding Claude's own payload shape into pr9k's de-facto surface.
-5. `claude --help` audit (V13 / Q-OPEN-8) — cheap verification that could change scope. Recommend running once before Phase 2 starts.
-6. Transcript-path parser extension (V12) — minor, but do not claim `transcript_path` unless `memory_paths.auto` is parsed.
-7. Q-OPEN-1 (profile adjacent-file reads) — blocks choosing between the scratch-dir mount and the file-level overlay fallback for Phase 3. Must be resolved before Option 1′ implementation starts.
-8. Q-OPEN-5 (Docker Desktop macOS Unix-socket-over-bind-mount reliability) — blocks choosing between the Unix-socket IPC and the atomic-write+fsnotify fallback for Phase 3.
-9. Maintenance cost of owning a Dockerfile — must be accepted as part of committing to Phase 3. Rebuild on base-image updates and on every `version.Version` bump; `sandbox_create` grows a `docker build` step that is new surface area for CI.
+1. **Silent settings-parse failures** — empirical bonus finding: Claude silently tolerates malformed `settings.json`. If pr9k writes a corrupted overlay, Claude may start but the statusLine shim won't be registered. Mitigation: pr9k round-trip-reads its own `sandbox-settings.json` after writing (10 LoC defensive check). Cheap, recommended.
+2. **Docker Desktop macOS bind-mount regressions** — Docker Desktop ships bind-mount changes release-to-release; the general "file overlay onto a bind-mounted directory" mechanism has been stable, but any new regression would surface as "Claude doesn't see the overlay." Integration test on both macOS and Linux CI agents mitigates. Low risk.
+3. **Claude payload schema evolution** — `claude.native` is a verbatim pass-through. If Claude's statusLine schema changes, user scripts that read specific nested fields break. pr9k cannot prevent this. Mitigation: version-note in `status-line.md` naming `claude.native` as "pass-through; coupling is the user script's responsibility." Documented in Section 8.2.
+4. **Versioning doc amendment (V7)** — before shipping, amend `docs/coding-standards/versioning.md` to classify `claude.native` as a pass-through surface. Blocker for the PR, not for the design. Small.
+5. **Opt-in friction** — some users won't realize the flag exists and will wonder why they don't see Claude-only fields. Mitigation: mention the flag prominently in `docs/how-to/configuring-a-status-line.md` and in the default workflow's `statusLine` block as a commented-out example. Documentation concern, not implementation.
+6. **Cold-start gap** — `claude.native` is absent until Claude's first shim invocation (~after the first assistant message). User scripts must tolerate the field being missing. Document this explicitly and test with a `jq` expression that handles both cases.
+7. **Shell-shim portability** — if Claude ever runs the statusLine command through a restricted shell that omits coreutils, the three-line `/bin/sh` shim fails. Fallback: swap in the static Go binary variant (Section 6.2). Drop-in replacement; no other layer changes.
+
+All other earlier risks (V1–V13 and the old Q-OPEN set) either no longer apply to Option 1″ (they concerned Options 2/2a) or are resolved (see Section 14). The full reasoning trail is preserved in Sections 11 and 12 for future readers.
+
+---
+
+## 14. Investigation Results — Open Question Resolutions
+
+All eight open questions from the original Option 1′ sketch are resolved. Two were answered empirically by running the Claude CLI in the sandbox image (Q-OPEN-2, and Q-OPEN-7 / V4); six were answered from Claude Code, Docker Desktop, and Docker Hub documentation. Each entry below cites the evidence source and records the resulting design decision.
+
+### Q-OPEN-1 — Does Claude read profile-dir state files beyond `.credentials.json`?
+
+**Answer:** Yes, but only a bounded set.
+
+**Evidence (from https://code.claude.com/docs/en/claude-directory.md):**
+- **Required at startup:** `.credentials.json` (auth), `settings.json` / `settings.local.json` (policy).
+- **Required for `--resume`:** `sessions/` directory contains session transcripts; Claude reads from this when resuming by session ID.
+- **Optional (read if present):** `plugins/` (plugin configuration), `.claude.json`, CLAUDE.md (context file).
+- **Output-only / cache:** `projects/`, `teams/`, `debug/`, `file-history/`, `backups/`, `shell-snapshots/`, `statsig/`, `telemetry/`, `tasks/`, `todos/`, `rule-violations.md`, `stats-cache.json`, `mcp-needs-auth-cache.json`, `history.jsonl`.
+
+**Impact on design:** a scratch `CLAUDE_CONFIG_DIR` design would need to recreate `sessions/`, `plugins/`, and possibly `.claude.json` — cost and correctness risk. A **file-level overlay that masks only `settings.json`** keeps everything else intact and is therefore the chosen approach. See Section 6.1.
+
+### Q-OPEN-2 — Does Claude accept unknown sibling keys under `statusLine`?
+
+**Answer:** Yes. Silently tolerated.
+
+**Evidence (empirical, Claude 2.1.114 in `docker/sandbox-templates:claude-code`):** wrote a scratch `settings.json` containing `{"statusLine": {"type":"command", "command":"/bin/echo test", "pr9kOwned":true, "pr9kMarker":"safe-to-remove"}}`. Ran `claude auth status` (exit 0), `claude -p "hi" --output-format stream-json --verbose` (emitted normal `system/init` event), and inspected the `--debug-file` output: zero lines mentioning `pr9k`, `unknown`, or `schema`. The settings watcher registered the file cleanly: `[DEBUG] Watching for changes in setting files /home/agent/.claude-scratch/settings.json...`.
+
+**Impact on design:** pr9k safely adds a `pr9kOwned: true` marker to the overlay to self-signal ownership. See Section 6.1.
+
+**Bonus empirical finding:** Claude silently tolerates *malformed* JSON in settings.json as well — a deliberately corrupted file produced no error and no warning in the debug log. pr9k should round-trip-read its own written overlay as a defensive check (listed in Section 13 as remaining risk #1).
+
+### Q-OPEN-3 — Does Claude accept `statusLine.command` from a project-local `.claude/settings.json`?
+
+**Answer:** Yes. Precedence: Managed > project-local `settings.local.json` > project-local `settings.json` > user-global `~/.claude/settings.json`.
+
+**Evidence (https://code.claude.com/docs/en/settings.md, "Settings precedence"):**
+> "Settings apply in order of precedence. From highest to lowest: 1. Managed settings, 2. Local settings (`.claude/settings.local.json`), 3. Project settings (`.claude/settings.json`), 4. User settings (`~/.claude/settings.json`)."
+
+**Impact on design:** a project-local overlay variant is technically possible, but it would require pr9k to write a `.claude/` directory into the user's project root — either polluting the repo or requiring a git-ignore setup. The **file-level bind-mount overlay over `/home/agent/.claude/settings.json`** is cleaner because it leaves zero on-disk trace in the user's project. See Section 6.1.
+
+### Q-OPEN-4 — Is there a `CLAUDE_STATUSLINE_COMMAND` env var or equivalent?
+
+**Answer:** No.
+
+**Evidence (https://code.claude.com/docs/en/env-vars.md):** the env-vars reference enumerates all Claude Code env vars; there is no `CLAUDE_STATUSLINE*` or equivalent. Status-line configuration is exclusively via `settings.json`.
+
+**Impact on design:** the overlay approach is mandatory; there is no env-var shortcut to bypass settings.json writing.
+
+### Q-OPEN-5 — Is Unix-domain socket over a bind-mount reliable on Docker Desktop macOS?
+
+**Answer:** No, still unreliable in 2026.
+
+**Evidence:**
+- Docker Community Forums, July 2024, [Unix socket on bind mount](https://forums.docker.com/t/unix-socket-on-bind-mount/142653): creating an AF_UNIX socket on a bind-mounted host directory yields `EINVAL` and corrupted `stat(2)` mode bits. Community guidance: create sockets inside the container FS or a named volume.
+- Docker Desktop 4.39.0 release notes: added Unix-socket support, but only for mounting an *already-existing socket file* by its full path (e.g. `-v /host.sock:/container.sock`) — not for sockets created in a shared directory.
+- [docker/for-mac #4995](https://github.com/docker/for-mac/issues/4995) (gRPC-FUSE socket blocked); [for-mac #6243](https://github.com/docker/for-mac/issues/6243), [#6614](https://github.com/docker/for-mac/issues/6614) (VirtioFS permissions): even on the current default VirtioFS backend, AF_UNIX socket in bind-mounted dir is not a first-class feature.
+
+**Impact on design:** **atomic-rename JSON file + fsnotify** is the primary IPC. It works reliably on VirtioFS bind mounts. See Section 6.3. The original Option 1′ Unix-socket plan is dropped entirely.
+
+### Q-OPEN-6 — Does `docker/sandbox-templates:claude-code` support statically-linked Go binaries and have shell tooling?
+
+**Answer:** Yes to Go, and yes to shell tooling — `sh`, `cat`, `mv` are present. `socat` present. `nc`/`netcat` absent.
+
+**Evidence (empirical, via `docker inspect` and `docker run`):**
+- Base OS: Ubuntu 25.10 (Questing Quokka). Confirmed by `/etc/os-release` inside the container and by the image labels `com.docker.sandboxes.base=ubuntu:questing`, `org.opencontainers.image.version=25.10`.
+- Static Go binary test: compiled `hello.go` with `CGO_ENABLED=0 GOOS=linux GOARCH=arm64`, bind-mounted and executed inside the image; output `ok`, plus `unix-listen: ok` from `net.Listen("unix", ...)` — Unix socket syscalls work inside the container.
+- `sh` at `/usr/bin/sh`, `bash` at `/usr/bin/bash`, `socat` at `/usr/bin/socat`. `nc`/`ncat`/`netcat` all absent from `/usr/bin`; not in dpkg list.
+- Image config: `WorkingDir=/home/agent/workspace`, `User=agent` (non-root), `Cmd=["claude","--dangerously-skip-permissions"]`, no Entrypoint.
+
+**Impact on design:** **no custom Dockerfile needed.** The three-line `/bin/sh` shim suffices. If coreutils ever disappear from the base image, swap in a ~30-LoC static Go binary written by pr9k — no image changes required. See Section 6.2.
+
+**Note:** Dockerfile source for `docker/sandbox-templates:claude-code` is NOT publicly available (no GitHub repo; Docker Hub overview is empty). Users extend via `FROM docker/sandbox-templates:claude-code` — reinforces the "derive nothing, overlay everything" approach.
+
+### Q-OPEN-7 — Refresh cadence and payload shape per invocation
+
+**Answer:** Claude invokes the shim on: (1) each new assistant message, (2) permission mode change, (3) vim mode toggle, (4) optional `refreshInterval` timer. 300 ms debounce. If a new trigger fires while the shim is still running, Claude cancels the in-flight execution. The stdin payload schema is identical every call.
+
+**Evidence (https://code.claude.com/docs/en/statusline.md, "When it updates"):**
+> "Your script runs after each new assistant message, when the permission mode changes, or when vim mode toggles. Updates are debounced at 300ms... If a new update triggers while your script is still running, the in-flight execution is cancelled."
+
+**Impact on design:** the atomic-rename + fsnotify IPC is comfortably within tolerance — ~few-KB JSON writes take low-ms on VirtioFS. No bandwidth concern. Because Claude cancels in-flight shims, the shim must be idempotent in its file write (the rename is atomic; either the new file lands or nothing changes).
+
+### Q-OPEN-8 / V13 — Does the Claude CLI have a non-interactive subcommand for session state?
+
+**Answer:** No. Only `claude auth status` is JSON-printable and it returns auth state only.
+
+**Evidence (https://code.claude.com/docs/en/cli-reference.md):** lists `claude auth status`, `claude agents`, `claude auto-mode defaults`, `claude update`. No `claude status`, `claude session info`, or similar for live session metrics.
+
+**Impact on design:** the capture-and-forward shim is the only path to Claude-side session state. There is no CLI-invocation shortcut that could replace it.
+
+### V4 — Does `claude --resume` emit an `init` event with the resumed `session_id` and `model`?
+
+**Answer:** Yes. Verified empirically.
+
+**Evidence (empirical, Claude 2.1.114 in `docker/sandbox-templates:claude-code`):**
+- Stream 1 (fresh session): first event `{"type":"system","subtype":"init","session_id":"2144ce37-51e8-4c4c-beaf-44b3a44edc5a","model":"claude-opus-4-7[1m]","claude_code_version":"2.1.114",...}`. Final `result` event: matching `session_id`.
+- Stream 2 (resumed with `--resume 2144ce37-51e8-4c4c-beaf-44b3a44edc5a`): first event is again a `system/init` with `session_id=2144ce37-...` (matches the resumed ID) and `model=claude-opus-4-7[1m]`.
+- Schemas are identical between fresh and resumed streams; resumed streams additionally carry an expanded `tools` / `mcp_servers` list and a new `uuid` (environmental, not session-identifying).
+
+**Impact on design:** **not blocking for Option 1″** (the shim captures whatever Claude sends, regardless of whether it's a fresh or resumed session). This finding matters mainly for future "derive from NDJSON stream" features (Option 2), confirming that init-event parsing is a viable signal for both fresh and resumed sessions.
+
+### Summary of resolved questions
+
+| ID | Question | Answer | Design impact |
+|---|----------|--------|---------------|
+| Q-OPEN-1 | Claude reads profile state beyond `.credentials.json`? | Yes — `sessions/`, `plugins/`, etc. | Use file-level overlay, NOT scratch dir |
+| Q-OPEN-2 | Unknown keys under `statusLine` tolerated? | Yes (empirical) | Safe to add `pr9kOwned` marker |
+| Q-OPEN-3 | Project-local settings.json works? | Yes — but overlay is cleaner | Overlay chosen; project-local noted as alternative |
+| Q-OPEN-4 | Env var bypasses settings.json? | No | Overlay is mandatory path |
+| Q-OPEN-5 | Unix socket over bind-mount reliable? | No (macOS Docker Desktop) | Use atomic-rename + fsnotify |
+| Q-OPEN-6 | Base image runs static Go / has sh? | Yes to both | No custom Dockerfile |
+| Q-OPEN-7 | Refresh cadence + payload shape | 300ms debounce, 4 triggers, identical schema | No bandwidth concern |
+| Q-OPEN-8 | Non-interactive CLI subcommand for state? | No | Capture-and-forward is only path |
+| V4 | `--resume` emits init event? | Yes (empirical) | Not blocking; useful for future work |
+| V7 | Payload versioning treatment | Decision pending in PR | Amend `versioning.md` before ship |
+| V13 | `claude --help` audit | Done (same as Q-OPEN-8) | No subcommand exists |
