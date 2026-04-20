@@ -31,7 +31,7 @@ When the user opts in with `statusLine.captureClaudeStatusLine: true`:
    - `statusline-shim.sh` — a three-line `/bin/sh` script, mode `0755`, that does an atomic-rename write of its stdin to `statusline-current.json`.
    - `statusline-current.json` is created by the shim at runtime — not pre-written.
 2. **A file-level Docker bind mount** is added to the `docker run` argv: `-v <projectDir>/.pr9k/sandbox-settings.json:/home/agent/.claude/settings.json`. This layers on top of the existing directory-level profile mount, so Claude inside the container reads pr9k's `settings.json` while every other file in `~/.claude` (sessions, credentials, plugins) is the user's real data. **The user's real `~/.claude/settings.json` on disk is never written.**
-3. **A host-side `fsnotify` watcher** observes `.pr9k/` for the shim's atomic rename, reads `statusline-current.json`, validates it parses as JSON, stores it in an `atomic.Pointer[json.RawMessage]` on `statusline.Runner`, and fires `Trigger()` so the user's statusLine script runs with the fresh data.
+3. **A host-side `fsnotify` watcher** observes `.pr9k/` for the shim's atomic rename, reads `statusline-current.json`, validates it parses as JSON, stores a `claudePayloadSnapshot` (`{raw, ingestedAt}`) via an `atomic.Pointer[claudePayloadSnapshot]` on `statusline.Runner`, and fires `Trigger()` so the user's statusLine script runs with the fresh data.
 4. **pr9k's stdin payload** to the user's script gains a `claude.native` field carrying Claude's full payload verbatim when present; the field is absent when the flag is off or Claude has not yet invoked the shim.
 5. **On every startup**, pr9k removes stale `sandbox-settings.json`, `statusline-shim.sh`, and `statusline-current.json` idempotently. Shutdown cleanup is not reliable (main exits via `os.Exit`, which skips defers), so startup cleanup is the only mechanism — see §4.8.
 
@@ -48,7 +48,7 @@ When the flag is off (default), pr9k behaves identically to today — no bind mo
 | `<projectDir>/.pr9k/sandbox-settings.json` | pr9k host process (`statusline_overlay.WriteOverlay`) | Claude in container via bind mount | `0644` | Before each claude step spawn (when flag on) | On startup (stale cleanup) only |
 | `<projectDir>/.pr9k/statusline-shim.sh` | pr9k host process (`statusline_overlay.WriteOverlay`) | Claude in container (invoked by `statusLine.command`) | `0755` | Before each claude step spawn (when flag on) | On startup (stale cleanup) only |
 | `<projectDir>/.pr9k/statusline-current.json` | shim in container (atomic rename) | pr9k host process (`claude_watcher`) | `0644` | On first shim invocation by Claude | On startup (stale cleanup) only |
-| `<projectDir>/.pr9k/statusline-current.json.tmp` | shim in container | renamed away | — | Transient | Consumed by the `mv` in the shim |
+| `<projectDir>/.pr9k/statusline-current.json.<pid>.tmp` | shim in container | renamed away | — | Transient | Consumed by the `mv` in the shim; stragglers from a failed `mv` are swept by `CleanOverlay` on next startup |
 
 All four files live under `.pr9k/`, which is already gitignored per ADR `docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md`.
 
@@ -80,10 +80,11 @@ Runner worker loop    →  execScript: build stdin JSON with runner.claudePayloa
 
 ### 3.4 Concurrency model
 
-- **`claudePayload atomic.Pointer[json.RawMessage]`** lives on `statusline.Runner`. Single shared cell.
-- **Writer:** the fsnotify watcher goroutine (single goroutine). Calls `claudePayload.Store(&raw)`.
+- **`claudePayload atomic.Pointer[claudePayloadSnapshot]`** lives on `statusline.Runner`. Single shared cell carrying both the raw JSON and the ingestion timestamp (needed for the `claude.pr9k.age_seconds` staleness signal in §4.9).
+- `claudePayloadSnapshot` is an immutable struct `{raw json.RawMessage; at time.Time}`. The watcher always allocates a fresh snapshot and stores its pointer — never mutates an existing one.
+- **Writer:** the fsnotify watcher goroutine (single goroutine). Calls `claudePayload.Store(snap)` after each successful ingest.
 - **Readers:** the runner's `execScript` goroutine via `claudePayload.Load()` during `BuildPayload`. `atomic.Pointer` provides the release-acquire ordering this pattern needs — no mutex.
-- **`json.RawMessage` is a `[]byte`** under the hood; the watcher must not mutate a slice after storing it. The pattern is always "allocate fresh → store pointer" (no reuse).
+- **`json.RawMessage` is a `[]byte`** under the hood; the watcher must not mutate the slice after storing it. The pattern is always "allocate fresh → store pointer" (no reuse).
 - **Single-flight on the user script** is unchanged — `Runner.running atomic.Bool` already serializes `execScript`.
 
 ### 3.5 What does NOT change
@@ -265,20 +266,32 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 }
 
 // CleanOverlay removes all three artifact files under <projectDir>/.pr9k/
-// idempotently. Missing files are ignored. Errors surface only for
-// unexpected failures (permission denied, etc.).
+// idempotently, plus any leaked PID-qualified tmp files from a shim whose
+// mv failed mid-run (pattern: statusline-current.json.*.tmp). Missing files
+// are ignored. Errors surface only for unexpected failures (permission
+// denied, etc.).
 //
 // Uses errors.Is(err, fs.ErrNotExist) per docs/coding-standards/error-handling.md
 // (wrapped-error compatibility). os.IsNotExist does not unwrap.
 func CleanOverlay(projectDir string) error {
     dir := filepath.Join(projectDir, ".pr9k")
     var firstErr error
-    for _, name := range []string{overlaySettingsBasename, shimBasename, payloadBasename} {
-        if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+    remove := func(path string) {
+        if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
             if firstErr == nil {
-                firstErr = fmt.Errorf("sandbox: remove %s: %w", name, err)
+                firstErr = fmt.Errorf("sandbox: remove %s: %w", filepath.Base(path), err)
             }
         }
+    }
+    for _, name := range []string{overlaySettingsBasename, shimBasename, payloadBasename} {
+        remove(filepath.Join(dir, name))
+    }
+    // Sweep leaked shim tmp files (statusline-current.json.<pid>.tmp). Glob
+    // errors only on malformed patterns, which this literal string is not —
+    // a nil-match return is expected and normal on a clean tree.
+    matches, _ := filepath.Glob(filepath.Join(dir, payloadBasename+".*.tmp"))
+    for _, m := range matches {
+        remove(m)
     }
     return firstErr
 }
@@ -292,7 +305,7 @@ func PayloadPath(projectDir string) string {
 
 ### 4.4 Sandbox `BuildRunArgs` — add the file-level bind mount
 
-**File:** `src/internal/sandbox/command.go:25-93`
+**File:** `src/internal/sandbox/command.go:25-93` (signature/body span verified against today's tree)
 
 Add one positional parameter at the end of `BuildRunArgs`:
 
@@ -328,11 +341,11 @@ if statusLineOverlayPath != "" {
 
 The existing code emits the profile-dir mount after the project-dir mount; append the overlay mount after the profile-dir mount (so both directory mounts are established before the file overlay).
 
-**Test-surface impact:** `BuildRunArgs` has 24 existing call sites — 23 in `src/internal/sandbox/command_test.go` and 1 in `src/internal/workflow/run.go:731` (`image_test.go` has no `BuildRunArgs` callers). Adding a positional parameter breaks all of them; each needs a trailing `""` (mechanical edit). Existing behavior is preserved since the flag opt-out is the empty-string default.
+**Test-surface impact:** `BuildRunArgs` has 24 existing call sites — 23 in `src/internal/sandbox/command_test.go` and 1 in `src/internal/workflow/run.go:764` (`image_test.go` has no `BuildRunArgs` callers). Adding a positional parameter breaks all of them; each needs a trailing `""` (mechanical edit). Existing behavior is preserved since the flag opt-out is the empty-string default.
 
 **API-shape alternative considered.** An options struct (e.g. `type RunArgs struct { … ; StatusLineOverlayPath string }`) would let the one new optional field land without churning 24 call sites. Rejected for this PR because (a) there is no in-tree precedent — `BuildLoginArgs` (`command.go:100`) is also positional, (b) the mechanical churn is trivial, and (c) the refactor would double the blast radius of a feature PR. An options-struct refactor is reasonable follow-up work; scope it separately.
 
-**Caller update:** `src/internal/workflow/run.go:731` passes the path produced by `sandbox.WriteOverlay` (see §4.7 lifecycle). All other callers (including `BuildLoginArgs` which is separate) pass `""`.
+**Caller update:** `src/internal/workflow/run.go:764` (inside `buildStep`) passes the path produced by `sandbox.WriteOverlay` (see §4.7 lifecycle). All other callers (including `BuildLoginArgs` which is separate) pass `""`.
 
 ### 4.5 Host-side fsnotify watcher — new statusline file
 
@@ -349,6 +362,7 @@ import (
     "os"
     "path/filepath"
     "sync/atomic"
+    "time"
 
     "github.com/fsnotify/fsnotify"
 )
@@ -358,15 +372,25 @@ import (
 // runaway shim write from ballooning memory. Matches research §6.7.
 const payloadSizeLimit = 16 * 1024
 
+// claudePayloadSnapshot is the atomic cell's value type: the raw JSON bytes
+// Claude's shim handed us, plus the host-wall-clock time at which pr9k
+// finished validating them. Both fields are read-only after Store; callers
+// never mutate an observed snapshot. The timestamp is what drives the
+// `claude.pr9k.age_seconds` staleness signal documented in §4.9.
+type claudePayloadSnapshot struct {
+    raw json.RawMessage
+    at  time.Time
+}
+
 // claudeWatcher watches <projectDir>/.pr9k/ for the shim's atomic-rename
-// writes of statusline-current.json, reads them, and stores the bytes as
-// a json.RawMessage in the atomic pointer. Safe to construct repeatedly;
+// writes of statusline-current.json, reads them, validates them, and stores
+// a fresh snapshot in the atomic pointer. Safe to construct repeatedly;
 // stop is idempotent and blocks until the goroutine exits.
 type claudeWatcher struct {
-    dir     string                         // <projectDir>/.pr9k/
-    payload *atomic.Pointer[json.RawMessage]
-    trigger func()                         // runner.Trigger
-    log     logWriter                      // pr9k file logger
+    dir     string                                   // <projectDir>/.pr9k/
+    payload *atomic.Pointer[claudePayloadSnapshot]
+    trigger func()                                   // runner.Trigger
+    log     logWriter                                // pr9k file logger
 
     watcher *fsnotify.Watcher
     cancel  context.CancelFunc
@@ -384,7 +408,7 @@ type logWriter interface {
 func startClaudeWatcher(
     ctx context.Context,
     dir string,
-    payload *atomic.Pointer[json.RawMessage],
+    payload *atomic.Pointer[claudePayloadSnapshot],
     trigger func(),
     log logWriter,
 ) (*claudeWatcher, error) {
@@ -466,8 +490,11 @@ func (cw *claudeWatcher) ingest(path string) {
         _ = cw.log.Log("statusline", "claude payload is not valid JSON; dropped")
         return
     }
-    raw := json.RawMessage(data)
-    cw.payload.Store(&raw)
+    snap := &claudePayloadSnapshot{
+        raw: json.RawMessage(data),
+        at:  time.Now(),
+    }
+    cw.payload.Store(snap)
     cw.trigger()
 }
 
@@ -496,10 +523,12 @@ Add two fields to `Runner`:
 type Runner struct {
     // ... existing fields ...
     captureClaude bool
-    claudePayload atomic.Pointer[json.RawMessage]
+    claudePayload atomic.Pointer[claudePayloadSnapshot]
     claudeWatcher *claudeWatcher // nil when !captureClaude
 }
 ```
+
+`claudePayloadSnapshot` is the unexported struct defined in `claude_watcher.go` (§4.5) that pairs the raw JSON bytes with an ingestion timestamp; both fields feed `BuildPayload` in §4.9.
 
 Extend `Config`:
 
@@ -580,11 +609,15 @@ func (r *Runner) Shutdown() {
 
 ```go
 var claudeRaw json.RawMessage
-if ptr := r.claudePayload.Load(); ptr != nil {
-    claudeRaw = *ptr
+var claudeAt time.Time
+if snap := r.claudePayload.Load(); snap != nil {
+    claudeRaw = snap.raw
+    claudeAt = snap.at
 }
-payload, err := BuildPayload(s, mode, claudeRaw)
+payload, err := BuildPayload(s, mode, claudeRaw, claudeAt)
 ```
+
+A zero-value `claudeAt` pairs with an empty `claudeRaw`, and `BuildPayload` treats both as "no Claude data yet — omit the `claude` field entirely" (§4.9).
 
 **Failure mode:** if the fsnotify watcher fails to start (e.g. inotify limit, permission denied), the runner logs and continues without Claude capture. Error mode is non-fatal — pr9k still runs, just without the `claude.native` field. Document.
 
@@ -592,7 +625,7 @@ payload, err := BuildPayload(s, mode, claudeRaw)
 
 Two reasonable call sites:
 
-**A. Per-step (call inside `workflow/run.go:716-738` `buildStep` right before `BuildRunArgs`)**
+**A. Per-step (call inside `workflow/run.go:749-772` `buildStep` right before `BuildRunArgs`)**
    - Pros: overlay files always present and correct before each claude spawn; if a user edits or deletes them mid-run they are replaced.
    - Cons: the write happens on every claude step spawn — ~20 times per run. Tiny cost (two small file writes) but more opportunities for transient failures.
 
@@ -626,7 +659,7 @@ func buildStep(
 ) (ui.ResolvedStep, error)
 ```
 
-Each `buildStep` call site (3 in `run.go:403, 527, 638`; ~15 in tests) forwards the bit from `cfg.CaptureClaudeStatusLine`.
+Each `buildStep` call site (3 in `run.go:403, 527, 662`; 17 in tests — 15 in `run_test.go` and 2 in `run_timeout_test.go`) forwards the bit from `cfg.CaptureClaudeStatusLine`.
 
 **Call site body inside `buildStep`:**
 
@@ -692,8 +725,14 @@ No preflight failure — cleanup is best-effort. Stale `statusline-current.json`
 **File:** `src/internal/statusline/payload.go:5-50`
 
 ```go
+type claudePr9kJSON struct {
+    IngestedAt string `json:"ingested_at"`
+    AgeSeconds int    `json:"age_seconds"`
+}
+
 type claudeJSON struct {
     Native json.RawMessage `json:"native,omitempty"`
+    Pr9k   *claudePr9kJSON `json:"pr9k,omitempty"`
 }
 
 type payloadJSON struct {
@@ -710,18 +749,33 @@ type payloadJSON struct {
     Claude        *claudeJSON       `json:"claude,omitempty"`
 }
 
-// BuildPayload grows a third parameter. Nil or empty claudeRaw → the
-// field is omitted entirely. A non-empty claudeRaw is assumed valid
-// (validated at ingest in claudeWatcher).
-func BuildPayload(s State, mode string, claudeRaw json.RawMessage) ([]byte, error) {
+// BuildPayload grows two new trailing parameters carrying the Claude
+// snapshot the caller observed on the runner (§4.6 load site). Both empty
+// values together → no Claude ingest has happened yet; the `claude` field is
+// omitted entirely (cold-start behavior documented in §4.9 shape guarantee).
+// A non-empty claudeRaw is assumed valid (validated at ingest in claudeWatcher).
+//
+// claudeAt is the host wall-clock time the watcher captured when it stored
+// the snapshot. It is rendered as RFC3339 in UTC so user scripts get a stable
+// format regardless of host timezone:
+//     claudeAt.UTC().Format(time.RFC3339)
+// age_seconds is computed at Marshal time against time.Now() (also UTC-safe
+// since it is a duration).
+func BuildPayload(s State, mode string, claudeRaw json.RawMessage, claudeAt time.Time) ([]byte, error) {
     // ... existing body, plus:
     p.Claude = nil
     if len(claudeRaw) > 0 {
-        p.Claude = &claudeJSON{Native: claudeRaw}
+        pr9k := &claudePr9kJSON{
+            IngestedAt: claudeAt.UTC().Format(time.RFC3339),
+            AgeSeconds: int(time.Since(claudeAt).Seconds()),
+        }
+        p.Claude = &claudeJSON{Native: claudeRaw, Pr9k: pr9k}
     }
     return json.Marshal(p)
 }
 ```
+
+**Callsite churn — existing `BuildPayload` tests.** The two-new-trailing-args signature breaks every current caller; each needs a trailing `nil, time.Time{}`. Grep of today's tree shows ten callers in `src/internal/statusline/statusline_test.go` (lines 43, 64, 85, 103, 137, 348, 353, 391, 395, and the T5 path at 1024) plus the single production caller in `execScript` (§4.6 load site). Mechanical update — no assertion changes because the new fields are additive and absent when `claudeRaw` is nil.
 
 **Shape guarantee:**
 
@@ -729,11 +783,11 @@ func BuildPayload(s State, mode string, claudeRaw json.RawMessage) ([]byte, erro
 - Flag on, pre-first-shim-invocation → `claude` field absent (documented cold-start gap).
 - Flag on, after first shim invocation → `claude.native` is Claude's full payload verbatim; pr9k adds a sibling `claude.pr9k` sub-object with pr9k-observed metadata.
 
-**Stale-payload signaling (`claude.pr9k.ingested_at` / `claude.pr9k.age_seconds`).** `claudePayload` holds the most recent payload pr9k has ever received from any claude step. Between steps, it is stale. Between iterations, more stale. To let user scripts distinguish fresh from stale data, the watcher stores `(payload, ingestedAt)` together and `BuildPayload` emits:
+**Stale-payload signaling (`claude.pr9k.ingested_at` / `claude.pr9k.age_seconds`).** `claudePayload` holds the most recent payload pr9k has ever received from any claude step. Between steps, it is stale. Between iterations, more stale. User scripts distinguish fresh from stale data by reading the sibling `claude.pr9k.*` fields the Marshal block above emits:
 
 ```json
 "claude": {
-  "native": { ... Claude's payload ... },
+  "native": { ... Claude's payload verbatim ... },
   "pr9k": {
     "ingested_at": "2026-04-20T15:04:05Z",
     "age_seconds": 12
@@ -741,7 +795,7 @@ func BuildPayload(s State, mode string, claudeRaw json.RawMessage) ([]byte, erro
 }
 ```
 
-User scripts gate on `.claude.pr9k.age_seconds // 999999`: a small value means fresh, a large value means stale-display. Implementation: change `claudePayload` from `atomic.Pointer[json.RawMessage]` to `atomic.Pointer[claudePayloadSnapshot]` where `snapshot` is `{raw json.RawMessage; at time.Time}`. Both fields are copy-on-write; atomic.Pointer still provides release-acquire.
+The `claudePayloadSnapshot` type defined in §3.4/§4.5 carries both values; the atomic pointer supplies release-acquire between writer (watcher) and reader (`execScript`). The UTC-RFC3339 rendering ensures host-timezone independence.
 
 User scripts read with defensive `jq`: `.claude.native.rate_limits.five_hour.used_percentage // empty`, and may further gate on staleness: `if (.claude.pr9k.age_seconds // 999) < 60 then ... else empty end`.
 
@@ -929,14 +983,16 @@ For `docs/how-to/capturing-claude-statusline-data.md`:
 - `TestClaudeWatcher_StartOnMissingDirCreatesIt` — call with a nonexistent `.pr9k/`; assert it's created and watcher functions.
 - `TestClaudeWatcher_IgnoresUnrelatedFiles` — write `other.json` in the watched dir; assert no store.
 - `TestClaudeWatcher_IgnoresTmpFile` — write `statusline-current.json.tmp` atomically (without the rename); assert no store (only the final filename triggers ingest).
-- `TestClaudeWatcher_RapidConcurrentWritesAndReadsRace` — writer goroutine atomic-renames in a loop; reader goroutine calls `payload.Load()` in a loop; run with `-race` to verify `atomic.Pointer[json.RawMessage]` serialization.
+- `TestClaudeWatcher_RapidConcurrentWritesAndReadsRace` — writer goroutine atomic-renames in a loop; reader goroutine calls `payload.Load()` in a loop and dereferences `.raw` / `.at`; run with `-race` to verify `atomic.Pointer[claudePayloadSnapshot]` serialization across both fields.
 - `TestClaudeWatcher_HandlesWatcherErrorChannel` — inject a synthetic error on `watcher.Errors`; assert log line written; assert goroutine continues.
 
 **`statusline/payload_test.go`** (extend)
 
-- `TestBuildPayload_ClaudeNativeAbsentWhenNil` — nil claudeRaw → no `claude` field in JSON.
+- `TestBuildPayload_ClaudeNativeAbsentWhenNil` — nil claudeRaw (and zero-value `claudeAt`) → no `claude` field in JSON.
 - `TestBuildPayload_ClaudeNativeEmbeddedVerbatim` — pass a json.RawMessage; assert it appears at `.claude.native` byte-for-byte.
 - `TestBuildPayload_ClaudeNativeNoDoubleMarshaling` — ensure the raw message is not string-quoted.
+- `TestBuildPayload_ClaudePr9kEmitsUTCRFC3339` — pass a non-zero `claudeAt` in a non-UTC location; assert `.claude.pr9k.ingested_at` is UTC and parses cleanly via `time.Parse(time.RFC3339, ...)`.
+- `TestBuildPayload_ClaudePr9kAgeSecondsIsRelative` — pass `claudeAt = time.Now().Add(-30*time.Second)`; assert `.claude.pr9k.age_seconds` is within `[29, 31]` (window tolerates scheduler jitter).
 
 **`statusline/statusline_test.go`** (extend)
 
@@ -1007,7 +1063,7 @@ All code + docs + version bump in one PR. No phased gates, no feature flag beyon
 4. Threading: `StatusLineConfig` / `vStatusLine` / `steps.LoadSteps` changes + validator tests.
 5. Add `claude_watcher.go` + tests (including platform-gated integration test).
 6. Wire watcher into `statusline.Runner.Start`/`Shutdown` + `BuildPayload` change with staleness timestamp + tests.
-7. Thread `CaptureClaudeStatusLine` through `wiring.go` (`buildStatusLineConfig` + `buildRunConfig`) and add new parameter to `buildStep` + update all 19 call sites.
+7. Thread `CaptureClaudeStatusLine` through `wiring.go` (`buildStatusLineConfig` + `buildRunConfig`) and add new parameter to `buildStep` + update all 20 call sites (3 production in `run.go` + 15 in `run_test.go` + 2 in `run_timeout_test.go`).
 8. Call `sandbox.WriteOverlay` in `workflow/run.go` claude step path.
 9. Update `workflow/scripts/statusline` demo to read `claude.native` and `claude.pr9k.age_seconds`.
 10. Documentation: new how-to + feature doc update + CLAUDE.md index + versioning clause.
@@ -1037,6 +1093,7 @@ Per `docs/coding-standards/versioning.md` §32-38, during `0.y.z` any additive c
 | R10 | JSON round-trip allocates — GC pressure under high trigger rate | Very low | Low | Claude's 300 ms debounce caps rate; 1–2 KB allocations/event are ~6 KB/s worst case |
 | R11 | Two pr9k processes in the same `projectDir` race on overlay files | Very low | Low | Shim uses atomic rename so writes are safe; sandbox-settings.json is a fixed byte sequence so concurrent writes produce the same output; no lockfile added in this PR. Document as non-supported in status-line.md. |
 | R12 | Docker bind-mount argv-ordering regression in a future Docker release | Very low | High | Integration test (§7.2) catches a regression; design §4.4 lists fallback: project-local `.claude/settings.json` write, per `research.md` Q-OPEN-3 |
+| R13 | User mutates Claude settings via `/config` inside a captureClaudeStatusLine run — the write lands on pr9k's overlay file, not `~/.claude/settings.json`, and is silently reverted on next `WriteOverlay` (per-step) or `CleanOverlay` (next startup) | Low | Low | Document in the how-to that in-container `/config` edits do not persist while the flag is on; user's real profile file is unaffected (which is a feature, but surprising). If surfaces as common confusion later, consider a user-visible TUI log line on first Claude write to the overlay file |
 
 ---
 
@@ -1136,3 +1193,19 @@ Captured empirically-unverifiable items that the agents flagged and that this pl
 - Docker Desktop VirtioFS fsnotify delivery from container→host has no in-tree empirical test today; integration tests in §7.2 are the validator. Failure mode is "silent feature inactivity," not crash.
 - Claude CLI cancel-and-restart behavior for the statusLine shim is asserted by Anthropic docs but not empirically tested against pr9k's shim. V4 mitigation (PID-unique tmp) hardens the worst case.
 - Docker file-over-directory mount ordering is documented by the design's integration test; if Docker changes this behavior, CI catches it.
+
+### 13.8 Iterative plan review — second pass (2026-04-20)
+
+Three codebase-grounded passes after the initial agent validation. Each finding was verified against the working tree at `HEAD` and fixed in-place in this plan.
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| I1 | Important | Internal inconsistency — §4.5/§4.6 described `atomic.Pointer[json.RawMessage]`; §4.9 required `atomic.Pointer[claudePayloadSnapshot]` for staleness timestamps. Watcher, Runner, and load-site snippets disagreed on the cell type. | Unified on `atomic.Pointer[claudePayloadSnapshot]`: promoted the snapshot struct into §3.4 and §4.5 as the canonical definition; updated §4.6 Runner field and load site; fixed §2 summary and §7.1 test description to match. |
+| I2 | Important | `BuildPayload(s, mode, claudeRaw)` signature in §4.9 could not produce `claude.pr9k.age_seconds` because the timestamp was nowhere in the signature. | Added `claudeAt time.Time` as a fourth parameter; documented in the inline comment; rewrote the Marshal block to derive `IngestedAt` / `AgeSeconds` from it; updated §4.6 load site to read `snap.at` and pass it through. |
+| I3 | Minor | `ingested_at` JSON example ("2026-04-20T15:04:05Z") implied UTC but the plan never specified the format explicitly, and Go's default `time.Format(time.RFC3339)` uses local TZ. | Wrote the serialization as `claudeAt.UTC().Format(time.RFC3339)` with an explaining comment. |
+| I4 | Minor | §4.9 silently changed the `BuildPayload` signature but — unlike §4.4 for `BuildRunArgs` — did not enumerate the existing test-caller churn. | Enumerated the ten existing callers in `statusline_test.go` (verified with `Grep`) and noted the mechanical trailing-arg update. |
+| I5 | Minor | Line-number drift: §4.4 cited `run.go:731` (actual 764); §4.7 cited `buildStep` call sites 403/527/638 (actual 403/527/662); §4.7 also pointed at `run.go:716-738` for the `buildStep` body (actual 749-772); §8.2 commit 7 said "19 call sites" (actual 20 = 3 production + 15 in `run_test.go` + 2 in `run_timeout_test.go`). | Corrected all citations against the current tree. |
+| I6 | Low | `CleanOverlay` removed only the three named basenames; a failed `mv` would leak `statusline-current.json.<pid>.tmp` files into `.pr9k/` forever (never a correctness issue, but litter). | Widened `CleanOverlay` to glob `statusline-current.json.*.tmp` and remove each. Updated §4.1 artifact table to reflect the sweep. |
+| I7 | Low | New risk — a user running `/config` inside a claude step with the flag on writes through the overlay bind mount to pr9k's `sandbox-settings.json`, not to `~/.claude/settings.json`; the write is silently reverted by the next `WriteOverlay` or `CleanOverlay`. Not addressed in §9. | Added R13 to the risk table with a doc mitigation; the user's real `~/.claude/settings.json` is unaffected, which is the safety property. |
+
+**Convergence check (end of iteration 3).** After I1–I7, no remaining internal inconsistency was found in the following targeted searches: all `atomic.Pointer[…]` occurrences now reference `claudePayloadSnapshot`; every `BuildPayload(` reference uses the four-argument form; every `run.go:NNN` citation matches the current tree. Iteration 4 would be cosmetic only — stopped at 3 per the skill's 80%-probability-of-meaningful-structural-improvement rule.
