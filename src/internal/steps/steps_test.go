@@ -63,8 +63,8 @@ func TestLoadSteps_FinalizeCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSteps returned error: %v", err)
 	}
-	if len(got.Finalize) != 7 {
-		t.Errorf("expected 7 finalization steps, got %d", len(got.Finalize))
+	if len(got.Finalize) != 8 {
+		t.Errorf("expected 8 finalization steps, got %d", len(got.Finalize))
 	}
 }
 
@@ -104,6 +104,7 @@ func TestLoadSteps_FinalizeOrder(t *testing.T) {
 		"Code review",
 		"Check review verdict",
 		"Fix review items",
+		"Final CI check",
 		"Update docs",
 		"Deferred work",
 		"Lessons learned",

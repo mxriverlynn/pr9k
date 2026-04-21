@@ -32,7 +32,7 @@
     { "name": "Code review",          "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
     { "name": "Check review verdict", "isClaude": false, "command": ["scripts/review_verdict"], "captureAs": "REVIEW_HAS_FIXES", "captureMode": "lastLine" },
     { "name": "Fix review items",     "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md", "skipIfCaptureEmpty": "REVIEW_HAS_FIXES" },
-    { "name": "Final CI check",       "isClaude": true,  "model": "sonnet", "promptFile": "full-ci-check.md" },
+    { "name": "Final CI check",       "isClaude": true,  "model": "sonnet", "promptFile": "final-ci-check.md" },
     { "name": "Update docs",          "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
     { "name": "Deferred work",        "isClaude": true,  "model": "sonnet", "promptFile": "deferred-work.md" },
     { "name": "Lessons learned",      "isClaude": true,  "model": "sonnet", "promptFile": "lessons-learned.md" },
