@@ -12,8 +12,9 @@ If the test-plan.md file is empty, non-existent, or otherwise says there is noth
 2. Run all tests, type checks, linting and formatting tools. Fix any issues.
 3. Delete test-plan.md
 4. Commit changes in a single commit.
-5. Append your progress to progress.txt
-6. Append all deferred work to deferred.txt
+5. Add a comment to github issue {{ISSUE_ID}} with your progress
+6. Append your progress to progress.txt
+7. Append all deferred work to deferred.txt
 Never commit test-plan.md
 Never commit progress.txt
 Never commit deferred.txt
