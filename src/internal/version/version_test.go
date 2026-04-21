@@ -14,10 +14,10 @@ func TestVersion_FollowsSemver(t *testing.T) {
 	}
 }
 
-// TP-005 (issue #145): version must remain at 0.7.0 for this issue.
-// Update this test intentionally when bumping.
-func TestVersion_PinnedAt070(t *testing.T) {
-	if Version != "0.7.0" {
-		t.Errorf("version must remain 0.7.0 for issue #145; got %q — update this test intentionally when bumping", Version)
+// Pins the current release. Update this test intentionally when bumping.
+// 0.7.1: PATCH bump for the onTimeout policy schema addition.
+func TestVersion_PinnedAt071(t *testing.T) {
+	if Version != "0.7.1" {
+		t.Errorf("version must remain 0.7.1 for the onTimeout release; got %q — update this test intentionally when bumping", Version)
 	}
 }

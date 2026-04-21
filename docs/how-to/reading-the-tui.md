@@ -25,7 +25,7 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 │ [test-writing subprocess output streams here]       │
 │                                                     │
 ├─────────────────────────────────────────────────────┤  ← HRule (T-junctions)
-│ ↑/k up  ↓/j down  n next step  q quit  pr9k v0.7.0 │  ← shortcut footer + version
+│ ↑/k up  ↓/j down  n next step  q quit  pr9k v0.7.1 │  ← shortcut footer + version
 ╰─────────────────────────────────────────────────────╯
 ```
 
@@ -37,7 +37,7 @@ State updates from the orchestration goroutine are sent as typed messages via `H
 
 The topmost region. Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, `SetPhaseSteps` swaps the step names into the same slots and trailing slots clear to empty.
 
-The five possible states:
+The six possible states:
 
 | Marker | Name | Meaning |
 |--------|------|---------|
@@ -46,6 +46,7 @@ The five possible states:
 | `[✓] <name>` | Done | Completed successfully, or user-terminated with `n` (treated as a skip) |
 | `[✗] <name>` | Failed | Returned non-zero exit and the user chose `c` to continue past it |
 | `[-] <name>` | Skipped | Marked skipped because an earlier step with `breakLoopIfEmpty` exited the iteration |
+| `[!] <name>` | Timed-out, continuing | Hit its `timeoutSeconds` cap AND its `onTimeout: "continue"` policy told pr9k to advance without prompting. Distinct from `[✗]` so you can tell an unattended soft-timeout from a hard failure at a glance. |
 
 **Note:** The initialize phase does not update the checkbox grid — it uses a `noopHeader` during `Orchestrate` so initialize step state isn't rendered. Only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
 
@@ -185,7 +186,7 @@ The footer uses a two-tone color scheme: the version label on the right renders 
 When a `statusLine` command is configured in `config.json` and its runner has produced output, the footer in Normal mode switches from the standard shortcut bar to a **status-line display**:
 
 ```
-[status text…]                    ? Help | pr9k v0.7.0
+[status text…]                    ? Help | pr9k v0.7.1
 ```
 
 The status text sits on the left and the `? Help | <version>` cluster is right-aligned, so the help hint and version label stay pinned to the right edge regardless of how wide the status text grows or shrinks between refreshes. The status text is the sanitized first non-empty line of the most recent command run; it is right-truncated to protect the `? Help | <version>` cluster. On very narrow terminals the version label may be truncated first; the `? Help` hint is always preserved. During cold-start (before the first successful run), the footer falls back to the standard shortcut bar.

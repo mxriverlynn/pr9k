@@ -62,7 +62,8 @@ func buildState(vt *vars.VarTable, phase vars.Phase, sessionID, ver string) stat
 }
 
 // StepExecutor is the interface for running workflow steps and capturing command output.
-// *Runner satisfies this interface.
+// *Runner satisfies this interface. WasTimedOut and ClearTimeoutFlag are
+// inherited from ui.StepRunner (embedded above).
 type StepExecutor interface {
 	ui.StepRunner
 	LastCapture() string
@@ -75,9 +76,6 @@ type StepExecutor interface {
 	// (returning false for every id) is safe and correct for test doubles that
 	// do not need to exercise G5.
 	SessionBlacklisted(id string) bool
-	// WasTimedOut reports whether the most recent step was ended by a timeout
-	// goroutine. Returns false once the next step begins.
-	WasTimedOut() bool
 	// WriteRunSummary writes line to both the TUI and the file logger. Used for
 	// the run-level cumulative summary (D13 2c) so it is visible in the TUI and
 	// persisted to disk, unlike WriteToLog which only sends to the TUI.
@@ -163,6 +161,8 @@ func (d *stepDispatcher) RunStep(name string, command []string) error {
 }
 
 func (d *stepDispatcher) WasTerminated() bool    { return d.exec.WasTerminated() }
+func (d *stepDispatcher) WasTimedOut() bool      { return d.exec.WasTimedOut() }
+func (d *stepDispatcher) ClearTimeoutFlag()      { d.exec.ClearTimeoutFlag() }
 func (d *stepDispatcher) WriteToLog(line string) { d.exec.WriteToLog(line) }
 
 // RunHeader is the interface for updating the TUI status header during workflow execution.
@@ -218,11 +218,14 @@ func (s *stateTracker) SetStepState(_ int, state ui.StepState) {
 }
 
 // stepStatus converts a ui.StepState to the IterationRecord Status string.
+// StepTimedOutContinuing maps to "failed" so the iteration log preserves the
+// signal that a timeout fired; setTimeoutNote attaches the "timed out after
+// Ns" note alongside.
 func stepStatus(state ui.StepState) string {
 	switch state {
 	case ui.StepDone, ui.StepActive:
 		return "done"
-	case ui.StepFailed:
+	case ui.StepFailed, ui.StepTimedOutContinuing:
 		return "failed"
 	case ui.StepSkipped:
 		return "skipped"
@@ -233,11 +236,18 @@ func stepStatus(state ui.StepState) string {
 	}
 }
 
-// setTimeoutNote sets rec.Notes to the standard timeout message when the executor
-// reports that the most recent step was ended by a per-step timeout goroutine.
+// setTimeoutNote sets rec.Notes to the standard timeout message when a per-step
+// timeout was the cause of the step ending. Two signals satisfy this: the
+// executor's WasTimedOut flag (the direct signal), or a lastState of
+// StepTimedOutContinuing (the soft-fail policy consumed the flag via
+// ClearTimeoutFlag before this function runs, but the state is preserved).
+// Either signal is sufficient; both are equivalent.
 // SUGG-001: extracted from three near-identical inline blocks in Run.
-func setTimeoutNote(rec *IterationRecord, executor StepExecutor, s steps.Step) {
-	if executor.WasTimedOut() && s.TimeoutSeconds > 0 {
+func setTimeoutNote(rec *IterationRecord, executor StepExecutor, s steps.Step, lastState ui.StepState) {
+	if s.TimeoutSeconds <= 0 {
+		return
+	}
+	if executor.WasTimedOut() || lastState == ui.StepTimedOutContinuing {
 		rec.Notes = fmt.Sprintf("timed out after %ds", s.TimeoutSeconds)
 	}
 }
@@ -438,7 +448,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
-		setTimeoutNote(&rec, executor, s)
+		setTimeoutNote(&rec, executor, s, st.lastState)
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -567,7 +577,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			rec.InputTokens = disp.capturedStats.InputTokens
 			rec.OutputTokens = disp.capturedStats.OutputTokens
 			rec.SessionID = disp.capturedStats.SessionID
-			setTimeoutNote(&rec, executor, s)
+			setTimeoutNote(&rec, executor, s, th.lastState)
 			if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 				executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 			}
@@ -700,7 +710,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		rec.InputTokens = disp.capturedStats.InputTokens
 		rec.OutputTokens = disp.capturedStats.OutputTokens
 		rec.SessionID = disp.capturedStats.SessionID
-		setTimeoutNote(&rec, executor, s)
+		setTimeoutNote(&rec, executor, s, th.lastState)
 		if logErr := AppendIterationRecord(executor.ProjectDir(), rec); logErr != nil {
 			executor.WriteToLog(fmt.Sprintf("warning: %v", logErr))
 		}
@@ -768,6 +778,7 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 			IsClaude:       true,
 			CidfilePath:    cidfile,
 			TimeoutSeconds: s.TimeoutSeconds,
+			OnTimeout:      s.OnTimeout,
 		}, nil
 	}
 	var capMode ui.CaptureMode
@@ -784,6 +795,7 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		Command:        ResolveCommand(workflowDir, s.Command, vt, phase),
 		CaptureMode:    capMode,
 		TimeoutSeconds: s.TimeoutSeconds,
+		OnTimeout:      s.OnTimeout,
 	}, nil
 }
 

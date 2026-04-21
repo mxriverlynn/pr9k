@@ -11,10 +11,14 @@ import (
 // --- Test doubles ---
 
 type stubRunner struct {
-	results       []error // one per RunStep call; nil = success
-	callCount     int
-	wasTerminated bool
-	logLines      []string
+	results           []error // one per RunStep call; nil = success
+	callCount         int
+	wasTerminated     bool
+	wasTimedOut       bool
+	clearTimeoutCalls int
+	// timedOutResults, if non-nil, returns wasTimedOut values per call (overrides wasTimedOut)
+	timedOutResults []bool
+	logLines        []string
 }
 
 func (s *stubRunner) RunStep(_ string, _ []string) error {
@@ -26,21 +30,41 @@ func (s *stubRunner) RunStep(_ string, _ []string) error {
 	return err
 }
 
-func (s *stubRunner) WasTerminated() bool    { return s.wasTerminated }
+func (s *stubRunner) WasTerminated() bool { return s.wasTerminated }
+func (s *stubRunner) WasTimedOut() bool {
+	// callCount is incremented after RunStep, so the "just-returned" call is at index callCount-1.
+	if len(s.timedOutResults) > 0 {
+		idx := s.callCount - 1
+		if idx >= 0 && idx < len(s.timedOutResults) {
+			return s.timedOutResults[idx]
+		}
+	}
+	return s.wasTimedOut
+}
+func (s *stubRunner) ClearTimeoutFlag()      { s.clearTimeoutCalls++; s.wasTimedOut = false }
 func (s *stubRunner) WriteToLog(line string) { s.logLines = append(s.logLines, line) }
 
 // callbackStubRunner is a StepRunner whose RunStep behaviour is controlled by
 // a callback. Use this when you need precise timing control in tests.
 type callbackStubRunner struct {
-	onRunStep       func(name string) error
-	wasTerminatedFn func() bool
-	logLines        []string
+	onRunStep         func(name string) error
+	wasTerminatedFn   func() bool
+	wasTimedOutFn     func() bool
+	clearTimeoutCalls int
+	logLines          []string
 }
 
 func (c *callbackStubRunner) RunStep(name string, _ []string) error {
 	return c.onRunStep(name)
 }
-func (c *callbackStubRunner) WasTerminated() bool    { return c.wasTerminatedFn() }
+func (c *callbackStubRunner) WasTerminated() bool { return c.wasTerminatedFn() }
+func (c *callbackStubRunner) WasTimedOut() bool {
+	if c.wasTimedOutFn == nil {
+		return false
+	}
+	return c.wasTimedOutFn()
+}
+func (c *callbackStubRunner) ClearTimeoutFlag()      { c.clearTimeoutCalls++ }
 func (c *callbackStubRunner) WriteToLog(line string) { c.logLines = append(c.logLines, line) }
 
 type spyHeader struct {
@@ -771,5 +795,154 @@ func TestCaptureMode_ZeroValueIsCaptureLastLine(t *testing.T) {
 	}
 	if CaptureLastLine == CaptureResult {
 		t.Errorf("CaptureLastLine and CaptureResult must be distinct values")
+	}
+}
+
+// --- OnTimeout=continue soft-fail behavior ---
+
+// TOT-1: When a step times out AND its OnTimeout policy is "continue", the
+// orchestrator marks the step with StepTimedOutContinuing, calls
+// ClearTimeoutFlag on the runner, and returns ActionContinue WITHOUT entering
+// ModeError (so no c/r/q prompt blocks an unattended run).
+func TestOrchestrate_TimeoutContinue_DoesNotEnterErrorMode(t *testing.T) {
+	stub := &stubRunner{
+		results:     []error{errors.New("killed by timer")},
+		wasTimedOut: true,
+	}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "long-step", Command: []string{"x"}, TimeoutSeconds: 60, OnTimeout: "continue"}}
+
+	done := make(chan StepAction, 1)
+	go func() { done <- Orchestrate(steps, stub, spy, h) }()
+
+	select {
+	case result := <-done:
+		if result != ActionContinue {
+			t.Errorf("expected ActionContinue, got %v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate blocked — soft-timeout branch did not return")
+	}
+
+	state, ok := spy.lastStateFor(0)
+	if !ok {
+		t.Fatal("no step state recorded")
+	}
+	if state != StepTimedOutContinuing {
+		t.Errorf("expected StepTimedOutContinuing, got %v", state)
+	}
+	if stub.clearTimeoutCalls != 1 {
+		t.Errorf("expected ClearTimeoutFlag called exactly once, got %d", stub.clearTimeoutCalls)
+	}
+	// Confirm the banner was written to the log.
+	var bannerFound bool
+	for _, line := range stub.logLines {
+		if strings.Contains(line, "timed out after 60s") && strings.Contains(line, "onTimeout=continue") {
+			bannerFound = true
+			break
+		}
+	}
+	if !bannerFound {
+		t.Errorf("expected TimeoutContinueBanner in log; got %v", stub.logLines)
+	}
+}
+
+// TOT-2: When OnTimeout is unset (default), a timeout still enters ModeError
+// exactly like today — the policy only activates on explicit "continue".
+func TestOrchestrate_TimeoutDefault_StillEntersErrorMode(t *testing.T) {
+	stub := &stubRunner{
+		results:     []error{errors.New("killed by timer")},
+		wasTimedOut: true,
+	}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "long-step", Command: []string{"x"}, TimeoutSeconds: 60 /* OnTimeout: "" */}}
+
+	done := make(chan StepAction, 1)
+	go func() { done <- Orchestrate(steps, stub, spy, h) }()
+
+	// Give the goroutine a moment to reach the blocking receive on h.Actions.
+	time.Sleep(30 * time.Millisecond)
+	// Must be in ModeError now — send continue to unblock.
+	h.Actions <- ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not respond to ActionContinue")
+	}
+
+	state, _ := spy.lastStateFor(0)
+	if state != StepFailed {
+		t.Errorf("expected StepFailed (default policy), got %v", state)
+	}
+	if stub.clearTimeoutCalls != 0 {
+		t.Errorf("ClearTimeoutFlag should not be called on default policy, got %d calls", stub.clearTimeoutCalls)
+	}
+}
+
+// TOT-3: OnTimeout="fail" is the explicit form of the default and must behave
+// identically — timeout still blocks on user input.
+func TestOrchestrate_TimeoutExplicitFail_BehavesLikeDefault(t *testing.T) {
+	stub := &stubRunner{
+		results:     []error{errors.New("killed by timer")},
+		wasTimedOut: true,
+	}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "long-step", Command: []string{"x"}, TimeoutSeconds: 60, OnTimeout: "fail"}}
+
+	done := make(chan StepAction, 1)
+	go func() { done <- Orchestrate(steps, stub, spy, h) }()
+
+	time.Sleep(30 * time.Millisecond)
+	h.Actions <- ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not respond to ActionContinue")
+	}
+
+	state, _ := spy.lastStateFor(0)
+	if state != StepFailed {
+		t.Errorf("expected StepFailed, got %v", state)
+	}
+}
+
+// TOT-4: The soft-fail policy is timeout-specific. A non-timeout failure
+// (WasTimedOut=false) with OnTimeout=continue still enters ModeError.
+func TestOrchestrate_NonTimeoutFailure_IgnoresOnTimeoutPolicy(t *testing.T) {
+	stub := &stubRunner{
+		results:     []error{errors.New("exit 1")}, // real failure
+		wasTimedOut: false,                         // not a timeout
+	}
+	spy := &spyHeader{}
+	actions := make(chan StepAction, 1)
+	h := NewKeyHandler(nil, actions)
+	steps := []ResolvedStep{{Name: "broken", Command: []string{"x"}, TimeoutSeconds: 60, OnTimeout: "continue"}}
+
+	done := make(chan StepAction, 1)
+	go func() { done <- Orchestrate(steps, stub, spy, h) }()
+
+	time.Sleep(30 * time.Millisecond)
+	h.Actions <- ActionContinue
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Orchestrate did not respond to ActionContinue")
+	}
+
+	state, _ := spy.lastStateFor(0)
+	if state != StepFailed {
+		t.Errorf("expected StepFailed (OnTimeout policy must not apply to non-timeout failures), got %v", state)
+	}
+	if stub.clearTimeoutCalls != 0 {
+		t.Errorf("ClearTimeoutFlag should not be called on non-timeout failure, got %d calls", stub.clearTimeoutCalls)
 	}
 }

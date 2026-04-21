@@ -411,7 +411,7 @@ func Orchestrate(steps []ResolvedStep, runner StepRunner, header StepHeader, h *
 
 The banner is written **after** the pre-step quit drain so pending quits don't write a banner for a step that will not run. Retries re-enter `runStepWithErrorHandling` and write `RetryStepSeparator(step.Name)` via `WriteToLog` before the retry; the `Starting step` banner is written once per step (not per attempt).
 
-On step failure (non-zero exit, not user-terminated), `runStepWithErrorHandling` enters error mode and blocks on user input:
+On step failure (non-zero exit, not user-terminated), `runStepWithErrorHandling` first consults the per-step `OnTimeout` policy; if the failure was a timeout AND the step is configured `OnTimeout: "continue"`, the step soft-fails (log banner, clear the executor's timeout flag, mark the checkbox `[!]`) and the workflow advances without prompting. Otherwise it enters error mode and blocks on user input:
 
 ```go
 func runStepWithErrorHandling(...) StepAction {
@@ -420,6 +420,14 @@ func runStepWithErrorHandling(...) StepAction {
 
         if err == nil || runner.WasTerminated() {
             header.SetStepState(idx, StepDone)
+            return ActionContinue
+        }
+
+        // Soft-fail on timeout when the step's policy is "continue".
+        if runner.WasTimedOut() && step.OnTimeout == "continue" {
+            runner.WriteToLog(TimeoutContinueBanner(step.Name, step.TimeoutSeconds))
+            runner.ClearTimeoutFlag()  // prevent stale flag leaking to next step's dispatcher
+            header.SetStepState(idx, StepTimedOutContinuing)  // [!]
             return ActionContinue
         }
 
@@ -437,6 +445,8 @@ func runStepWithErrorHandling(...) StepAction {
     }
 }
 ```
+
+`ClearTimeoutFlag` is critical here: the stepDispatcher's WARN-001 pre-check (`run.go:138-144`) fires `onTimeoutRetry` at the start of any `RunStep` call when `WasTimedOut()` is true. Without the clear, the next step's dispatcher would emit a spurious synthetic iteration record (`status=failed, notes="timed out after 0s"`) for a step that never timed out. The iteration record for the soft-failed step itself still carries the truthful `status=failed` + `notes="timed out after Ns"` because `stepStatus(StepTimedOutContinuing) == "failed"` and `setTimeoutNote` checks `lastState == StepTimedOutContinuing` as a secondary signal (the primary flag is cleared by that point).
 
 ### runStats
 

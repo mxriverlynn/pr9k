@@ -23,7 +23,7 @@
     { "name": "Feature work",          "isClaude": true,  "model": "sonnet", "promptFile": "feature-work.md" },
     { "name": "Get post-feature diff", "isClaude": false, "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"], "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" },
     { "name": "Test planning",         "isClaude": true,  "model": "opus",   "promptFile": "test-planning.md" },
-    { "name": "Test writing",     "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md", "timeoutSeconds": 900 },
+    { "name": "Test writing",     "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md", "timeoutSeconds": 1800, "onTimeout": "continue" },
     { "name": "Summarize to issue", "isClaude": false, "command": ["scripts/post_issue_summary", "{{ISSUE_ID}}"] },
     { "name": "Close issue",      "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"] },
     { "name": "Git push",         "isClaude": false, "command": ["git", "push"] }

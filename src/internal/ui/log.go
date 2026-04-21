@@ -49,6 +49,14 @@ func RetryStepSeparator(stepName string) string {
 	return fmt.Sprintf("── %s (retry) ─────────────", stepName)
 }
 
+// TimeoutContinueBanner returns the one-line log entry written when a step
+// hits its timeoutSeconds and its onTimeout policy is "continue". Mirrors the
+// "timed out after Ns" phrasing used in iteration.jsonl so operators grepping
+// logs see the same string.
+func TimeoutContinueBanner(stepName string, timeoutSeconds int) string {
+	return fmt.Sprintf("── %s timed out after %ds — continuing (onTimeout=continue) ─────────────", stepName, timeoutSeconds)
+}
+
 // CompletionSummary returns the final summary line written to the log body
 // after all iterations and finalize steps have completed.
 // Example output: "Ralph completed after 3 iteration(s) and 2 finalizing tasks."

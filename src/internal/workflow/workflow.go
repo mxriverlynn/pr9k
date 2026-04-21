@@ -167,6 +167,17 @@ func (r *Runner) WasTimedOut() bool {
 	return r.timeoutFired
 }
 
+// ClearTimeoutFlag resets the timed-out flag to false. The ui layer calls this
+// when an onTimeout="continue" policy has consumed the timeout signal and the
+// workflow is advancing. Without this reset, the next step's stepDispatcher
+// would see a stale true from WasTimedOut() and fire its WARN-001 synthetic
+// iteration record for a step that never timed out.
+func (r *Runner) ClearTimeoutFlag() {
+	r.processMu.Lock()
+	defer r.processMu.Unlock()
+	r.timeoutFired = false
+}
+
 // SessionBlacklisted reports whether id is in the session blacklist. Safe for
 // concurrent use; acquires processMu internally.
 func (r *Runner) SessionBlacklisted(id string) bool {

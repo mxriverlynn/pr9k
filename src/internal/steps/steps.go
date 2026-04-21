@@ -39,6 +39,17 @@ type Step struct {
 	// cidfile-driven Terminator path so Docker containers are cleaned up correctly.
 	// Zero means no timeout (the default).
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+	// OnTimeout selects the per-step policy applied when TimeoutSeconds fires.
+	// Accepted values:
+	//   ""         same as "fail" — current behavior: enter error mode and block
+	//              on user input (c/r/q) for the failed step.
+	//   "fail"     explicit form of the default.
+	//   "continue" soft-fail: log the timeout, advance to the next step without
+	//              prompting, and render the step with the StepTimedOutContinuing
+	//              glyph ("[!]"). Intended for unattended runs where the work was
+	//              already partially completed before the timer fired.
+	// Only meaningful when TimeoutSeconds > 0.
+	OnTimeout string `json:"onTimeout,omitempty"`
 	// ResumePrevious, when true, requests that this claude step resume the
 	// previous claude step's session via --resume <session_id>. Five runtime
 	// gates (G1–G5) must all pass; any failure logs the blocking gate and falls
