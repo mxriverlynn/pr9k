@@ -10,19 +10,33 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ### Prerequisites
 
-- [Go 1.26.2](https://go.dev/dl/) (for pr9k)
-- [GitHub CLI (`gh`)](https://cli.github.com/) — authenticated with access to your target repo
-- [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) — installed and authenticated
+- [Docker](https://docs.docker.com/get-docker/) — Docker Desktop (macOS) or Docker Engine (Linux), running. pr9k runs every claude step inside a Docker sandbox
+- [GitHub CLI (`gh`)](https://cli.github.com/) — authenticated against the repo you want to automate (installed automatically by Homebrew)
+- [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) credentials — pr9k uses your `~/.claude` profile inside the sandbox container
 - A GitHub repo with issues labeled `ralph` assigned to your user
 
 ### Installation
 
 ```bash
+brew tap mxriverlynn/pr9k
+brew install pr9k
+
+# One-time sandbox setup:
+pr9k sandbox create   # pull the claude sandbox image
+pr9k sandbox login    # authenticate the claude profile
+```
+
+See [Setting Up Docker Sandbox](docs/how-to/setting-up-docker-sandbox.md) for the full sandbox walk-through.
+
+### Building from source
+
+Requires [Go 1.26.2](https://go.dev/dl/).
+
+```bash
 git clone https://github.com/mxriverlynn/pr9k.git
 cd pr9k
-
-# Build the orchestrator
 make build
+./bin/pr9k
 ```
 
 ### Quick Start
@@ -31,10 +45,10 @@ From the **target repo** (the repo where you want Ralph to work):
 
 ```bash
 # Run until no issues remain (until-done mode)
-path/to/pr9k/bin/pr9k
+pr9k
 
 # Or cap at 3 iterations
-path/to/pr9k/bin/pr9k -n 3
+pr9k -n 3
 ```
 
 Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue. When run without `-n`, Ralph keeps going until `get_next_issue` finds no more issues.
@@ -45,18 +59,16 @@ Ralph will find the next open issue labeled `ralph`, implement the feature, writ
 
 ```bash
 # From your target repo — run until no issues remain:
-path/to/pr9k/bin/pr9k
+pr9k
 
 # Cap at N iterations:
-path/to/pr9k/bin/pr9k -n <iterations>
+pr9k -n <iterations>
 
 # Specify the project directory explicitly:
-path/to/pr9k/bin/pr9k --project-dir path/to/your-target-repo
-
-# Build and run directly (without make):
-cd path/to/pr9k/src && go build -o ../bin/pr9k ./cmd/pr9k
-path/to/pr9k/bin/pr9k -n <iterations>
+pr9k --project-dir path/to/your-target-repo
 ```
+
+If you built from source, invoke the binary as `./bin/pr9k` (or add `bin/` to your `PATH`) instead of `pr9k`.
 
 Omitting `-n` (or passing `-n 0`) runs Ralph in until-done mode: it keeps picking up issues until `get_next_issue` finds none. Passing `-n N` caps the run at N iterations.
 

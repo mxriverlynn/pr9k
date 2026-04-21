@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.2"
+          cache-dependency-path: src/go.sum
+
+      - name: Verify tag matches version.Version constant
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          constant=$(grep -E '^const Version' src/internal/version/version.go | awk -F'"' '{print $2}')
+          if [ "$tag" != "$constant" ]; then
+            echo "::error::tag ($tag) does not match version.Version ($constant) — bump src/internal/version/version.go and re-tag" >&2
+            exit 1
+          fi
+          echo "tag $tag matches version.Version"
+
+      - name: Run full CI suite
+        run: make ci
+
+      - name: Run bundle integration test
+        working-directory: src
+        run: go test -tags=integration -race ./cmd/pr9k/...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

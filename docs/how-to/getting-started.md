@@ -4,20 +4,37 @@ This guide walks you through installing pr9k, pointing it at a target repo, and 
 
 ## Prerequisites
 
-- **[Go 1.26.2](https://go.dev/dl/)** — pr9k compiles to a single static binary
-- **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS/Windows) or Docker Engine (Linux), running. pr9k runs every Claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
-- **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`)
-- **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** — installed and authenticated (`claude --version`). The CLI's credentials are used inside the sandbox container
+- **[Docker](https://docs.docker.com/get-docker/)** — Docker Desktop (macOS) or Docker Engine (Linux), running. pr9k runs every claude step inside a Docker sandbox; Docker is a **required** runtime dependency, not optional
+- **[GitHub CLI (`gh`)](https://cli.github.com/)** — authenticated against the repo you want to automate (`gh auth status`). Homebrew installs this as a formula dependency
+- **[Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli)** credentials — pr9k uses your `~/.claude` profile inside the sandbox container. Initial authentication is handled by `pr9k sandbox login` (below)
 - A **target repo** — a git working copy with at least one open GitHub issue labeled `ralph` assigned to your user (for the default workflow), or your own custom `config.json`
 - A Unix-like terminal — pr9k uses `ioctl TIOCGWINSZ` for terminal sizing, so it runs on macOS and Linux but not Windows
 
 ## Installing
 
-Clone this repo and build:
+Install via Homebrew:
+
+```bash
+brew tap mxriverlynn/pr9k
+brew install pr9k
+```
+
+Then initialize the claude sandbox image and authenticate the profile:
+
+```bash
+pr9k sandbox create   # pulls docker/sandbox-templates:claude-code
+pr9k sandbox login    # interactive claude authentication
+```
+
+See [Setting Up Docker Sandbox](setting-up-docker-sandbox.md) for the full sandbox walk-through, including `CLAUDE_CONFIG_DIR` multi-profile setups.
+
+### Building from source
+
+If you want to hack on pr9k itself, build from source instead:
 
 ```bash
 git clone https://github.com/mxriverlynn/pr9k.git
-cd src
+cd pr9k
 make build
 ```
 
@@ -34,7 +51,7 @@ bin/
         └── scripts/              # helper scripts (get_next_issue, get_gh_user, close_gh_issue, ...)
 ```
 
-`bin/` is self-contained — you can copy it elsewhere or symlink `bin/pr9k` into your `PATH`.
+`bin/` is self-contained — copy it anywhere or symlink `bin/pr9k` into your `PATH`. Homebrew installs the same layout under `$(brew --prefix)/opt/pr9k/libexec/`.
 
 If you just want to rebuild the Go binary without copying assets, run `cd src && go build -o ../bin/pr9k ./cmd/pr9k`. Don't use `go run`: the orchestrator resolves its project directory from the executable path (`os.Executable()` + `filepath.EvalSymlinks`), and `go run` uses a temp dir that doesn't contain the prompts or scripts.
 
@@ -51,18 +68,20 @@ From the **target repo's working directory** (not pr9k's — pr9k runs subproces
 
 ```bash
 # Run until no more ralph-labeled issues remain:
-/path/to/pr9k/bin/pr9k
+pr9k
 
 # Or cap at 3 iterations for a dry run:
-/path/to/pr9k/bin/pr9k -n 3
+pr9k -n 3
 ```
+
+If you built from source, invoke the binary as `./bin/pr9k` (or add `bin/` to your `PATH`) instead of `pr9k`.
 
 With `-n 0` (the default), pr9k runs until `scripts/get_next_issue` returns an empty string (no more open issues). With `-n N`, it caps the loop at N iterations regardless of remaining issues.
 
 To check which version you are running without launching the workflow:
 
 ```bash
-/path/to/pr9k/bin/pr9k --version
+pr9k --version
 # pr9k version 0.4.1
 ```
 
@@ -80,7 +99,7 @@ To use a custom bundle in your target repo, create `.pr9k/workflow/` with at lea
 To override both candidates explicitly — for example, when testing a feature branch of pr9k — pass `--workflow-dir`:
 
 ```bash
-/path/to/pr9k/bin/pr9k --workflow-dir /path/to/pr9k/bin/.pr9k/workflow
+pr9k --workflow-dir /path/to/pr9k/bin/.pr9k/workflow
 ```
 
 The workflow directory is where pr9k looks for `config.json`, `prompts/`, and `scripts/`. It is *not* the target repo — the target repo is the current working directory when you launch pr9k (or can be overridden with `--project-dir`).
