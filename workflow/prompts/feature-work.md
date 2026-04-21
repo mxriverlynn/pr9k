@@ -24,11 +24,11 @@ Implement github issue #{{ISSUE_ID}} in the current branch (do not switch branch
 
 ## After the loop
 
-1. Check off each completed Acceptance Criterion in github issue #{{ISSUE_ID}}.
-2. Add a comment to github issue {{ISSUE_ID}} with your progress and the TDD summary.
-3. Append your progress to progress.txt.
-4. Append all deferred work to deferred.txt.
-5. Commit changes in a single commit.
+5. Check off each completed Acceptance Criterion in github issue #{{ISSUE_ID}}.
+6. Add a comment to github issue {{ISSUE_ID}} with your progress and the TDD summary.
+7. Append your progress to progress.txt.
+8. Append all deferred work to deferred.txt.
+9. Commit changes in a single commit.
 
 Never commit progress.txt
 Never commit deferred.txt
