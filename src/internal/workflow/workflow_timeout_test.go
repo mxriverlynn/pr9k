@@ -295,3 +295,38 @@ func TestTimeoutGracePeriod_IsTenSeconds(t *testing.T) {
 		t.Errorf("timeoutGracePeriod = %v, want %v — update docs/how-to/setting-step-timeouts.md if this changes", timeoutGracePeriod, want)
 	}
 }
+
+// TOT-R1: ClearTimeoutFlag resets timeoutFired to false. Verifies the executor
+// side of the onTimeout=continue fix — without this, a residual timeoutFired
+// would leak across dispatcher boundaries.
+func TestRunner_ClearTimeoutFlag_ResetsTimedOutFlag(t *testing.T) {
+	r, log, _ := newCapturingRunner(t)
+	defer func() { _ = log.Close() }()
+	r.timeoutGraceOverride = 200 * time.Millisecond
+
+	stepDone := make(chan error, 1)
+	go func() {
+		stepDone <- r.RunStepFull("slow", []string{"sh", "-c", "trap '' TERM; sleep 5"}, ui.CaptureLastLine, 1)
+	}()
+
+	select {
+	case <-stepDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunStepFull did not complete within 5 seconds")
+	}
+
+	if !r.WasTimedOut() {
+		t.Fatal("WasTimedOut should be true after the timer fires")
+	}
+
+	r.ClearTimeoutFlag()
+	if r.WasTimedOut() {
+		t.Error("WasTimedOut should be false after ClearTimeoutFlag()")
+	}
+
+	// Idempotent: calling again does not panic or change state.
+	r.ClearTimeoutFlag()
+	if r.WasTimedOut() {
+		t.Error("WasTimedOut should remain false after a second ClearTimeoutFlag()")
+	}
+}

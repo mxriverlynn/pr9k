@@ -49,6 +49,13 @@ type fakeExecutor struct {
 	writeRunSummaryCalls int
 	// wasTimedOut controls the value returned by WasTimedOut().
 	wasTimedOut bool
+	// clearTimeoutFlagCalls counts how many times ClearTimeoutFlag() has been called.
+	clearTimeoutFlagCalls int
+	// onRunStepFull, when set, is invoked at the start of each RunStepFull call
+	// with the current fakeExecutor and the zero-based call index. Tests use it
+	// to mutate state mid-call — e.g. set wasTimedOut=true to simulate the real
+	// Runner's timer firing during execution.
+	onRunStepFull func(f *fakeExecutor, callIdx int)
 	// sessionBlacklist is the set of session IDs returned as blacklisted.
 	sessionBlacklist map[string]bool
 }
@@ -73,6 +80,9 @@ func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui
 	f.runStepCalls = append(f.runStepCalls, runStepCall{name, command})
 	f.runStepFullCaptureModes = append(f.runStepFullCaptureModes, captureMode)
 	f.runStepFullTimeouts = append(f.runStepFullTimeouts, timeoutSeconds)
+	if f.onRunStepFull != nil {
+		f.onRunStepFull(f, idx)
+	}
 	if idx < len(f.runStepErrors) && f.runStepErrors[idx] != nil {
 		f.lastCapture = ""
 		return f.runStepErrors[idx]
@@ -87,6 +97,7 @@ func (f *fakeExecutor) RunStepFull(name string, command []string, captureMode ui
 
 func (f *fakeExecutor) WasTerminated() bool               { return false }
 func (f *fakeExecutor) WasTimedOut() bool                 { return f.wasTimedOut }
+func (f *fakeExecutor) ClearTimeoutFlag()                 { f.clearTimeoutFlagCalls++; f.wasTimedOut = false }
 func (f *fakeExecutor) SessionBlacklisted(id string) bool { return f.sessionBlacklist[id] }
 
 func (f *fakeExecutor) RunSandboxedStep(name string, command []string, opts SandboxOptions) error {

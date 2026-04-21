@@ -397,3 +397,128 @@ func TestBuildStep_Claude_CopiesTimeoutSeconds(t *testing.T) {
 		t.Errorf("ResolvedStep.TimeoutSeconds: want 300, got %d", resolved.TimeoutSeconds)
 	}
 }
+
+// TOT-B1: buildStep non-claude branch copies s.OnTimeout into the ResolvedStep.
+func TestBuildStep_NonClaude_CopiesOnTimeout(t *testing.T) {
+	workflowDir := t.TempDir()
+	vt := vars.New(workflowDir, t.TempDir(), 1)
+	executor := &fakeExecutor{projectDir: t.TempDir()}
+
+	resolved, err := buildStep(
+		workflowDir,
+		steps.Step{IsClaude: false, Command: []string{"true"}, TimeoutSeconds: 300, OnTimeout: "continue"},
+		vt, vars.Iteration, nil, nil, executor, "",
+	)
+	if err != nil {
+		t.Fatalf("buildStep: %v", err)
+	}
+	if resolved.OnTimeout != "continue" {
+		t.Errorf("ResolvedStep.OnTimeout: want %q, got %q", "continue", resolved.OnTimeout)
+	}
+}
+
+// TOT-B2: buildStep claude branch copies s.OnTimeout into the ResolvedStep.
+func TestBuildStep_Claude_CopiesOnTimeout(t *testing.T) {
+	workflowDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workflowDir, "prompts"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workflowDir, "prompts", "p.md"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vt := vars.New(workflowDir, t.TempDir(), 1)
+	executor := &fakeExecutor{projectDir: t.TempDir()}
+
+	resolved, err := buildStep(
+		workflowDir,
+		steps.Step{Name: "c", IsClaude: true, Model: "sonnet", PromptFile: "p.md", TimeoutSeconds: 300, OnTimeout: "continue"},
+		vt, vars.Iteration, nil, nil, executor, "",
+	)
+	if err != nil {
+		t.Fatalf("buildStep: %v", err)
+	}
+	if resolved.OnTimeout != "continue" {
+		t.Errorf("ResolvedStep.OnTimeout: want %q, got %q", "continue", resolved.OnTimeout)
+	}
+}
+
+// TOT-X1: Cross-step integration — step A is a non-claude step with
+// TimeoutSeconds and OnTimeout=continue whose subprocess the fakeExecutor
+// "times out" (timer fires mid-step via onRunStepFull hook + error return);
+// step B is a non-claude step that succeeds. Iteration log must contain:
+//   - step A: exactly one record, status="failed", notes="timed out after Ns"
+//   - step B: exactly one record, status="done", no spurious WARN-001 "timed out after 0s" record
+//
+// This covers V4/V13 from the plan review: without ClearTimeoutFlag, the
+// residual WasTimedOut=true would fire stepDispatcher's onTimeoutRetry at the
+// start of step B and emit a bogus "failed" record for step B.
+func TestRun_OnTimeoutContinue_DoesNotLeakTimeoutFlagToNextStep(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{
+		projectDir: projectDir,
+		// Step A errors; step B succeeds.
+		runStepErrors: []error{fmt.Errorf("killed by timer"), nil},
+	}
+	// Simulate the real Runner: wasTimedOut starts false and is set true by the
+	// timer goroutine during step A's execution. The hook fires at the start of
+	// each RunStepFull call; for idx==0 (step A) we set wasTimedOut=true so the
+	// post-return check observes a timeout. For idx==1 (step B) we leave it
+	// alone — if ClearTimeoutFlag was called after step A's soft-fail, it is
+	// already false.
+	executor.onRunStepFull = func(f *fakeExecutor, callIdx int) {
+		if callIdx == 0 {
+			f.wasTimedOut = true
+		}
+	}
+
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps: []steps.Step{
+			{Name: "step-a", IsClaude: false, Command: []string{"true"}, TimeoutSeconds: 60, OnTimeout: "continue"},
+			{Name: "step-b", IsClaude: false, Command: []string{"true"}},
+		},
+	}
+
+	kh := newTestKeyHandler()
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+
+	// Count records per step.
+	recsByStep := map[string][]IterationRecord{}
+	for _, r := range recs {
+		recsByStep[r.StepName] = append(recsByStep[r.StepName], r)
+	}
+
+	// step-a: exactly one record, status="failed", notes="timed out after 60s".
+	a := recsByStep["step-a"]
+	if len(a) != 1 {
+		t.Fatalf("step-a: want 1 record, got %d: %+v", len(a), a)
+	}
+	if a[0].Status != "failed" {
+		t.Errorf("step-a Status: want %q, got %q", "failed", a[0].Status)
+	}
+	if a[0].Notes != "timed out after 60s" {
+		t.Errorf("step-a Notes: want %q, got %q", "timed out after 60s", a[0].Notes)
+	}
+
+	// step-b: exactly one record, status="done", no timeout note.
+	b := recsByStep["step-b"]
+	if len(b) != 1 {
+		t.Fatalf("step-b: want 1 record (no spurious WARN-001 leak), got %d: %+v", len(b), b)
+	}
+	if b[0].Status != "done" {
+		t.Errorf("step-b Status: want %q, got %q — WasTimedOut flag leaked across steps", "done", b[0].Status)
+	}
+	if b[0].Notes != "" {
+		t.Errorf("step-b Notes: want empty, got %q — stale timeout note leaked to next step", b[0].Notes)
+	}
+
+	// ClearTimeoutFlag was called at least once by the orchestrate-layer soft-fail branch.
+	if executor.clearTimeoutFlagCalls < 1 {
+		t.Errorf("expected ClearTimeoutFlag to be called on the soft-fail branch, got %d calls", executor.clearTimeoutFlagCalls)
+	}
+}

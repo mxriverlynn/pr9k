@@ -86,6 +86,7 @@ type vStep struct {
 	BreakLoopIfEmpty   bool     `json:"breakLoopIfEmpty,omitempty"`
 	SkipIfCaptureEmpty *string  `json:"skipIfCaptureEmpty,omitempty"`
 	TimeoutSeconds     *int     `json:"timeoutSeconds,omitempty"`
+	OnTimeout          *string  `json:"onTimeout,omitempty"`
 	ResumePrevious     *bool    `json:"resumePrevious,omitempty"`
 }
 
@@ -452,6 +453,48 @@ func validatePhase(
 				*errs = append(*errs, at("schema", "timeoutSeconds must be a positive integer when set"))
 			} else if *step.TimeoutSeconds > 86400 {
 				*errs = append(*errs, at("schema", "timeoutSeconds must not exceed 86400 (24 hours)"))
+			}
+		}
+
+		// Schema 2d2 — onTimeout: must be "", "fail", or "continue". Warn when set
+		// without a positive timeoutSeconds (the field is inert in that case).
+		if step.OnTimeout != nil {
+			ot := *step.OnTimeout
+			switch ot {
+			case "", "fail", "continue":
+				// valid
+			default:
+				*errs = append(*errs, at("schema", fmt.Sprintf("onTimeout %q is not valid; use \"fail\", \"continue\", or omit the field", ot)))
+			}
+			if ot != "" && (step.TimeoutSeconds == nil || *step.TimeoutSeconds <= 0) {
+				*errs = append(*errs, Error{
+					Severity: SeverityWarning,
+					Category: "schema",
+					Phase:    phaseName,
+					StepName: stepName,
+					Problem:  "onTimeout is set but timeoutSeconds is not; the field has no effect without a positive timeoutSeconds",
+				})
+			}
+			// Warn when onTimeout=continue precedes a step with resumePrevious=true:
+			// the soft-timeout leaves the current step in StepTimedOutContinuing
+			// (stepStatus -> "failed"), so the next step's G2 gate will reject the
+			// resume and fall through to a fresh session. Not a bug, just a gotcha
+			// worth flagging at config time.
+			if ot == "continue" && i+1 < len(steps) {
+				next := steps[i+1]
+				if next.ResumePrevious != nil && *next.ResumePrevious {
+					nextName := next.Name
+					if nextName == "" {
+						nextName = fmt.Sprintf("<unnamed step %d>", i+1)
+					}
+					*errs = append(*errs, Error{
+						Severity: SeverityWarning,
+						Category: "schema",
+						Phase:    phaseName,
+						StepName: stepName,
+						Problem:  fmt.Sprintf("onTimeout=\"continue\" precedes step %q which uses resumePrevious=true; on a soft-timeout path the resume will fall through G2 and start a fresh session", nextName),
+					})
+				}
 			}
 		}
 

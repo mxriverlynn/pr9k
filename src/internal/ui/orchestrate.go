@@ -22,6 +22,15 @@ const (
 type StepRunner interface {
 	RunStep(name string, command []string) error
 	WasTerminated() bool
+	// WasTimedOut reports whether the most recent RunStep ended by a per-step
+	// timeout goroutine (as opposed to natural non-zero exit or user skip).
+	// Runner.WasTimedOut / stepDispatcher.WasTimedOut satisfy this.
+	WasTimedOut() bool
+	// ClearTimeoutFlag resets the executor's timeoutFired bit. Called by
+	// Orchestrate when an onTimeout="continue" policy has consumed the timeout
+	// so the next step's stepDispatcher does not see stale state and emit a
+	// spurious WARN-001 iteration record.
+	ClearTimeoutFlag()
 	WriteToLog(line string)
 }
 
@@ -49,6 +58,12 @@ type ResolvedStep struct {
 	// TimeoutSeconds, when positive, limits the wall-clock time for this step.
 	// Zero means no timeout.
 	TimeoutSeconds int
+	// OnTimeout selects the per-step policy applied when TimeoutSeconds fires.
+	// "" and "fail" block on user input via ModeError (current behavior);
+	// "continue" soft-fails: the step is marked StepTimedOutContinuing and the
+	// workflow advances without prompting. Only meaningful when TimeoutSeconds
+	// is positive.
+	OnTimeout string
 }
 
 // Orchestrate runs steps in sequence. On step failure (non-zero exit, not
@@ -89,6 +104,20 @@ func runStepWithErrorHandling(idx int, step ResolvedStep, runner StepRunner, hea
 
 		if err == nil || runner.WasTerminated() {
 			header.SetStepState(idx, StepDone)
+			return ActionContinue
+		}
+
+		// Soft-fail on timeout: if the step was ended by the per-step timeout
+		// goroutine AND its configured policy is "continue", log the timeout,
+		// clear the executor's timeoutFired flag (so the next step's dispatcher
+		// does not see stale state), mark the step with the distinct glyph, and
+		// advance without blocking on user input. The iteration record still
+		// records status="failed" with a "timed out after Ns" note because
+		// stepStatus maps StepTimedOutContinuing to "failed".
+		if runner.WasTimedOut() && step.OnTimeout == "continue" {
+			runner.WriteToLog(TimeoutContinueBanner(step.Name, step.TimeoutSeconds))
+			runner.ClearTimeoutFlag()
+			header.SetStepState(idx, StepTimedOutContinuing)
 			return ActionContinue
 		}
 

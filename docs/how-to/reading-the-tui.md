@@ -37,7 +37,7 @@ State updates from the orchestration goroutine are sent as typed messages via `H
 
 The topmost region. Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, `SetPhaseSteps` swaps the step names into the same slots and trailing slots clear to empty.
 
-The five possible states:
+The six possible states:
 
 | Marker | Name | Meaning |
 |--------|------|---------|
@@ -46,6 +46,7 @@ The five possible states:
 | `[✓] <name>` | Done | Completed successfully, or user-terminated with `n` (treated as a skip) |
 | `[✗] <name>` | Failed | Returned non-zero exit and the user chose `c` to continue past it |
 | `[-] <name>` | Skipped | Marked skipped because an earlier step with `breakLoopIfEmpty` exited the iteration |
+| `[!] <name>` | Timed-out, continuing | Hit its `timeoutSeconds` cap AND its `onTimeout: "continue"` policy told pr9k to advance without prompting. Distinct from `[✗]` so you can tell an unattended soft-timeout from a hard failure at a glance. |
 
 **Note:** The initialize phase does not update the checkbox grid — it uses a `noopHeader` during `Orchestrate` so initialize step state isn't rendered. Only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
 

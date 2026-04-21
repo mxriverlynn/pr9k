@@ -65,21 +65,20 @@ Executes a step inside Docker. `captureMode` is not applicable here — claude s
 
 ```go
 type StepExecutor interface {
-    ui.StepRunner
+    ui.StepRunner   // RunStep, WasTerminated, WasTimedOut, ClearTimeoutFlag, WriteToLog
     LastCapture() string
     LastStats() claudestream.StepStats
     ProjectDir() string
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
     RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
     SessionBlacklisted(id string) bool
-    WasTimedOut() bool
     WriteRunSummary(line string)
 }
 ```
 
-`ui.StepRunner` contributes `RunStep`, `WasTerminated`, and `WriteToLog`.
+`WasTimedOut` and `ClearTimeoutFlag` are inherited from `ui.StepRunner` (the ui layer needs both to route on the soft-timeout policy).
 
-`WasTimedOut()` returns `true` if the most recent step was ended by the per-step timeout goroutine. The flag is reset at the start of each `RunStepFull` or `RunSandboxedStep` call.
+`WasTimedOut()` returns `true` if the most recent step was ended by the per-step timeout goroutine. The flag is reset at the start of each `RunStepFull` or `RunSandboxedStep` call, AND is explicitly cleared by `ClearTimeoutFlag()` when the ui layer's soft-timeout branch (`onTimeout: "continue"`) consumes the signal. The explicit clear is required because the stepDispatcher's WARN-001 pre-check reads the flag BEFORE entering the next `RunStepFull`/`RunSandboxedStep` — without the clear, a stale `true` would fire `onTimeoutRetry` and emit a spurious iteration record for the next step.
 
 ### Session blacklist
 

@@ -108,6 +108,16 @@ In practice this only happens when the config references a missing prompt file. 
 
 Every step is independent. Choosing `c` on iteration 3's "Test writing" doesn't affect iteration 3's "Git push" or iteration 4's "Feature work" — both are still capable of failing and dropping you back into error mode.
 
+### The step timed out but was configured with `onTimeout: "continue"`
+
+If a step's config sets `onTimeout: "continue"` AND the per-step `timeoutSeconds` cap fires, pr9k skips the error-mode pause entirely. You'll see:
+
+1. A one-line banner in the log: `── <step name> timed out after Ns — continuing (onTimeout=continue) ─────────────`
+2. The step's checkbox flips to `[!]` (not `[✗]`) so soft-timeouts are visually distinct from hard failures
+3. The workflow advances to the next step without prompting
+
+The iteration log still records `status: "failed"` with `notes: "timed out after Ns"` for the affected step, so after-the-fact debugging sees the timeout. The bundled "Test writing" step ships with this policy enabled; see [Setting Step Timeouts](setting-step-timeouts.md) for details.
+
 ## Deciding: continue, retry, or quit?
 
 A rough decision tree:

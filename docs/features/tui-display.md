@@ -12,7 +12,7 @@ Manages the visual status display for the pr9k terminal interface, showing itera
 - The iteration line is embedded into the top-border title (not rendered as a separate inner row); it shows `Iteration N/M` in bounded mode and `Iteration N` (no total) when total is 0 (unbounded mode)
 - When no stream-json event arrives for ≥15s during an active claude step, the title is suffixed with `  ⋯ thinking (Ns)` — a passive heartbeat indicator (D23) that replaces the "feels alive" contribution of token-level streaming without requiring `--include-partial-messages`. The suffix is pure view state: it updates in-place each second and is never appended to the log ring buffer
 - Displays step progress as a dynamic grid of rows (4 checkboxes per row), sized at startup to fit the largest phase
-- Each step shows one of five states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped; the active step marker (`▸`) is rendered in green; all other chrome is light gray
+- Each step shows one of six states: `[ ]` pending, `[▸]` active, `[✓]` done, `[✗]` failed, `[-]` skipped, `[!]` timed-out-continuing (step hit its `timeoutSeconds` and its `onTimeout: "continue"` policy advanced the workflow without prompting); the active step marker (`▸`) is rendered in green; all other chrome is light gray
 - Switches between phases (initialize, iteration, finalize) by sending `headerPhaseStepsMsg` through `headerProxy`
 - The log body is structured with phase banners, iteration separators, per-step "Starting step" banners, variable capture logs, and a final completion summary — all spaced with blank lines (helpers in `log.go`)
 - Terminal width for full-width phase banner underlines is detected via `ui.TerminalWidth()` (ioctl TIOCGWINSZ) with an 80-column fallback
@@ -103,6 +103,7 @@ const (
     StepDone                       // [✓]
     StepFailed                     // [✗]
     StepSkipped                    // [-]
+    StepTimedOutContinuing         // [!] — onTimeout="continue" soft-fail
 )
 
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.

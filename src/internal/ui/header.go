@@ -48,7 +48,8 @@ const (
 	StepActive
 	StepDone
 	StepFailed
-	StepSkipped // displayed as "[-] <name>"
+	StepSkipped            // displayed as "[-] <name>"
+	StepTimedOutContinuing // displayed as "[!] <name>" — step hit its timeoutSeconds but onTimeout=continue let the workflow advance
 )
 
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
@@ -248,6 +249,8 @@ func cellStyle(state StepState) (marker string, nameColor, markerColor lipgloss.
 		return "✗", LightGray, LightGray
 	case StepSkipped:
 		return "-", LightGray, LightGray
+	case StepTimedOutContinuing:
+		return "!", LightGray, LightGray
 	default:
 		return " ", LightGray, LightGray
 	}
