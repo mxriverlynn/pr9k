@@ -54,13 +54,19 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 
 - **Entry condition:** The user selects a target folder that exists but contains no configuration file.
 - **Sequence:** Builder offers scaffold / copy-default / cancel. On scaffold, the builder creates an in-memory workflow with empty initialize, one placeholder iteration step, and empty finalize, then enters edit view. Nothing is written to disk until the user saves.
-- **Exit:** First save writes the configuration file; any prompt or script files the user added during the session are written at the same time.
+- **Exit:** First save writes every file the workflow depends on — the configuration file and any prompt or script files created during the session. Every file uses the same durable save pattern (companion files first, configuration file last), so either the full bundle lands on disk or the prior state is preserved ([D60](artifacts/decision-log.md#d60-companion-file-write-atomicity)).
 
 ### Copy-default-to-local
 
 - **Entry condition:** The user selects "Copy the default target to the local project and edit the copy" on the landing page, or selects "copy from default" from the empty-folder dialog.
-- **Sequence:** Builder displays a brief status indicator during the copy. Copies the full default bundle — configuration file, all prompt files referenced by any step, all scripts referenced by any step — into the project-local workflow directory ([D15](artifacts/decision-log.md#d15-companion-file-copy-scope)). A prompt or script not referenced by the configuration is not copied. If any file fails to copy, the builder rolls the partial copy back to a clean state, shows an error naming the failed file and reason, and returns to the landing page — it does not enter edit view with a partial bundle ([D32](artifacts/decision-log.md#d32-copy-progress-and-partial-failure-handling)).
+- **Sequence:** Builder first performs a **pre-copy reference-integrity check** against the default bundle — every prompt and script referenced by the default's configuration must exist in the default bundle. If any reference is broken, the builder shows an error dialog naming the missing files and offers "Copy anyway" (proceeds with the partial copy; user lands in edit view with the validator's fatal findings already visible) or "Cancel" (returns to landing) ([D61](artifacts/decision-log.md#d61-default-bundle-reference-integrity-check-before-copy)). Assuming the check passes (or the user chose "Copy anyway"), the builder displays a brief status indicator during the copy and copies the full default bundle — configuration file, every prompt file referenced by any step, every script file referenced by any step, and the statusLine script when a statusLine block is present — into the project-local workflow directory ([D15](artifacts/decision-log.md#d15-companion-file-copy-scope)). Unreferenced files are not copied. If any file fails to copy, the builder rolls the partial copy back to a clean state, shows an error naming the failed file and reason, and returns to the landing page — it does not enter edit view with a partial bundle ([D32](artifacts/decision-log.md#d32-copy-progress-and-partial-failure-handling)).
 - **Exit:** Standard save / quit.
+
+### Target switching within a session
+
+- **Entry condition:** The user invokes a return-to-landing action from the edit view (keyboard shortcut shown in the footer) to pick a different target.
+- **Sequence:** If the edit view has unsaved changes, the unsaved-changes dialog (see Primary Flow step 10) intercepts first — the user must Save, Discard (with confirmation), or Cancel before the return proceeds. If the user Cancels, the return is abandoned and the session continues unchanged. If the user Saves (and save succeeds) or Discards, the return proceeds: the current session ends, all session-scoped state is released, and the landing page reopens with a fresh session on whatever target the user picks next ([D57](artifacts/decision-log.md#d57-session-definition-and-target-switching)).
+- **Exit:** User selects a new target and begins a new session, or cancels back to the previous session's edit view.
 
 ### Read-only target (default or other)
 
@@ -126,7 +132,22 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 - **Sequence:** Builder shows a non-blocking notice naming the file and its modification time, and offers to delete it silently or leave it. The builder does not auto-delete ([D42-a](artifacts/decision-log.md#d42-a-crash-era-temp-file-cleanup-contract)).
 - **Exit:** User picks an action and proceeds to the landing page / edit view.
 
+## Dialog Conventions
+
+Every modal, dialog, and non-blocking notice in the builder follows one convention ([D48](artifacts/decision-log.md#d48-dialog-convention-standard)):
+
+- **Escape is equivalent to Cancel** (or the safe/close action) in every dialog. Escape never commits a destructive action.
+- **The safe option is the keyboard default** — pressing `Enter` from the initial dialog state activates it. For destructive dialogs (discard, overwrite, delete), the default option is always the safe one.
+- **Destructive options are never the keyboard default** and require explicit arrow or Tab navigation to reach.
+- **Option labels are drawn from a fixed lexicon:** *Save, Discard, Overwrite, Reload, Cancel, Close, Delete, Keep, Retry, Confirm.* Ad-hoc labels are normalized to this vocabulary.
+- **Option spatial order is primary-safe first, secondary safe middle, destructive last.**
+- **Dialogs re-layout on terminal resize**, matching the existing TUI's overlay behavior.
+
+Every error dialog triggered from a row in the Edge Cases table below follows a four-element template: *what happened* (one sentence in user-visible vocabulary), *why* (the specific condition — OS error text, file path, or validator finding), *in-memory state commitment* (explicit statement that edits are still in memory, or that no edits were lost), and *available action* (labeled options from the lexicon, safe option default) ([D56](artifacts/decision-log.md#d56-error-message-template-for-edge-case-failures)).
+
 ## Edge Cases and Failure Modes
+
+Error dialogs referenced in this table follow the four-element template described in the Dialog Conventions section above.
 
 | Condition | Required Behavior |
 |-----------|-------------------|
@@ -154,37 +175,49 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 | External editor hangs indefinitely | User may interrupt with SIGINT, which the foreground process group will receive — the editor exits if it handles SIGINT. If the editor ignores SIGINT, the user must terminate it from another session. |
 | SIGHUP (terminal disconnect) during session | Builder exits immediately; unsaved changes are lost. Documented as a known limitation; the how-to guide recommends `nohup` or a terminal multiplexer for long-running edit sessions. |
 | SIGTSTP (Ctrl-Z) during session | Builder releases the terminal to the shell and suspends. On resume, it reclaims the terminal and re-renders. |
+| Configuration file is readable and parseable but contains fields the builder's schema model does not recognize | Non-blocking banner at load time listing the unrecognized fields and warning that saving will drop them (see Alternate Flows — Unknown-field warning). |
+| Focused step is removed | Focus falls through to the step immediately below it in the outline; if the removed step was last, focus falls through to the step above; if the phase is now empty, focus moves to the phase's `+ Add step` row. |
+| Reorder moves the focused step past the viewport edge | The outline auto-scrolls to keep the moving step visible ([D34](artifacts/decision-log.md#d34-step-reorder-ux)). |
+| Empty section (zero items) | The section header is still focusable and collapsible; the detail pane shows a "no items configured" state alongside the section's `+ Add ...` affordance ([D51](artifacts/decision-log.md#d51-section-summary-content)). |
+| Two saves within the same clock second produce files of identical size on a filesystem with one-second mtime resolution | Known limitation: the change-detection check is a best-effort signal and cannot distinguish this case from no change. Documented as a limitation of the collision approach rather than a defect ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)). |
+| SIGINT arrives during the brief window after the builder has released the terminal but before the external editor process exists | Builder treats it the same as any other quit signal during the terminal-released state: it completes the editor-spawn step (so `RestoreTerminal` runs), then enters the normal SIGINT/quit flow. The terminal is never left in a released-but-not-reclaimed state. |
+| User renames or moves a companion file from within the external editor's "Save As" flow | Builder re-reads the original path on editor return; if the file is now missing, the step's detail pane surfaces the "referenced file not found" state. The reference in the configuration still points to the old path and must be updated manually. |
+| User invokes save within one second of the previous save | Allowed. The builder's own file-change snapshot is refreshed after every successful save, so the builder does not treat its own prior write as a conflict ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)). |
+| Save invoked but in-memory state is identical to on-disk state | No-op save: file is not rewritten, validation does not run, the success feedback shows `No changes to save` ([D63](artifacts/decision-log.md#d63-no-op-save-behavior)). |
 | User requests a version bump or config migration from within the builder | Not supported in v1; out of scope (see Out of Scope). |
 
 ## User Interactions
 
 - **Affordances:**
-  - Landing page: up to four target options (deduplicated), default target preselected, banners for read-only / external-workflow / symlink states as applicable.
-  - Session header: target path, unsaved-changes indicator, read-only indicator, external-workflow banner, shared-install banner, symlink banner, validator findings summary.
-  - Outline: collapsible sections with always-visible item counts; scrollable with position indicator; each step row shows a gripper glyph (`⠿`) and, when applicable, a secret-masked value indicator or a fatal-finding marker.
-  - Detail pane: labeled input boxes, choice lists (indicated by `▾`), numeric inputs with visible bounds, masked secret values with reveal toggle, add-step and remove-step affordances at the phase level, open-in-external-editor affordance on any prompt-or-script-path field (always visible in the footer when the field is focused).
-  - Step reorder: gripper glyph signifier, `Alt+↑` / `Alt+↓` keyboard shortcuts, mouse drag.
-  - Save, quit, toggle findings panel, jump-to-field from a finding, `?` help modal.
+  - Landing page: up to four target options (deduplicated), default target preselected, resolved absolute path shown as a subtitle under each option, banners for read-only / external-workflow / symlink states as applicable.
+  - Session header: target path, unsaved-changes indicator, read-only indicator, at most one warning banner at a time selected by priority (read-only, external-workflow, symlink, shared-install, unknown-field) with a `[N more warnings]` affordance when multiple are active, validator findings summary.
+  - Outline: collapsible sections with always-visible item counts; independently scrollable with a visible scroll-position indicator; each list-typed section ends with a visible `+ Add <item-type>` affordance row; each step row shows a gripper glyph (`⋮⋮`) and, when applicable, a secret-masked value indicator or a fatal-finding marker.
+  - Detail pane: labeled input boxes, choice lists (indicated by `▾` with keyboard contract `Enter`/`Space` to open, `↑`/`↓` to navigate, `Enter` to confirm, `Escape` to dismiss), numeric inputs with visible bounds, masked secret values with `[press r to reveal]` label and `r` toggle, add-item affordance at every list section (visible `+ Add ...` row; `a` shortcut when on section header), remove-step affordance with confirmation, open-in-external-editor affordance on any prompt-or-script-path field (visible in the footer when the field is focused). Detail pane is independently scrollable.
+  - Step reorder: gripper glyph signifier (`⋮⋮`), `Alt+↑` / `Alt+↓` primary keyboard shortcut, `r`-to-enter-reorder-mode fallback for environments where `Alt` is intercepted, mouse drag on the gripper or row.
+  - Session-level: save, quit, return-to-landing, toggle findings panel, jump-to-field from a finding, `?` help modal (toggles open/closed).
 - **Feedback:**
   - Shortcut footer shows every available keyboard shortcut for the current mode; updates when focus moves to a field with a focus-specific action.
   - Currently selected outline item and currently focused detail-pane field are visually distinct.
   - Input hints render next to the input (e.g., "must be a positive integer up to 86400").
-  - Invalid input shows an inline marker and a one-line reason.
-  - Findings panel: each entry has a text-mode severity prefix (`[FATAL]`, `[WARN]`, `[INFO]`), a category tag, the offending location, and a jump-to-field affordance.
+  - Invalid input shows an inline marker and a one-line reason. Non-numeric input on a numeric field is silently ignored (no marker).
+  - Findings panel: each entry has a text-mode severity prefix (`[FATAL]`, `[WARN]`, `[INFO]`), a category tag, the offending location, and a jump-to-field affordance. The panel's acknowledged-warning suppression state is preserved across rebuilds.
   - External editor invocation shows an "Opening editor…" message before yielding the terminal.
   - Validation runs on save show a brief "Validating…" status when validation takes more than a fraction of a second.
+  - Successful save: unsaved-changes indicator clears; transient `Saved at HH:MM:SS` banner appears in the session header for about three seconds, then clears. No-change saves show `No changes to save` in the same slot.
+  - Focus restoration: manual dismiss of the findings panel returns focus to the field or outline item focused immediately before the panel was opened.
 - **Error states:**
-  - Read-only banner and browse-only edit view.
-  - External-workflow banner.
-  - Symlink banner and first-save confirmation.
+  - Read-only banner and browse-only edit view (save affordance hidden, not merely disabled).
+  - External-workflow banner with first-save confirmation.
+  - Symlink banner with first-save confirmation.
   - Shared-install banner.
-  - Referenced-file-missing states on step fields.
+  - Referenced-file-missing states on step fields (including chmod-to-fix option for valid-shebang-but-not-executable scripts).
   - Parse-error recovery view with reload action.
   - Unknown-field warning banner.
   - Crash-era temp-file notice.
-  - Permission and disk-full errors at save.
-  - Editor-binary-cannot-be-spawned dialog.
-  - Configuration-file-modified-on-disk conflict dialog.
+  - Permission, disk-full, and cross-device errors at save, each following the four-element error template.
+  - Editor-binary-cannot-be-spawned dialog with retry / cancel options.
+  - Configuration-file-modified-on-disk conflict dialog with overwrite / reload / cancel options.
+  - Default-bundle broken-reference error dialog with copy-anyway / cancel options.
   - Validation findings panel (a normal part of the save flow, not an exception).
 
 ## Coordinations
@@ -220,14 +253,17 @@ This feature ships with the following documentation artifacts in the same pull r
 - `docs/how-to/using-the-workflow-builder.md` — step-by-step guide for new users: launching the subcommand, picking a target, editing steps, saving.
 - `docs/how-to/configuring-external-editor-for-workflow-builder.md` — how the builder resolves `$VISUAL` / `$EDITOR`, what values are rejected, recommended settings (`code --wait`, `nvim`, `nano`).
 - An ADR recording the save-durability pattern ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)) and its relationship to the rest of the codebase's file-write conventions.
+- A coding-standards entry (e.g., `docs/coding-standards/file-writes.md`) codifying the save-durability pattern as a rule for future contributors, alongside the ADR which records its decision history ([D59](artifacts/decision-log.md#d59-coding-standards-entry-for-save-durability-pattern)).
 - A code-package doc for any new Go package the builder introduces, following the existing `docs/code-packages/` pattern.
 - Updates to `docs/features/cli-configuration.md` adding the `pr9k workflow` subcommand and its flags.
 - Updates to `CLAUDE.md` linking every new doc file.
 - Updates to `docs/architecture.md` if new top-level packages are introduced.
+- A note in the external-editor how-to guide calling out the tmux / SSH `Alt`-modifier forwarding caveat for step reorder (a known limitation addressed by the `r`-to-enter-reorder-mode fallback in D34).
+- A note in the how-to guide explaining that the `model` field suggestion list is a hardcoded snapshot and may go out of date ([D58](artifacts/decision-log.md#d58-model-suggestion-list-maintenance)); the field accepts any value regardless.
 
 ## Versioning
 
-Adding the `pr9k workflow` subcommand is a backwards-compatible addition to the CLI surface. Per the 0.y.z rules in `docs/coding-standards/versioning.md`, this requires a **patch** version bump at ship time ([D37](artifacts/decision-log.md#d37-version-bump)). The new subcommand name becomes part of pr9k's public API from the moment it ships.
+Adding the `pr9k workflow` subcommand is a backwards-compatible addition to the CLI surface. Per the 0.y.z rules in `docs/coding-standards/versioning.md`, this requires a **patch** version bump at ship time. The version bump is delivered as its own commit (either landed ahead of the feature PR or included in the feature PR as an independent commit), never bundled into a feature commit — the coding standard explicitly prohibits that pattern ([D37](artifacts/decision-log.md#d37-version-bump)). The new subcommand name becomes part of pr9k's public API from the moment it ships.
 
 ## Testing
 
@@ -241,14 +277,29 @@ The implementation plan must cover:
 
 ## Open Items
 
-No open items remain. All questions raised during the review round (Q-A through Q-I) and all 47 team findings were resolved before synthesis. Items deferred to the implementation plan (step-count hard ceilings, file-size caps, final validator API shape for in-memory validation, specific widget choices for single-line inputs) are noted in the decision log and technical notes, and do not block implementation from beginning.
+- **OI-1: `safePromptPath` symlink-containment hardening in the validator.** The existing `safePromptPath` function in the validator calls `filepath.Abs` but not `filepath.EvalSymlinks` before its containment check. A symlink at `prompts/foo.md` pointing outside the bundle tree passes the check because the un-resolved path still has the correct prefix. This lets the builder's "open in external editor" affordance open, and subsequently overwrite, files outside the bundle ([F27](artifacts/team-findings.md#f27-symlink-escape-in-companion-files) of the first review; re-flagged in round 2).
+  - **Resolves when:** the validator's `safePromptPath` (and an equivalent check added for scripts) resolves symlinks via `EvalSymlinks` before the containment check, and rejects any path whose resolved target escapes the workflow bundle tree.
+  - **Blocks implementation:** No — the builder's symlink banner (D17) mitigates the user-visible risk by surfacing all symlinks on load and requiring confirmation at first save. The validator hardening is a defense-in-depth step the implementation plan should address in the same PR as the builder work, but the builder can ship before the hardening lands.
 
 ## Summary
 
 - **Outcome delivered:** A workflow author produces or updates a validated pr9k workflow bundle through an interactive terminal interface, without hand-editing JSON.
 - **Primary actors:** Workflow author — pr9k operator tailoring their own loop, or pr9k maintainer updating the bundled default.
-- **Decisions committed:** 44 — see [artifacts/decision-log.md](artifacts/decision-log.md)
-- **Sub-agents consulted:** user-experience-designer, junior-developer, edge-case-explorer, adversarial-security-analyst, devops-engineer — see [artifacts/team-findings.md](artifacts/team-findings.md)
-- **Key adjustments from review:** security hardening around `--workflow-dir` and `$EDITOR` (D22, D33); symlink visibility and secret masking (D17, D20); findings-panel lifecycle, manual dismiss, and accessibility severity prefixes (D23, D25, D35); unknown-field warn-and-drop (D18); documentation, versioning, observability, and testing commitments (D37, D38, D39, D41-b).
-- **Remaining open items:** 0
+- **Decisions committed:** 63 — see [artifacts/decision-log.md](artifacts/decision-log.md)
+- **Sub-agents consulted across two review passes:** user-experience-designer (rounds 1 & 2), junior-developer (1 & 2), edge-case-explorer (1 & 2), adversarial-security-analyst (round 1), devops-engineer (round 1), evidence-based-investigator (round 2), adversarial-validator (round 2) — see [artifacts/team-findings.md](artifacts/team-findings.md) and [artifacts/review-findings.md](artifacts/review-findings.md).
+- **Key adjustments from review:** security hardening around `--workflow-dir` and `$EDITOR` (D22, D33); symlink visibility and secret masking (D17, D20); findings-panel lifecycle, manual dismiss, and accessibility severity prefixes (D23, D25, D35); unknown-field warn-and-drop (D18); documentation, versioning, observability, and testing commitments (D37, D38, D39, D41-b). Round-2 additions: interaction-mechanics coverage (choice lists, add-item affordance, secret-reveal binding, dialog conventions, banner priority — D45-D51, D56); safety guards on discard (D54); correctness fixes on the atomic-save symlink mechanic (T1) and the Bubble Tea handoff API (T2); documentation-debt cleanup (D59-D60).
+- **Remaining open items:** 1 — validator `safePromptPath` symlink-containment hardening (OI-1), non-blocking given the builder's symlink banner.
 - **Technical notes:** 3 — see [artifacts/feature-technical-notes.md](artifacts/feature-technical-notes.md)
+
+## Review History
+
+- **Review mode:** team
+- **Spec-aware mode:** engaged
+- **Rounds completed:** 1 — see [artifacts/review-iteration-history.md](artifacts/review-iteration-history.md)
+- **Team composition:** user-experience-designer (UX emphasis per user request); junior-developer (required generalist); evidence-based-investigator (required; verified codebase claims); adversarial-validator (required; attacked the plan's evidence and assumptions); edge-case-explorer (second-pass usability edge cases).
+- **Findings raised:** 35 new findings (F48-F82) — see [artifacts/review-findings.md](artifacts/review-findings.md). All resolved by evidence and user-accepted recommendations; zero required user judgment beyond the first review's round.
+- **Assumptions challenged:** T1's symlink-through-rename mechanism (physically impossible on POSIX — verified with live test; corrected), T2's Bubble Tea mechanism (wrong API surface named — corrected), D26's "iteration is the most-edited phase" rationale (Ralph-specific; replaced with schema-grounded rationale), D33's `$`-rejection (overcautious under direct exec; removed), D34's gripper glyph (Braille font risk; replaced with universally-covered glyph; added non-modifier reorder fallback).
+- **Consolidations made:** dialog conventions unified across eight surfaces (D48); banner priority model introduced for the session header (D49); error message template applied to every edge-case-table row (D56); section summary content enumerated for all six section types (D51).
+- **Ambiguities resolved:** version bump commit-style (D37), external editor fallback (confirmed D16 no-silent-fallback), mtime snapshot refresh after save (D41 updated), focus restoration after findings-panel dismiss (D55), session definition and target-switching semantics (D57), model suggestion list maintenance expectations (D58), companion-file write atomicity (D60), default-bundle integrity check before copy (D61), numeric-field non-numeric input behavior (D62), no-op save handling (D63).
+- **Technical notes added/edited:** 0 new T-notes; T1 corrected on symlink mechanism, T2 corrected on the Bubble Tea API name, T3 corrected on the approach-2 self-contradiction — see [artifacts/feature-technical-notes.md](artifacts/feature-technical-notes.md).
+- **Open items remaining:** 1 — OI-1 validator `safePromptPath` hardening; non-blocking because the builder's symlink banner mitigates the user-visible risk.
