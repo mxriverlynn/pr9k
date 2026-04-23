@@ -51,7 +51,7 @@
   - Always write to a temporary location — violates user intent.
   - Refuse to open a read-only target — denies legitimate browse.
 - **Linked technical notes:** —
-- **Driven by findings:** F28
+- **Driven by findings:** F18, F24, F28
 - **Dependent decisions:** D30
 - **Referenced in spec:** Primary Flow step 3; Alternate Flows — Read-only target
 
@@ -219,7 +219,7 @@
 - **Rejected alternatives:**
   - Hard fallback to `vi` — traps vi-unfamiliar users.
   - Probe `nano` / `vi` in order — introduces surprise-editor failure modes on minimal containers.
-- **Linked technical notes:** —
+- **Linked technical notes:** T2
 - **Driven by findings:** F9
 - **Dependent decisions:** D33
 - **Referenced in spec:** Primary Flow step 7; Alternate Flows — External-editor invocation, No external editor configured
@@ -234,7 +234,7 @@
   - Reject symlinks that escape the tree.
   - Follow silently.
 - **Linked technical notes:** T1 (follow-symlink save semantics)
-- **Driven by findings:** F38, F27, F26
+- **Driven by findings:** F24, F26, F27, F38
 - **Dependent decisions:** —
 - **Referenced in spec:** Alternate Flows — Symlinked target or companion file; Edge Cases table (target config file is a symlink)
 
@@ -331,7 +331,7 @@
   - Gate `?` on some other condition.
   - Documentation-only shortcut list.
 - **Linked technical notes:** —
-- **Driven by findings:** F2
+- **Driven by findings:** F2, F14
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow steps 5 and 8; User Interactions — Feedback
 
@@ -401,7 +401,7 @@
   - Pagination with explicit page controls — less smooth than continuous scroll.
   - Unbounded rendering — breaks on tall workflows.
 - **Linked technical notes:** —
-- **Driven by findings:** F15
+- **Driven by findings:** F15, F47
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 5
 
@@ -456,8 +456,8 @@
 - **Rejected alternatives:**
   - `sh -c $VISUAL "$@"` — command injection surface.
   - Treat whole value as program name — breaks common `VISUAL="vim -u NONE"` pattern.
-- **Linked technical notes:** —
-- **Driven by findings:** F36
+- **Linked technical notes:** T2
+- **Driven by findings:** F8, F9, F29, F36
 - **Dependent decisions:** —
 - **Referenced in spec:** Alternate Flows — External-editor invocation, Editor binary cannot be spawned
 
@@ -569,7 +569,7 @@
   - Multi-session locking — out of scope.
   - No detection — silent overwrite.
 - **Linked technical notes:** T1
-- **Driven by findings:** F34, F41
+- **Driven by findings:** F23, F28, F34, F41
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases table; Out of Scope
 
@@ -596,7 +596,7 @@
   - Preserve all pasted content — creates structural-field corruption.
   - Reject the paste entirely — unhelpful when paste is mostly fine.
 - **Linked technical notes:** —
-- **Driven by findings:** F31
+- **Driven by findings:** F29, F31, F47
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 7; Edge Cases table
 

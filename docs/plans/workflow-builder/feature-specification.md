@@ -40,7 +40,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
    - **Removing a step** requires a confirmation affordance.
 8. At any time the user can press `?` to open a **help modal** listing every keyboard shortcut for the current mode. The help modal is unconditionally reachable from the edit view regardless of any other configuration ([D24](artifacts/decision-log.md#d24-help-modal-and-shortcut-footer)).
 9. The user invokes save. The builder runs the full workflow-configuration validator against the in-memory state ([D14](artifacts/decision-log.md#d14-reuse-existing-validator), [T3](artifacts/feature-technical-notes.md#t3-in-memory-validation)) and groups the findings by severity ([D6](artifacts/decision-log.md#d6-validation-ux-fatal-blocks-warnings-do-not)):
-   - If any finding is **fatal**, save is blocked. The builder opens a **findings panel** listing each finding prefixed with a text-mode severity tag (`[FATAL]`, `[WARN]`, `[INFO]`) alongside any color — severity is never conveyed by color alone ([D25](artifacts/decision-log.md#d25-severity-text-prefixes)). Each finding shows its category, the offending field's location in the outline, and a jump-to-field affordance. When the user jumps to a field, the findings panel stays visible; on each subsequent save attempt, the panel is fully rebuilt from the new validator output. When all fatals are resolved, the panel closes automatically and the save proceeds ([D35](artifacts/decision-log.md#d35-findings-panel-lifecycle)).
+   - If any finding is **fatal**, save is blocked. The builder opens a **findings panel** listing each finding prefixed with a text-mode severity tag (`[FATAL]`, `[WARN]`, `[INFO]`) alongside any color — severity is never conveyed by color alone ([D25](artifacts/decision-log.md#d25-severity-text-prefixes)). Each finding shows its category, the offending field's location in the outline, and a jump-to-field affordance. When the user jumps to a field, the findings panel stays visible; on each subsequent save attempt, the panel is fully rebuilt from the new validator output. When all fatals are resolved, the panel closes automatically and the save proceeds. The user can also dismiss the panel manually at any time ([D35](artifacts/decision-log.md#d35-findings-panel-lifecycle)).
    - If the only findings are **warnings** or **informational**, the save proceeds after the user acknowledges the findings panel. A finding acknowledged during a session is not surfaced again for the remainder of that session at the acknowledgment dialog, though it continues to appear in the findings panel the user can open manually ([D23](artifacts/decision-log.md#d23-per-session-warning-suppression)).
    - If there are no findings, the save proceeds silently.
    - A successful save leaves the workflow file on disk either fully containing the previous content or fully containing the new content — a crash or interruption during save never leaves the file torn or empty ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)).
@@ -82,7 +82,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 ### External-editor invocation
 
 - **Entry condition:** The user opens a prompt file or script for multi-line editing from the detail pane.
-- **Sequence:** Builder resolves the configured external editor: `$VISUAL` first, then `$EDITOR`. The resolved value is parsed as a command with arguments (shell-style word splitting) and rejected if it contains shell metacharacters or if it resolves to a relative path that is not on the user's `PATH` ([D33](artifacts/decision-log.md#d33-editor-execution-model)). Before yielding the terminal, the builder displays a brief "Opening editor…" message in the normal-screen context. It yields the terminal to the external editor, waits for it to exit, reclaims the terminal, and re-reads the file from disk ([D5](artifacts/decision-log.md#d5-external-editor-for-multi-line-content), [T2](artifacts/feature-technical-notes.md#t2-terminal-handoff-to-external-editor)).
+- **Sequence:** Builder resolves the configured external editor: `$VISUAL` first, then `$EDITOR`. The resolved value is treated as a command with optional arguments — so a value like `code --wait` is handled correctly — and rejected if it contains shell metacharacters or if it resolves to a relative path that is not on the user's `PATH` ([D33](artifacts/decision-log.md#d33-editor-execution-model)). Before yielding the terminal, the builder displays a brief "Opening editor…" message. It then yields the terminal to the external editor, waits for it to exit, reclaims the terminal, and re-reads the file from disk ([D5](artifacts/decision-log.md#d5-external-editor-for-multi-line-content), [T2](artifacts/feature-technical-notes.md#t2-terminal-handoff-to-external-editor)).
 - **Exit:** Editor exits zero — builder treats the file as updated. Editor exits non-zero — builder still re-reads the file, because the external editor may have written partial content before failing; the user is informed of the non-zero exit.
 
 ### Editor binary cannot be spawned
@@ -110,7 +110,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 ### Parse-error recovery
 
 - **Entry condition:** The target's configuration file exists but cannot be parsed.
-- **Sequence:** Builder enters a **recovery view** showing the file's raw bytes (including a human-readable note if the file is empty or contains a UTF-8 BOM or non-UTF-8 encoding), the parse error with its location (byte offset or line/column, whichever the parser produces), and four actions: open the raw file in the external editor, reload (re-parse the file as it currently sits on disk), discard and scaffold fresh, cancel back to landing. After a successful open-in-editor invocation from this view, the builder automatically attempts to reload; if parsing succeeds, the builder transitions directly to the edit view without requiring the user to return to the landing page ([D36](artifacts/decision-log.md#d36-parse-error-recovery-reload)).
+- **Sequence:** Builder enters a **recovery view** showing the file's raw bytes (including a human-readable note if the file is empty or contains a UTF-8 BOM or non-UTF-8 encoding), the parse error with its specific location, and four actions: open the raw file in the external editor, reload (re-parse the file as it currently sits on disk), discard and scaffold fresh, cancel back to landing. After a successful open-in-editor invocation from this view, the builder automatically attempts to reload; if parsing succeeds, the builder transitions directly to the edit view without requiring the user to return to the landing page ([D36](artifacts/decision-log.md#d36-parse-error-recovery-reload)).
 - **Exit:** Successful reload transitions to edit view; discard-and-scaffold transitions to scaffold-from-empty; cancel returns to landing.
 
 ### Unknown-field warning
@@ -148,7 +148,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 | Duplicate step name or duplicate capture name within a phase | Validator surfaces at save. |
 | User types a disallowed value into a constrained field | Choice lists never offer disallowed values in the first place; numeric inputs clamp at the boundary. Cross-field rules surfaced by the validator at save. |
 | User is editing the bundled default on a writable shared install | Session header shows a "shared install" banner alerting the user that saving will affect other users of this pr9k binary ([D39](artifacts/decision-log.md#d39-shared-install-and-observability)). |
-| Another `pr9k` process is running against the same project at save time | No cross-process coordination. The configuration-file-mtime check at save (described above) is the only collision signal; it detects on-disk changes but not concurrent in-memory edits across two builder sessions ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)). Last-completed-save wins. |
+| Another `pr9k` process is running against the same project at save time | No cross-process coordination. The configuration file change-detection check at save (described above) is the only collision signal; it detects on-disk changes but not concurrent in-memory edits across two builder sessions ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)). Last-completed-save wins. |
 | External editor daemonizes and returns immediately | Documented limitation; see help text and the documentation guide on configuring the external editor (e.g., `code --wait`). The builder does not try to distinguish "daemonized" from "exited normally". |
 | External editor hangs indefinitely | User may interrupt with SIGINT, which the foreground process group will receive — the editor exits if it handles SIGINT. If the editor ignores SIGINT, the user must terminate it from another session. |
 | SIGHUP (terminal disconnect) during session | Builder exits immediately; unsaved changes are lost. Documented as a known limitation; the how-to guide recommends `nohup` or a terminal multiplexer for long-running edit sessions. |
@@ -170,7 +170,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
   - Input hints render next to the input (e.g., "must be a positive integer up to 86400").
   - Invalid input shows an inline marker and a one-line reason.
   - Findings panel: each entry has a text-mode severity prefix (`[FATAL]`, `[WARN]`, `[INFO]`), a category tag, the offending location, and a jump-to-field affordance.
-  - External editor invocation shows an "Opening editor…" message in normal-screen context before yielding the terminal.
+  - External editor invocation shows an "Opening editor…" message before yielding the terminal.
   - Validation runs on save show a brief "Validating…" status when validation takes more than a fraction of a second.
 - **Error states:**
   - Read-only banner and browse-only edit view.
@@ -201,7 +201,7 @@ A workflow author ends a workflow-builder session with a valid, saved workflow b
 - Running or dry-running workflows from within the builder, including single-step dry-runs and variable-expansion previews ([D9](artifacts/decision-log.md#d9-v1-scope-boundary)).
 - Importing workflows from URLs, git repositories, or network paths ([D9](artifacts/decision-log.md#d9-v1-scope-boundary)).
 - Diffing an edited workflow against the default or against any other reference.
-- Multi-user or multi-session locking of the workflow directory. Concurrent builder sessions against the same file resolve last-completed-save-wins, with a best-effort mtime-collision warning ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)).
+- Multi-user or multi-session locking of the workflow directory. Concurrent builder sessions against the same file resolve last-completed-save-wins, with a best-effort file-change collision warning ([D41](artifacts/decision-log.md#d41-cross-session-mutation-detection)).
 - Syntax highlighting inside prompt or script content — the external editor owns that.
 - Any version-control operations. The user runs `git` themselves.
 - Modifying pr9k itself or the set of built-in substitution tokens the runtime understands.
@@ -218,7 +218,7 @@ This feature ships with the following documentation artifacts in the same pull r
 - `docs/features/workflow-builder.md` — feature behavior, TUI layout, keyboard map, landing-page modes, interaction with validator and external editor.
 - `docs/how-to/using-the-workflow-builder.md` — step-by-step guide for new users: launching the subcommand, picking a target, editing steps, saving.
 - `docs/how-to/configuring-external-editor-for-workflow-builder.md` — how the builder resolves `$VISUAL` / `$EDITOR`, what values are rejected, recommended settings (`code --wait`, `nvim`, `nano`).
-- An ADR recording the atomic-rename save pattern and its relationship to the rest of the codebase's file-write conventions.
+- An ADR recording the save-durability pattern ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)) and its relationship to the rest of the codebase's file-write conventions.
 - A code-package doc for any new Go package the builder introduces, following the existing `docs/code-packages/` pattern.
 - Updates to `docs/features/cli-configuration.md` adding the `pr9k workflow` subcommand and its flags.
 - Updates to `CLAUDE.md` linking every new doc file.
@@ -232,23 +232,22 @@ Adding the `pr9k workflow` subcommand is a backwards-compatible addition to the 
 
 The implementation plan must cover:
 
-- The atomic-rename save path with unit tests that simulate write failure between the temporary-file write and the rename step, confirming the on-disk file is unchanged ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)).
+- The durable save path ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)) with unit tests that simulate write failure between the temporary-file write and the final-rename step, confirming the on-disk file is unchanged ([T1](artifacts/feature-technical-notes.md#t1-atomic-configuration-file-save)).
 - The terminal handoff to the external editor through an injectable runner, so external-editor invocation is tested without a real TTY ([T2](artifacts/feature-technical-notes.md#t2-terminal-handoff-to-external-editor), [D41-b](artifacts/decision-log.md#d41-b-test-strategy-for-t1-t2-and-tui-modes)).
 - The validator integration, including the in-memory state being passed to the validator rather than a file path ([T3](artifacts/feature-technical-notes.md#t3-in-memory-validation)).
-- Every TUI mode's keyboard and mouse inputs through Bubble Tea model-update unit tests, in the pattern already used by the main TUI.
+- Every TUI mode's keyboard and mouse inputs through framework-level unit tests following the model-update pattern already used by the main TUI.
 - Every alternate flow and every row of the edge-case table above.
 
 ## Open Items
 
-<!-- populated by project-manager synthesis -->
+No open items remain. All questions raised during the review round (Q-A through Q-I) and all 47 team findings were resolved before synthesis. Items deferred to the implementation plan (step-count hard ceilings, file-size caps, final validator API shape for in-memory validation, specific widget choices for single-line inputs) are noted in the decision log and technical notes, and do not block implementation from beginning.
 
 ## Summary
 
 - **Outcome delivered:** A workflow author produces or updates a validated pr9k workflow bundle through an interactive terminal interface, without hand-editing JSON.
 - **Primary actors:** Workflow author — pr9k operator tailoring their own loop, or pr9k maintainer updating the bundled default.
-- **Decisions settled by evidence:** 7 — see [artifacts/decision-log.md](artifacts/decision-log.md)
-- **Decisions settled by user input:** 35 — see [artifacts/decision-log.md](artifacts/decision-log.md)
+- **Decisions committed:** 44 — see [artifacts/decision-log.md](artifacts/decision-log.md)
 - **Sub-agents consulted:** user-experience-designer, junior-developer, edge-case-explorer, adversarial-security-analyst, devops-engineer — see [artifacts/team-findings.md](artifacts/team-findings.md)
-- **Key adjustments from review:** security hardening around `--workflow-dir` and `$EDITOR`; explicit symlink and secret-masking policies; findings-panel lifecycle and accessibility prefixes; unknown-field handling; documentation, versioning, observability, and testing commitments.
-- **Remaining open items:** 0 at initial draft; updated by project-manager synthesis
+- **Key adjustments from review:** security hardening around `--workflow-dir` and `$EDITOR` (D22, D33); symlink visibility and secret masking (D17, D20); findings-panel lifecycle, manual dismiss, and accessibility severity prefixes (D23, D25, D35); unknown-field warn-and-drop (D18); documentation, versioning, observability, and testing commitments (D37, D38, D39, D41-b).
+- **Remaining open items:** 0
 - **Technical notes:** 3 — see [artifacts/feature-technical-notes.md](artifacts/feature-technical-notes.md)
