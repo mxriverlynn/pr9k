@@ -83,17 +83,19 @@
 ## D7: Save semantics — explicit, atomic, unsaved prompt
 
 - **Question:** Auto-save or explicit? Atomic or direct? Quit-with-unsaved behavior?
-- **Decision:** Explicit save. Atomic at the file level (see T1). Quit with unsaved changes invokes a three-way confirmation dialog (save/discard/cancel). No auto-save, no undo history.
-- **Rationale:** The editor is the canonical editing path and deserves crash-safe writes. Explicit matches the validator integration.
-- **Evidence:** User input on Q4. Existing write patterns at `src/internal/workflow/iterationlog.go:47` and `src/internal/claudestream/rawwriter.go:29` — no atomic-rename pattern in the codebase today.
+- **Decision:** Explicit save. Atomic at the file level (see T1). Quit with unsaved changes invokes a three-way confirmation dialog (Save / Discard / Cancel) — single-step, no second confirmation on Discard. Quit with no unsaved changes invokes a simpler "Quit the workflow builder? (Yes / No)" confirmation ([D73](#d73-quit-confirmation-always-required)). No auto-save, no undo history.
+- **Rationale:** The editor is the canonical editing path and deserves crash-safe writes. Explicit matches the validator integration. Always confirming Quit (even when there's nothing to lose) prevents accidental process exit and matches the pattern in the existing pr9k TUI's quit-confirm behavior. The Discard path is single-step per the user's R3 simplification direction.
+- **Evidence:** User input on Q4. User input in R3 simplifying the Quit flow. Existing write patterns at `src/internal/workflow/iterationlog.go:47` and `src/internal/claudestream/rawwriter.go:29` — no atomic-rename pattern in the codebase today. Existing quit-confirm pattern in the main TUI at `src/internal/ui/ui.go` (ModeQuitConfirm).
 - **Rejected alternatives:**
   - Auto-save on every keystroke.
   - Direct `O_TRUNC` overwrite.
   - `.bak` sibling.
+  - Two-step Discard confirmation — rejected at user direction in R3 (see D54 superseded note).
+  - No-confirmation Quit when no unsaved changes — rejected; see D73 rationale.
 - **Linked technical notes:** T1
-- **Driven by findings:** —
-- **Dependent decisions:** D40
-- **Referenced in spec:** Primary Flow steps 9 and 10; Alternate Flows — Unsaved-changes quit
+- **Driven by findings:** F92
+- **Dependent decisions:** D40, D73
+- **Referenced in spec:** Primary Flow steps 9 and 10; Alternate Flows — Unsaved-changes interception, Quit confirmation
 
 ## D8: Scaffold or copy or cancel for empty folder — SUPERSEDED by D69
 
@@ -773,20 +775,14 @@
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 9; User Interactions — Feedback
 
-## D54: Discard safety in unsaved-quit dialog
+## D54: Discard safety in unsaved-quit dialog — SUPERSEDED by D7 (R3 simplification)
 
-- **Question:** How does the builder protect against accidental discard of an entire session's unsaved edits?
-- **Decision:** In the unsaved-changes quit dialog, the keyboard-default option is **Cancel** (pressing `Enter` from the initial dialog state cancels the quit). The three options are spatially ordered: **Save** (primary safe), **Cancel** (also safe, and the escape-equivalent), **Discard** (destructive, rightmost, visually de-emphasized). Choosing Discard does NOT immediately discard — it prompts a second confirmation: `Discard all unsaved changes? This cannot be undone. (y/N)`, with `N` as the keyboard default. Only a positive `y` or explicit arrow+Enter through both prompts discards. Escape at any step cancels.
-- **Rationale:** UX round 2 F70 / F71 flagged that the original three-way dialog had no confirmation guard on Discard, and that Discard could be reached from the initial dialog with a single misfire (down-arrow + Enter). D7's "no undo history" means Discard is irreversible. Given the stakes (all session edits lost), the two-step confirmation matches the pattern used for remove-step in the detail pane (D21) and prevents a fatigued user from losing their work via an accidental keystroke.
-- **Evidence:** UX round 2 F70, F71. D7 ("no undo history"). Universal Design Principle 5 (tolerance for error).
-- **Rejected alternatives:**
-  - Single-step discard with cancel as default only — insufficient for irreversible action.
-  - Three-step confirmation — disproportionate friction.
-  - Require typing a specific word ("discard") — excessive for a keyboard TUI.
-- **Linked technical notes:** —
-- **Driven by findings:** F70, F71
-- **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 10; Alternate Flows — Unsaved-changes quit
+- **Status:** Superseded by the R3 simplification of D7. The two-step Discard confirmation added by this decision was removed at user direction. The three-option dialog (Save / Discard / Cancel with Cancel keyboard default) remains — only the second Discard confirmation step goes away.
+- **Original question:** How does the builder protect against accidental discard of an entire session's unsaved edits?
+- **Original decision:** Two-step Discard: the initial dialog's Discard option opened a second `(y/N)` confirmation with `N` default, so only an explicit positive confirmation destroyed session edits.
+- **Why superseded:** In R3 the user directed an explicit simplification of the Quit flow. The single-step three-option dialog (Save / Discard / Cancel with Cancel as keyboard default) retains meaningful protection — Cancel-by-default and spatial ordering of Discard as the rightmost option still prevent single-keystroke accidents from the dialog's initial state. The second confirmation was judged disproportionate friction given that the first dialog already requires navigation plus Enter to reach Discard.
+- **Driven by findings:** F70, F71, F92
+- **Referenced in spec:** historical only — spec now references D7 for the simplified unsaved-Quit behavior.
 
 ## D55: Focus restoration after findings-panel dismiss
 
@@ -1043,14 +1039,28 @@
 ## D72: Unsaved-changes interception and resume semantics for File > New / File > Open
 
 - **Question:** What happens when the user invokes File > New or File > Open while the current session has unsaved changes?
-- **Decision:** Both File > New and File > Open invoke the same D54 three-way unsaved-changes dialog (Save / Cancel / Discard with Cancel default and two-step Discard confirmation). **Resume semantics:** if the user picks Save and the save succeeds, the New / Open flow resumes automatically — the user does not need to re-invoke the menu item. If the user picks Save and the save surfaces fatal findings, the New / Open flow is cancelled, the findings panel opens, the user stays in the current session's edit view to resolve the fatals (same as D40's quit-with-fatals handling). If the user picks Discard (and confirms the two-step), the New / Open flow resumes automatically with the current in-memory state discarded. If the user picks Cancel (or presses Escape), the New / Open invocation is cancelled entirely — the user returns to the current session's edit view unchanged.
-- **Rationale:** UX designer round-2 recommendation. The user has a goal (switch workflows); the builder intercepts for a legitimate reason (save protection); the builder should carry the user through to the goal after they resolve the interception, not force them to re-invoke the menu item. Nielsen heuristic 3 (user control and freedom). The D40 fatal-findings branch is preserved verbatim: a save with fatals cancels the pending action and opens the findings panel.
-- **Evidence:** UX designer round-2 recommendation. D40 (fatals cancel pending actions). D54 (existing unsaved-changes dialog).
+- **Decision:** Both File > New and File > Open invoke the same three-way unsaved-changes dialog used by File > Quit (Save / Cancel / Discard, Cancel keyboard default, single-step per D7's R3 simplification). **Resume semantics:** if the user picks Save and the save succeeds, the New / Open flow resumes automatically — the user does not need to re-invoke the menu item. If the user picks Save and the save surfaces fatal findings, the New / Open flow is cancelled, the findings panel opens, the user stays in the current session's edit view to resolve the fatals (same as D40's quit-with-fatals handling). If the user picks Discard, the New / Open flow resumes automatically with the current in-memory state discarded. If the user picks Cancel (or presses Escape), the New / Open invocation is cancelled entirely — the user returns to the current session's edit view unchanged.
+- **Rationale:** UX designer round-2 recommendation. The user has a goal (switch workflows); the builder intercepts for a legitimate reason (save protection); the builder should carry the user through to the goal after they resolve the interception, not force them to re-invoke the menu item. Nielsen heuristic 3 (user control and freedom). The D40 fatal-findings branch is preserved verbatim: a save with fatals cancels the pending action and opens the findings panel. Per R3, the two-step Discard confirmation originally specified in D54 is removed — Discard is a single step in all unsaved-interception contexts (Quit, New, Open) for consistency and at user direction.
+- **Evidence:** UX designer round-2 recommendation. D40 (fatals cancel pending actions). D7 as simplified in R3 (single-step three-option unsaved dialog).
 - **Rejected alternatives:**
   - Require user to re-invoke File > New / File > Open after Save or Discard — needless friction.
-  - Skip the D54 two-step Discard confirmation for the New / Open path — inconsistent with Quit, creates data-loss risk asymmetry.
+  - Retain the two-step Discard confirmation from the superseded D54 — user explicitly simplified this in R3.
   - Auto-save on File > New / File > Open — silently saves possibly-unwanted state.
 - **Linked technical notes:** —
-- **Driven by findings:** F91
+- **Driven by findings:** F91, F92
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow — File > New, File > Open; Alternate Flows — Unsaved-changes interception
+
+## D73: Quit confirmation always required
+
+- **Question:** Does File > Quit require a confirmation dialog even when there are no unsaved changes?
+- **Decision:** Yes. Quit always prompts for confirmation. With unsaved changes, the three-option Save / Cancel / Discard dialog from D7 applies. With no unsaved changes, a simpler two-option `Quit the workflow builder? (Yes / No)` dialog applies — `No` is the keyboard default (Enter cancels the quit), `Yes` or pressing `y` proceeds with exit. Escape is equivalent to `No`. The dialog follows the D48 convention (safe option default, fixed lexicon, spatial order).
+- **Rationale:** User direction in R3: "already saved workflow confirms you want to quit." Always confirming Quit — even without unsaved changes — matches the existing pr9k TUI's quit-confirm pattern (`ModeQuitConfirm` at `src/internal/ui/ui.go`), prevents accidental process exit from a misfire on `Ctrl+Q`, and keeps the Quit flow consistent regardless of unsaved state (the user always sees a confirmation before the process dies). The simpler two-option dialog on the saved-workflow path keeps the dialog faithful to its purpose (confirm intent, not adjudicate unsaved state).
+- **Evidence:** User input in R3. Existing quit-confirm pattern at `src/internal/ui/ui.go` (`ModeQuitConfirm`, `QuitConfirmPrompt`).
+- **Rejected alternatives:**
+  - No confirmation on Quit when nothing is unsaved — accidental `Ctrl+Q` exits the builder instantly.
+  - Same three-option dialog regardless of saved state — the Save and Discard options are meaningless when nothing needs saving.
+- **Linked technical notes:** —
+- **Driven by findings:** F93
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 10; Alternate Flows — Quit confirmation (saved workflow)
