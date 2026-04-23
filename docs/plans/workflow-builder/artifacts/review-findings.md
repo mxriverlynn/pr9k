@@ -10,7 +10,7 @@ changed.
 
 Numbering continues from the `team-findings.md` entries produced by the
 original plan-a-feature run (F1-F47). Round 1 of this review adds
-F48-F82.
+F48-F82. Round 2 (user-initiated menu-bar redesign) adds F83-F91.
 -->
 
 ## F48: T1 symlink write-through mechanism is physically impossible
@@ -502,3 +502,112 @@ F48-F82.
 - **Affected decisions:** —
 - **Affected tech-notes:** —
 - **Changed in spec:** —
+
+## F83: User-initiated redesign — menu bar replaces landing page
+
+- **Agent:** user (direct redesign) / user-experience-designer (round 2 confirmation)
+- **Category:** scope change
+- **Finding:** The user realized in round 2 that the four-option landing-page model they had originally specified was awkward: it existed only at startup, while the operations it surfaced (switch workflows, create a new one, save the current one, quit) are mid-session operations. The user requested a replacement model: a persistent menu bar at the top of the builder with a File menu containing New, Open, Save, and Quit.
+- **Evidence considered:** User's verbatim redesign request. UX designer R2 structured recommendation covering 15 sub-questions of the new model. Junior-developer R2 decisions audit.
+- **Resolution:** Landing page removed. Persistent menu bar added. Four landing-page decisions (D2, D8, D31, D50) marked superseded in place (history preserved, with pointers to D64). Six decisions whose trigger moves from landing-page selection to File-menu load events updated (D3, D4, D22, D30, D57). Nine new decisions added (D64 menu-bar model, D65 rendering, D66 activation, D67 shortcuts, D68 initial state, D69 New flow, D70 Open flow, D71 path picker, D72 unsaved-changes auto-resume). Spec Primary Flow steps 1-4 rewritten; step 5 updated for the menu-bar chrome row; Alternate Flows renamed and rewritten (Scaffold-from-empty → File > New empty scaffold; Copy-default → File > New copy; Target switching → File > Open switching); Unsaved-changes interception consolidated across Quit/New/Open with auto-resume.
+- **Resolved by:** user input (design direction) + evidence (UX designer detailed recommendations for each sub-question)
+- **Raised in round:** R2
+- **Affected decisions:** D2 (superseded), D3 (updated), D4 (updated), D8 (superseded), D15 (dependency only), D17 (no change — behavior preserved, trigger moved), D22 (updated), D30 (updated), D31 (superseded), D32 (no change), D50 (superseded), D57 (updated), D61 (dependency only), D64 through D72 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow steps 1-5, 9, 10; Alternate Flows (multiple); User Interactions — Affordances; Documentation Obligations; Summary; Review History.
+
+## F84: Menu bar rendering and placement
+
+- **Agent:** user-experience-designer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user's request named a "header menu bar" but did not specify where it lives relative to the existing session header, whether the session header content moves into the menu bar, or how the layout accommodates the new row on narrow terminals.
+- **Resolution:** New D65 commits to a dedicated menu bar row at the very top, separated from the session header by a single horizontal rule. The session header (target path, unsaved indicator, banners, findings summary) stays on its existing row. The menu bar is left-aligned with `File` as the only v1 item and room reserved for future menus (Edit, Help, etc.) without a layout redesign. Two rows of permanent chrome paid once, traded for removing an entire landing-page screen.
+- **Resolved by:** evidence
+- **Raised in round:** R2
+- **Affected decisions:** D65 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 5; User Interactions — Affordances
+
+## F85: Menu activation model
+
+- **Agent:** user-experience-designer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user's request did not name an activation key. Keyboard-only users need a discoverable entry point; mouse users need a clickable surface; focus-in-a-text-field cases need precedence rules.
+- **Resolution:** New D66 commits to `F10` (universal POSIX menu-bar activation), `Alt+F` (GUI convention, known-fragile under tmux), and mouse click — all three always available. `F10` steals focus from any focused text field; the field's partial input is preserved. `Alt+F` is a convenience alias given its tmux fragility (same approach as D34's `Alt+↑/↓` fallback).
+- **Resolved by:** evidence (F10 POSIX precedent; Alt+F GUI precedent; D34 Alt-fragility precedent)
+- **Raised in round:** R2
+- **Affected decisions:** D66 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow steps 2, 5; User Interactions — Affordances
+
+## F86: Menu item keyboard shortcuts and XON/XOFF caveat
+
+- **Agent:** user-experience-designer (R2)
+- **Category:** behavioral gap / cross-standard conflict
+- **Finding:** The user's request did not specify keyboard shortcuts for individual menu items. Ctrl+S collides with terminal XON/XOFF flow control on many Linux setups — silently freezing output until Ctrl+Q is pressed.
+- **Resolution:** New D67 commits to Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Q (the cross-platform standard vocabulary), intercepted at application level so they work regardless of focused text field. The XON/XOFF collision is documented explicitly — the how-to guide names `stty -ixon` as the mitigation, and File > Save via the menu bar is always a reachable alternative to the shortcut.
+- **Resolved by:** evidence (standard shortcut vocabulary; XON/XOFF semantics)
+- **Raised in round:** R2
+- **Affected decisions:** D67 (new); D38 (Documentation Obligations now includes the `stty -ixon` caveat note)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 2; Documentation Obligations
+
+## F87: Initial-launch state
+
+- **Agent:** user-experience-designer (R2); junior-developer (R2)
+- **Category:** behavioral gap
+- **Finding:** With the landing page removed, what does the user see first? Auto-load the D3-resolved default (convenient but silently decides what the user is editing), or empty editor with a hint (explicit but adds a step)? The user's request was silent on this.
+- **Resolution:** New D68 commits to the empty-editor state with a centered hint naming File > New and File > Open (with their shortcuts). The one exception: if the user explicitly passed `--workflow-dir`, the builder auto-opens that file via the File > Open code path — treating the flag as an explicit expression of intent.
+- **Resolved by:** evidence (Nielsen H3 user control; VS Code / Neovim precedent for no-file startup)
+- **Raised in round:** R2
+- **Affected decisions:** D68 (new); D3 (updated to scope the default-target resolution to two specific use cases: --workflow-dir auto-open and path-picker pre-fill).
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 2; User Interactions — Affordances
+
+## F88: File > New flow
+
+- **Agent:** user-experience-designer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user's description of File > New — "prompt for copy-of-default vs empty, then ask where to put it" — was a two-step flow, but didn't cover: (a) what to do when the current session has unsaved changes; (b) whether the copy-from-default integrity check (D61) still applies; (c) whether anything is written to disk before the first File > Save; (d) whether the destination path defaulting to `<projectDir>/.pr9k/workflow/` handles edge cases where `<projectDir>` isn't known.
+- **Resolution:** New D69 formalizes the five-step flow: unsaved-changes interception (D72), choice dialog, pre-copy integrity check (D61 when applicable), path picker, load into edit view. Nothing is written to disk until first File > Save; on first save, every file in the bundle lands atomically per D60.
+- **Resolved by:** evidence
+- **Raised in round:** R2
+- **Affected decisions:** D69 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 3; Alternate Flows — File > New (both variants)
+
+## F89: File > Open flow
+
+- **Agent:** user-experience-designer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user's description of File > Open — "let the user choose a config.json from wherever they want" — didn't cover: (a) unsaved-changes interception behavior; (b) what happens when the chosen path is a directory or doesn't exist; (c) whether existing load-time behaviors (D4 read-only, D17 symlink, D22 external-workflow, D43 load-time integrity, D36 parse-error recovery) still fire. Junior-developer flagged that "open a config.json" semantically implies opening a bundle (the config plus its companion files rooted at the config's parent directory).
+- **Resolution:** New D70 formalizes the three-step flow: unsaved-changes interception, path picker targeting a file, load into edit view with all existing load-time behaviors intact. The path picker shows inline notes when the typed path is a directory or doesn't exist.
+- **Resolved by:** evidence
+- **Raised in round:** R2
+- **Affected decisions:** D70 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 4; Alternate Flows — File > Open target switching
+
+## F90: Path picker design
+
+- **Agent:** user-experience-designer (R2); junior-developer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user didn't specify the form of the path picker. The existing TUI stack has no file-browser widget. Options: single text input, embedded file tree, hybrid. Junior-developer flagged that the target persona (workflow author) is shell-proficient.
+- **Resolution:** New D71 commits to a single labeled text input with filesystem tab-completion. Matches shell idioms familiar to the target persona; minimal implementation surface; extensible later if needed. Pre-filled with sensible defaults so Enter is often enough.
+- **Resolved by:** evidence (persona shell-proficiency from D38; existing TUI dependency stack)
+- **Raised in round:** R2
+- **Affected decisions:** D71 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Alternate Flows — File > New, File > Open; User Interactions — Affordances
+
+## F91: Unsaved-changes interception and auto-resume for New / Open
+
+- **Agent:** user-experience-designer (R2); junior-developer (R2)
+- **Category:** behavioral gap (resolved by new decision)
+- **Finding:** The user's request mentioned the three-way unsaved-changes dialog for Quit but was silent on File > New and File > Open. Junior-developer flagged this as the single biggest gap — those two menu items switch workflows mid-session, which is exactly when unsaved changes matter most. They also flagged that the user's description omitted D54's two-step Discard confirmation, potentially suggesting simplification — but couldn't determine whether that was intentional or elided.
+- **Resolution:** New D72 commits to the same D54 three-way dialog intercepting File > New and File > Open with auto-resume semantics: Save-success or confirmed-Discard continues the pending action; Save with fatal findings cancels the pending action and opens the findings panel (matching D40's Quit-with-fatals handling); Cancel leaves the user in the current session. D54's two-step Discard confirmation is preserved — the safety feature was added in round 1 for explicit UX reasons (irreversible, no undo) and nothing the user said in R2 indicates removal.
+- **Resolved by:** evidence (D40 precedent; D54 safety rationale preserved)
+- **Raised in round:** R2
+- **Affected decisions:** D72 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow steps 3, 4, 10; Alternate Flows — Unsaved-changes interception
