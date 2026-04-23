@@ -11,6 +11,7 @@ changed.
 Numbering continues from the `team-findings.md` entries produced by the
 original plan-a-feature run (F1-F47). Round 1 of this review adds
 F48-F82. Round 2 (user-initiated menu-bar redesign) adds F83-F91.
+Round 3 (user-initiated Quit-flow simplification) adds F92-F93.
 -->
 
 ## F48: T1 symlink write-through mechanism is physically impossible
@@ -611,3 +612,29 @@ F48-F82. Round 2 (user-initiated menu-bar redesign) adds F83-F91.
 - **Affected decisions:** D72 (new)
 - **Affected tech-notes:** —
 - **Changed in spec:** Primary Flow steps 3, 4, 10; Alternate Flows — Unsaved-changes interception
+
+## F92: Two-step Discard confirmation removed at user direction
+
+- **Agent:** user (direct simplification)
+- **Category:** scope change (simplification)
+- **Finding:** After R2, the project-manager flagged to the user that R2's spec preserved D54's two-step Discard confirmation even though the user's R2 redesign request had described the unsaved-Quit dialog as simpler. The user confirmed the intended simplification: unsaved-Quit is single-step (Save / Discard / Cancel, no second `(y/N)` confirmation on Discard).
+- **Evidence considered:** User's R3 verbatim response: "yes, simplify the way you quit. unsaved workflow prompts you with those options." The Cancel-default plus rightmost-Discard spatial ordering retains meaningful protection against single-keystroke accidents from the dialog's initial state — the second confirmation was judged disproportionate.
+- **Resolution:** D54 marked superseded (history preserved with pointer to D7's R3 simplification). D7 decision text updated to specify single-step Discard. D72 (New/Open interception) updated to match — no two-step Discard anywhere. Spec Primary Flow step 10 and the Unsaved-changes-interception alternate flow rewritten.
+- **Resolved by:** user input
+- **Raised in round:** R3
+- **Affected decisions:** D54 (superseded), D7 (updated), D72 (updated)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 10; Alternate Flows — Unsaved-changes interception
+
+## F93: Quit always confirms, even with no unsaved changes
+
+- **Agent:** user (direct specification)
+- **Category:** behavioral gap (new requirement)
+- **Finding:** The user's R3 simplification request named two distinct Quit shapes: unsaved-Quit uses the three-option dialog; **saved-Quit shows a simple confirmation** ("already saved workflow confirms you want to quit"). The spec before R3 was silent on the saved-Quit case — it documented only the unsaved path, implicitly allowing a no-confirm exit when the workflow was clean. The user's specification adds a confirmation on every Quit, regardless of unsaved state.
+- **Evidence considered:** User's R3 verbatim: "already saved workflow confirms you want to quit." Existing pr9k TUI has a `ModeQuitConfirm` pattern (`src/internal/ui/ui.go`) that always confirms — matches the user's mental model. Accidental `Ctrl+Q` misfires would otherwise exit the builder silently.
+- **Resolution:** New D73 commits to always-confirm-on-Quit with a two-option `(Yes / No)` dialog when there are no unsaved changes. `No` is keyboard default, Escape equivalent to No, `y` or arrow+Enter to confirm exit. D7 updated to reference D73 for the saved-Quit path. Spec Primary Flow step 10 rewritten to document both shapes. New Alternate Flow "Quit confirmation (no unsaved changes)" added.
+- **Resolved by:** user input
+- **Raised in round:** R3
+- **Affected decisions:** D73 (new), D7 (updated)
+- **Affected tech-notes:** —
+- **Changed in spec:** Primary Flow step 10; Alternate Flows — Quit confirmation (no unsaved changes)

@@ -63,3 +63,27 @@ R2 closed the user's redesign request completely. The UX designer's 15-question 
 After R2, the spec has absorbed all substantive feedback across two review rounds. Remaining work is pure implementation detail (validator API shape for in-memory validation, single-line input widget choice, pagination caps, specific Bubble Tea wire-up for the menu bar dropdown). These belong in the implementation plan produced by `han:plan-implementation`.
 
 **Next step recommended:** proceed to `han:plan-implementation`.
+
+## R3: User-initiated Quit-flow simplification
+
+- **Mode:** direct user simplification (no specialists engaged)
+- **Spec-aware mode:** engaged
+- **Specialists engaged:** none. After R2's menu-bar redesign, the project-manager flagged that R2 preserved D54's two-step Discard confirmation even though the user's R2 description of the Quit dialog had been simpler. The user confirmed the intended simplification and added a new requirement (saved-Quit also confirms). No adversarial or domain-specialist review was needed — the change is a narrow, user-directed simplification of the Quit flow.
+- **Findings raised:** 2 findings (F92, F93) — see [review-findings.md](review-findings.md).
+- **Changed in plan:**
+  - Primary Flow step 10: rewritten to document two dialog shapes — three-option (Save/Cancel/Discard, single-step) for unsaved state, and two-option (Yes/No) for saved state.
+  - Alternate Flows — "Unsaved-changes interception" updated: removed the two-step Discard confirmation language.
+  - Alternate Flows — new entry "Quit confirmation (no unsaved changes)": documents the always-confirm-on-Quit behavior with the simpler two-option dialog.
+  - Review History and Summary: R3 recorded.
+- **Changed in decision log:**
+  - D54 superseded: two-step Discard confirmation removed. History preserved with pointer to D7's R3 simplification.
+  - D7 updated: unsaved-Quit is single-step; saved-Quit uses the new D73 confirmation.
+  - D72 updated: New/Open interception no longer references the two-step Discard.
+  - D73 added: Quit always confirms, with a two-option `(Yes / No)` dialog when no unsaved changes exist.
+- **Changed in tech-notes:** None.
+
+### Stability assessment and next-step recommendation
+
+R3 is a narrow simplification that does not surface any new design questions. The spec has now absorbed three rounds of review (R1 adversarial, R2 user redesign of target selection, R3 user simplification of Quit) and remains internally consistent with one non-blocking open item (OI-1 validator `safePromptPath` hardening).
+
+**Next step recommended:** proceed to `han:plan-implementation`.
