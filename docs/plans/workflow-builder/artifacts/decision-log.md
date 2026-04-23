@@ -14,46 +14,42 @@
 - **Dependent decisions:** D3, D10, D19
 - **Referenced in spec:** Actors and Triggers; Primary Flow step 1
 
-## D2: Target selection modes
+## D2: Target selection modes — SUPERSEDED by D64
 
-- **Question:** What options does the user have when choosing which workflow to edit?
-- **Decision:** Four options on the landing page — edit the default target in place; copy the default target into the project-local workflow directory and edit the copy; edit the project-local workflow; edit a workflow at an arbitrary path.
-- **Rationale:** Matches the user's stated requirements and the two-candidate workflow-directory resolution already in pr9k.
-- **Evidence:** User input. Two-candidate resolver `resolveWorkflowDirWith` at `src/internal/cli/args.go:26`. ADR [`docs/adr/20260418175134-pr9k-rename-and-pr9k-layout.md`](../../../adr/20260418175134-pr9k-rename-and-pr9k-layout.md).
-- **Rejected alternatives:**
-  - Single target = "whatever pr9k would resolve right now" — denies agency to switch.
-  - Prompt only for a path — denies discoverability.
-- **Linked technical notes:** —
-- **Driven by findings:** —
-- **Dependent decisions:** D3, D4, D8, D15, D31, D22
-- **Referenced in spec:** Primary Flow step 3; User Interactions — Affordances
+- **Status:** Superseded by [D64](#d64-menu-bar-target-selection-model) in review round 2.
+- **Original question:** What options does the user have when choosing which workflow to edit?
+- **Original decision:** Four options on a landing page — edit the default target in place; copy the default target into the project-local workflow directory and edit the copy; edit the project-local workflow; edit a workflow at an arbitrary path.
+- **Why superseded:** The landing page was replaced with a menu-bar File menu (New / Open / Save / Quit) at the user's request in review round 2. The four landing-page options collapse into File > New (copy-from-default or empty scaffold) and File > Open (arbitrary config.json). See [D64](#d64-menu-bar-target-selection-model) for the replacement model.
+- **Driven by findings:** F83 (round 2)
+- **Referenced in spec:** historical only — spec references point to D64.
 
 ## D3: Default target resolution semantics
 
-- **Question:** What does "the default target" mean when the landing page preselects it?
-- **Decision:** The default target is the directory that the main `pr9k` command would resolve for this invocation, using identical precedence: `--workflow-dir` override if set, otherwise `<projectDir>/.pr9k/workflow/`, otherwise `<executableDir>/.pr9k/workflow/`.
-- **Rationale:** Keeps the builder's behavior consistent with the rest of pr9k.
-- **Evidence:** User input on Q1. `resolveWorkflowDir` / `resolveWorkflowDirWith` at `src/internal/cli/args.go:26-54`. ADR [`docs/adr/20260413162428-workflow-project-dir-split.md`](../../../adr/20260413162428-workflow-project-dir-split.md).
+- **Question:** What does "the default target" mean now that the landing page is gone?
+- **Decision:** The default-target resolution rule still applies, but its use shifts. It is consumed in two places under the menu-bar model: (a) when `--workflow-dir` is explicitly set on the command line, the builder auto-opens that file at launch (equivalent to an implicit File > Open); (b) the File > New and File > Open path pickers pre-fill their path input using the resolution, so the user can accept the default by pressing Enter. The resolution precedence is unchanged: `--workflow-dir` override if set, otherwise `<projectDir>/.pr9k/workflow/`, otherwise `<executableDir>/.pr9k/workflow/`.
+- **Rationale:** Originally supported landing-page preselection. With the menu-bar model (D64), the same resolution provides sensible path-picker defaults and honors the `--workflow-dir` command-line override as an explicit user intent to open a specific file.
+- **Evidence:** User input on Q1. User input on the menu-bar redesign (R2). `resolveWorkflowDir` / `resolveWorkflowDirWith` at `src/internal/cli/args.go:26-54`. ADR [`docs/adr/20260413162428-workflow-project-dir-split.md`](../../../adr/20260413162428-workflow-project-dir-split.md).
 - **Rejected alternatives:**
-  - Always preselect the bundled ship path — diverges from runtime rules.
+  - Always auto-load the resolved default even without `--workflow-dir` — rejected because it silently decides what the user is editing; the empty-editor-with-hint state (D68) gives the user explicit control.
 - **Linked technical notes:** —
-- **Driven by findings:** —
-- **Dependent decisions:** D4, D31
-- **Referenced in spec:** Primary Flow step 2
+- **Driven by findings:** F83
+- **Dependent decisions:** D68, D69, D70
+- **Referenced in spec:** Primary Flow steps 2, 5; File > New and File > Open flows
 
-## D4: Read-only default fallback
+## D4: Read-only target — load-time detection
 
-- **Question:** What happens when the default target is not writable?
-- **Decision:** The landing page detects writability and, when the default target is read-only, surfaces a banner and enters browse-only mode (see D30). The writability check applies to all four target options, not only the default (extended under F-28 review).
-- **Rationale:** Common when pr9k is installed via a package manager. Writability discovery must not be limited to the default target — the arbitrary-path option can also point at a read-only bundle.
-- **Evidence:** User input on Q1. Go coding standard [`docs/coding-standards/go-patterns.md`](../../../coding-standards/go-patterns.md) — restrict file/directory permissions.
+- **Question:** What happens when the target being loaded is not writable?
+- **Decision:** The builder detects writability at File-menu load time — when File > Open resolves a path, when File > New confirms a destination path, and when `--workflow-dir` auto-opens at launch. If the resolved target is read-only, the builder surfaces a read-only banner in the session header and enters browse-only mode (D30). The check is uniform across all entry points — there is no separate code path for "default target" vs "arbitrary path."
+- **Rationale:** In the landing-page model, the writability check happened before the edit view opened. In the menu-bar model, the check moves to the moment a file is loaded (New completion or Open completion). The behavior is unchanged — only the trigger point moved. Writability checks apply equally to the bundled default, the project-local workflow, and an arbitrary path, so the underlying logic is the same.
+- **Evidence:** User input on Q1. User input on R2 menu-bar redesign. Go coding standard [`docs/coding-standards/go-patterns.md`](../../../coding-standards/go-patterns.md) — restrict file/directory permissions.
 - **Rejected alternatives:**
   - Always write to a temporary location — violates user intent.
   - Refuse to open a read-only target — denies legitimate browse.
+  - Per-entry-point writability logic — unnecessary complexity.
 - **Linked technical notes:** —
-- **Driven by findings:** F18, F24, F28
-- **Dependent decisions:** D30
-- **Referenced in spec:** Primary Flow step 3; Alternate Flows — Read-only target
+- **Driven by findings:** F18, F24, F28, F83
+- **Dependent decisions:** D30, D69, D70
+- **Referenced in spec:** Primary Flow — file-load handling; Alternate Flows — Read-only target
 
 ## D5: External editor for multi-line content
 
@@ -99,19 +95,14 @@
 - **Dependent decisions:** D40
 - **Referenced in spec:** Primary Flow steps 9 and 10; Alternate Flows — Unsaved-changes quit
 
-## D8: Scaffold or copy or cancel for empty folder
+## D8: Scaffold or copy or cancel for empty folder — SUPERSEDED by D69
 
-- **Question:** When the user selects a target folder that has no configuration file, what does the builder do?
-- **Decision:** Three actions — scaffold a minimal valid workflow; copy from the default target; cancel.
-- **Rationale:** User input on Q5.
-- **Evidence:** User input on Q5. Minimum-phase-size rule at `src/internal/validator/validator.go` (category 3).
-- **Rejected alternatives:**
-  - Require existing file.
-  - Silent scaffold.
-- **Linked technical notes:** —
-- **Driven by findings:** —
-- **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 4; Alternate Flows — Scaffold-from-empty
+- **Status:** Superseded by [D69](#d69-file--new-flow) in review round 2.
+- **Original question:** When the user selects a target folder that has no configuration file, what does the builder do?
+- **Original decision:** Three actions — scaffold a minimal valid workflow; copy from the default target; cancel.
+- **Why superseded:** The scaffold-vs-copy-default choice moves into File > New, where it is presented as the first choice before the user picks a destination path. The "cancel" option returns to the empty-editor hint state rather than to the removed landing page. See [D69](#d69-file--new-flow).
+- **Driven by findings:** F83
+- **Referenced in spec:** historical only — spec references point to D69.
 
 ## D9: v1 scope boundary
 
@@ -297,17 +288,17 @@
 
 ## D22: External-workflow warning
 
-- **Question:** When the target directory is outside the user's project and home, does the builder treat it differently?
-- **Decision:** Yes. Display an "external workflow" banner during the entire session. At the first save, prompt for explicit confirmation with the absolute path. Subsequent saves in the same session do not re-confirm.
-- **Rationale:** User input on Q-G (option A). A workflow the user later runs executes scripts on the host with the user's privileges; editing an attacker-placed workflow at `/tmp/evil/` should be visibly distinct from editing one's own.
-- **Evidence:** User input on Q-G. Security-F1. Existing `resolveProjectDir` at `src/internal/cli/args.go:59`.
+- **Question:** When the loaded target is outside the user's project and home, does the builder treat it differently?
+- **Decision:** Yes. When File > Open (or File > New with an external destination, or `--workflow-dir` auto-open) resolves a path outside the user's project directory and home directory, the builder displays an "external workflow" banner in the session header for the entire session. At the first save, prompt for explicit confirmation with the absolute path. Subsequent saves in the same session do not re-confirm.
+- **Rationale:** User input on Q-G (option A) and R2 menu-bar redesign. A workflow the user later runs executes scripts on the host with the user's privileges; editing an attacker-placed workflow at `/tmp/evil/` should be visibly distinct from editing one's own. The detection point moved from landing-page selection to File-menu load completion, but the protection is unchanged.
+- **Evidence:** User input on Q-G. User input on R2. Security-F1. Existing `resolveProjectDir` at `src/internal/cli/args.go:59`.
 - **Rejected alternatives:**
   - Banner only — insufficient for the save action itself.
   - No visible treatment — denies the user informed consent.
 - **Linked technical notes:** —
-- **Driven by findings:** F35
-- **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 3; Alternate Flows — External-workflow session
+- **Driven by findings:** F35, F83
+- **Dependent decisions:** D69, D70
+- **Referenced in spec:** Primary Flow — file-load handling; Alternate Flows — External-workflow session
 
 ## D23: Per-session warning suppression
 
@@ -409,31 +400,27 @@
 
 ## D30: Read-only targets open in browse-only mode
 
-- **Question:** When a target is read-only, is it opened for edit (with save disabled) or for browse (with edit hidden)?
-- **Decision:** Browse-only mode. The edit view opens with the same layout as the editable view, but the save affordance is absent (not merely greyed out), unsaved-change tracking is disabled, and the session header shows a prominent "read-only" indicator.
-- **Rationale:** Jr-F3. Offering an edit affordance that cannot succeed at save time is a broken promise; hiding it is clearer. The user can still copy-to-local to gain write access.
-- **Evidence:** Jr-F3.
+- **Question:** When a loaded target is read-only, is it opened for edit (with save disabled) or for browse (with edit hidden)?
+- **Decision:** Browse-only mode. The edit view opens with the same layout as the editable view, but the File > Save menu item is greyed out and its shortcut is inert, unsaved-change tracking is disabled, and the session header shows a prominent "read-only" indicator. (File > New and File > Open remain available; the user can open a writable copy via New > "copy from default" without losing their place.)
+- **Rationale:** Jr-F3. Offering a save affordance that cannot succeed at save time is a broken promise. Under the menu-bar model (R2), "hiding the save affordance" is achieved by greying out the File > Save menu item rather than removing an edit-view save button, because the menu item exists as a persistent surface. The user sees clearly that Save is unavailable, and File > New and File > Open give them an escape hatch without quitting.
+- **Evidence:** Jr-F3. User input on R2 menu-bar redesign.
 - **Rejected alternatives:**
-  - Edit-with-disabled-save.
-  - Refuse to open.
+  - Edit-with-active-save that fails at save time.
+  - Refuse to open read-only files — denies legitimate browsing.
+  - Remove the File menu entirely in browse-only mode — loses the escape hatch to New/Open.
 - **Linked technical notes:** —
-- **Driven by findings:** F18
+- **Driven by findings:** F18, F83
 - **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 3; Alternate Flows — Read-only target
+- **Referenced in spec:** Primary Flow — file-load handling; Alternate Flows — Read-only target
 
-## D31: Landing page duplicate-option suppression
+## D31: Landing page duplicate-option suppression — SUPERSEDED by D64
 
-- **Question:** When two landing-page options resolve to the same directory, does the builder show both?
-- **Decision:** No. When two options resolve to identical paths, the builder collapses them, showing only the more specific option label. A "show all options" affordance remains available for users who want to see the full set.
-- **Rationale:** UX-003. Duplicate options are friction; in the no-flags-no-project case, options 2 and 3 often resolve to the same target.
-- **Evidence:** UX-003.
-- **Rejected alternatives:**
-  - Always show all four — Hick's Law cost with ambiguous meaning.
-  - Hide without a way to recover — expert users want the full menu.
-- **Linked technical notes:** —
-- **Driven by findings:** F3
-- **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 3
+- **Status:** Superseded by [D64](#d64-menu-bar-target-selection-model) in review round 2 (the landing page is gone, so there are no options to deduplicate).
+- **Original question:** When two landing-page options resolve to the same directory, does the builder show both?
+- **Original decision:** Collapse duplicates, show only the more specific label.
+- **Why superseded:** The landing page was replaced by the File menu. Path-level discoverability is handled by the path picker's pre-filled default path, not by landing-page option labels.
+- **Driven by findings:** F3, F83
+- **Referenced in spec:** historical only.
 
 ## D32: Copy progress and partial-failure handling
 
@@ -728,19 +715,13 @@
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 5; User Interactions — Affordances
 
-## D50: Landing-page option subtitles
+## D50: Landing-page option subtitles — SUPERSEDED by D64
 
-- **Question:** How does a first-time user know what each landing-page option means without prior knowledge of pr9k's directory model?
-- **Decision:** Each landing-page option is rendered with a one-line subtitle showing the resolved absolute path it would open. For example, "Edit the default target in place" renders as the option label above a subtitle reading `/usr/local/share/pr9k/workflow/`; "Edit the local project's workflow" renders with the subtitle `/home/user/myproject/.pr9k/workflow/`; "Edit a workflow in another folder" renders without a subtitle (path is not yet chosen).
-- **Rationale:** UX round 2 F66 flagged that "the default target," "the local project's workflow," and "another folder" are jargon for users who do not know pr9k's two-candidate directory resolution. Showing the concrete path lets the user recognize their target without needing the mental model. The paths are already resolved at landing-page construction time (see D3) — no new computation is introduced.
-- **Evidence:** UX round 2 F66. D3 (target resolution rules). Nielsen heuristic 2 (match between system and real world).
-- **Rejected alternatives:**
-  - Inline tooltip revealed on hover — terminals have no hover state.
-  - Single introductory paragraph at the top of landing — does not help once users scroll the paragraph off-screen.
-- **Linked technical notes:** —
-- **Driven by findings:** F66
-- **Dependent decisions:** —
-- **Referenced in spec:** Primary Flow step 3
+- **Status:** Superseded by [D64](#d64-menu-bar-target-selection-model) in review round 2.
+- **Original decision:** Each landing-page option rendered with a one-line subtitle showing the resolved absolute path.
+- **Why superseded:** The landing page was replaced by the File menu. Path recognition is now provided by the path picker's pre-filled default value (File > New and File > Open both show an editable path with sensible defaults) rather than by labeled subtitles on landing-page options.
+- **Driven by findings:** F66, F83
+- **Referenced in spec:** historical only.
 
 ## D51: Section summary content
 
@@ -842,14 +823,15 @@
 ## D57: Session definition and target switching
 
 - **Question:** What starts and ends a builder session, and does session state persist across target switches within a running builder?
-- **Decision:** A **session** begins when the user reaches the edit view and ends when the builder process exits or the user explicitly returns to the landing page. Session-scoped state includes: acknowledged warnings (D23), external-workflow first-save confirmation (D22), symlink first-save confirmation (D17), the unsaved-changes indicator, the outline scroll position, and collapse state (D28). **Returning to the landing page from the edit view ends the current session** — all session-scoped state is discarded; picking a new target starts a fresh session. If the edit view has unsaved changes at the moment the user invokes "return to landing," the unsaved-changes dialog (D7, D54) intercepts first; only after the user confirms discard or successful save does the return to landing proceed and the session end.
-- **Rationale:** UX round 2 F74 and edge-case round 2 F75 / F76 flagged that "session" was used everywhere in the spec without a definition, leaving the cross-target behavior undefined. The chosen semantics ("returning to landing ends the session") is the simpler model — no session bleed, no cross-target suppression state. NF-17 in the edge-case round separately flagged that an accidental return-to-landing without a confirmation guard would discard edits silently; wrapping the return action behind the unsaved-changes dialog closes that loss path.
-- **Evidence:** UX round 2 F74. Edge-case round 2 F75, F76 (NF-17 silent edit discard).
+- **Decision:** A **session** begins when a workflow is loaded (via File > New completing, File > Open completing, or `--workflow-dir` auto-open at launch) and ends when either (a) the builder process exits, or (b) the user invokes File > New or File > Open, which starts a new session with a different workflow after any unsaved-changes interception. Between sessions — i.e., when the builder is running but no workflow is loaded — the builder shows the empty-editor hint state (D68). Session-scoped state includes: acknowledged warnings (D23), external-workflow first-save confirmation (D22), symlink first-save confirmation (D17), the unsaved-changes indicator, the outline scroll position, collapse state (D28), and the file-change snapshot (D41). All session-scoped state is discarded when the session ends; the new session starts fresh. If the current session has unsaved changes at the moment the user invokes File > New, File > Open, or File > Quit, the unsaved-changes dialog (D7, D54, D72) intercepts first; only after the user confirms discard, successful save, or cancel does the flow proceed. "Cancel" returns to the current session unchanged.
+- **Rationale:** UX round 2 F74 and edge-case round 2 F75 / F76 flagged that "session" was used everywhere in the spec without a definition. R2 menu-bar redesign eliminates the landing page entirely — sessions now begin on explicit file load (New or Open) and transition via explicit menu actions rather than a landing-page round-trip. The simpler model (one active session at a time; switching sessions goes through the unsaved-changes guard) means no session bleed and no cross-target suppression state.
+- **Evidence:** UX round 2 F74. Edge-case round 2 F75, F76. R2 menu-bar redesign.
 - **Rejected alternatives:**
-  - Session persists across target switches — complicates suppression semantics; users would be surprised that a previously-acknowledged warning from target A remains suppressed after switching to target B.
-  - No confirmation before return-to-landing — silent edit loss.
+  - Session persists across File > Open — complicates suppression semantics.
+  - File > Open does not check for unsaved changes — silent edit loss.
+  - Allow multiple concurrent sessions — out of scope for v1.
 - **Linked technical notes:** —
-- **Driven by findings:** F74, F75, F76
+- **Driven by findings:** F74, F75, F76, F83
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow; new Session Lifecycle paragraph; Alternate Flows — Target switching
 
@@ -938,3 +920,137 @@
 - **Driven by findings:** F82
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow step 9; Edge Cases table
+
+## D64: Menu-bar target-selection model
+
+- **Question:** How does the user choose which workflow to edit?
+- **Decision:** The builder shows a persistent menu bar at the top of the screen with a `File` menu containing `New`, `Open`, `Save`, and `Quit`. The four original landing-page target-selection options (edit default in place, copy-default-to-local, edit project-local, edit arbitrary path) are superseded by this model. File > New handles both "start from a copy of the default" and "start with an empty scaffold"; File > Open handles opening any existing `config.json` at an arbitrary path; File > Save and File > Quit route through the existing save (D6, D7, T1) and unsaved-changes (D54) flows.
+- **Rationale:** User input in R2 review. The landing page was a one-shot modal that disappeared after the user made a choice — but "switch to a different workflow" and "save what you are editing" are mid-session operations, not startup-only operations. A persistent menu bar makes those actions always reachable. The File menu idiom (New/Open/Save/Quit) is familiar from decades of GUI editor convention; users need no instruction manual to know what each item does. Replaces and subsumes D2 (target selection modes), D31 (duplicate suppression), D50 (landing-page option subtitles), and D8 (scaffold-or-copy-or-cancel as a standalone dialog).
+- **Evidence:** User input on the menu-bar redesign in R2. UX designer round-2 review (F84-F92).
+- **Rejected alternatives:**
+  - Keep the landing page — user explicitly redesigned it away.
+  - A single "File > Browse" item that launches a tree picker — adds mechanism without reducing friction.
+  - Auto-load the resolved default every time — silent decision; see D68 rationale.
+- **Linked technical notes:** —
+- **Driven by findings:** F83
+- **Dependent decisions:** D65, D66, D67, D68, D69, D70, D71, D72
+- **Referenced in spec:** Primary Flow steps 1-4; User Interactions — Affordances (menu bar)
+
+## D65: Menu bar rendering and placement
+
+- **Question:** Where does the menu bar live relative to the rest of the chrome?
+- **Decision:** The menu bar occupies its own dedicated row at the top of the screen, separated from the session header by a single horizontal rule. Top-to-bottom layout: menu bar row (row 1), separator (row 2), session header (row 3), separator (row 4), outline + detail pane (rows 5..N-1), shortcut footer (row N). The menu bar is left-aligned; `File` is the only item in v1, with room reserved for future menus (Edit, Help, etc.) without a layout redesign. The session header content (target path, unsaved-changes indicator, banners, findings summary) stays on row 3 — nothing from the session header moves into the menu bar row.
+- **Rationale:** Two rows of permanent chrome (menu bar + separator) is a small cost, paid once, in exchange for removing an entire landing-page screen from the user flow. Separating the menu bar from the session header keeps two distinct cognitive surfaces distinct: "what file operations are available" (menu bar) vs. "what am I currently editing and what's its state" (session header). Merging them would conflate both concerns and break the 80-column budget on long paths.
+- **Evidence:** UX designer round-2 recommendation. Existing TUI layout conventions at `src/internal/ui/model.go`.
+- **Rejected alternatives:**
+  - Menu bar embedded in session header — conflates two concerns on one row.
+  - Menu bar hidden until activated — loses persistent discoverability of File operations.
+- **Linked technical notes:** —
+- **Driven by findings:** F84
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow step 5; User Interactions — Affordances
+
+## D66: Menu activation model
+
+- **Question:** How does the user open the File menu?
+- **Decision:** Three entry points, all always available: (a) press `F10`; (b) press `Alt+F`; (c) mouse-click on the `File` label in the menu bar. When a text field is focused, `F10` opens the menu unconditionally, stealing focus from the field (the field's partial input is preserved in memory — nothing is committed or cleared by menu activation). `Alt+F` has the same behavior but is known-fragile under tmux's default `escape-time`, so `F10` is the canonical keyboard path and `Alt+F` is a convenience alias for environments where it works reliably. Mouse click routes to the menu regardless of keyboard focus. Closing the menu via Escape or item-selection restores focus to whatever was focused before the menu opened (same pattern as D55).
+- **Rationale:** `F10` is the universally documented "activate menu bar" key in POSIX terminal conventions and ncurses-era programs. It is a function key — no modifier, no printable-character conflict, unused by any text-input operation. `Alt+F` matches the Windows/Linux GUI convention for "open the File menu" and is familiar to users coming from GUI editors. Triple coverage (F10, Alt+F, mouse) satisfies both keyboard-fluent and mouse-fluent users, plus the tmux-fragile fallback path mirrors D34's approach for the reorder shortcut.
+- **Evidence:** UX designer round-2 recommendation. F10 precedent across ncurses apps. D34 (Alt-fragility already documented).
+- **Rejected alternatives:**
+  - F10 only — loses the Alt+F convenience for GUI-habit users.
+  - Alt+F only — silently fails under tmux.
+  - A single-character shortcut like `m` — conflicts with text-input fields.
+- **Linked technical notes:** —
+- **Driven by findings:** F85
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow — menu activation; User Interactions — Affordances
+
+## D67: Menu item keyboard shortcuts
+
+- **Question:** What keyboard shortcuts activate each File menu item?
+- **Decision:** `Ctrl+N` for New, `Ctrl+O` for Open, `Ctrl+S` for Save, `Ctrl+Q` for Quit. These shortcuts are intercepted at the application level before they reach any focused text field — the user cannot type these byte sequences into a text field by pressing them, which is consistent with every terminal editor that uses Ctrl-combinations as global shortcuts. `Ctrl+S` has a well-known collision with terminal XON/XOFF flow control (Ctrl+S sends XOFF, freezing output on terminals where flow control is enabled): the spec documents this and the how-to guide names the mitigation (`stty -ixon` in the user's shell profile, or using File > Save via the menu bar). The shortcut labels appear to the right of their menu items in the dropdown so users learn them passively.
+- **Rationale:** Ctrl+N/O/S/Q is the standard cross-platform shortcut vocabulary for File-menu operations. Using the standard saves users from relearning a new vocabulary. The XON/XOFF caveat is real but has a standard mitigation; explicitly documenting it is honest and preempts user confusion when the shortcut appears to do nothing.
+- **Evidence:** UX designer round-2 recommendation. XON/XOFF semantics (`stty -ixon` man page). Documentation standard `docs/coding-standards/documentation.md`.
+- **Rejected alternatives:**
+  - Avoid Ctrl+S to sidestep XON/XOFF — abandons decades of convention; users would be hunting for the save shortcut.
+  - Use single-character shortcuts (n/o/s/q) — collides with text-input fields.
+  - Use F-key shortcuts (F2=save, etc.) — no mnemonic link to the operation.
+- **Linked technical notes:** —
+- **Driven by findings:** F86
+- **Dependent decisions:** D38
+- **Referenced in spec:** Primary Flow — menu item shortcuts; Documentation Obligations (stty -ixon how-to note)
+
+## D68: Initial-launch state
+
+- **Question:** What does the builder show on first frame when the user runs `pr9k workflow`?
+- **Decision:** **Empty-editor state** with the menu bar visible and a centered hint panel in the detail-pane area: "`File > New` to create a workflow (`Ctrl+N`)" and "`File > Open` to open an existing config.json (`Ctrl+O`)." The outline panel shows the text `No workflow open`. No file is auto-loaded unless the user explicitly passed `--workflow-dir` on the command line — in that case, the builder loads the specified file via the same code path as File > Open (applying all load-time behaviors: read-only check, symlink banner, external-workflow banner, unknown-field warning, parse-error recovery).
+- **Rationale:** Under the menu-bar model (D64), the builder no longer gates entry to the edit view on a landing-page choice — it opens directly to the edit view. But the edit view has no meaningful content until a file is loaded. Auto-loading whatever `resolveWorkflowDir` returns would silently decide what the user is editing, which can lead to the user inadvertently saving changes to the system-shipped default bundle. The empty-editor-with-hint approach makes the user's first action explicit: they see two paths (New, Open) and pick one. `--workflow-dir` is treated as the explicit expression of intent ("open this file for me") and honored as an auto-open; absent that flag, nothing is loaded.
+- **Evidence:** UX designer round-2 recommendation. Nielsen heuristic 3 (user control and freedom). VS Code / Neovim no-file-argument convention.
+- **Rejected alternatives:**
+  - Auto-load D3-resolved default — silently decides what the user edits; an accidental Ctrl+S can mutate the shipped default.
+  - Show a blank edit view with no hint — leaves first-time users without a starting action.
+  - Modal "What do you want to do?" dialog at startup — a landing page by a different name.
+- **Linked technical notes:** —
+- **Driven by findings:** F87
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow steps 1-2; User Interactions — Empty-state
+
+## D69: File > New flow
+
+- **Question:** What is the complete flow when the user invokes File > New?
+- **Decision:** Five-step flow: (1) **Unsaved-changes check** — if the current session has unsaved changes, the D54 three-way dialog intercepts (Save/Cancel/Discard with Cancel default and Discard two-step confirmation). Cancel returns to the current session unchanged. Save-success or confirmed-Discard continues the New flow. Save with fatal findings cancels the New flow and opens the findings panel (same as D40 handling). (2) **Choice dialog** — three-option dialog: "Copy from default workflow" / "Start with empty workflow" / "Cancel" (Cancel is keyboard default per D48). The choice comes before the path picker because the user's intent (full bundle vs. empty scaffold) must be known to present meaningful defaults. (3) **Pre-copy integrity check** (only when "Copy from default workflow" is chosen) — per D61, the builder validates the default bundle's internal reference integrity; if broken, Copy-anyway / Cancel dialog. (4) **Path picker** — a single-text-input dialog (D71) pre-filled with `<projectDir>/.pr9k/workflow/` as the destination path. If the chosen path already contains a `config.json`, an inline warning is shown; the user may continue (the save uses T1 atomic rename so there is no partial-write risk) or pick a different path. (5) **Load into edit view** — the new in-memory workflow (either a copy of the default's in-memory state or the empty scaffold) is loaded; nothing is written to disk until the first File > Save. All load-time behaviors (D4, D17, D22, D30) apply to the chosen destination path.
+- **Rationale:** UX designer round-2 recommendation. Choice-before-path matches the user's mental model of the task. Putting the unsaved-changes interception first is necessary to preserve the D54 safety guarantee; putting the pre-copy integrity check after the choice but before the path picker catches a broken default bundle before the user commits to a location. The "nothing is written until first Save" contract preserves T1's atomicity guarantee end-to-end.
+- **Evidence:** UX designer round-2 recommendation.
+- **Rejected alternatives:**
+  - Path picker first, then choice — user cannot evaluate the path without knowing the intent.
+  - Copy/scaffold to disk immediately — breaks the "first save is explicit" contract from D7.
+  - Skip the unsaved-changes check — silently destroys current session edits.
+- **Linked technical notes:** —
+- **Driven by findings:** F88
+- **Dependent decisions:** D61, D71, D72
+- **Referenced in spec:** Primary Flow — File > New; Alternate Flows — File > New
+
+## D70: File > Open flow
+
+- **Question:** What is the complete flow when the user invokes File > Open?
+- **Decision:** Three-step flow: (1) **Unsaved-changes check** — same D54 interception as File > New. (2) **Path picker** — a single-text-input dialog (D71) pre-filled with `<projectDir>/.pr9k/workflow/config.json` as the target file. The picker targets a file (not a directory); tab-completion resolves against the filesystem. If the typed path is a directory, the picker shows an inline note "That is a directory — add `/config.json` to open the workflow file." If the path does not exist, the picker shows an inline note "No config.json at that path — use File > New to create one." (3) **Load into edit view** — the chosen file is loaded via the same load path as `--workflow-dir` auto-open; all load-time behaviors (D4 read-only detection, D17 symlink banner, D22 external-workflow banner, D18 unknown-field banner, D43 load-time integrity checks, D36 parse-error recovery) apply unchanged. If parsing fails, the parse-error recovery view (D36) replaces the edit view; the recovery-view actions and auto-reload after external-editor fix are unchanged.
+- **Rationale:** UX designer round-2 recommendation. Open is the simpler of the two flows — user picks a file, builder loads it. All existing load-time handling is preserved so the behavior after-load is identical regardless of whether the file was chosen via --workflow-dir or File > Open.
+- **Evidence:** UX designer round-2 recommendation.
+- **Rejected alternatives:**
+  - No pre-fill — user must type every path from scratch.
+  - Default to `~` instead of the project's .pr9k/workflow/ — misses the most common case.
+  - Separate flows for "open local" vs "open external" — unnecessary complexity; the single picker handles both.
+- **Linked technical notes:** —
+- **Driven by findings:** F89
+- **Dependent decisions:** D71, D72
+- **Referenced in spec:** Primary Flow — File > Open; Alternate Flows — File > Open
+
+## D71: Path picker design
+
+- **Question:** How does the path picker present itself to the user?
+- **Decision:** A single labeled text input with filesystem tab-completion. The dialog shows a title (e.g., "Open workflow file" or "Where should the new workflow be saved?"), a pre-filled editable path input, a hint line ("tab to complete"), and two buttons (e.g., "Open" or "Create", and "Cancel"). Cancel is keyboard default per D48. The text input behaves like a shell path input: typing normally edits the path; `Tab` completes against the filesystem — exactly-one-match auto-completes, multiple-matches cycle through matches on repeated presses. The dialog re-layouts on terminal resize (D48). The picker does not embed a tree widget in v1.
+- **Rationale:** UX designer round-2 recommendation. The pr9k TUI stack has no existing file-picker widget, and the target persona (workflow author) is shell-fluent, so tab-completion is a familiar and fast input model. An embedded tree picker would cost implementation effort and screen rows without changing what the user can accomplish; a single input extends cleanly later if needed. The pre-filled default lets the user accept the common case by pressing Enter.
+- **Evidence:** UX designer round-2 recommendation. D38 (target persona "workflow author" is shell-proficient).
+- **Rejected alternatives:**
+  - Embedded tree file browser — overbuilt for v1.
+  - Free-text with no completion — tedious for deep paths.
+  - Two-step picker (choose directory, then file) — extra friction.
+- **Linked technical notes:** —
+- **Driven by findings:** F90
+- **Dependent decisions:** —
+- **Referenced in spec:** Alternate Flows — File > New, File > Open; User Interactions — Affordances
+
+## D72: Unsaved-changes interception and resume semantics for File > New / File > Open
+
+- **Question:** What happens when the user invokes File > New or File > Open while the current session has unsaved changes?
+- **Decision:** Both File > New and File > Open invoke the same D54 three-way unsaved-changes dialog (Save / Cancel / Discard with Cancel default and two-step Discard confirmation). **Resume semantics:** if the user picks Save and the save succeeds, the New / Open flow resumes automatically — the user does not need to re-invoke the menu item. If the user picks Save and the save surfaces fatal findings, the New / Open flow is cancelled, the findings panel opens, the user stays in the current session's edit view to resolve the fatals (same as D40's quit-with-fatals handling). If the user picks Discard (and confirms the two-step), the New / Open flow resumes automatically with the current in-memory state discarded. If the user picks Cancel (or presses Escape), the New / Open invocation is cancelled entirely — the user returns to the current session's edit view unchanged.
+- **Rationale:** UX designer round-2 recommendation. The user has a goal (switch workflows); the builder intercepts for a legitimate reason (save protection); the builder should carry the user through to the goal after they resolve the interception, not force them to re-invoke the menu item. Nielsen heuristic 3 (user control and freedom). The D40 fatal-findings branch is preserved verbatim: a save with fatals cancels the pending action and opens the findings panel.
+- **Evidence:** UX designer round-2 recommendation. D40 (fatals cancel pending actions). D54 (existing unsaved-changes dialog).
+- **Rejected alternatives:**
+  - Require user to re-invoke File > New / File > Open after Save or Discard — needless friction.
+  - Skip the D54 two-step Discard confirmation for the New / Open path — inconsistent with Quit, creates data-loss risk asymmetry.
+  - Auto-save on File > New / File > Open — silently saves possibly-unwanted state.
+- **Linked technical notes:** —
+- **Driven by findings:** F91
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow — File > New, File > Open; Alternate Flows — Unsaved-changes interception
