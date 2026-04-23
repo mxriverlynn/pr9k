@@ -151,7 +151,7 @@
   - Step-template gallery — requires amending the ADR.
   - `--ralph` flag.
 - **Linked technical notes:** —
-- **Driven by findings:** F29
+- **Driven by findings:** F20
 - **Dependent decisions:** —
 - **Referenced in spec:** Out of Scope (final bullet)
 
@@ -165,7 +165,7 @@
   - `model` as a fixed list.
   - All fields as free text.
 - **Linked technical notes:** —
-- **Driven by findings:** F27
+- **Driven by findings:** —
 - **Dependent decisions:** D27
 - **Referenced in spec:** Primary Flow step 7
 
@@ -192,7 +192,7 @@
   - Builder-local validator.
   - Partial validation.
 - **Linked technical notes:** T3
-- **Driven by findings:** F24
+- **Driven by findings:** F30
 - **Dependent decisions:** D21
 - **Referenced in spec:** Primary Flow step 9; Coordinations — Workflow configuration validator
 
@@ -248,7 +248,7 @@
   - Preserve unknowns through load/save (option A) — adds in-memory state not otherwise needed.
   - Block save on unknowns (option C) — disproportionate to the risk.
 - **Linked technical notes:** —
-- **Driven by findings:** F47
+- **Driven by findings:** F44
 - **Dependent decisions:** —
 - **Referenced in spec:** Alternate Flows — Unknown-field warning; Out of Scope
 
