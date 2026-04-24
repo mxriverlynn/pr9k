@@ -68,6 +68,10 @@ type rawConfig struct {
 	StatusLine *rawStatusLine `json:"statusLine,omitempty"`
 }
 
+// ParseConfig parses config.json bytes into a WorkflowDoc. Exported so
+// workflowio can parse raw bytes it has already read (for recovery-view support).
+func ParseConfig(data []byte) (WorkflowDoc, error) { return parseConfig(data) }
+
 func parseConfig(data []byte) (WorkflowDoc, error) {
 	var rc rawConfig
 	if err := json.Unmarshal(data, &rc); err != nil {
