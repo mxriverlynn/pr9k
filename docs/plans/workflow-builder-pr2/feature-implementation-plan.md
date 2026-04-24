@@ -1,0 +1,301 @@
+# Feature Implementation Plan: Workflow Builder PR-2 (`pr9k workflow` TUI delivery)
+
+Ship the user-facing `pr9k workflow` TUI subcommand on top of the inner-ring infrastructure delivered in PR-1, by cherry-picking the backup-tag draft of `internal/workflowedit/` and `cmd/pr9k/editor.go`, closing the ~50 implementation gaps the analysis identified, and un-hiding the subcommand as the last revertable commit ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work), [D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit)).
+
+<!--
+Behavioral and rationale details for non-obvious choices live in
+[artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md).
+Round-by-round history lives in
+[artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md).
+Inline parenthetical `([D-PR2-N])` links mark each non-obvious claim. PR-2
+inherits the full D-1..D-47 decision set from the original plan and adds
+D-PR2-1..D-PR2-23. The original plan is the authoritative source for inherited
+decisions; this plan does not re-derive them.
+-->
+
+## Source Specification
+
+- **Feature specification:** [../workflow-builder/feature-specification.md](../workflow-builder/feature-specification.md) (322 lines, behavioral ground truth — unchanged from PR-1)
+- **Original feature implementation plan (PR-1+PR-2 scope):** [../workflow-builder/feature-implementation-plan.md](../workflow-builder/feature-implementation-plan.md) (418 lines — PR-2 ships the second-half slice per its OI-4 split recommendation; this plan inherits the architecture, security posture, and operational readiness, and refines only what the gap analysis surfaced)
+- **Implementation gaps:** [../workflow-builder/implementation-gaps.md](../workflow-builder/implementation-gaps.md) (387 lines, ~50 numbered gaps)
+- **Specification decision log:** [../workflow-builder/artifacts/decision-log.md](../workflow-builder/artifacts/decision-log.md) (D1..D73; 5 superseded; live set 68 decisions)
+- **Specification team findings:** [../workflow-builder/artifacts/team-findings.md](../workflow-builder/artifacts/team-findings.md)
+- **Specification technical notes:** [../workflow-builder/artifacts/feature-technical-notes.md](../workflow-builder/artifacts/feature-technical-notes.md) (T1 atomic save, T2 terminal handoff, T3 in-memory validation — all load-bearing; PR-2 honors all three)
+- **Original implementation decision log:** [../workflow-builder/artifacts/implementation-decision-log.md](../workflow-builder/artifacts/implementation-decision-log.md) (D-1..D-47, all inherited unchanged unless explicitly superseded by a D-PR2-N entry)
+- **TUI mode coverage:** [../workflow-builder/artifacts/tui-mode-coverage.md](../workflow-builder/artifacts/tui-mode-coverage.md) (28 entries — authoritative; PR-2's `model_test.go` reactivates this set)
+- **Specification decisions this plan inherits:** D1–D73 from spec decision-log (68 non-superseded), and D-1..D-47 from the original implementation-decision-log
+- **Specification open items this plan must respect or resolve:** OI-1 (validator hardening — closed in PR-1), OI-2 (D69 stale spec text — non-blocking), OI-3 (version-bump PR structure — resolved by [D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)), OI-4 (PR scope split — PR-2 is the second-half ship per OI-4)
+
+## Outcome
+
+When PR-2 lands, `pr9k workflow` is listed under `pr9k --help`, the cobra subcommand is no longer hidden, and launching it opens the Bubble Tea TUI delivered by `internal/workflowedit.Model`. Users can open an existing `config.json`, edit fields in the detail pane, reorder steps in the outline, validate against `validator.ValidateDoc`, save atomically through `internal/atomicwrite`, and quit with confirmation. External-editor handoff for prompt and script files works through `tea.ExecProcess` with the three-way SIGINT/exit/restore-failed branch, and session events stream to `.pr9k/logs/workflow-<timestamp>.log` per the D-27 closed enumeration. The pr9k binary version is `0.7.3` ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)).
+
+## Context
+
+- **Driving constraint:** PR-1 shipped the inner-ring infrastructure (`workflowio`, `workflowmodel`, `workflowvalidate`, `atomicwrite`, `ansi`, validator OI-1 hardening, `logger.NewLoggerWithPrefix`). The outer ring — the interactive TUI that makes all of it reachable — is the gap PR-2 closes. Without it, PR-1's user-facing surface is a silent no-op (the cobra subcommand is hidden and returns nil).
+- **Stakeholders:**
+  - *Workflow authors* — success means editing workflows without hand-writing JSON, with validation feedback before save.
+  - *pr9k maintainers* — success means the bundled default workflow loads cleanly through the same path.
+  - *Future contributors* — success means `internal/workflowedit` is the precedent for any future TUI component spawning async `tea.Cmd` goroutines.
+  - *Operators with pre-existing config.json files* — success means files round-trip without data loss across the new schema fields ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)).
+- **Future-state concern:** The `tea.ExecProcess` usage (T2) is the codebase's first interactive subprocess; its signal and terminal-handoff semantics become precedent. The `tea.Cmd` async-result drain pattern ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)) is novel for pr9k and must be documented so future TUI contributors follow it.
+- **Out-of-scope boundary:** Running workflows from the builder; multi-user locking; syntax highlighting in prompts; cross-phase step drag; Windows; config migration. These remain out of scope per spec §"Out of Scope" and are not relitigated in PR-2.
+
+## Team Composition and Participation
+
+| Specialist | Status | Key Input |
+|------------|--------|-----------|
+| `project-manager` | Coordinator | Two facilitation rounds + this synthesis; resolved 9 OQs (3 by R2 evidence, 6 by PM recommendation under auto-mode authority) |
+| `junior-developer` | Active R1 | 11 questions (JrQ-PR2-001..011); reframed cherry-pick vs rewrite cost ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work)), commit-graph ordering ([D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit)), gap triage ([D-PR2-11](artifacts/implementation-decision-log.md#d-pr2-11-gap-triage-classification--16-p0-blockers-30-functional-completeness-6-deferred-3-implicit-1-false-positive)), version bump ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)) |
+| `user-experience-designer` | Active R1, R2 | 10 R1 findings + 1 R2 finding; drove `?` help-modal suppression ([D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs)), Ctrl+E external-editor shortcut ([D-PR2-8](artifacts/implementation-decision-log.md#d-pr2-8-external-editor-shortcut-for-promptscript-path-fields-is-ctrle)), pendingAction discriminated type ([D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume)) |
+| `adversarial-security-analyst` | Active R1, R2 | 11 R1 findings + 1 R2 finding; drove rejectShellMeta correction ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)), session-event logger injection ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)), editorInProgress flag ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)) |
+| `devops-engineer` | Active R1 | 10 R1 findings; drove version bump as first commit ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)), un-hide as last revertable commit ([D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit)), session-event observability wiring ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)) |
+| `software-architect` | Active R1, R2 | 10 R1 findings + 1 R2 finding; drove cherry-pick + gap-close strategy ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work)), editor message ownership move ([D-PR2-5](artifacts/implementation-decision-log.md#d-pr2-5-editor-message-types-live-in-internalworkfloweditedito-go)), workflowmodel schema extensions ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)), DialogKind enumeration ([D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants)) |
+| `behavioral-analyst` | Active R1, R2 | 10 R1 findings + 1 R2 finding; drove QuitConfirm-after-pendingQuit ([D-PR2-10](artifacts/implementation-decision-log.md#d-pr2-10-quitconfirm-always-shows-after-pendingquit-successful-save)), conflict-dialog handlers ([D-PR2-17](artifacts/implementation-decision-log.md#d-pr2-17-conflict-detection-dialog-handlers-for-dialogfileconflict--dialogfirstsaveconfirm--dialogcrashtempnotice--dialogrecovery)), workflowmodel.IsDirty replacing ad-hoc dirty mutations ([D-PR2-18](artifacts/implementation-decision-log.md#d-pr2-18-workflowmodelisdirty-replaces-ad-hoc-mdirtytrue-mutations)), GAP-036 false-positive verdict ([D-PR2-12](artifacts/implementation-decision-log.md#d-pr2-12-gap-036-companion-key-convention-is-a-false-positive--closed)) |
+| `concurrency-analyst` | Active R1 | 9 R1 findings; drove ctx propagation to closures ([D-PR2-13](artifacts/implementation-decision-log.md#d-pr2-13-goroutine-ctx-propagation--option-b-with-bubble-tea-runtime-exemption)), routing pre-dispatch for async messages ([D-PR2-19](artifacts/implementation-decision-log.md#d-pr2-19-routing-pre-dispatch-for-validatecompletemsg--savecompletemsg-before-dialog-tier)), path-completion generation counter ([D-PR2-20](artifacts/implementation-decision-log.md#d-pr2-20-generation-counter-for-path-completion-teacmd)), program-reference race fix ([D-PR2-21](artifacts/implementation-decision-log.md#d-pr2-21-capture-teaprogram-in-local-closure-before-signal-goroutine-starts)), drain pattern ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)), 10s timer cancellation ([D-PR2-23](artifacts/implementation-decision-log.md#d-pr2-23-10s-signal-handler-timer-cancellation-when-ctxdone-fires)) |
+| `test-engineer` | Active R1 | 12 R1 findings; drove fakeFS counters/mutex restoration, T2 matrix gaps, 28-mode test reactivation, DI-1/DI-2 placeholder activation, bundle smoke driving the Model |
+| `edge-case-explorer` | Active R1 | 15 R1 findings (5 P0); drove editorInProgress flag ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)), pendingAction state-machine fix ([D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume)), workflowmodel schema additions ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)) |
+
+Full round-by-round detail in [artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md).
+
+## Implementation Approach
+
+PR-2's architecture is inherited from the original plan. This section refines only what the gap analysis surfaced and the two facilitation rounds settled. For unchanged content (package decomposition, dependency layering, save-flow contract, validator extension shape), see [the original plan](../workflow-builder/feature-implementation-plan.md).
+
+### Architecture and Integration Points
+
+**Cherry-pick + gap-close strategy.** The backup tag preserves a draft of `internal/workflowedit/` (~4,140 LOC, 27 files) and `cmd/pr9k/editor.go`. PR-2 cherry-picks the draft, then closes the gaps the analysis enumerated. A pre-implementation work unit (WU-PR2-0) produces a function-level triage table classifying every backup function as `as-is`, `modify`, or `replace` ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work)).
+
+**Package boundaries.** Inherited unchanged from D-1 of the original plan. PR-2 does not introduce new packages. The cherry-pick lands files into the existing `internal/workflowedit/` and `cmd/pr9k/` directories; the dependency layering (`workflowedit` imports `workflowmodel`, `workflowio`, `workflowvalidate`; `workflowedit` does not import `internal/statusline`) is preserved.
+
+**Editor message ownership.** `EditorExitMsg`, `EditorSigintMsg`, `EditorRestoreFailedMsg` move from `cmd/pr9k/editor.go` (`package main`) into `internal/workflowedit/editor.go` as exported types ([D-PR2-5](artifacts/implementation-decision-log.md#d-pr2-5-editor-message-types-live-in-internalworkfloweditedito-go)). `cmd/pr9k/editor.go`'s `makeExecCallback` constructs them by package-qualified name. This is a DIP correction: the consumer (`workflowedit.Model.Update`) must own its domain message types.
+
+**DialogKind set.** `dialogs.go` declares 14 named non-zero `DialogKind` constants (15 iota values total including `DialogNone`) ([D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants)). The set: `DialogPathPicker`, `DialogNewChoice`, `DialogUnsavedChanges`, `DialogQuitConfirm`, `DialogExternalEditorOpening`, `DialogFindingsPanel`, `DialogError`, `DialogCrashTempNotice`, `DialogFirstSaveConfirm`, `DialogRemoveConfirm`, `DialogFileConflict`, `DialogSaveInProgress`, `DialogRecovery`, `DialogAcknowledgeFindings`. The original D-8 entry undercounted by three; the inherited decision is updated rather than the implementation truncated.
+
+**Wiring sequence at startup.** `cmd/pr9k/workflow.go runWorkflowBuilder`:
+1. Resolve `workflowDir` and `projectDir` via inherited `internal/cli` helpers.
+2. Construct `*logger.Logger` via `logger.NewLoggerWithPrefix(projectDir, "workflow")` ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)).
+3. Construct `workflowedit.New(deps)` where `deps` carries the logger, `realSaveFS`, `realEditorRunner`, `workflowDir`, `projectDir`, and the bundled-default copy-source.
+4. `program := tea.NewProgram(model, opts...)` — **before** any signal-handler installation ([D-PR2-21](artifacts/implementation-decision-log.md#d-pr2-21-capture-teaprogram-in-local-closure-before-signal-goroutine-starts)).
+5. `signal.Notify(sigCh, ...)` and the goroutine starts, capturing `program` and `cancel` by closure.
+6. `program.Run()` blocks until the user quits.
+7. After `program.Run()` returns: `cancel()` then `wg.Wait()` to drain spawned closures ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)).
+
+### Data Model and Persistence
+
+**Schema extensions.** `workflowmodel.WorkflowDoc` gains five fields before any `workflowedit` cherry-pick lands ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)):
+- `UnknownFields map[string]json.RawMessage` — round-trip preservation; `json.RawMessage` chosen over `interface{}` to keep byte equivalence on save (rejected alternatives in [D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)).
+- `Env []EnvEntry` (top-level) — the validator's Category 10 already validates this; the model was missing it.
+- `ContainerEnv []EnvEntry` (top-level) — same situation.
+- `DefaultModel string` — referenced by detail-pane model-suggestion list (D-42); previously absent.
+- Per-step `Env` and `ContainerEnv` slices — same situation as top-level.
+
+**Round-trip test.** `workflowmodel/round_trip_test.go` asserts that loading the bundled default `workflow/config.json`, marshaling it back to bytes, and re-loading yields a doc with no detected changes per [D-PR2-18](artifacts/implementation-decision-log.md#d-pr2-18-workflowmodelisdirty-replaces-ad-hoc-mdirtytrue-mutations) `IsDirty`. The test pins EC-PR2-004 against regression.
+
+**Dirty-state computation.** `workflowmodel.IsDirty(diskDoc, inMemoryDoc)` is the single source of truth ([D-PR2-18](artifacts/implementation-decision-log.md#d-pr2-18-workflowmodelisdirty-replaces-ad-hoc-mdirtytrue-mutations)). The 8 ad-hoc `m.dirty=true` mutation sites in the backup are removed in favor of computing dirty at the end of every `Update` call (or lazily in `View`). `IsDirty` compares `UnknownFields` by sorted-key equality of `json.RawMessage` byte slices, not `reflect.DeepEqual`, to avoid the EC-PR2-010 false-positive on map iteration order.
+
+**Save flow contract.** Inherited from the original plan unchanged. `workflowio.Save` writes companion files first, `config.json` last (D-20); each write is `atomicwrite.Write` (D-5); `SaveResult.Kind` carries the typed error enum (D-47).
+
+**T3 (in-memory validation) is satisfied.** GAP-036 is closed as a false positive ([D-PR2-12](artifacts/implementation-decision-log.md#d-pr2-12-gap-036-companion-key-convention-is-a-false-positive--closed)): both `validator.ValidateDoc` and `workflowio.Load` use `filepath.Join("prompts", step.PromptFile)` as the companion-file map key.
+
+### Runtime Behavior
+
+**Update routing.** Inherited D-9 routing tier order is preserved with one addition: a pre-dispatch tier (0) for async-completion messages ([D-PR2-19](artifacts/implementation-decision-log.md#d-pr2-19-routing-pre-dispatch-for-validatecompletemsg--savecompletemsg-before-dialog-tier)):
+```
+(0) switch msg.(type) { case validateCompleteMsg, saveCompleteMsg: dispatch to handler }
+(1) m.helpOpen        → updateHelpModal(msg)
+(2) m.dialog.kind != DialogNone → updateDialog(msg)
+(3) isGlobalKey(msg)  → handleGlobalKey(msg)
+(4) otherwise         → updateEditView(msg)
+```
+Tier (0) prevents async-completion messages from being silently swallowed by `updateDialog` while `DialogSaveInProgress` is open (CV-PR2-005).
+
+**Dialog handlers.** PR-2 adds complete `updateDialog<Kind>` handlers for the four conflict-detection dialogs that were stub or Esc-only in the backup ([D-PR2-17](artifacts/implementation-decision-log.md#d-pr2-17-conflict-detection-dialog-handlers-for-dialogfileconflict--dialogfirstsaveconfirm--dialogcrashtempnotice--dialogrecovery)): `DialogFileConflict` (Overwrite/Reload/Cancel), `DialogFirstSaveConfirm` (Confirm/Cancel), `DialogCrashTempNotice` (Acknowledge/Recover/Discard), `DialogRecovery` (Open-in-editor/Reload/Discard/Cancel).
+
+**Help modal.** `?` opens the help modal only when no dialog is active **or** when the active dialog is `DialogFindingsPanel` ([D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs)). For all other dialog kinds, `?` is silently suppressed. The shortcut footer for every dialog enumerates the available actions in full so users have guidance without needing `?`. Spec §8 sentence is updated as part of WU-PR2-11 to reflect this commitment.
+
+**Save flow step 9 (post-save with pendingAction).** After a successful save with `pendingAction != nil`, `handleSaveResult` dispatches by type ([D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume)):
+- `pendingActionQuit{}` → re-route to `handleGlobalKey(Ctrl+Q)`. Because `saveInProgress=false` and `dirty=false`, `handleGlobalKey` opens the no-unsaved-changes `DialogQuitConfirm` (Yes / No, No default). User explicitly confirms exit ([D-PR2-10](artifacts/implementation-decision-log.md#d-pr2-10-quitconfirm-always-shows-after-pendingquit-successful-save)).
+- `pendingActionNew{choice}` → open `DialogNewChoice` with the captured choice.
+- `pendingActionOpen{targetPath}` → open the path picker pre-filled with `targetPath`.
+
+**Save flow step 5 fatal handling.** If validation returns fatal findings, `pendingAction` is **cleared** and the state machine remains on `DialogFindingsPanel`. The user must address fatals before the auto-resume can re-fire (EC-PR2-003 [P0] mitigation).
+
+**External editor handoff.** The two-cycle render pattern (D-26) is inherited unchanged. PR-2 adds:
+- `editorInProgress bool` field gating Ctrl+Q during the ExecProcess window ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)). While true, Ctrl+Q sets `pendingAction = pendingActionQuit{}` and returns; the eventual `editorExitMsg` / `editorSigintMsg` / `editorRestoreFailedMsg` clears the flag and lets the quit flow proceed.
+- `Ctrl+E` shortcut for invoking the external editor on a focused prompt-or-script-path field ([D-PR2-8](artifacts/implementation-decision-log.md#d-pr2-8-external-editor-shortcut-for-promptscript-path-fields-is-ctrle)). The two backup how-to docs are rewritten in WU-PR2-11 to use Ctrl+E (replacing the Ctrl+O collision).
+
+**Path picker.** Async tab-completion uses a generation counter to discard stale results ([D-PR2-20](artifacts/implementation-decision-log.md#d-pr2-20-generation-counter-for-path-completion-teacmd)). `Model.pathCompletionGen uint64` increments on every Tab keystroke; the counter value is captured in the `tea.Cmd` closure and compared against the receiver's current value before applying the `pathCompletionMsg`.
+
+**Signal handler.** `runWorkflowBuilder` installs `signal.Notify` only after `tea.NewProgram` returns ([D-PR2-21](artifacts/implementation-decision-log.md#d-pr2-21-capture-teaprogram-in-local-closure-before-signal-goroutine-starts)). The 10s fallback timer in the goroutine is wrapped in a `select` with `<-ctx.Done()` so clean shutdown releases the timer immediately ([D-PR2-23](artifacts/implementation-decision-log.md#d-pr2-23-10s-signal-handler-timer-cancellation-when-ctxdone-fires)). `program.Send(quitMsg{})` is wired (closing GAP-003).
+
+**Goroutine lifecycle.** Every closure spawned by the builder receives `ctx context.Context` as a parameter and selects on `ctx.Done()` at every blocking call ([D-PR2-13](artifacts/implementation-decision-log.md#d-pr2-13-goroutine-ctx-propagation--option-b-with-bubble-tea-runtime-exemption)). After `program.Run()` returns, `cancel()` is invoked and `wg.Wait()` blocks until all spawned closures exit ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)). Bubble Tea-runtime-owned goroutines (tick scheduler, stdin reader) are exempt by construction and the exemption is documented in `docs/code-packages/workflowedit.md`.
+
+### External Interfaces
+
+**CLI surface.** Inherited unchanged. After WU-PR2-13, `pr9k workflow [--workflow-dir PATH] [--project-dir PATH]` is listed under `pr9k --help`.
+
+**Validator.** Inherited unchanged. PR-2 adds no validator changes.
+
+**Logger.** Inherited `NewLoggerWithPrefix` is consumed in PR-2. `Model` carries a `logger *logger.Logger` field injected via `workflowDeps` ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)). All 9 D-27 trigger points fire `log.Log("workflow-builder", line)` with the closed `reason=<short>` enumeration. The `editorFirstToken` for session logs uses already-resolved `tokens[0]` from the shlex parse (closing SEC-009), not a re-parse of raw env.
+
+**Rejection set for `$VISUAL`/`$EDITOR`.** `cmd/pr9k/editor.go` `rejectShellMeta` rejects exactly four characters: backtick, semicolon, pipe, newline ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)). `$` is **not** rejected (D33 permits it; direct `exec.Command` does not interpret `$`). `&`/`<`/`>` are **not** added (inert under `exec.Command`).
+
+## Decomposition and Sequencing
+
+| # | Work Unit | Delivers | Depends On | Verification |
+|---|-----------|----------|------------|--------------|
+| WU-PR2-0 | Cherry-pick triage table | `docs/plans/workflow-builder-pr2/artifacts/cherry-pick-triage.md` — function-level classification of every backup symbol as `as-is` / `modify` / `replace` ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work)) | — | Artifact reviewed by `software-architect`; no code change |
+| WU-PR2-1 | Version bump 0.7.2 → 0.7.3 | `internal/version.Version` patch increment ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)) | — | `pr9k --version` prints `0.7.3`; rename-guard test still passes |
+| WU-PR2-2 | `workflowmodel` schema extensions | `UnknownFields`, top-level `Env`, top-level `ContainerEnv`, `DefaultModel`, step-level `Env`/`ContainerEnv` ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)); round-trip test against bundled default | WU-PR2-1 | `make ci` green; `TestWorkflowDoc_RoundTrip_BundledDefault` passes |
+| WU-PR2-3 | `workflowedit` cherry-pick skeleton | All `internal/workflowedit/*.go` files restored from backup tag with the `triage:replace` items deferred; `EditorExitMsg`/`EditorSigintMsg`/`EditorRestoreFailedMsg` moved into `workflowedit` ([D-PR2-5](artifacts/implementation-decision-log.md#d-pr2-5-editor-message-types-live-in-internalworkfloweditedito-go)); 14 `DialogKind` constants ([D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants)) | WU-PR2-2 | `make ci` green; package compiles; subcommand still hidden |
+| WU-PR2-4 | Editor wiring + ExecCallback fix + rejectShellMeta correction | `cmd/pr9k/editor.go` cherry-pick with corrected rejection set ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)); `realEditorRunner` constructed in `runWorkflowBuilder`; `m.editor.Run` call site wired (closes GAP-029); editor message handlers in `Update` (closes GAP-031) | WU-PR2-3 | `TestResolveEditor_*` passes (including `VisualWithDollar_Accepted`); editor invocation reachable in mode-21 test |
+| WU-PR2-5 | Signal handler + drain + program-ref ordering | Signal handler installs after `tea.NewProgram` ([D-PR2-21](artifacts/implementation-decision-log.md#d-pr2-21-capture-teaprogram-in-local-closure-before-signal-goroutine-starts)); 10s timer wrapped in select with ctx.Done ([D-PR2-23](artifacts/implementation-decision-log.md#d-pr2-23-10s-signal-handler-timer-cancellation-when-ctxdone-fires)); WaitGroup drain after `program.Run` ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)); ctx threaded into closures ([D-PR2-13](artifacts/implementation-decision-log.md#d-pr2-13-goroutine-ctx-propagation--option-b-with-bubble-tea-runtime-exemption)) | WU-PR2-3 | `make ci` green under `-race`; `TestWorkflow_SIGINT_DrainCleanly` passes |
+| WU-PR2-6 | State machine: pendingAction, IsDirty, editorInProgress | `pendingAction` discriminated type replaces `pendingQuit bool` ([D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume)); `m.dirty = !workflowmodel.IsDirty(...)` replaces ad-hoc mutations ([D-PR2-18](artifacts/implementation-decision-log.md#d-pr2-18-workflowmodelisdirty-replaces-ad-hoc-mdirtytrue-mutations)); `editorInProgress` flag ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)) | WU-PR2-4 | tui-mode-coverage modes 8, 12, 21 pass; `TestModel_Mode_*` 28-entry suite |
+| WU-PR2-7 | Routing pre-dispatch + path-picker generation counter | Async-completion pre-dispatch tier ([D-PR2-19](artifacts/implementation-decision-log.md#d-pr2-19-routing-pre-dispatch-for-validatecompletemsg--savecompletemsg-before-dialog-tier)); `pathCompletionGen` counter ([D-PR2-20](artifacts/implementation-decision-log.md#d-pr2-20-generation-counter-for-path-completion-teacmd)); QuitConfirm-after-pendingQuit re-routing ([D-PR2-10](artifacts/implementation-decision-log.md#d-pr2-10-quitconfirm-always-shows-after-pendingquit-successful-save)) | WU-PR2-6 | tui-mode-coverage mode 21 (`saveCompleteMsg` arrives during `DialogSaveInProgress`) passes |
+| WU-PR2-8 | Conflict-detection dialog handlers | `updateDialog<Kind>` handlers for `DialogFileConflict`, `DialogFirstSaveConfirm`, `DialogCrashTempNotice`, `DialogRecovery` ([D-PR2-17](artifacts/implementation-decision-log.md#d-pr2-17-conflict-detection-dialog-handlers-for-dialogfileconflict--dialogfirstsaveconfirm--dialogcrashtempnotice--dialogrecovery)) | WU-PR2-6 | `dialogs_render_test.go` covers all four kinds; integration-test mode 28 `DialogRecovery` actions reachable |
+| WU-PR2-9 | Outline sections + Add affordance + detail-pane editing | Phase grouping + env/containerEnv/statusLine sections (closes GAP-010); `+ Add` affordance and `a`/`Enter` shortcuts (closes GAP-013); detail-pane field editing (closes GAP-014); choice-list dropdown (closes GAP-015); numeric fields (closes GAP-016); secret-mask key-pattern gate (closes GAP-017); model-suggestion list (closes GAP-018); path picker for File>New (closes GAP-019) | WU-PR2-3 | `outline_render_test.go`, `detail_pane_render_test.go`, mode 6/7/8/9/10/14/15/16/17 pass |
+| WU-PR2-10 | Session header banners + load pipeline forwarding + session logging | Session header with target-path + dirty glyph + priority banner (closes GAP-005); read-only banner (GAP-006); external-workflow banner + first-save (GAP-007); symlink banner + first-save (GAP-008); unknown-field warn-on-load (GAP-009); load pipeline forwards `IsSymlink`/`SymlinkTarget` (GAP-035); shared-install detection wiring (GAP-034); pre-copy integrity (GAP-021); ackSet write at acknowledgment (GAP-027/028); recovery-view → editor (GAP-030); script + statusLine companion loading (GAP-037); session-event logging at all 9 D-27 trigger points ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)) | WU-PR2-9 | `TestModel_LoadPipeline_*`; mode 28 recovery-view test; R7 secret-leak regression test against logged events |
+| WU-PR2-11 | Doc updates + DI tests | Backup how-tos cherry-picked with Ctrl+E rewrite ([D-PR2-8](artifacts/implementation-decision-log.md#d-pr2-8-external-editor-shortcut-for-promptscript-path-fields-is-ctrle)); spec §8 sentence updated for help-modal scope ([D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs)); `docs/code-packages/workflowedit.md` documents Bubble Tea-runtime ctx exemption ([D-PR2-13](artifacts/implementation-decision-log.md#d-pr2-13-goroutine-ctx-propagation--option-b-with-bubble-tea-runtime-exemption)); DI-1 and DI-2 reactivated in `doc_integrity_test.go` (closes GAP-043 implicit) | WU-PR2-10 | `TestDocIntegrity_WorkflowBuilder*` passes |
+| WU-PR2-12 | Bundle smoke driving Model + fakeFS counters/mutex | `bundle_builder_integration_test.go` drives `workflowedit.Model` end-to-end against the bundled default workflow (closes GAP-044); fakeFS has per-method counters and `sync.Mutex` per `docs/coding-standards/testing.md` (closes TST-004 / TST-010) | WU-PR2-10 | Integration test passes; race detector clean |
+| WU-PR2-13 | Un-hide subcommand + extend rename-guard | `cmd/pr9k/workflow.go` `Hidden: false` (closes GAP-001 + GAP-002); `rename_guard_test.go` extended to assert `"workflow-"` log prefix and `"pr9k workflow"` subcommand name do not collide with existing `ralph-` prefix (closes DOR-006) | WU-PR2-12 | `pr9k --help` lists `workflow`; `rename_guard_test.go` passes; PR-2 ready to merge |
+
+The un-hide is the **last** named commit ([D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit)). Reverting WU-PR2-13 alone removes the user-facing surface while preserving the schema additions, atomic-write standard, and validator hardening.
+
+## RAID Log
+
+### Risks
+
+PR-2 inherits R1..R9 from the original plan (still applicable to the inner-ring code PR-1 shipped). New PR-2-specific risks below; the R1 facilitation R-PR2-A through R-PR2-G items have been resolved as follows: R-PR2-A mitigated by [D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit); R-PR2-B mitigated by [D-PR2-8](artifacts/implementation-decision-log.md#d-pr2-8-external-editor-shortcut-for-promptscript-path-fields-is-ctrle) (Ctrl+E rewrite); R-PR2-C closed by [D-PR2-12](artifacts/implementation-decision-log.md#d-pr2-12-gap-036-companion-key-convention-is-a-false-positive--closed); R-PR2-D mitigated by [D-PR2-5](artifacts/implementation-decision-log.md#d-pr2-5-editor-message-types-live-in-internalworkfloweditedito-go); R-PR2-E mitigated by [D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants) and [D-PR2-17](artifacts/implementation-decision-log.md#d-pr2-17-conflict-detection-dialog-handlers-for-dialogfileconflict--dialogfirstsaveconfirm--dialogcrashtempnotice--dialogrecovery); R-PR2-F mitigated by [D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work) (WU-PR2-0 triage table); R-PR2-G mitigated by [D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume).
+
+| ID | Risk | Likelihood | Severity | Blast Radius | Reversibility | Owner | Mitigation |
+|----|------|------------|----------|--------------|---------------|-------|------------|
+| R-PR2-H | Cherry-pick of `workflowedit` skeleton (WU-PR2-3) introduces functions whose triage classification is `replace` but they are landed `as-is` due to oversight | Medium | Medium (latent gaps) | One package | Recoverable in subsequent gap-closure commits | `software-architect` | WU-PR2-0 triage table is reviewed before WU-PR2-3 lands; triage IDs annotated in the cherry-pick commit message |
+| R-PR2-I | `editorInProgress` flag desynchronizes with `tea.ExecProcess` actual state (e.g., flag stays true after editor exits without a callback fired) | Low | High (terminal corruption + hung Ctrl+Q) | One session | Reversible via `pr9k` restart; user kills the process | `concurrency-analyst` | Three-way ExecCallback switch ([D-7](../workflow-builder/artifacts/implementation-decision-log.md#d-7) inherited) clears flag on every branch including `editorRestoreFailedMsg`; tested per mode 21 in `model_test.go` |
+| R-PR2-J | `pendingAction` discriminated-type dispatch misses a case (compile error caught) or routes to wrong handler (silent bug) | Low | Medium (auto-resume to wrong action) | One session | Reversible (user reissues action) | `behavioral-analyst` | Exhaustive switch with default panic; per-type test in `model_test.go`; dispatch pinned in `TestModel_Mode_PendingAction_*` |
+| R-PR2-K | WU-PR2-9 outline-section restructure conflicts with the cherry-picked outline.go enough that the `replace` classification produces a substantial rewrite | Medium | Medium (timeline pressure on a P0 functional gap) | Outline panel | Recoverable via additional commits | `software-architect` jointly with `user-experience-designer` | WU-PR2-0 triage table flags GAP-010 functions as `replace` from the start; specialist re-engagement allowed before the commit lands |
+
+### Assumptions
+
+| ID | Assumption | What Changes If Wrong | Verifier | Status |
+|----|------------|-----------------------|----------|--------|
+| A-PR2-1 | Backup tag `backup/workflow-builder-mode-full-2026-04-24` is intact and accessible | PR-2 loses the cherry-pick reference; reverts to "rewrite using inherited spec" path | Any team member at PR-2 kickoff | Verified at synthesis (tag exists in repo `git tag -l`) |
+| A-PR2-2 | Backup `workflowedit` compiles against PR-1's `main` once `workflowmodel` schema additions land (WU-PR2-2) | Cherry-pick commit fails compile; gap-closure series shifts left | `software-architect` after WU-PR2-3 lands | Pending — verified by WU-PR2-3 CI |
+| A-PR2-3 | `workflowmodel.IsDirty` already exists per PR-1 docs | Must add it; WU-PR2-2 scope grows | `behavioral-analyst` | Verified — `docs/code-packages/workflowmodel.md` references it |
+| A-PR2-4 | The 28 TUI mode-coverage tests can be written against the cherry-picked Model without behavioral changes from the backup beyond the gap-close set | Test reactivation requires Model surface changes beyond the gap list | `test-engineer` after WU-PR2-3 lands | Pending |
+
+### Issues
+
+| ID | Issue | Owner | Next Step |
+|----|-------|-------|-----------|
+| I-PR2-1 | Spec §8 sentence "unconditionally reachable from the edit view regardless of any other configuration" must be updated to add "or the findings panel" per [D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs) | `information-architect` (or PM) | Edit committed in WU-PR2-11 |
+| I-PR2-2 | Inherited D-8 in `../workflow-builder/artifacts/implementation-decision-log.md` undercounts DialogKind constants (says 14, has 14 named non-zero values per [D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants)); the inherited entry is updated by reference, not edited in place | `software-architect` | D-PR2-7 is the authoritative entry; inherited D-8 marked superseded with link to D-PR2-7 |
+
+### Dependencies
+
+| ID | Dependency | Owner | Status |
+|----|------------|-------|--------|
+| Dep-PR2-1 | `workflowmodel.WorkflowDoc` schema additions land in WU-PR2-2 before WU-PR2-3 cherry-pick | `software-architect` | Pending |
+| Dep-PR2-2 | Backup tag `backup/workflow-builder-mode-full-2026-04-24` accessible | repo-admin | Verified |
+| Dep-PR2-3 | `cherry-pick-triage.md` artifact produced before WU-PR2-3 lands | `software-architect` | Pending — WU-PR2-0 |
+
+## Testing Strategy
+
+PR-2 inherits the full testing strategy from the original plan unchanged (T1 matrix on `atomicwrite`, T2 matrix on editor resolution, T3 matrix on `workflowvalidate`). PR-2-specific additions:
+
+- **28-entry TUI mode coverage** — reactivate `src/internal/workflowedit/model_test.go` with one `TestModel_Mode_*` test per entry in [`../workflow-builder/artifacts/tui-mode-coverage.md`](../workflow-builder/artifacts/tui-mode-coverage.md). The table is authoritative; PR-2 does not duplicate it.
+- **T2 matrix completeness** — add the two missing T2 cases TST-001 and TST-002 flagged: `VISUAL` with unquoted space, and `VISUAL=""` with `EDITOR=""`. The corrected rejection set ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)) means `TestResolveEditor_VisualWithDollar_Rejected` becomes `TestResolveEditor_VisualWithDollar_Accepted`.
+- **DI-1 and DI-2 reactivation** — the placeholder comments in `cmd/pr9k/doc_integrity_test.go` are activated in WU-PR2-11 (closes GAP-043 implicit). DI-3..DI-8 inherited from PR-1 unchanged.
+- **Bundle smoke driving the Model** — `cmd/pr9k/bundle_builder_integration_test.go` constructs `workflowedit.New(deps)` with the bundled default workflow and exercises load → edit → save end-to-end (closes GAP-044). Distinct from the existing `bundle_integration_test.go` which only covers PR-1's inner ring.
+- **Race detector requirement** — `make ci` runs `go test -race ./...` per `docs/coding-standards/testing.md`. The drain pattern ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)) and ctx propagation ([D-PR2-13](artifacts/implementation-decision-log.md#d-pr2-13-goroutine-ctx-propagation--option-b-with-bubble-tea-runtime-exemption)) must pass under `-race` with no flakes.
+- **fakeFS / fakeEditorRunner extensions** — per-method call counters (TST-004) and `sync.Mutex` on shared fields (TST-010) per `docs/coding-standards/testing.md`. Backup helpers lack both; WU-PR2-12 adds them before any test exercises async paths.
+- **R7 secret-leak regression test** — DOR-007: `TestSessionEvent_NoContainerEnvValuesLogged` constructs a `Model` with a `containerEnv` block containing a synthetic secret value and asserts that **no** session-event line emitted during open/save/quit contains the secret string ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)).
+- **Edge-case coverage** — every P0/P1 finding in the R1 ledger that is classified PR-2-required has a targeted test:
+  - EC-PR2-001 → `TestModel_CtrlQ_DuringExecProcess_DefersUntilEditorExits`
+  - EC-PR2-002 → `TestResolveEditor_SingleQuotedPathWithSpace_Accepted`
+  - EC-PR2-003 → `TestModel_PendingAction_ClearedOnFatals`
+  - EC-PR2-004 → `TestWorkflowDoc_RoundTrip_BundledDefault` (data-corruption regression)
+  - EC-PR2-006 → `TestModel_RapidCtrlS_NoOverlappingSaves`
+  - EC-PR2-010 → `TestIsDirty_UnknownFieldsMapOrderInsensitive`
+
+**Test doubles posture (inherited unchanged from PR-1 plan):** Two DI seams — `workflowio.SaveFS` and `workflowedit.EditorRunner`. Every fake captures calls with per-method counters; fakes shared across goroutines carry `sync.Mutex`.
+
+## Security Posture
+
+PR-2 inherits all 9 mitigations from the original plan. PR-2-specific refinements:
+
+1. **`$VISUAL`/`$EDITOR` rejection set narrowed** — exactly four characters: backtick, semicolon, pipe, newline ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)). The narrower set reflects the actual `exec.Command` threat model (no shell invocation), avoiding both false-rejection (`$HOME`) and false-acceptance (`;`/`|` user-confusion footguns).
+2. **Editor-window terminal-corruption guard** — `editorInProgress` flag prevents Ctrl+Q from killing the builder mid-ExecProcess ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)). The Bubble Tea runtime's `RestoreTerminal` guarantee depends on the program still being alive when the `tea.Cmd` completes; the flag preserves that invariant.
+3. **Session-event logging field exclusion** — `Model` carries the logger and emits at all 9 D-27 trigger points ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)). The `editorFirstToken` for log lines uses `tokens[0]` from the resolved shlex parse (closing SEC-009). The R7 secret-leak regression test pins this against future regression.
+4. **Help-modal scope tightened** — `?` is suppressed in non-findings dialogs ([D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs)). Trade-off: discoverability is preserved by per-dialog footer enumeration, accepting a small UX cost for a simpler overlay-management contract.
+5. **GAP-036 closed** — companion-file map key convention pinned by both `validator.ValidateDoc` and `workflowio.Load` using `filepath.Join("prompts", step.PromptFile)` ([D-PR2-12](artifacts/implementation-decision-log.md#d-pr2-12-gap-036-companion-key-convention-is-a-false-positive--closed)). T3 satisfied; no symlink-via-companion-key race.
+
+**Accepted residual** — inherited from the original plan. PID reuse in crash-era detection (D-16 / F-117) and orphaned companions on mid-save crash (D-24) remain accepted limitations.
+
+## Operational Readiness
+
+- **Versioning:** Patch bump to 0.7.3 as the first commit of PR-2 ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)). `pr9k --version` reports the new value before any user-facing surface lands.
+- **Observability:** Inherited from the original plan. PR-2 adds the wiring that fires session events ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)). Logs land in `.pr9k/logs/workflow-<timestamp>.log` per inherited D-44 directory rule.
+- **SLO impact:** None. Local interactive tool, no SLO touchpoints.
+- **Feature flag:** None. Versioning + un-hide-as-last-commit is the rollout control.
+- **Rollout:** PR-2 commits land in the WU-PR2-1 through WU-PR2-13 sequence ([D-PR2-2](artifacts/implementation-decision-log.md#d-pr2-2-commit-graph-with-un-hide-as-the-last-revertable-commit)). Each commit passes `make ci`. Merged with `--no-ff` to preserve the version-bump commit boundary per inherited D-18.
+- **Rollback:** **Revert WU-PR2-13 alone**. Reverting only the un-hide commit removes the user-facing surface while preserving WU-PR2-1 through WU-PR2-12 (version bump, schema additions, atomic-write standard, validator hardening from PR-1). If a deeper rollback is required, revert the entire merge commit; `pr9k` returns to PR-1 state (subcommand hidden, returns nil).
+- **Cost and scale:** Zero runtime cost. No cloud resources.
+
+## Definition of Done
+
+- [ ] WU-PR2-0 cherry-pick triage table committed under `docs/plans/workflow-builder-pr2/artifacts/cherry-pick-triage.md` ([D-PR2-1](artifacts/implementation-decision-log.md#d-pr2-1-cherry-pick--gap-close-strategy-with-wu-pr2-0-triage-table-as-pre-implementation-work)).
+- [ ] `internal/version.Version` is `0.7.3`; `pr9k --version` prints it ([D-PR2-3](artifacts/implementation-decision-log.md#d-pr2-3-version-bump-072--073-as-the-first-commit-of-pr-2)).
+- [ ] `workflowmodel.WorkflowDoc` has `UnknownFields`, top-level `Env`, top-level `ContainerEnv`, `DefaultModel`, step-level `Env`/`ContainerEnv`; `TestWorkflowDoc_RoundTrip_BundledDefault` passes ([D-PR2-4](artifacts/implementation-decision-log.md#d-pr2-4-workflowmodel-schema-extensions-land-before-the-workflowedit-cherry-pick)).
+- [ ] `EditorExitMsg`, `EditorSigintMsg`, `EditorRestoreFailedMsg` are exported types in `internal/workflowedit/editor.go` ([D-PR2-5](artifacts/implementation-decision-log.md#d-pr2-5-editor-message-types-live-in-internalworkfloweditedito-go)).
+- [ ] `cmd/pr9k/editor.go` `rejectShellMeta` set is exactly `{backtick, semicolon, pipe, newline}` ([D-PR2-6](artifacts/implementation-decision-log.md#d-pr2-6-rejectshellmeta-set-is-backtick-semicolon-pipe-newline)); `TestResolveEditor_VisualWithDollar_Accepted` passes.
+- [ ] 14 named non-zero `DialogKind` constants in `dialogs.go`; per-kind handlers exist for all four conflict-detection dialogs ([D-PR2-7](artifacts/implementation-decision-log.md#d-pr2-7-d-8-dialog-state-set-updated-to-enumerate-14-named-dialogkind-constants), [D-PR2-17](artifacts/implementation-decision-log.md#d-pr2-17-conflict-detection-dialog-handlers-for-dialogfileconflict--dialogfirstsaveconfirm--dialogcrashtempnotice--dialogrecovery)).
+- [ ] `Ctrl+E` invokes external editor on focused prompt/script-path field; both how-to docs reflect this binding ([D-PR2-8](artifacts/implementation-decision-log.md#d-pr2-8-external-editor-shortcut-for-promptscript-path-fields-is-ctrle)).
+- [ ] `?` opens help modal only from edit view or `DialogFindingsPanel`; spec §8 sentence updated ([D-PR2-9](artifacts/implementation-decision-log.md#d-pr2-9--help-modal-silently-suppressed-in-non-findings-dialogs)).
+- [ ] Successful save with `pendingAction = pendingActionQuit{}` shows `DialogQuitConfirm` before exit ([D-PR2-10](artifacts/implementation-decision-log.md#d-pr2-10-quitconfirm-always-shows-after-pendingquit-successful-save)).
+- [ ] All 16 P0 gaps + ~30 functional-completeness gaps closed ([D-PR2-11](artifacts/implementation-decision-log.md#d-pr2-11-gap-triage-classification--16-p0-blockers-30-functional-completeness-6-deferred-3-implicit-1-false-positive)); 6 deferred-to-vNext gaps filed as issues.
+- [ ] `editorInProgress` flag set/cleared by all three ExecCallback branches ([D-PR2-14](artifacts/implementation-decision-log.md#d-pr2-14-editorinprogress-flag-gates-ctrlq-during-the-external-editor-window)).
+- [ ] `pendingAction` discriminated type replaces `pendingQuit bool`; auto-resume routes by type; cleared on save fatals ([D-PR2-15](artifacts/implementation-decision-log.md#d-pr2-15-pendingaction-discriminated-type-replaces-pendingquit-bool-for-unsaved-changes-auto-resume)).
+- [ ] `Model` has `logger *logger.Logger` field; D-27 events fire at all 9 trigger points; R7 secret-leak regression test passes ([D-PR2-16](artifacts/implementation-decision-log.md#d-pr2-16-logger-injected-into-model-via-workflowdeps-d27-events-fire-at-all-d39-trigger-points)).
+- [ ] `workflowmodel.IsDirty` is the single source of truth for dirty state; `UnknownFields` comparison is sorted-key insensitive ([D-PR2-18](artifacts/implementation-decision-log.md#d-pr2-18-workflowmodelisdirty-replaces-ad-hoc-mdirtytrue-mutations)).
+- [ ] Update routing pre-dispatch tier (0) handles `validateCompleteMsg` and `saveCompleteMsg` before the dialog tier ([D-PR2-19](artifacts/implementation-decision-log.md#d-pr2-19-routing-pre-dispatch-for-validatecompletemsg--savecompletemsg-before-dialog-tier)).
+- [ ] Path-completion `tea.Cmd` carries a generation counter; stale `pathCompletionMsg` discarded ([D-PR2-20](artifacts/implementation-decision-log.md#d-pr2-20-generation-counter-for-path-completion-teacmd)).
+- [ ] Signal handler installs after `tea.NewProgram` ([D-PR2-21](artifacts/implementation-decision-log.md#d-pr2-21-capture-teaprogram-in-local-closure-before-signal-goroutine-starts)); WaitGroup drain runs after `program.Run()` ([D-PR2-22](artifacts/implementation-decision-log.md#d-pr2-22-drain-pattern-after-programrun-returns)); 10s timer wrapped in `select`+`ctx.Done` ([D-PR2-23](artifacts/implementation-decision-log.md#d-pr2-23-10s-signal-handler-timer-cancellation-when-ctxdone-fires)).
+- [ ] All 28 `TestModel_Mode_*` tests pass per [`../workflow-builder/artifacts/tui-mode-coverage.md`](../workflow-builder/artifacts/tui-mode-coverage.md); race detector clean.
+- [ ] `bundle_builder_integration_test.go` drives `workflowedit.Model` end-to-end; passes.
+- [ ] `pr9k workflow` is listed under `pr9k --help` (Hidden: false); rename-guard test extended to assert `"workflow-"` log prefix and `"pr9k workflow"` subcommand name do not collide with existing `ralph-` prefix.
+- [ ] `make ci` passes: `go test -race ./...`, `golangci-lint`, `gofmt`, `go vet`, `govulncheck`, `go mod tidy`, `go build`. No `nolint` suppressions per `docs/coding-standards/lint-and-tooling.md`.
+
+## Specialist Handoffs for Implementation
+
+- **`software-architect`** — dispatch first to produce the WU-PR2-0 cherry-pick triage table; needs the backup tag and the gap analysis. Re-engage after WU-PR2-3 lands to confirm the cherry-picked Model surface matches the triage classifications.
+- **`behavioral-analyst`** — dispatch during WU-PR2-6 to validate the `pendingAction` dispatch in `handleSaveResult` and after WU-PR2-8 to validate the four conflict-dialog handlers; needs the cherry-picked Model and the test plan.
+- **`concurrency-analyst`** — dispatch during WU-PR2-5 to validate the signal-handler ordering and drain pattern; re-engage if `make ci -race` flakes anywhere in WU-PR2-6 through WU-PR2-12.
+- **`adversarial-security-analyst`** — dispatch after WU-PR2-10 for a final pass verifying R7 (logger field exclusion) and the corrected rejection set; needs the integration-test artifact.
+- **`user-experience-designer`** — dispatch during WU-PR2-9 for an outline-section walkthrough and during WU-PR2-11 for the how-to-doc Ctrl+E rewrite; needs running builder or screenshots.
+- **`devops-engineer`** — dispatch before WU-PR2-13 lands to verify the version-bump-first-commit invariant and the un-hide-as-last-commit invariant in the PR commit graph; needs the final PR URL.
+- **`test-engineer`** — dispatch after WU-PR2-12 to confirm the 28-mode test set has one test per coverage entry and the bundle smoke drives Model end-to-end.
+- **`gap-analyzer`** — dispatch after WU-PR2-12 to confirm every PR-2-required gap from [D-PR2-11](artifacts/implementation-decision-log.md#d-pr2-11-gap-triage-classification--16-p0-blockers-30-functional-completeness-6-deferred-3-implicit-1-false-positive) is closed by a code path; needs the completed implementation.
+
+## Open Items
+
+- **OI-PR2-1:** Six gaps deferred to vNext per [D-PR2-11](artifacts/implementation-decision-log.md#d-pr2-11-gap-triage-classification--16-p0-blockers-30-functional-completeness-6-deferred-3-implicit-1-false-positive): GAP-011 (gripper always-visible glyph), GAP-026 (no-op save feedback), GAP-032 (per-mode help modal detail), GAP-047 (footer context-sensitivity refinement), GAP-048 (statusLine `RefreshIntervalSeconds 0 vs omitempty`), EC-PR2-015 (probe name PID collision after SIGKILL).
+  - **Resolves when:** Each is filed as a vNext issue with the GAP/EC ID and the decision rationale.
+  - **Blocks implementation:** No — these are documented as accepted-for-now and have no user-blocking severity in dogfooding.
+
+- **OI-PR2-2 (carried from inherited OI-2):** Spec D69 step-(1) contains a stale reference to superseded D54's "two-step Discard confirmation."
+  - **Resolves when:** Spec author updates D69 to cite D7 and remove "two-step confirmation" language.
+  - **Blocks implementation:** No — implementation follows D7's authoritative single-step flow.
+
+## Summary
+
+- **Outcome delivered:** Interactive `pr9k workflow` TUI subcommand un-hidden in `pr9k --help`, with all 16 P0 gaps and ~30 functional-completeness gaps closed; backed by inherited PR-1 inner ring (atomicwrite, workflowio, workflowmodel, workflowvalidate, ansi, validator OI-1).
+- **Team size:** 9 specialists — see [artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md).
+- **Rounds of facilitation:** 2 (R1 parallel review + R2 targeted evidence handoffs) plus synthesis — see [artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md).
+- **Decisions committed:** 23 PR-2-specific (D-PR2-1 through D-PR2-23) on top of 47 inherited (D-1..D-47) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md).
+- **Decisions settled by evidence:** 4 (D-PR2-5, D-PR2-6, D-PR2-7, D-PR2-12 — all R2 code-inspection-driven).
+- **Decisions settled by junior-developer reframing:** 2 (D-PR2-1 cherry-pick strategy via JrQ-PR2-001/010; D-PR2-3 version bump via JrQ-PR2-008).
+- **Decisions settled by user input:** 0 — all OQs resolved by evidence or PM-recommendation under auto-mode.
+- **Rejected alternatives recorded:** 51 across the 23 PR-2 decisions (see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)).
+- **Open items remaining:** 2 — both non-blocking (vNext deferrals; spec D69 stale text).
+- **Recommendation:** **Ship as planned.** Begin with WU-PR2-0 cherry-pick triage table, then WU-PR2-1 (version bump) through WU-PR2-13 (un-hide). The un-hide is the rollback boundary; reverting it alone removes the user-facing surface while preserving the schema and standard additions.
