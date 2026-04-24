@@ -14,6 +14,9 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/logger"
 )
 
+// osGetwd is a var so tests can inject a failing implementation (D-44).
+var osGetwd = os.Getwd
+
 // workflowDeps captures injected dependencies for the workflow builder.
 // Shape to be finalized in later tickets.
 type workflowDeps struct {
@@ -88,7 +91,7 @@ func resolveBuilderLogBaseDir(projectDirFlag string) string {
 	if projectDirFlag != "" {
 		return projectDirFlag
 	}
-	if cwd, err := os.Getwd(); err == nil {
+	if cwd, err := osGetwd(); err == nil {
 		return cwd
 	}
 	if configDir, err := os.UserConfigDir(); err == nil {

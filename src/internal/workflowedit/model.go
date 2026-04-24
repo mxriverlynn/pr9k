@@ -61,7 +61,8 @@ type Model struct {
 	reorderOrigin   int
 	reorderSnapshot []workflowmodel.Step
 
-	saveBanner string // "Saved at HH:MM:SS" after a successful save
+	saveBanner           string // "Saved at HH:MM:SS" after a successful save
+	sharedInstallWarning string // non-empty → show warning banner (D-43)
 
 	// validateFn overrides the real validator when non-nil; used by tests.
 	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
@@ -80,6 +81,13 @@ func New(saveFS workflowio.SaveFS, editor EditorRunner, projectDir, workflowDir 
 		detail:      newDetailPane(defaultDetailW, defaultH),
 		menu:        newMenuBar(),
 	}
+}
+
+// WithSharedInstallWarning returns a copy of the model with the shared-install
+// warning banner set. An empty string clears the warning (D-43).
+func (m Model) WithSharedInstallWarning(msg string) Model {
+	m.sharedInstallWarning = msg
+	return m
 }
 
 // Init satisfies tea.Model. No startup commands are needed.
@@ -122,6 +130,10 @@ func (m Model) View() string {
 	var sb strings.Builder
 	sb.WriteString(m.menu.render())
 	sb.WriteString("\n")
+	if m.sharedInstallWarning != "" {
+		sb.WriteString(m.sharedInstallWarning)
+		sb.WriteString("\n")
+	}
 	if m.helpOpen {
 		sb.WriteString(m.renderHelpModal())
 	} else if m.dialog.kind != DialogNone {

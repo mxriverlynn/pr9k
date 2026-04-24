@@ -91,6 +91,45 @@ func TestRunWorkflowBuilder_ExitsCleanly(t *testing.T) {
 	}
 }
 
+// TestLogDir_DefaultUnderProjectDir — when --project-dir is given, log base dir equals it.
+func TestLogDir_DefaultUnderProjectDir(t *testing.T) {
+	dir := t.TempDir()
+	got := resolveBuilderLogBaseDir(dir)
+	if got != dir {
+		t.Errorf("resolveBuilderLogBaseDir(%q) = %q, want %q", dir, got, dir)
+	}
+}
+
+// TestLogDir_ExternalWorkflow_InheritsProjectDir — external workflow dir does not
+// affect log placement; log dir is always rooted at projectDir (D-44).
+func TestLogDir_ExternalWorkflow_InheritsProjectDir(t *testing.T) {
+	projectDir := t.TempDir()
+	// workflowDir is not passed to resolveBuilderLogBaseDir; it only takes projectDir.
+	got := resolveBuilderLogBaseDir(projectDir)
+	if got != projectDir {
+		t.Errorf("log base dir should always use projectDir, got %q want %q", got, projectDir)
+	}
+}
+
+// TestLogDir_ProjectDirResolutionFails_FallsBackToUserConfigDir — when projectDirFlag
+// is empty and os.Getwd fails, the log base dir falls back to UserConfigDir (D-44).
+func TestLogDir_ProjectDirResolutionFails_FallsBackToUserConfigDir(t *testing.T) {
+	// Inject a failing Getwd so the fallback path is exercised.
+	saved := osGetwd
+	t.Cleanup(func() { osGetwd = saved })
+	osGetwd = func() (string, error) { return "", os.ErrNotExist }
+
+	got := resolveBuilderLogBaseDir("")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Skip("os.UserConfigDir() unavailable")
+	}
+	want := filepath.Join(configDir, ".pr9k")
+	if got != want {
+		t.Errorf("fallback log dir = %q, want %q", got, want)
+	}
+}
+
 // T-2: runWorkflowBuilder propagates a logger error with "workflow:" prefix.
 func TestRunWorkflowBuilder_PropagatesLoggerError(t *testing.T) {
 	if os.Getuid() == 0 {
