@@ -160,3 +160,58 @@ func TestTabComplete_SingleMatch_FillsCompletely(t *testing.T) {
 		t.Errorf("want /tmp/foobar, got %q", p.input)
 	}
 }
+
+// TestPathPicker_BackspaceResetsMatches — Backspace removes the last character
+// from input AND resets the match cache, so stale completions aren't cycled.
+func TestPathPicker_BackspaceResetsMatches(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{
+		input:    "/tmp/foo",
+		matches:  []string{"x", "y"},
+		matchIdx: 1,
+	}}
+	got := applyMsg(m, keyBackspace())
+	p := got.dialog.payload.(pathPickerModel)
+	if p.input != "/tmp/fo" {
+		t.Errorf("want /tmp/fo after backspace, got %q", p.input)
+	}
+	if p.matches != nil {
+		t.Errorf("matches should be nil after backspace (cache reset), got %v", p.matches)
+	}
+}
+
+// TestPathPicker_CharInput_AppendsClearsMatches — typing a character appends it
+// to input and invalidates the stale match cache.
+func TestPathPicker_CharInput_AppendsClearsMatches(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{
+		input:   "/tmp/f",
+		matches: []string{"x"},
+	}}
+	got := applyMsg(m, keyRune('o'))
+	p := got.dialog.payload.(pathPickerModel)
+	if p.input != "/tmp/fo" {
+		t.Errorf("want /tmp/fo after typing 'o', got %q", p.input)
+	}
+	if p.matches != nil {
+		t.Errorf("matches should be nil after char input (cache invalidated), got %v", p.matches)
+	}
+}
+
+// TestPathPicker_Enter_ClosesDialog — Enter confirms the path and dismisses the
+// dialog, restoring focus to whatever it was before Ctrl+O.
+func TestPathPicker_Enter_ClosesDialog(t *testing.T) {
+	m := newTestModel()
+	m.focus = focusOutline
+	// Open the path picker the same way Ctrl+O does.
+	m.prevFocus = m.focus
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{input: "/tmp/foo"}}
+
+	got := applyMsg(m, keyEnter())
+	if got.dialog.kind != DialogNone {
+		t.Errorf("dialog should be closed after Enter, got kind=%v", got.dialog.kind)
+	}
+	if got.focus != focusOutline {
+		t.Errorf("focus should be restored to focusOutline after Enter, got %v", got.focus)
+	}
+}
