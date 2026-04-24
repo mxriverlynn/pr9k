@@ -2963,3 +2963,82 @@ func TestValidateDoc_DoesNotWriteToDisk(t *testing.T) {
 		t.Errorf("ValidateDoc must not write files to disk (prompts/p.md found)")
 	}
 }
+
+// ----------------------------------------------------------------------------
+// ValidateDoc — scaffold fallback + Rule B companion bytes (gap tests)
+// ----------------------------------------------------------------------------
+
+// TestValidateDoc_ScaffoldFallback_ClaudeStepValidated verifies that when no
+// config.json is present and doc.Steps is non-empty, the scaffold fallback
+// (docToVFile) path is exercised and a valid claude step produces no fatal errors.
+// This is the primary builder pre-save use case (all 6 prior ValidateDoc tests
+// write config.json first, leaving this path uncovered).
+func TestValidateDoc_ScaffoldFallback_ClaudeStepValidated(t *testing.T) {
+	dir := tempProject(t)
+	// Deliberately do NOT write config.json — force scaffold fallback.
+
+	doc := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{
+				Name:        "step-1",
+				Kind:        workflowmodel.StepKindClaude,
+				IsClaudeSet: true,
+				Model:       "sonnet",
+				PromptFile:  "step-1.md",
+			},
+		},
+	}
+	companions := map[string][]byte{"prompts/step-1.md": []byte("do some work")}
+
+	errs := validator.ValidateDoc(doc, dir, companions)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("scaffold fallback with valid claude step should produce no fatal errors; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_ScaffoldFallback_SchemaViolationSurfaces verifies that
+// validation errors fire from the scaffold fallback path. A claude step with no
+// model should produce a schema error — confirming docToVFile and validateVFile
+// are both reached, not just docToVFile (struct construction).
+func TestValidateDoc_ScaffoldFallback_SchemaViolationSurfaces(t *testing.T) {
+	dir := tempProject(t)
+	// Deliberately do NOT write config.json — force scaffold fallback.
+
+	doc := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{
+				Name:        "step-1",
+				Kind:        workflowmodel.StepKindClaude,
+				IsClaudeSet: true,
+				Model:       "", // missing model — schema violation
+				PromptFile:  "step-1.md",
+			},
+		},
+	}
+	companions := map[string][]byte{"prompts/step-1.md": []byte("do some work")}
+
+	errs := validator.ValidateDoc(doc, dir, companions)
+	if !hasError(errs, "non-empty model") {
+		t.Errorf("scaffold fallback should surface schema error for missing model; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_CompanionBytesScannedForRuleB verifies that readCompanionOrDisk
+// uses companion bytes (not disk) when scanning prompt files for Rule B token bans
+// ({{WORKFLOW_DIR}}, {{PROJECT_DIR}}). All 6 prior ValidateDoc tests only exercise
+// statCompanionOrDisk (file existence); this covers the read path.
+func TestValidateDoc_CompanionBytesScannedForRuleB(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	// Companion bytes contain a banned token — no disk file exists.
+	companions := map[string][]byte{"prompts/p.md": []byte("path: {{WORKFLOW_DIR}}/bin")}
+
+	errs := validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+	if !hasError(errs, "WORKFLOW_DIR") {
+		t.Errorf("Rule B should fire on companion bytes containing {{WORKFLOW_DIR}}; got: %v", errs)
+	}
+}
