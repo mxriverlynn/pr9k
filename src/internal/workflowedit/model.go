@@ -147,8 +147,10 @@ func (m Model) renderDialog() string {
 	case DialogNewChoice:
 		return "New Workflow: Copy / Empty / Cancel"
 	case DialogPathPicker:
-		path, _ := m.dialog.payload.(string)
-		return "Open: " + path
+		if picker, ok := m.dialog.payload.(pathPickerModel); ok {
+			return "Open: " + picker.input
+		}
+		return "Open: "
 	case DialogUnsavedChanges:
 		return "Unsaved changes: Save / Cancel / Discard"
 	case DialogQuitConfirm:
@@ -247,14 +249,68 @@ func (m Model) updateDialogNewChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateDialogPathPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
-	km, ok := msg.(tea.KeyMsg)
-	if !ok {
+	picker, _ := m.dialog.payload.(pathPickerModel)
+
+	switch msg := msg.(type) {
+	case pathCompletionMsg:
+		if len(msg.matches) > 0 {
+			picker.matches = msg.matches
+			picker.matchIdx = 0
+			picker.input = msg.matches[0]
+		} else {
+			picker.matches = []string{}
+		}
+		m.dialog.payload = picker
 		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.dialog = dialogState{}
+			m.focus = m.prevFocus
+
+		case tea.KeyEnter:
+			m.dialog = dialogState{}
+			m.focus = m.prevFocus
+
+		case tea.KeyTab:
+			if picker.matches == nil {
+				return m, completePath(picker.input)
+			}
+			if len(picker.matches) > 0 {
+				picker.matchIdx = (picker.matchIdx + 1) % len(picker.matches)
+				picker.input = picker.matches[picker.matchIdx]
+				m.dialog.payload = picker
+			}
+
+		case tea.KeyShiftTab:
+			if picker.matches == nil {
+				return m, completePath(picker.input)
+			}
+			if len(picker.matches) > 0 {
+				picker.matchIdx = (picker.matchIdx - 1 + len(picker.matches)) % len(picker.matches)
+				picker.input = picker.matches[picker.matchIdx]
+				m.dialog.payload = picker
+			}
+
+		case tea.KeyBackspace:
+			if len(picker.input) > 0 {
+				picker.input = picker.input[:len(picker.input)-1]
+				picker.matches = nil
+				picker.matchIdx = 0
+				m.dialog.payload = picker
+			}
+
+		default:
+			if len(msg.Runes) > 0 {
+				picker.input += string(msg.Runes)
+				picker.matches = nil
+				picker.matchIdx = 0
+				m.dialog.payload = picker
+			}
+		}
 	}
-	if km.Type == tea.KeyEsc {
-		m.dialog = dialogState{}
-		m.focus = m.prevFocus
-	}
+
 	return m, nil
 }
 
@@ -387,7 +443,7 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlO:
 		m.prevFocus = m.focus
 		defaultPath := filepath.Join(m.projectDir, ".pr9k", "workflow", "config.json")
-		m.dialog = dialogState{kind: DialogPathPicker, payload: defaultPath}
+		m.dialog = dialogState{kind: DialogPathPicker, payload: newPathPicker(defaultPath)}
 	case tea.KeyCtrlS:
 		if m.saveInProgress {
 			return m, nil

@@ -90,12 +90,13 @@ func keyDel() tea.KeyMsg   { return tea.KeyMsg{Type: tea.KeyDelete} }
 
 func keyRune(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
-func keyCtrlN() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlN} }
-func keyCtrlO() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlO} }
-func keyCtrlS() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlS} }
-func keyCtrlQ() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlQ} }
-func keyF10() tea.KeyMsg   { return tea.KeyMsg{Type: tea.KeyF10} }
-func keyAltUp() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyUp, Alt: true} }
+func keyCtrlN() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlN} }
+func keyCtrlO() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlO} }
+func keyCtrlS() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlS} }
+func keyCtrlQ() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlQ} }
+func keyF10() tea.KeyMsg      { return tea.KeyMsg{Type: tea.KeyF10} }
+func keyAltUp() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyUp, Alt: true} }
+func keyShiftTab() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyShiftTab} }
 
 // --- step factories ---
 

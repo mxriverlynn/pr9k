@@ -44,9 +44,12 @@ func TestModel_Mode_3_EmptyEditor_CtrlO_OpensPathPicker(t *testing.T) {
 	if got.dialog.kind != DialogPathPicker {
 		t.Fatalf("want DialogPathPicker, got %d", got.dialog.kind)
 	}
-	path, _ := got.dialog.payload.(string)
-	if !strings.Contains(path, ".pr9k") {
-		t.Errorf("path picker should be pre-filled with .pr9k path, got %q", path)
+	picker, ok := got.dialog.payload.(pathPickerModel)
+	if !ok {
+		t.Fatal("payload should be pathPickerModel")
+	}
+	if !strings.Contains(picker.input, ".pr9k") {
+		t.Errorf("path picker should be pre-filled with .pr9k path, got %q", picker.input)
 	}
 }
 

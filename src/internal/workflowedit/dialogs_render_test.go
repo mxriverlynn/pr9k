@@ -18,7 +18,7 @@ func TestDialog_NewChoice_ContainsCopyEmptyCancel(t *testing.T) {
 
 func TestDialog_PathPicker_ContainsOpenLabel(t *testing.T) {
 	m := newTestModel()
-	m.dialog = dialogState{kind: DialogPathPicker, payload: "/some/path"}
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{input: "/some/path"}}
 	view := m.View()
 	if !strings.Contains(view, "Open") {
 		t.Errorf("DialogPathPicker should show Open, got %q", view)
