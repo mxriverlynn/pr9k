@@ -276,3 +276,43 @@ func TestNoLegacyIterationJsonlPath_WorkflowConfigJSON(t *testing.T) {
 		t.Errorf("workflow/config.json contains %q — update to .pr9k/iteration.jsonl", legacyIterationPath)
 	}
 }
+
+// F-116: Naming-collision guards for the workflow-builder feature.
+
+// TestRenameGuard_WorkflowLogPrefix_DoesNotCollideWithRalph asserts that
+// workflow.go uses the correct "workflow" log prefix for its logger and does
+// not reference the legacy log-file namespace. The two runtime output spaces
+// (builder logs vs main-loop logs) must remain distinct.
+func TestRenameGuard_WorkflowLogPrefix_DoesNotCollideWithRalph(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "src/cmd/pr9k/workflow.go")
+
+	// Positive: builder must use the prefix-variant logger constructor.
+	assertContains(t, content, "NewLoggerWithPrefix",
+		`workflow.go: "NewLoggerWithPrefix" required for builder log prefix`)
+
+	// Negative: legacy log namespace must not appear. Assembled at runtime so
+	// this guard file does not introduce the literal token into its own content.
+	legacyNS := "ral" + "ph-"
+	assertNotContains(t, content, legacyNS,
+		`workflow.go: legacy log namespace must not appear — builder must use the "workflow" prefix`)
+}
+
+// TestRenameGuard_PR9kWorkflowCommand_DoesNotCollideWithSubcommands asserts
+// that the workflow subcommand constructor lives only in workflow.go and that
+// the sandbox subcommand does not also claim the workflow command name.
+func TestRenameGuard_PR9kWorkflowCommand_DoesNotCollideWithSubcommands(t *testing.T) {
+	root := docTestRepoRoot(t)
+
+	// Positive: the workflow subcommand constructor must be defined in workflow.go.
+	wfContent := readFile(t, root, "src/cmd/pr9k/workflow.go")
+	assertContains(t, wfContent, "newWorkflowCmd",
+		`workflow.go: expected "newWorkflowCmd" (workflow subcommand constructor)`)
+
+	// Negative: sandbox.go must not also define the workflow subcommand constructor.
+	// Assembled at runtime to prevent a literal match in this guard file itself.
+	wfCtor := "new" + "Workflow" + "Cmd"
+	sbContent := readFile(t, root, "src/cmd/pr9k/sandbox.go")
+	assertNotContains(t, sbContent, wfCtor,
+		"sandbox.go: must not also define the workflow subcommand constructor")
+}
