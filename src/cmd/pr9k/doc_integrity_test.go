@@ -1113,6 +1113,35 @@ func TestDocIntegrity_NoDeadLinks(t *testing.T) {
 	}
 }
 
+// T-1: DI-7 asserted only "workflow" in architecture.md, but that string pre-existed. Pin the
+// specific WU-11 paragraph: workflow subcommand does not call startup().
+func TestDocIntegrity_ArchitectureDoc_WorkflowStartupBypassDocumented(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/architecture.md")
+	assertContains(t, content, "startup()", "docs/architecture.md: workflow startup() bypass")
+	assertContains(t, content, "does **not** call", "docs/architecture.md: workflow startup() bypass phrasing")
+}
+
+// T-2: DI-6 checked for "workflow" and "--workflow-dir" in cli-configuration.md, but the issue
+// spec also requires documenting the explicit absence of --iterations from the workflow subcommand.
+func TestDocIntegrity_CLIConfig_WorkflowSubcmdIterationsAbsent(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/features/cli-configuration.md")
+	assertContains(t, content, "pr9k workflow", "docs/features/cli-configuration.md: workflow subcommand section")
+	assertContains(t, content, "--iterations", "docs/features/cli-configuration.md: --iterations mentioned in workflow section")
+	assertContains(t, content, "does **not** expose", "docs/features/cli-configuration.md: --iterations explicitly absent from workflow subcommand")
+}
+
+// T-3: DI-3 only checked ADR existence and linkage. Pin two critical design decisions in the body:
+// companion-first write ordering and nanosecond-precision mtime conflict detection.
+func TestDocIntegrity_SaveDurabilityADR_CompanionFirstOrderingDocumented(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/adr/20260424120000-workflow-builder-save-durability.md")
+	assertContains(t, content, "written before", "ADR: companion-first ordering (written before config.json)")
+	assertContains(t, content, "config.json", "ADR: companion-first ordering references config.json")
+	assertContains(t, content, "nanosecond", "ADR: nanosecond-precision mtime conflict detection documented")
+}
+
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
