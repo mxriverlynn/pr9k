@@ -50,6 +50,22 @@ func TestCopyFromDefault_ReadsDefaultBundle(t *testing.T) {
 	}
 }
 
+func TestEmpty_StepModelIsDefaultScaffoldModel(t *testing.T) {
+	doc := workflowmodel.Empty()
+	step := doc.Steps[0]
+	if step.Model != workflowmodel.DefaultScaffoldModel {
+		t.Errorf("Empty: step.Model = %q, want DefaultScaffoldModel %q",
+			step.Model, workflowmodel.DefaultScaffoldModel)
+	}
+}
+
+func TestCopyFromDefault_NonExistentBundlePath_ReturnsError(t *testing.T) {
+	_, err := workflowmodel.CopyFromDefault("/does/not/exist")
+	if err == nil {
+		t.Error("CopyFromDefault: expected error for non-existent path, got nil")
+	}
+}
+
 func TestCopyFromDefault_InputImmutability(t *testing.T) {
 	bundlePath := defaultBundlePath(t)
 
