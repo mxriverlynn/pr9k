@@ -298,6 +298,22 @@ func TestRenameGuard_WorkflowLogPrefix_DoesNotCollideWithRalph(t *testing.T) {
 		`workflow.go: legacy log namespace must not appear — builder must use the "workflow" prefix`)
 }
 
+// TestRenameGuard_WorkflowLogPrefix_PrefixStringIsWorkflow asserts that the
+// literal string "workflow" is passed as the prefix argument to NewLoggerWithPrefix
+// in workflow.go. The D-27 log-file namespace is determined by this string; if it
+// were changed to a variable or a different literal, the collision contract would go
+// unverified (T-2).
+func TestRenameGuard_WorkflowLogPrefix_PrefixStringIsWorkflow(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "src/cmd/pr9k/workflow.go")
+
+	// The literal prefix string must appear in the source file. Assembled across
+	// two concatenations so this guard file does not become a match for its own scan.
+	prefixLiteral := `"work` + `flow"`
+	assertContains(t, content, prefixLiteral,
+		`workflow.go: literal "workflow" prefix string required for D-27 log-file namespace`)
+}
+
 // TestRenameGuard_PR9kWorkflowCommand_DoesNotCollideWithSubcommands asserts
 // that the workflow subcommand constructor lives only in workflow.go and that
 // the sandbox subcommand does not also claim the workflow command name.

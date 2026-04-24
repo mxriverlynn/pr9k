@@ -55,6 +55,47 @@ func TestBundleBuilderSmoke_DefaultBundleLoadsAndValidates(t *testing.T) {
 	}
 }
 
+// TestBundleBuilderSmoke_DefaultBundleHasNonEmptyDoc verifies that the default
+// bundle produces a doc with at least one step. A doc with zero steps would make
+// validation vacuous — zero findings are trivially produced by an empty step list.
+// The exact count is not pinned; non-zero is the stable contract (T-1).
+func TestBundleBuilderSmoke_DefaultBundleHasNonEmptyDoc(t *testing.T) {
+	root := docTestRepoRoot(t)
+	srcBundle := filepath.Join(root, "workflow")
+
+	tmpDir := t.TempDir()
+	bundleMirrorDir(t, srcBundle, tmpDir)
+
+	result, err := workflowio.Load(tmpDir)
+	if err != nil {
+		t.Fatalf("workflowio.Load: %v", err)
+	}
+	if len(result.Doc.Steps) == 0 {
+		t.Error("default bundle loaded with zero steps; expected a non-empty step list")
+	}
+}
+
+// TestBundleBuilderSmoke_DefaultBundleCompanionsLoaded verifies that the default
+// bundle populates result.Companions with at least one entry. If companion loading
+// were silently broken, Companions would be empty and the validator would fall back
+// to disk reads — the smoke test would pass while in-memory companion tracking broke
+// (T-3).
+func TestBundleBuilderSmoke_DefaultBundleCompanionsLoaded(t *testing.T) {
+	root := docTestRepoRoot(t)
+	srcBundle := filepath.Join(root, "workflow")
+
+	tmpDir := t.TempDir()
+	bundleMirrorDir(t, srcBundle, tmpDir)
+
+	result, err := workflowio.Load(tmpDir)
+	if err != nil {
+		t.Fatalf("workflowio.Load: %v", err)
+	}
+	if len(result.Companions) == 0 {
+		t.Error("default bundle loaded with empty Companions map; expected at least one companion file")
+	}
+}
+
 // TestBundleBuilderSmoke_NoOpSave_DoesNotWrite verifies that a freshly-loaded
 // bundle doc is not dirty against itself — meaning a save immediately after
 // opening the default bundle is a no-op and no files would be written.

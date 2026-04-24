@@ -79,13 +79,16 @@ func Load(workflowDir string) (LoadResult, error) {
 	result.Doc = doc
 
 	// Load companion files referenced by steps; skip missing, reject non-regular.
+	// Companions live in the prompts/ subdirectory; keys are relative to workflowDir
+	// (e.g., "prompts/feature-work.md") to match the validator's relKey convention.
 	companions := make(map[string][]byte)
 	for _, step := range doc.Steps {
 		if step.PromptFile == "" {
 			continue
 		}
-		companionPath := filepath.Join(workflowDir, step.PromptFile)
-		cfi, err := os.Lstat(companionPath)
+		relKey := filepath.Join("prompts", step.PromptFile)
+		companionPath := filepath.Join(workflowDir, relKey)
+		_, err := os.Lstat(companionPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -96,7 +99,6 @@ func Load(workflowDir string) (LoadResult, error) {
 		if err != nil {
 			return LoadResult{}, fmt.Errorf("workflowio: eval symlinks companion %s: %w", companionPath, err)
 		}
-		_ = cfi
 		rci, err := os.Stat(realCompanion)
 		if err != nil {
 			return LoadResult{}, fmt.Errorf("workflowio: stat real companion %s: %w", realCompanion, err)
@@ -108,7 +110,7 @@ func Load(workflowDir string) (LoadResult, error) {
 		if err != nil {
 			return LoadResult{}, fmt.Errorf("workflowio: read companion %s: %w", realCompanion, err)
 		}
-		companions[step.PromptFile] = data
+		companions[relKey] = data
 	}
 	if len(companions) > 0 {
 		result.Companions = companions
