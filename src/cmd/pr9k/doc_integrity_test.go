@@ -998,6 +998,121 @@ func TestGitignore_WorkflowIsTracked_BundleIsIgnored(t *testing.T) {
 	}
 }
 
+// DI-1: docs/features/workflow-builder.md exists and is linked from CLAUDE.md.
+func TestDocIntegrity_FeatureDocLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	featureDoc := "docs/features/workflow-builder.md"
+	assertFileExists(t, filepath.Join(root, featureDoc))
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	assertContains(t, claudeMD, featureDoc, "CLAUDE.md Feature Documentation section")
+}
+
+// DI-2: both how-to guides exist and are linked from CLAUDE.md.
+func TestDocIntegrity_HowToGuidesLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	guides := []string{
+		"docs/how-to/using-the-workflow-builder.md",
+		"docs/how-to/configuring-external-editor-for-workflow-builder.md",
+	}
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	for _, g := range guides {
+		assertFileExists(t, filepath.Join(root, g))
+		assertContains(t, claudeMD, g, "CLAUDE.md How-To Guides section")
+	}
+}
+
+// DI-3: ADR file for workflow-builder save durability exists and is linked from CLAUDE.md.
+func TestDocIntegrity_ADRLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	adrFile := "docs/adr/20260424120000-workflow-builder-save-durability.md"
+	assertFileExists(t, filepath.Join(root, adrFile))
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	assertContains(t, claudeMD, adrFile, "CLAUDE.md ADRs section")
+}
+
+// DI-4: docs/coding-standards/file-writes.md is linked from CLAUDE.md.
+func TestDocIntegrity_CodingStandardFileWritesLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	assertFileExists(t, filepath.Join(root, "docs/coding-standards/file-writes.md"))
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	assertContains(t, claudeMD, "docs/coding-standards/file-writes.md", "CLAUDE.md Coding Standards section")
+}
+
+// DI-5: all six new code-package docs exist and are linked from CLAUDE.md.
+func TestDocIntegrity_CodePackageDocsLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	pkgDocs := []string{
+		"docs/code-packages/atomicwrite.md",
+		"docs/code-packages/ansi.md",
+		"docs/code-packages/workflowmodel.md",
+		"docs/code-packages/workflowio.md",
+		"docs/code-packages/workflowvalidate.md",
+		"docs/code-packages/workflowedit.md",
+	}
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	for _, p := range pkgDocs {
+		assertFileExists(t, filepath.Join(root, p))
+		assertContains(t, claudeMD, p, "CLAUDE.md Code Package Documentation section")
+	}
+}
+
+// DI-6: docs/features/cli-configuration.md mentions the workflow subcommand.
+func TestDocIntegrity_CLIConfigMentionsWorkflowSubcommand(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/features/cli-configuration.md")
+	assertContains(t, content, "workflow", "docs/features/cli-configuration.md workflow subcommand")
+	assertContains(t, content, "--workflow-dir", "docs/features/cli-configuration.md workflow flags")
+}
+
+// DI-7: docs/architecture.md contains a reference to the workflow subcommand or new package layout.
+func TestDocIntegrity_ArchitectureDocUpdated(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/architecture.md")
+	assertContains(t, content, "workflow", "docs/architecture.md workflow subcommand reference")
+}
+
+// DI-8: every relative markdown link in the new workflow-builder docs resolves to an existing file.
+func TestDocIntegrity_NoDeadLinks(t *testing.T) {
+	root := docTestRepoRoot(t)
+	newDocs := []string{
+		"docs/features/workflow-builder.md",
+		"docs/how-to/using-the-workflow-builder.md",
+		"docs/how-to/configuring-external-editor-for-workflow-builder.md",
+		"docs/adr/20260424120000-workflow-builder-save-durability.md",
+		"docs/code-packages/atomicwrite.md",
+		"docs/code-packages/ansi.md",
+		"docs/code-packages/workflowmodel.md",
+		"docs/code-packages/workflowio.md",
+		"docs/code-packages/workflowvalidate.md",
+		"docs/code-packages/workflowedit.md",
+	}
+	// linkRe matches markdown links: [text](target) — captures the target.
+	linkRe := regexp.MustCompile(`\]\(([^)]+)\)`)
+	for _, rel := range newDocs {
+		content := readFile(t, root, rel)
+		docDir := filepath.Dir(filepath.Join(root, rel))
+		for _, m := range linkRe.FindAllStringSubmatch(content, -1) {
+			target := m[1]
+			// Skip HTTP(S) URLs, bare anchors, and mailto links.
+			if strings.HasPrefix(target, "http") || strings.HasPrefix(target, "#") || strings.HasPrefix(target, "mailto") {
+				continue
+			}
+			// Strip inline anchor (e.g. file.md#section → file.md).
+			if idx := strings.IndexByte(target, '#'); idx != -1 {
+				target = target[:idx]
+			}
+			if target == "" {
+				continue
+			}
+			// Resolve relative to the doc's directory.
+			resolved := filepath.Join(docDir, target)
+			if _, err := os.Stat(resolved); err != nil {
+				t.Errorf("%s: dead link %q → %s (%v)", rel, m[1], resolved, err)
+			}
+		}
+	}
+}
+
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

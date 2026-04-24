@@ -198,7 +198,9 @@ Each feature is documented in detail under [`docs/features/`](features/) (user-f
 
 Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `config.json`, `prompts/`, and `scripts/` live) via a two-candidate search when not given explicitly: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The executable path is dereferenced via `os.Executable()` + `filepath.EvalSymlinks` to follow symlinks correctly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
-**Packages:** `internal/cli/`, `internal/version/`
+The `pr9k workflow` subcommand opens the interactive [Workflow Builder](features/workflow-builder.md) TUI. It shares `--workflow-dir` and `--project-dir` flags but intentionally omits `--iterations`. The `workflow` subcommand does **not** call `startup()` — it bypasses the main preflight / step-loading / TUI-orchestration wiring and creates its own logger via `logger.NewLoggerWithPrefix`. This is an intentional design boundary: the builder is a standalone editor, not a runner.
+
+**Packages:** `internal/cli/`, `internal/version/`, `cmd/pr9k/workflow.go`
 
 ### [Step Definitions & Prompt Building](code-packages/steps.md)
 
@@ -281,7 +283,7 @@ Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -
 ## Package Dependency Graph
 
 ```
-cmd/src/main.go
+cmd/pr9k/main.go                    (root command: run workflow)
     ├── internal/cli           (argument parsing)
     │       └── internal/version
     ├── internal/logger        (file logging)
@@ -305,11 +307,30 @@ cmd/src/main.go
             ├── internal/ui
             └── internal/vars
 
+cmd/pr9k/workflow.go                (pr9k workflow subcommand: builder TUI)
+    ├── internal/logger
+    ├── internal/workflowedit  (Bubble Tea model for the builder TUI)
+    │       ├── internal/workflowio
+    │       ├── internal/workflowmodel
+    │       └── internal/workflowvalidate
+    │               └── internal/validator
+    ├── internal/workflowio    (load, save, detect operations)
+    │       ├── internal/atomicwrite
+    │       ├── internal/ansi
+    │       └── internal/workflowmodel
+    └── internal/workflowmodel (in-memory WorkflowDoc types)
+
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)
 
 internal/statusline            (status-line runner, state, payload, sanitizer)
     └── internal/logger
+
+internal/atomicwrite           (atomic file replacement via temp+rename)
+    (no internal dependencies)
+
+internal/ansi                  (ANSI escape sequence stripper)
+    (no internal dependencies)
 ```
 
 ## Key Design Principles
