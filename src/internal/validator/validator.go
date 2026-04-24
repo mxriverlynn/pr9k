@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/src/internal/vars"
+	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 )
 
 // Severity constants for Error entries.
@@ -152,13 +153,28 @@ var reservedBuiltins = map[string]bool{
 // Validation collects every error before returning — it does not stop at the
 // first failure.
 func Validate(workflowDir string) []Error {
-	var errs []Error
+	return ValidateDoc(workflowmodel.WorkflowDoc{}, workflowDir, nil)
+}
 
-	// Category 1 — file presence.
+// ValidateDoc validates a WorkflowDoc against the D13 categories.
+// When workflowDir contains a config.json, that file is used for phase
+// structure and the doc parameter is ignored. When config.json is absent,
+// doc.Steps are treated as a flat iteration-only workflow (scaffold fallback).
+//
+// Companion files keyed by path relative to workflowDir (e.g.,
+// "prompts/step-1.md") override on-disk reads for existence checks and token
+// scanning. Keys must use the full relative path — bare filenames like
+// "step-1.md" are cache misses and fall through to disk (F-121).
+func ValidateDoc(doc workflowmodel.WorkflowDoc, workflowDir string, companions map[string][]byte) []Error {
 	path := filepath.Join(workflowDir, "config.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return []Error{cfgErr("file", "config", "", fmt.Sprintf("could not read %s: %v", path, err))}
+		// Scaffold fallback: no config.json — build vFile from doc.
+		if len(doc.Steps) == 0 {
+			return []Error{cfgErr("file", "config", "", fmt.Sprintf("could not read %s: %v", path, err))}
+		}
+		vf := docToVFile(doc)
+		return validateVFile(vf, workflowDir, companions)
 	}
 
 	// Category 1 — parseability and no unknown fields (V6 Option A).
@@ -168,6 +184,86 @@ func Validate(workflowDir string) []Error {
 	if err := dec.Decode(&vf); err != nil {
 		return []Error{cfgErr("parse", "config", "", fmt.Sprintf("malformed JSON in %s: %v", path, err))}
 	}
+	return validateVFile(vf, workflowDir, companions)
+}
+
+// docToVFile converts a flat WorkflowDoc to a vFile with all steps in the
+// iteration phase. Used as a scaffold fallback when config.json is absent.
+func docToVFile(doc workflowmodel.WorkflowDoc) vFile {
+	empty := []vStep{}
+	var iterSteps []vStep
+	for _, s := range doc.Steps {
+		iterSteps = append(iterSteps, stepToVStep(s))
+	}
+	if iterSteps == nil {
+		iterSteps = empty
+	}
+	vf := vFile{
+		Initialize: &empty,
+		Iteration:  &iterSteps,
+		Finalize:   &empty,
+	}
+	if doc.StatusLine != nil {
+		ri := doc.StatusLine.RefreshIntervalSeconds
+		vf.StatusLine = &vStatusLine{
+			Type:                   doc.StatusLine.Type,
+			Command:                doc.StatusLine.Command,
+			RefreshIntervalSeconds: &ri,
+		}
+	}
+	return vf
+}
+
+// stepToVStep converts a workflowmodel.Step to an internal vStep.
+func stepToVStep(s workflowmodel.Step) vStep {
+	vs := vStep{
+		Name:             s.Name,
+		Model:            s.Model,
+		PromptFile:       s.PromptFile,
+		BreakLoopIfEmpty: s.BreakLoopIfEmpty,
+	}
+	if len(s.Command) > 0 {
+		cmd := make([]string, len(s.Command))
+		copy(cmd, s.Command)
+		vs.Command = cmd
+	}
+	if s.IsClaudeSet {
+		isClaude := s.Kind == workflowmodel.StepKindClaude
+		vs.IsClaude = &isClaude
+	} else if s.Kind == workflowmodel.StepKindShell {
+		f := false
+		vs.IsClaude = &f
+	}
+	if s.CaptureAs != "" {
+		ca := s.CaptureAs
+		vs.CaptureAs = &ca
+	}
+	if s.CaptureMode != "" {
+		cm := s.CaptureMode
+		vs.CaptureMode = &cm
+	}
+	if s.SkipIfCaptureEmpty != "" {
+		sk := s.SkipIfCaptureEmpty
+		vs.SkipIfCaptureEmpty = &sk
+	}
+	if s.TimeoutSeconds != 0 {
+		ts := s.TimeoutSeconds
+		vs.TimeoutSeconds = &ts
+	}
+	if s.OnTimeout != "" {
+		ot := s.OnTimeout
+		vs.OnTimeout = &ot
+	}
+	if s.ResumePrevious {
+		rp := true
+		vs.ResumePrevious = &rp
+	}
+	return vs
+}
+
+// validateVFile runs all D13 validation categories against a parsed vFile.
+func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) []Error {
+	var errs []Error
 
 	// Category 1 — required top-level array keys.
 	if vf.Initialize == nil {
@@ -291,7 +387,7 @@ func Validate(workflowDir string) []Error {
 	}
 
 	// Validate initialize; collect captureAs names for the persistent scope.
-	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs)
+	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs, companions)
 
 	// Persistent scope = initialize seeds + all captureAs from initialize.
 	persistentScope := copyScope(initScope)
@@ -303,10 +399,10 @@ func Validate(workflowDir string) []Error {
 	iterScope := copyScope(persistentScope)
 	iterScope["ITER"] = true
 
-	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs)
+	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs, companions)
 
 	// Finalize scope = persistent only (no ITER, no iteration captures).
-	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs)
+	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs, companions)
 
 	return errs
 }
@@ -320,6 +416,7 @@ func validatePhase(
 	steps []vStep,
 	initialScope map[string]bool,
 	errs *[]Error,
+	companions map[string][]byte,
 ) []string {
 	seenNames := make(map[string]bool)
 	seenCaptureAs := make(map[string]bool)
@@ -542,8 +639,11 @@ func validatePhase(
 				absPath, pathErr := safePromptPath(workflowDir, step.PromptFile)
 				if pathErr != nil {
 					*errs = append(*errs, at("file", pathErr.Error()))
-				} else if _, err := os.Stat(absPath); err != nil {
-					*errs = append(*errs, at("file", fmt.Sprintf("prompt file %q not found", step.PromptFile)))
+				} else {
+					relKey := filepath.Join("prompts", step.PromptFile)
+					if !statCompanionOrDisk(companions, relKey, absPath) {
+						*errs = append(*errs, at("file", fmt.Sprintf("prompt file %q not found", step.PromptFile)))
+					}
 				}
 			}
 			if !isClaude && len(step.Command) > 0 {
@@ -562,7 +662,8 @@ func validatePhase(
 		// as {{{{WORKFLOW_DIR}}}} which should not be flagged.
 		if isClaude && step.PromptFile != "" {
 			if absPath, pathErr := safePromptPath(workflowDir, step.PromptFile); pathErr == nil {
-				if data, err := os.ReadFile(absPath); err == nil {
+				relKey := filepath.Join("prompts", step.PromptFile)
+				if data, readErr := readCompanionOrDisk(companions, relKey, absPath); readErr == nil {
 					refs := vars.ExtractReferences(string(data))
 					hasWorkflowDir, hasProjectDir := false, false
 					for _, ref := range refs {
@@ -609,7 +710,7 @@ func validatePhase(
 
 		// Category 5 — variable references must be in scope.
 		if step.IsClaude != nil {
-			refs := extractStepRefs(workflowDir, step, isClaude)
+			refs := extractStepRefs(workflowDir, step, isClaude, companions)
 			for _, ref := range refs {
 				if !scope[ref] {
 					*errs = append(*errs, at("variable", fmt.Sprintf("unresolved variable reference {{%s}}", ref)))
@@ -637,7 +738,9 @@ func validatePhase(
 
 // validateCommandPath checks that cmd (command[0]) is resolvable.
 // A path containing "/" is treated as relative (resolved under workflowDir) or
-// absolute.  A bare name is looked up via exec.LookPath.
+// absolute. A bare name is looked up via exec.LookPath.
+// OI-1: relative paths are additionally checked via EvalSymlinks + containment
+// against the resolved parent directory to reject file-level symlink escapes.
 func validateCommandPath(workflowDir, cmd string) string {
 	// Uses "/" as path separator; assumes Unix. Revise if Windows support is added.
 	if strings.Contains(cmd, "/") {
@@ -647,8 +750,30 @@ func validateCommandPath(workflowDir, cmd string) string {
 		} else {
 			resolved = filepath.Join(workflowDir, cmd)
 		}
-		if _, err := os.Stat(resolved); err != nil {
+
+		if filepath.IsAbs(cmd) {
+			// Absolute paths: existence check only.
+			if _, err := os.Stat(resolved); err != nil {
+				return fmt.Sprintf("command %q not found at %s", cmd, resolved)
+			}
+			return ""
+		}
+
+		// Relative paths: OI-1 EvalSymlinks + containment check.
+		realCmd, err := filepath.EvalSymlinks(resolved)
+		if err != nil {
+			// File does not exist.
 			return fmt.Sprintf("command %q not found at %s", cmd, resolved)
+		}
+		// Resolve the command's immediate parent directory via symlinks.
+		parentDir := filepath.Dir(resolved)
+		realParent, err := filepath.EvalSymlinks(parentDir)
+		if err != nil {
+			realParent = parentDir
+		}
+		// Check that the resolved command is within its resolved parent directory.
+		if !strings.HasPrefix(realCmd, realParent+string(filepath.Separator)) {
+			return fmt.Sprintf("command %q escapes its directory", cmd)
 		}
 		return ""
 	}
@@ -660,9 +785,9 @@ func validateCommandPath(workflowDir, cmd string) string {
 
 // extractStepRefs returns the variable names referenced by {{VAR}} tokens in
 // the step's prompt file (for claude steps) or command arguments (for non-claude
-// steps).  If the prompt file cannot be read, nil is returned — a missing file
+// steps). If the prompt file cannot be read, nil is returned — a missing file
 // is already reported by category 4.
-func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
+func extractStepRefs(workflowDir string, step vStep, isClaude bool, companions map[string][]byte) []string {
 	if isClaude {
 		if step.PromptFile == "" {
 			return nil
@@ -671,7 +796,8 @@ func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 		if err != nil {
 			return nil
 		}
-		data, err := os.ReadFile(absPath)
+		relKey := filepath.Join("prompts", step.PromptFile)
+		data, err := readCompanionOrDisk(companions, relKey, absPath)
 		if err != nil {
 			return nil
 		}
@@ -685,9 +811,10 @@ func extractStepRefs(workflowDir string, step vStep, isClaude bool) []string {
 }
 
 // safePromptPath resolves the named prompt file under workflowDir/prompts and
-// returns its absolute path. It returns an error if the path escapes the
-// prompts directory (e.g. via ".." traversal), preventing path-traversal
-// attacks where a malicious config.json could read arbitrary host files.
+// returns its absolute path. It returns an error if the resolved path escapes
+// the resolved prompts directory (OI-1: EvalSymlinks on both sides prevents
+// file-level symlink traversal attacks while allowing directory-level symlinks
+// like the test bundle pattern <tempdir>/prompts → <repo>/workflow/prompts).
 func safePromptPath(workflowDir, promptFile string) (string, error) {
 	promptPath := filepath.Join(workflowDir, "prompts", promptFile)
 	absPath, err := filepath.Abs(promptPath)
@@ -698,10 +825,49 @@ func safePromptPath(workflowDir, promptFile string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not resolve prompts directory: %w", err)
 	}
-	if !strings.HasPrefix(absPath, absPrompts+string(filepath.Separator)) {
+
+	// OI-1: resolve symlinks on both sides before the containment check.
+	// If EvalSymlinks fails on the candidate (file doesn't exist yet), fall
+	// back to the abs path — a non-existent file cannot escape via symlink.
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		resolvedPath = absPath
+	}
+	resolvedPrompts, err := filepath.EvalSymlinks(absPrompts)
+	if err != nil {
+		resolvedPrompts = absPrompts
+	}
+
+	if !strings.HasPrefix(resolvedPath, resolvedPrompts+string(filepath.Separator)) {
 		return "", fmt.Errorf("prompt path escapes prompts directory: %s", promptFile)
 	}
 	return absPath, nil
+}
+
+// statCompanionOrDisk reports whether the file at relKey (companion map key,
+// path relative to workflowDir, e.g. "prompts/step-1.md") exists. When the key
+// is present in the companion map the file is considered to exist in memory.
+// Otherwise os.Stat(diskPath) is used.
+func statCompanionOrDisk(companions map[string][]byte, relKey, diskPath string) bool {
+	if companions != nil {
+		if _, ok := companions[relKey]; ok {
+			return true
+		}
+	}
+	_, err := os.Stat(diskPath)
+	return err == nil
+}
+
+// readCompanionOrDisk returns the contents of the file at relKey. When the key
+// is present in the companion map the in-memory bytes are returned directly.
+// Otherwise os.ReadFile(diskPath) is used.
+func readCompanionOrDisk(companions map[string][]byte, relKey, diskPath string) ([]byte, error) {
+	if companions != nil {
+		if data, ok := companions[relKey]; ok {
+			return data, nil
+		}
+	}
+	return os.ReadFile(diskPath)
 }
 
 // cfgErr constructs a validation Error.
