@@ -8,6 +8,23 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 )
 
+// --- validate function helpers ---
+
+// noFindings is a validateFn that returns zero findings (validation passes).
+var noFindings = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) []findingResult {
+	return nil
+}
+
+// fatalFindings is a validateFn that returns one fatal finding.
+var fatalFindings = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) []findingResult {
+	return []findingResult{{text: "config error: schema: step model is required", isFatal: true}}
+}
+
+// warnFindings is a validateFn that returns one non-fatal warning.
+var warnFindings = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) []findingResult {
+	return []findingResult{{text: "config warning: schema: captureAs has no consumer", isFatal: false}}
+}
+
 // --- fake SaveFS ---
 
 type fakeFS struct {

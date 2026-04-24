@@ -274,31 +274,41 @@ func TestModel_Mode_17_DetailFocus_Leave_ReMasksField(t *testing.T) {
 // Part C — Save-flow modes
 // ============================================================
 
-// TestModel_Mode_18 — Ctrl+S with valid doc → saveInProgress, then complete
+// TestModel_Mode_18 — Ctrl+S with valid doc → 3-stage: validate → save → complete
 func TestModel_Mode_18_CtrlS_ValidDoc_SaveSequence(t *testing.T) {
 	m := newLoadedModel(sampleStep("s1"))
-	m.validateFn = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) (bool, any) {
-		return false, nil
+	m.validateFn = noFindings
+
+	// Stage 1: Ctrl+S → validateInProgress=true
+	next1, validateCmd := m.Update(keyCtrlS())
+	got1 := next1.(Model)
+	if !got1.validateInProgress {
+		t.Fatal("want validateInProgress=true after Ctrl+S")
 	}
-	next, cmd := m.Update(keyCtrlS())
-	got := next.(Model)
-	if !got.saveInProgress {
-		t.Fatal("want saveInProgress=true after Ctrl+S")
+	if validateCmd == nil {
+		t.Fatal("want validate cmd")
 	}
-	if cmd == nil {
-		t.Fatal("want a non-nil save cmd")
+
+	// Stage 2: validate completes → saveInProgress=true
+	next2, saveCmd := got1.Update(validateCmd())
+	got2 := next2.(Model)
+	if !got2.saveInProgress {
+		t.Fatal("want saveInProgress=true after validation")
 	}
-	// Execute the save cmd.
-	msg := cmd()
-	got2 := applyMsg(got, msg)
-	if got2.saveInProgress {
+	if saveCmd == nil {
+		t.Fatal("want save cmd")
+	}
+
+	// Stage 3: save completes
+	got3 := applyMsg(got2, saveCmd())
+	if got3.saveInProgress {
 		t.Error("saveInProgress should be false after save completes")
 	}
-	if got2.dirty {
+	if got3.dirty {
 		t.Error("dirty should be false after successful save")
 	}
-	if !strings.Contains(got2.saveBanner, "Saved") {
-		t.Errorf("expected save banner, got %q", got2.saveBanner)
+	if !strings.Contains(got3.saveBanner, "Saved") {
+		t.Errorf("expected save banner, got %q", got3.saveBanner)
 	}
 }
 
@@ -347,18 +357,31 @@ func TestModel_Mode_21_DialogSaveInProgress_SaveComplete_EntersQuitFlow(t *testi
 	}
 }
 
-// TestModel_Mode_22 — Ctrl+S with validator fatals → DialogFindingsPanel
+// TestModel_Mode_22 — Ctrl+S with validator fatals → async validate → DialogFindingsPanel
 func TestModel_Mode_22_CtrlS_ValidatorFatals_ShowsFindingsPanel(t *testing.T) {
 	m := newLoadedModel(sampleStep("s1"))
-	m.validateFn = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) (bool, any) {
-		return true, nil // has fatals
+	m.validateFn = fatalFindings
+
+	// Stage 1: Ctrl+S → validateInProgress=true
+	next1, validateCmd := m.Update(keyCtrlS())
+	got1 := next1.(Model)
+	if !got1.validateInProgress {
+		t.Fatal("want validateInProgress=true after Ctrl+S")
 	}
-	got := applyKey(m, keyCtrlS())
-	if got.dialog.kind != DialogFindingsPanel {
-		t.Fatalf("want DialogFindingsPanel, got %d", got.dialog.kind)
+	if validateCmd == nil {
+		t.Fatal("want validate cmd")
 	}
-	if got.saveInProgress {
+
+	// Stage 2: validate completes with fatals → DialogFindingsPanel
+	got2 := applyMsg(got1, validateCmd())
+	if got2.dialog.kind != DialogFindingsPanel {
+		t.Fatalf("want DialogFindingsPanel after fatal findings, got %d", got2.dialog.kind)
+	}
+	if got2.saveInProgress {
 		t.Error("saveInProgress should remain false when validation fails")
+	}
+	if got2.validateInProgress {
+		t.Error("validateInProgress should be false after validation")
 	}
 }
 
@@ -424,9 +447,7 @@ func TestModel_Mode_27_DialogUnsavedChanges_S_WithFatals_ShowsFindings(t *testin
 	m := newLoadedModel(sampleStep("s1"))
 	m.dirty = true
 	m.dialog = dialogState{kind: DialogUnsavedChanges}
-	m.validateFn = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) (bool, any) {
-		return true, nil
-	}
+	m.validateFn = fatalFindings
 	got := applyKey(m, keyRune('s'))
 	if got.dialog.kind != DialogFindingsPanel {
 		t.Fatalf("want DialogFindingsPanel, got %d", got.dialog.kind)

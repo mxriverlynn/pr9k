@@ -43,8 +43,12 @@ type Model struct {
 	dialog   dialogState
 	helpOpen bool
 
-	saveInProgress bool
-	pendingQuit    bool
+	validateInProgress bool
+	saveInProgress     bool
+	pendingQuit        bool
+	saveSnapshot       *workflowio.SaveSnapshot // nil until first successful save
+
+	findingsPanel findingsPanel
 
 	outline outlinePanel
 	detail  detailPane
@@ -60,7 +64,7 @@ type Model struct {
 	saveBanner string // "Saved at HH:MM:SS" after a successful save
 
 	// validateFn overrides the real validator when non-nil; used by tests.
-	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) (bool, any)
+	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
 }
 
 // New constructs a workflow-builder Model with the provided dependency
@@ -157,6 +161,8 @@ func (m Model) renderDialog() string {
 		return "Quit? Yes / No"
 	case DialogFindingsPanel:
 		return "Findings: validation errors found"
+	case DialogAcknowledgeFindings:
+		return "Validation warnings: acknowledge and save (Enter/y) or cancel (Esc)"
 	case DialogSaveInProgress:
 		return "Save in progress — please wait"
 	case DialogRemoveConfirm:
@@ -218,6 +224,8 @@ func (m Model) updateDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDialogRemoveConfirm(msg)
 	case DialogFindingsPanel:
 		return m.updateDialogFindings(msg)
+	case DialogAcknowledgeFindings:
+		return m.updateDialogAcknowledgeFindings(msg)
 	case DialogQuitConfirm:
 		return m.updateDialogQuitConfirm(msg)
 	case DialogUnsavedChanges:
@@ -353,6 +361,35 @@ func (m Model) updateDialogFindings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.focus = m.prevFocus
 	case string(km.Runes) == "?":
 		m.helpOpen = true
+	case km.Type == tea.KeyDown:
+		m.findingsPanel.vp.ScrollDown(1)
+	case km.Type == tea.KeyUp:
+		m.findingsPanel.vp.ScrollUp(1)
+	case km.Type == tea.KeyEnter:
+		// Jump to the first finding's referenced step (if any).
+		stepIdx := m.findingsPanel.firstStepIdx()
+		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+			m.outline.cursor = stepIdx
+		}
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	}
+	return m, nil
+}
+
+func (m Model) updateDialogAcknowledgeFindings(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch {
+	case km.Type == tea.KeyEsc, string(km.Runes) == "c":
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	case string(km.Runes) == "y", km.Type == tea.KeyEnter:
+		m.dialog = dialogState{}
+		m.saveInProgress = true
+		return m, m.makeSaveCmd()
 	}
 	return m, nil
 }
@@ -385,9 +422,10 @@ func (m Model) updateDialogUnsavedChanges(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case string(km.Runes) == "d":
 		return m, tea.Quit
 	case string(km.Runes) == "s":
-		hasFatals, errs := m.runValidate()
+		hasFatals, items := m.runValidate()
 		if hasFatals {
-			m.dialog = dialogState{kind: DialogFindingsPanel, payload: errs}
+			m.findingsPanel = buildFindingsPanel(items, m.doc.Steps, m.findingsPanel)
+			m.dialog = dialogState{kind: DialogFindingsPanel}
 		} else {
 			cmd := m.makeSaveCmd()
 			m.saveInProgress = true
@@ -405,18 +443,7 @@ func (m Model) updateDialogSaveInProgress(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.dialog = dialogState{}
-	m.saveInProgress = false
-	if scm.result.Err == nil {
-		m.dirty = false
-		if scm.result.Snapshot != nil {
-			m.diskDoc = m.doc
-		}
-		if m.pendingQuit {
-			m.pendingQuit = false
-			return m, tea.Quit
-		}
-	}
-	return m, nil
+	return m.handleSaveResult(scm)
 }
 
 func (m Model) updateDialogRecovery(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -438,6 +465,7 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prevFocus = m.focus
 		m.menu.open = !m.menu.open
 	case tea.KeyCtrlN:
+		m.saveSnapshot = nil // F-98: reset snapshot on session transition
 		m.prevFocus = m.focus
 		m.dialog = dialogState{kind: DialogNewChoice}
 	case tea.KeyCtrlO:
@@ -445,23 +473,26 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 		defaultPath := filepath.Join(m.projectDir, ".pr9k", "workflow", "config.json")
 		m.dialog = dialogState{kind: DialogPathPicker, payload: newPathPicker(defaultPath)}
 	case tea.KeyCtrlS:
-		if m.saveInProgress {
+		if m.validateInProgress || m.saveInProgress {
 			return m, nil
 		}
 		if !m.loaded {
 			return m, nil
 		}
-		hasFatals, errs := m.runValidate()
-		if hasFatals {
-			m.prevFocus = m.focus
-			m.dialog = dialogState{kind: DialogFindingsPanel, payload: errs}
-			return m, nil
+		// D-41 snapshot compare: if mtime changed since last save, conflict detected.
+		if m.saveSnapshot != nil {
+			configPath := filepath.Join(m.workflowDir, "config.json")
+			fi, err := m.saveFS.Stat(configPath)
+			if err == nil && !m.saveSnapshot.ModTime.Equal(fi.ModTime()) {
+				m.prevFocus = m.focus
+				m.dialog = dialogState{kind: DialogFileConflict}
+				return m, nil
+			}
 		}
-		cmd := m.makeSaveCmd()
-		m.saveInProgress = true
-		return m, cmd
+		m.validateInProgress = true
+		return m, m.makeValidateCmd()
 	case tea.KeyCtrlQ:
-		if m.saveInProgress {
+		if m.saveInProgress || m.validateInProgress {
 			m.prevFocus = m.focus
 			m.dialog = dialogState{kind: DialogSaveInProgress}
 			m.pendingQuit = true
@@ -485,6 +516,8 @@ func (m Model) updateEditView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 	case tea.WindowSizeMsg:
 		return m.handleWindowSize(msg)
+	case validateCompleteMsg:
+		return m.handleValidateComplete(msg)
 	case saveCompleteMsg:
 		return m.handleSaveComplete(msg)
 	case openFileResultMsg:
@@ -673,18 +706,55 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleValidateComplete processes the result of the async validation command.
+// Step 3–5 of the three-stage save state machine (D-13).
+func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.Cmd) {
+	m.validateInProgress = false
+	for _, item := range msg.items {
+		if item.isFatal {
+			// Fatal findings block save.
+			m.prevFocus = m.focus
+			m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
+			m.dialog = dialogState{kind: DialogFindingsPanel}
+			return m, nil
+		}
+	}
+	if len(msg.items) > 0 {
+		// Warn/info-only findings: show acknowledgment dialog.
+		m.prevFocus = m.focus
+		m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
+		m.dialog = dialogState{kind: DialogAcknowledgeFindings}
+		return m, nil
+	}
+	// Zero findings: proceed directly to save.
+	m.saveInProgress = true
+	return m, m.makeSaveCmd()
+}
+
 func (m Model) handleSaveComplete(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
+	return m.handleSaveResult(msg)
+}
+
+// handleSaveResult is the shared save-completion handler used by both the
+// normal path (handleSaveComplete) and the DialogSaveInProgress path.
+func (m Model) handleSaveResult(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
 	m.saveInProgress = false
-	if msg.result.Err == nil {
-		m.dirty = false
-		if msg.result.Snapshot != nil {
-			m.diskDoc = m.doc
-		}
-		m.saveBanner = "Saved at " + time.Now().Format("15:04:05")
-		if m.pendingQuit {
-			m.pendingQuit = false
-			return m, tea.Quit
-		}
+	if msg.result.Kind != workflowio.SaveErrorNone {
+		m.prevFocus = m.focus
+		m.dialog = dialogState{kind: DialogError, payload: saveErrorMsg(msg.result)}
+		m.pendingQuit = false
+		return m, nil
+	}
+	// Success.
+	m.dirty = false
+	m.saveSnapshot = msg.result.Snapshot
+	if msg.result.Snapshot != nil {
+		m.diskDoc = m.doc
+	}
+	m.saveBanner = "Saved at " + time.Now().Format("15:04:05")
+	if m.pendingQuit {
+		m.pendingQuit = false
+		return m, tea.Quit
 	}
 	return m, nil
 }
@@ -705,22 +775,61 @@ func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) 
 	m.loaded = true
 	m.dirty = false
 	m.outline.cursor = 0
+	m.saveSnapshot = nil // F-98: reset snapshot on session transition
 	return m, nil
 }
 
-// runValidate runs validation and returns (hasFatals, errorsPayload).
-// workflowedit does not import internal/validator directly (D-4).
-func (m Model) runValidate() (bool, any) {
+// runValidate runs validation synchronously (used by the UnsavedChanges dialog
+// path). The async Ctrl+S path uses makeValidateCmd instead.
+func (m Model) runValidate() (bool, []findingResult) {
 	if m.validateFn != nil {
-		return m.validateFn(m.doc, m.workflowDir, m.companions)
+		items := m.validateFn(m.doc, m.workflowDir, m.companions)
+		for _, item := range items {
+			if item.isFatal {
+				return true, items
+			}
+		}
+		return false, items
 	}
 	errs := workflowvalidate.Validate(m.doc, m.workflowDir, m.companions)
-	for _, e := range errs {
-		if e.IsFatal() {
-			return true, errs
+	items := make([]findingResult, len(errs))
+	for i, e := range errs {
+		items[i] = findingResult{
+			text:     e.Error(),
+			isFatal:  e.IsFatal(),
+			stepName: e.StepName,
 		}
 	}
-	return false, errs
+	for _, item := range items {
+		if item.isFatal {
+			return true, items
+		}
+	}
+	return false, items
+}
+
+// makeValidateCmd returns a tea.Cmd that runs validation asynchronously.
+// It deep-copies doc and snapshots companions so the goroutine has its own data.
+func (m Model) makeValidateCmd() tea.Cmd {
+	docCopy := deepCopyDoc(m.doc)
+	companionsCopy := snapshotCompanions(m)
+	workflowDir := m.workflowDir
+	vfn := m.validateFn
+	return func() tea.Msg {
+		if vfn != nil {
+			return validateCompleteMsg{items: vfn(docCopy, workflowDir, companionsCopy)}
+		}
+		errs := workflowvalidate.Validate(docCopy, workflowDir, companionsCopy)
+		items := make([]findingResult, len(errs))
+		for i, e := range errs {
+			items[i] = findingResult{
+				text:     e.Error(),
+				isFatal:  e.IsFatal(),
+				stepName: e.StepName,
+			}
+		}
+		return validateCompleteMsg{items: items}
+	}
 }
 
 // makeSaveCmd returns a tea.Cmd that performs the async save.
@@ -734,6 +843,76 @@ func (m Model) makeSaveCmd() tea.Cmd {
 		result := workflowio.Save(saveFS, workflowDir, diskDoc, doc, companions)
 		return saveCompleteMsg{result: result}
 	}
+}
+
+// saveErrorMsg returns a human-readable error message for a failed save result.
+func saveErrorMsg(result workflowio.SaveResult) string {
+	switch result.Kind {
+	case workflowio.SaveErrorPermission:
+		return "Permission denied saving workflow. Check file permissions and try again."
+	case workflowio.SaveErrorDiskFull:
+		return "Disk full. Free up space and try again."
+	case workflowio.SaveErrorEXDEV:
+		return "Cannot save across devices. The workflow directory must be on the same filesystem."
+	case workflowio.SaveErrorSymlinkEscape:
+		return "Save rejected: symlink would escape the workflow directory."
+	case workflowio.SaveErrorTargetNotRegularFile:
+		return "Save rejected: target is not a regular file (FIFO, socket, or device)."
+	case workflowio.SaveErrorParse:
+		if result.Err != nil {
+			return "Marshal error serializing workflow: " + result.Err.Error()
+		}
+		return "Marshal error serializing workflow."
+	case workflowio.SaveErrorConflictDetected:
+		return "File conflict: the workflow was modified externally. Reload or overwrite."
+	default:
+		if result.Err != nil {
+			return "Save error: " + result.Err.Error()
+		}
+		return "Save error."
+	}
+}
+
+// deepCopyDoc returns a deep copy of doc so the caller can mutate it safely
+// without affecting the original. Used by makeValidateCmd.
+func deepCopyDoc(doc workflowmodel.WorkflowDoc) workflowmodel.WorkflowDoc {
+	cp := workflowmodel.WorkflowDoc{
+		DefaultModel: doc.DefaultModel,
+	}
+	if doc.StatusLine != nil {
+		sl := *doc.StatusLine
+		cp.StatusLine = &sl
+	}
+	if len(doc.Steps) > 0 {
+		cp.Steps = make([]workflowmodel.Step, len(doc.Steps))
+		for i, s := range doc.Steps {
+			cs := s
+			if len(s.Command) > 0 {
+				cs.Command = make([]string, len(s.Command))
+				copy(cs.Command, s.Command)
+			}
+			if len(s.Env) > 0 {
+				cs.Env = make([]workflowmodel.EnvEntry, len(s.Env))
+				copy(cs.Env, s.Env)
+			}
+			cp.Steps[i] = cs
+		}
+	}
+	return cp
+}
+
+// snapshotCompanions returns a deep copy of the companions map.
+func snapshotCompanions(m Model) map[string][]byte {
+	if len(m.companions) == 0 {
+		return nil
+	}
+	cp := make(map[string][]byte, len(m.companions))
+	for k, v := range m.companions {
+		bv := make([]byte, len(v))
+		copy(bv, v)
+		cp[k] = bv
+	}
+	return cp
 }
 
 // outlineWidth computes the outline panel's column count for the given total

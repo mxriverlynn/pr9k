@@ -19,6 +19,7 @@ const (
 	DialogFileConflict                            // mtime-mismatch: overwrite / reload / cancel
 	DialogSaveInProgress                          // save running while quit was requested
 	DialogRecovery                                // malformed config.json recovery view
+	DialogAcknowledgeFindings                     // warn/info-only findings: proceed or cancel
 )
 
 // dialogState holds the active dialog's kind and any kind-specific payload.

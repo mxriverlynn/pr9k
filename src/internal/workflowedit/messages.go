@@ -5,6 +5,11 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 )
 
+// validateCompleteMsg is dispatched when the async validation command finishes.
+type validateCompleteMsg struct {
+	items []findingResult
+}
+
 // saveCompleteMsg is dispatched when the async save command finishes.
 type saveCompleteMsg struct {
 	result workflowio.SaveResult
