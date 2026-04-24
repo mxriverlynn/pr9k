@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/src/internal/validator"
+	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 )
 
 // ----------------------------------------------------------------------------
@@ -2709,5 +2710,335 @@ func TestValidate_ResumePrevious_NonClaudePrev_WarnsFastFeedback(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected warning about non-claude previous step falling through G1; got: %v", errs)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// OI-1 hardening: safePromptPath EvalSymlinks + containment
+// ----------------------------------------------------------------------------
+
+// TestSafePromptPath_DirectorySymlinkInsideBundle_Allowed verifies that a
+// directory-level symlink (like the one assembleWorkflowDir uses) is accepted.
+// prompts/ → external-real-prompts-dir; resolved content stays within the
+// resolved prompts root — no false escape error.
+func TestSafePromptPath_DirectorySymlinkInsideBundle_Allowed(t *testing.T) {
+	// Real prompts dir lives outside the workflowDir (temp dir).
+	realPrompts := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realPrompts, "p.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	// prompts/ is a directory symlink to the external real-prompts dir.
+	if err := os.Symlink(realPrompts, filepath.Join(dir, "prompts")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "escapes") {
+			t.Errorf("directory symlink inside bundle should not produce escape error: %s", e.Error())
+		}
+	}
+}
+
+// TestSafePromptPath_SymlinkEscapesBundle_Rejected verifies that a file-level
+// symlink that resolves outside the prompts directory is rejected.
+func TestSafePromptPath_SymlinkEscapesBundle_Rejected(t *testing.T) {
+	// A file that lives outside the bundle.
+	outsideFile := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := tempProject(t)
+	// evil.md → file outside the prompts directory.
+	if err := os.Symlink(outsideFile, filepath.Join(dir, "prompts", "evil.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"evil.md"}],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "escapes") {
+		t.Errorf("expected escape error for file symlink outside bundle; got: %v", errs)
+	}
+}
+
+// TestSafePromptPath_SymlinkToEtcPasswd_Rejected verifies that a prompt file
+// symlinked to /etc/passwd (or an equivalent outside-bundle target) is rejected.
+func TestSafePromptPath_SymlinkToEtcPasswd_Rejected(t *testing.T) {
+	// Use a file outside the temp dir as the escape target — /etc/passwd if
+	// it exists, otherwise a freshly written file in a separate temp dir.
+	escapeTarget := "/etc/passwd"
+	if _, err := os.Stat(escapeTarget); err != nil {
+		other := t.TempDir()
+		escapeTarget = filepath.Join(other, "passwd")
+		if err2 := os.WriteFile(escapeTarget, []byte("root:x:0:0"), 0o644); err2 != nil {
+			t.Fatal(err2)
+		}
+	}
+
+	dir := tempProject(t)
+	if err := os.Symlink(escapeTarget, filepath.Join(dir, "prompts", "escape.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"escape.md"}],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "escapes") {
+		t.Errorf("expected escape error for symlink to %s; got: %v", escapeTarget, errs)
+	}
+}
+
+// TestValidateCommandPath_SymlinkEscape_Rejected verifies that a command script
+// with a file-level symlink that resolves outside the scripts directory is rejected.
+func TestValidateCommandPath_SymlinkEscape_Rejected(t *testing.T) {
+	// A target outside workflowDir.
+	outside := filepath.Join(t.TempDir(), "outside-binary")
+	if err := os.WriteFile(outside, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	dir := tempProject(t)
+	// scripts/evil → file outside scripts/.
+	if err := os.Symlink(outside, filepath.Join(dir, "scripts", "evil")); err != nil {
+		t.Fatal(err)
+	}
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":false,"command":["scripts/evil"]}],
+		"finalize": []
+	}`)
+
+	errs := validator.Validate(dir)
+	if !hasError(errs, "escapes") {
+		t.Errorf("expected escape error for command symlink outside scripts dir; got: %v", errs)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// ValidateDoc entry point
+// ----------------------------------------------------------------------------
+
+// TestValidateDoc_EquivalentToValidate verifies that ValidateDoc with nil
+// companions and a doc derived from the same config produces identical errors
+// to Validate (D-37).
+func TestValidateDoc_EquivalentToValidate(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "p.md", "do something {{STEP_NAME}}")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+
+	errsFromValidate := validator.Validate(dir)
+	doc := workflowmodel.WorkflowDoc{}
+	errsFromDoc := validator.ValidateDoc(doc, dir, nil)
+
+	if len(errsFromValidate) != len(errsFromDoc) {
+		t.Fatalf("ValidateDoc returned %d errors, Validate returned %d; want equal\nValidate: %v\nValidateDoc: %v",
+			len(errsFromDoc), len(errsFromValidate), errsFromValidate, errsFromDoc)
+	}
+	for i := range errsFromValidate {
+		if errsFromValidate[i].Error() != errsFromDoc[i].Error() {
+			t.Errorf("error[%d] mismatch:\n  Validate:    %s\n  ValidateDoc: %s",
+				i, errsFromValidate[i].Error(), errsFromDoc[i].Error())
+		}
+	}
+}
+
+// TestValidateDoc_CompanionFileMap_UsesInMemoryBytes verifies that when the
+// companion map has key "prompts/step-1.md", the validator uses the in-memory
+// bytes and does not require the file to exist on disk.
+func TestValidateDoc_CompanionFileMap_UsesInMemoryBytes(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"step-1.md"}],
+		"finalize": []
+	}`)
+	// Do NOT create prompts/step-1.md on disk.
+	companions := map[string][]byte{"prompts/step-1.md": []byte("do something")}
+
+	errs := validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+	if hasError(errs, "not found") {
+		t.Errorf("expected no not-found error when companion provides the file; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_CompanionMap_MissingKey_FallsBackToDisk verifies that when
+// the companion map does NOT contain the prompt file key, the validator reads
+// from disk as usual.
+func TestValidateDoc_CompanionMap_MissingKey_FallsBackToDisk(t *testing.T) {
+	dir := tempProject(t)
+	writePrompt(t, dir, "step-1.md", "do something")
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"step-1.md"}],
+		"finalize": []
+	}`)
+	// Companion has a different key — validator must fall back to disk.
+	companions := map[string][]byte{"prompts/other.md": []byte("irrelevant")}
+
+	errs := validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+	if hasError(errs, "not found") {
+		t.Errorf("expected no not-found error when file exists on disk; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_EmptyScaffoldPasses verifies that the Empty() scaffold with
+// an in-memory companion for its placeholder step passes validation with no
+// fatal errors.
+func TestValidateDoc_EmptyScaffoldPasses(t *testing.T) {
+	dir := tempProject(t)
+	// Write a minimal config that matches the Empty() scaffold structure.
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"step-1","isClaude":true,"model":"claude-sonnet-4-6","promptFile":"step-1.md"}],
+		"finalize": []
+	}`)
+	// Provide in-memory content for the placeholder prompt (not on disk).
+	companions := map[string][]byte{"prompts/step-1.md": []byte{}}
+
+	doc := workflowmodel.Empty()
+	errs := validator.ValidateDoc(doc, dir, companions)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("Empty scaffold should produce no fatal errors; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_BareFilenameKey_FallsBackToDisk pins the key convention (F-121):
+// a bare filename key ("step-1.md") is a cache miss; the validator falls through
+// to disk. If the file does not exist on disk, a not-found error is produced.
+func TestValidateDoc_BareFilenameKey_FallsBackToDisk(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"step-1.md"}],
+		"finalize": []
+	}`)
+	// Do NOT create prompts/step-1.md on disk.
+	// Companion uses the BARE filename — this is a cache miss per F-121.
+	companions := map[string][]byte{"step-1.md": []byte("ignored")}
+
+	errs := validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+	if !hasError(errs, "not found") {
+		t.Errorf("bare filename key should be a cache miss; expected not-found error; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_DoesNotWriteToDisk verifies that ValidateDoc is a read-only
+// operation and leaves no new files behind.
+func TestValidateDoc_DoesNotWriteToDisk(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	// Companion provides the prompt in memory; no disk file.
+	companions := map[string][]byte{"prompts/p.md": []byte("do work")}
+
+	_ = validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+
+	// p.md must not have been created on disk.
+	if _, err := os.Stat(filepath.Join(dir, "prompts", "p.md")); !os.IsNotExist(err) {
+		t.Errorf("ValidateDoc must not write files to disk (prompts/p.md found)")
+	}
+}
+
+// ----------------------------------------------------------------------------
+// ValidateDoc — scaffold fallback + Rule B companion bytes (gap tests)
+// ----------------------------------------------------------------------------
+
+// TestValidateDoc_ScaffoldFallback_ClaudeStepValidated verifies that when no
+// config.json is present and doc.Steps is non-empty, the scaffold fallback
+// (docToVFile) path is exercised and a valid claude step produces no fatal errors.
+// This is the primary builder pre-save use case (all 6 prior ValidateDoc tests
+// write config.json first, leaving this path uncovered).
+func TestValidateDoc_ScaffoldFallback_ClaudeStepValidated(t *testing.T) {
+	dir := tempProject(t)
+	// Deliberately do NOT write config.json — force scaffold fallback.
+
+	doc := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{
+				Name:        "step-1",
+				Kind:        workflowmodel.StepKindClaude,
+				IsClaudeSet: true,
+				Model:       "sonnet",
+				PromptFile:  "step-1.md",
+			},
+		},
+	}
+	companions := map[string][]byte{"prompts/step-1.md": []byte("do some work")}
+
+	errs := validator.ValidateDoc(doc, dir, companions)
+	if validator.FatalErrorCount(errs) > 0 {
+		t.Errorf("scaffold fallback with valid claude step should produce no fatal errors; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_ScaffoldFallback_SchemaViolationSurfaces verifies that
+// validation errors fire from the scaffold fallback path. A claude step with no
+// model should produce a schema error — confirming docToVFile and validateVFile
+// are both reached, not just docToVFile (struct construction).
+func TestValidateDoc_ScaffoldFallback_SchemaViolationSurfaces(t *testing.T) {
+	dir := tempProject(t)
+	// Deliberately do NOT write config.json — force scaffold fallback.
+
+	doc := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{
+				Name:        "step-1",
+				Kind:        workflowmodel.StepKindClaude,
+				IsClaudeSet: true,
+				Model:       "", // missing model — schema violation
+				PromptFile:  "step-1.md",
+			},
+		},
+	}
+	companions := map[string][]byte{"prompts/step-1.md": []byte("do some work")}
+
+	errs := validator.ValidateDoc(doc, dir, companions)
+	if !hasError(errs, "non-empty model") {
+		t.Errorf("scaffold fallback should surface schema error for missing model; got: %v", errs)
+	}
+}
+
+// TestValidateDoc_CompanionBytesScannedForRuleB verifies that readCompanionOrDisk
+// uses companion bytes (not disk) when scanning prompt files for Rule B token bans
+// ({{WORKFLOW_DIR}}, {{PROJECT_DIR}}). All 6 prior ValidateDoc tests only exercise
+// statCompanionOrDisk (file existence); this covers the read path.
+func TestValidateDoc_CompanionBytesScannedForRuleB(t *testing.T) {
+	dir := tempProject(t)
+	writeStepsJSON(t, dir, `{
+		"initialize": [],
+		"iteration": [{"name":"s","isClaude":true,"model":"sonnet","promptFile":"p.md"}],
+		"finalize": []
+	}`)
+	// Companion bytes contain a banned token — no disk file exists.
+	companions := map[string][]byte{"prompts/p.md": []byte("path: {{WORKFLOW_DIR}}/bin")}
+
+	errs := validator.ValidateDoc(workflowmodel.WorkflowDoc{}, dir, companions)
+	if !hasError(errs, "WORKFLOW_DIR") {
+		t.Errorf("Rule B should fire on companion bytes containing {{WORKFLOW_DIR}}; got: %v", errs)
 	}
 }

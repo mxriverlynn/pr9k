@@ -276,10 +276,37 @@ All errors are written to stderr followed by a `Run 'pr9k --help' for usage.` hi
 
 ```
 pr9k [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
+pr9k workflow [--workflow-dir <path>] [--project-dir <path>]
 pr9k sandbox create [--force]
 pr9k sandbox login
 pr9k --version
 ```
+
+## `pr9k workflow` Subcommand
+
+The `workflow` subcommand opens the interactive workflow builder TUI. It accepts `--workflow-dir` and `--project-dir` with the same semantics as the root command, but does **not** expose `--iterations` / `-n` — the builder is a standalone editor, not a runner.
+
+> **Note:** The `workflow` subcommand is registered with `Hidden: true` and does not appear in `pr9k --help` output until the TUI wiring is complete. The command is fully functional; run `pr9k workflow --help` to see its flags.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--workflow-dir` | `<projectDir>/.pr9k/workflow/`, then `<executableDir>/.pr9k/workflow/` | Path to the workflow bundle to open and edit |
+| `--project-dir` | Current working directory | Governs log file location (`.pr9k/logs/workflow-*.log`) |
+
+The `workflow` subcommand does **not** call `startup()` (the preflight validator, logger, and TUI orchestrator wiring used by the root command). It creates its own logger via `logger.NewLoggerWithPrefix` and handles signals directly. This is the intentional bypass of the main startup sequence.
+
+### Log Directory Resolution
+
+The builder resolves its log base directory in this order (D-44):
+
+1. `--project-dir` flag value (if provided)
+2. `os.Getwd()` (current working directory)
+3. `os.UserConfigDir()/.pr9k/` (fallback if CWD is unavailable)
+4. `os.TempDir()` (last resort)
+
+Key files: `src/cmd/pr9k/workflow.go` — `newWorkflowCmd`, `runWorkflowBuilder`, `resolveBuilderLogBaseDir`
+
+See [`docs/features/workflow-builder.md`](workflow-builder.md) for the full feature reference.
 
 ## Testing
 

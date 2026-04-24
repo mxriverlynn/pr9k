@@ -102,20 +102,36 @@ Apply `errors.Is(err, fs.ErrPermission)` anywhere you wrap errors with `%w` and 
 
 When a config or user-supplied field resolves to a file path (e.g., `PromptFile` in a step definition), confirm that the resolved path remains inside the expected root directory before opening it. A relative path containing `..` can escape the root and read arbitrary files.
 
+**Use `filepath.EvalSymlinks` on both sides.** A `filepath.Rel` check alone is not sufficient: a symlink within the path can make an escaping path look contained. Resolve both the root directory and the candidate path through `EvalSymlinks` before comparing.
+
 ```go
-// safePromptPath returns an error if resolved path escapes the prompts directory.
-func safePromptPath(workflowDir, promptFile string) (string, error) {
-    root := filepath.Join(workflowDir, "prompts")
-    abs := filepath.Join(root, promptFile)
-    rel, err := filepath.Rel(root, abs)
-    if err != nil || strings.HasPrefix(rel, "..") {
-        return "", fmt.Errorf("steps: PromptFile %q escapes prompts directory", promptFile)
+// pathContainedIn returns an ErrPathEscape-wrapped error if candidate does not
+// resolve to a path strictly inside dir.
+func pathContainedIn(dir, candidate string) error {
+    absDir, _ := filepath.Abs(dir)
+    absCand, _ := filepath.Abs(candidate)
+
+    // EvalSymlinks on both sides — a symlink in either path can defeat a bare
+    // prefix check. Fall back to abs path when target doesn't exist yet.
+    resolvedDir, err := filepath.EvalSymlinks(absDir)
+    if err != nil {
+        resolvedDir = absDir
     }
-    return abs, nil
+    resolvedCand, err := filepath.EvalSymlinks(absCand)
+    if err != nil {
+        resolvedCand = absCand
+    }
+
+    if !strings.HasPrefix(resolvedCand, resolvedDir+string(filepath.Separator)) {
+        return fmt.Errorf("%w: %s", ErrPathEscape, candidate)
+    }
+    return nil
 }
 ```
 
-Apply this check at every boundary where a file path is supplied by config or user input and opened from within a bounded directory. The check must happen after `filepath.Join` — not before — so that any `..` components are resolved against the root first.
+The same principle applies to any prefix-based containment check (e.g., `DetectExternalWorkflow`): resolve both the base directory and the candidate through `EvalSymlinks` before comparing with `strings.HasPrefix`. Skipping symlink resolution on either side allows a symlinked directory inside the root to appear external, or a symlink pointing outside the root to appear internal.
+
+Apply at every boundary where a file path is supplied by config or user input and opened from within a bounded directory.
 
 ## Check accumulated error accessors after deferred Close
 
@@ -211,3 +227,4 @@ Apply to any validator that collects findings rather than returning on the first
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `pipeline.WriteErr()` check after `pipeline.Close()` as the canonical accumulated-error accessor example (issue #91)
 - [Docker Sandbox](../features/docker-sandbox.md) — `errors.As` for `*exec.ExitError` in bash-subprocess test helpers (issues #127, #128)
 - [Config Validation](../code-packages/validator.md) — `IsFatal` / `FatalErrorCount` / `Severity` model as the canonical non-fatal severity tier implementation (issue #122)
+- [Workflow IO](../code-packages/workflowio.md) — `pathContainedIn` as the canonical EvalSymlinks-on-both-sides containment check; `DetectExternalWorkflow` as the canonical prefix-check with symlink resolution on both sides
