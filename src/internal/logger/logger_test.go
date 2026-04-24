@@ -14,8 +14,9 @@ import (
 // timestampPrefix matches "[YYYY-MM-DD HH:MM:SS]"
 var timestampRe = regexp.MustCompile(`^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`)
 
-// runStampRe matches the RunStamp() value: "ralph-YYYY-MM-DD-HHMMSS.mmm"
-var runStampRe = regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+// runStampRe matches the RunStamp() value: "<prefix>-YYYY-MM-DD-HHMMSS.mmm"
+// Covers both "ralph-" and "workflow-" prefixes.
+var runStampRe = regexp.MustCompile(`^[a-z]+-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
 
 func TestLogLineHasTimestampAndStepPrefix(t *testing.T) {
 	dir := t.TempDir()
@@ -428,6 +429,61 @@ func TestRunStampReadableAfterClose(t *testing.T) {
 	}
 	if !runStampRe.MatchString(stamp) {
 		t.Errorf("RunStamp() after Close %q does not match expected pattern", stamp)
+	}
+}
+
+// TestNewLoggerWithPrefix_WorkflowPrefix verifies that NewLoggerWithPrefix with
+// prefix "workflow" produces a log file named workflow-YYYY-MM-DD-HHMMSS.mmm.log.
+func TestNewLoggerWithPrefix_WorkflowPrefix(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLoggerWithPrefix(dir, "workflow")
+	if err != nil {
+		t.Fatalf("NewLoggerWithPrefix: %v", err)
+	}
+	_ = l.Close()
+
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir logs: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	name := entries[0].Name()
+	stem := strings.TrimSuffix(name, ".log")
+	workflowRe := regexp.MustCompile(`^workflow-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+	if stem == name || !workflowRe.MatchString(stem) {
+		t.Errorf("unexpected filename: %q (want workflow-YYYY-MM-DD-HHMMSS.mmm.log)", name)
+	}
+	if !runStampRe.MatchString(l.RunStamp()) {
+		t.Errorf("RunStamp() %q does not match expected pattern", l.RunStamp())
+	}
+}
+
+// TestNewLogger_BackwardsCompatible verifies that NewLogger(dir) still produces
+// a ralph-prefixed log file, preserving existing behaviour after the refactor.
+func TestNewLogger_BackwardsCompatible(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLogger(dir)
+	if err != nil {
+		t.Fatalf("NewLogger: %v", err)
+	}
+	_ = l.Close()
+
+	entries, err := os.ReadDir(filepath.Join(dir, ".pr9k", "logs"))
+	if err != nil {
+		t.Fatalf("ReadDir logs: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 log file, got %d", len(entries))
+	}
+
+	name := entries[0].Name()
+	stem := strings.TrimSuffix(name, ".log")
+	ralphRe := regexp.MustCompile(`^ralph-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+	if stem == name || !ralphRe.MatchString(stem) {
+		t.Errorf("NewLogger produced unexpected filename: %q (want ralph-YYYY-MM-DD-HHMMSS.mmm.log)", name)
 	}
 }
 

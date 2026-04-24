@@ -20,18 +20,19 @@ type Logger struct {
 	runStamp  string
 }
 
-// NewLogger creates a new Logger that writes to .pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log
-// under projectDir (the target repository directory). The .pr9k/logs/ directory is
-// created if it does not exist.
-func NewLogger(projectDir string) (*Logger, error) {
+// NewLoggerWithPrefix creates a new Logger that writes to
+// .pr9k/logs/<prefix>-YYYY-MM-DD-HHMMSS.mmm.log under projectDir. The
+// .pr9k/logs/ directory is created if it does not exist.
+func NewLoggerWithPrefix(projectDir, prefix string) (*Logger, error) {
 	logsDir := filepath.Join(projectDir, ".pr9k", "logs")
 	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return nil, fmt.Errorf("logger: could not create logs directory: %w", err)
 	}
 
 	now := time.Now()
-	filename := now.Format("ralph-2006-01-02-150405.000.log")
-	runStamp := now.Format("ralph-2006-01-02-150405.000")
+	layout := prefix + "-2006-01-02-150405.000"
+	filename := now.Format(layout + ".log")
+	runStamp := now.Format(layout)
 	logPath := filepath.Join(logsDir, filename)
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
@@ -44,6 +45,13 @@ func NewLogger(projectDir string) (*Logger, error) {
 		writer:   bufio.NewWriter(f),
 		runStamp: runStamp,
 	}, nil
+}
+
+// NewLogger creates a new Logger that writes to .pr9k/logs/ralph-YYYY-MM-DD-HHMMSS.mmm.log
+// under projectDir (the target repository directory). The .pr9k/logs/ directory is
+// created if it does not exist.
+func NewLogger(projectDir string) (*Logger, error) {
+	return NewLoggerWithPrefix(projectDir, "ralph")
 }
 
 // RunStamp returns the run identifier for this logger, which is the log filename
