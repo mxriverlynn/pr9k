@@ -689,5 +689,4 @@ Apply to every log file or session-state file that may be re-opened. One-shot wr
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `fullStdoutCapture` uses `utf8.RuneStart` backward walk for truncation (issue #123)
 - [Docker Sandbox](../features/docker-sandbox.md) — `Setpgid: true` + `syscall.Kill(-pid, sig)` for host subprocess process-group signals (issue #130)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `resumeInputTokenLimit` constant replacing 200_000 magic number (issue #131)
-- [Workflow Edit](../code-packages/workflowedit.md) — `renderEditView` fix replacing string concatenation with `lipgloss.JoinHorizontal` as the canonical side-by-side panel example (workflow-builder branch)
 - [File Logging](../code-packages/logger.md) — `O_APPEND` added to logger open flags to prevent write-position reset on re-open (workflow-builder branch)

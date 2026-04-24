@@ -198,7 +198,7 @@ Each feature is documented in detail under [`docs/features/`](features/) (user-f
 
 Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `config.json`, `prompts/`, and `scripts/` live) via a two-candidate search when not given explicitly: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The executable path is dereferenced via `os.Executable()` + `filepath.EvalSymlinks` to follow symlinks correctly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
-The `pr9k workflow` subcommand opens the interactive [Workflow Builder](features/workflow-builder.md) TUI. It shares `--workflow-dir` and `--project-dir` flags but intentionally omits `--iterations`. The `workflow` subcommand does **not** call `startup()` — it bypasses the main preflight / step-loading / TUI-orchestration wiring and creates its own logger via `logger.NewLoggerWithPrefix`. This is an intentional design boundary: the builder is a standalone editor, not a runner.
+The `pr9k workflow` subcommand is registered as a peer to `pr9k sandbox`. It accepts `--workflow-dir` and `--project-dir` but intentionally omits `--iterations`. The `workflow` subcommand does **not** call `startup()` — it bypasses the main preflight / step-loading / TUI-orchestration wiring and creates its own logger via `logger.NewLoggerWithPrefix`. This is an intentional design boundary: the future workflow builder is a standalone editor, not a runner. The PR-1 scope ships the subcommand wiring and the inner-ring packages (`atomicwrite`, `ansi`, `workflowmodel`, `workflowio`, `workflowvalidate`) plus the validator's OI-1 hardening; the Bubble Tea TUI itself lands in PR-2 and the subcommand is `Hidden: true` until then.
 
 **Packages:** `internal/cli/`, `internal/version/`, `cmd/pr9k/workflow.go`
 
@@ -307,18 +307,19 @@ cmd/pr9k/main.go                    (root command: run workflow)
             ├── internal/ui
             └── internal/vars
 
-cmd/pr9k/workflow.go                (pr9k workflow subcommand: builder TUI)
-    ├── internal/logger
-    ├── internal/workflowedit  (Bubble Tea model for the builder TUI)
-    │       ├── internal/workflowio
-    │       ├── internal/workflowmodel
-    │       └── internal/workflowvalidate
-    │               └── internal/validator
-    ├── internal/workflowio    (load, save, detect operations)
-    │       ├── internal/atomicwrite
-    │       ├── internal/ansi
-    │       └── internal/workflowmodel
-    └── internal/workflowmodel (in-memory WorkflowDoc types)
+cmd/pr9k/workflow.go                (pr9k workflow subcommand — Hidden: true until PR-2)
+    └── internal/logger
+
+internal/atomicwrite           (durable temp-file + rename writer; landed in PR-1 for future TUI)
+internal/ansi                  (StripAll for untrusted bytes; landed in PR-1 for future TUI)
+internal/workflowmodel         (in-memory WorkflowDoc types; landed in PR-1 for future TUI)
+internal/workflowio            (load/save/detect; landed in PR-1 for future TUI)
+    ├── internal/atomicwrite
+    ├── internal/ansi
+    └── internal/workflowmodel
+internal/workflowvalidate      (bridge to internal/validator; landed in PR-1 for future TUI)
+    ├── internal/workflowmodel
+    └── internal/validator
 
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)

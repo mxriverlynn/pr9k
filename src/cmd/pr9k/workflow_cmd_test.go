@@ -86,7 +86,7 @@ func TestRunWorkflowBuilder_ExitsCleanly(t *testing.T) {
 	dir := t.TempDir()
 	cmd := newWorkflowCmd()
 	cmd.SetContext(context.Background())
-	if err := runWorkflowBuilder(cmd, "", dir); err != nil {
+	if err := runWorkflowBuilder(cmd, dir); err != nil {
 		t.Errorf("runWorkflowBuilder returned unexpected error: %v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestRunWorkflowBuilder_PropagatesLoggerError(t *testing.T) {
 
 	cmd := newWorkflowCmd()
 	cmd.SetContext(context.Background())
-	err := runWorkflowBuilder(cmd, "", filepath.Join(parent, "sub"))
+	err := runWorkflowBuilder(cmd, filepath.Join(parent, "sub"))
 	if err == nil {
 		t.Fatal("expected error from runWorkflowBuilder, got nil")
 	}

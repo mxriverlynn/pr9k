@@ -1,7 +1,7 @@
-// Package workflowvalidate is a thin bridge between the TUI editor packages
-// and internal/validator. It converts workflowmodel.WorkflowDoc to the shape
-// validator.ValidateDoc expects and delegates — keeping workflowedit from
-// importing internal/validator directly (D-4).
+// Package workflowvalidate is a thin bridge that the future workflow-builder
+// TUI will call into instead of importing internal/validator directly. It
+// converts workflowmodel.WorkflowDoc to the shape validator.ValidateDoc
+// expects and delegates (D-4).
 package workflowvalidate
 
 import (

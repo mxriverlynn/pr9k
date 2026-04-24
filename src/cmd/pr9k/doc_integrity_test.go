@@ -998,28 +998,10 @@ func TestGitignore_WorkflowIsTracked_BundleIsIgnored(t *testing.T) {
 	}
 }
 
-// DI-1: docs/features/workflow-builder.md exists and is linked from CLAUDE.md.
-func TestDocIntegrity_FeatureDocLinked(t *testing.T) {
-	root := docTestRepoRoot(t)
-	featureDoc := "docs/features/workflow-builder.md"
-	assertFileExists(t, filepath.Join(root, featureDoc))
-	claudeMD := readFile(t, root, "CLAUDE.md")
-	assertContains(t, claudeMD, featureDoc, "CLAUDE.md Feature Documentation section")
-}
-
-// DI-2: both how-to guides exist and are linked from CLAUDE.md.
-func TestDocIntegrity_HowToGuidesLinked(t *testing.T) {
-	root := docTestRepoRoot(t)
-	guides := []string{
-		"docs/how-to/using-the-workflow-builder.md",
-		"docs/how-to/configuring-external-editor-for-workflow-builder.md",
-	}
-	claudeMD := readFile(t, root, "CLAUDE.md")
-	for _, g := range guides {
-		assertFileExists(t, filepath.Join(root, g))
-		assertContains(t, claudeMD, g, "CLAUDE.md How-To Guides section")
-	}
-}
+// DI-1 and DI-2 (workflow-builder feature doc + how-to guides) deferred to PR-2:
+// the feature is not yet runnable from the CLI, so user-facing docs would describe a
+// non-functional surface. The PR-1 scope per OI-4 ships only the inner-ring packages
+// plus the ADR and the file-writes coding standard. See docs/plans/workflow-builder/.
 
 // DI-3: ADR file for workflow-builder save durability exists and is linked from CLAUDE.md.
 func TestDocIntegrity_ADRLinked(t *testing.T) {
@@ -1038,7 +1020,8 @@ func TestDocIntegrity_CodingStandardFileWritesLinked(t *testing.T) {
 	assertContains(t, claudeMD, "docs/coding-standards/file-writes.md", "CLAUDE.md Coding Standards section")
 }
 
-// DI-5: all six new code-package docs exist and are linked from CLAUDE.md.
+// DI-5: the five PR-1 code-package docs (inner ring) exist and are linked from CLAUDE.md.
+// The workflowedit code-package doc lands with the TUI in PR-2.
 func TestDocIntegrity_CodePackageDocsLinked(t *testing.T) {
 	root := docTestRepoRoot(t)
 	pkgDocs := []string{
@@ -1047,7 +1030,6 @@ func TestDocIntegrity_CodePackageDocsLinked(t *testing.T) {
 		"docs/code-packages/workflowmodel.md",
 		"docs/code-packages/workflowio.md",
 		"docs/code-packages/workflowvalidate.md",
-		"docs/code-packages/workflowedit.md",
 	}
 	claudeMD := readFile(t, root, "CLAUDE.md")
 	for _, p := range pkgDocs {
@@ -1071,20 +1053,18 @@ func TestDocIntegrity_ArchitectureDocUpdated(t *testing.T) {
 	assertContains(t, content, "workflow", "docs/architecture.md workflow subcommand reference")
 }
 
-// DI-8: every relative markdown link in the new workflow-builder docs resolves to an existing file.
+// DI-8: every relative markdown link in the new PR-1 workflow-builder docs resolves to an
+// existing file. Feature doc, both how-tos, and the workflowedit code-package doc are deferred
+// to PR-2 alongside the TUI itself.
 func TestDocIntegrity_NoDeadLinks(t *testing.T) {
 	root := docTestRepoRoot(t)
 	newDocs := []string{
-		"docs/features/workflow-builder.md",
-		"docs/how-to/using-the-workflow-builder.md",
-		"docs/how-to/configuring-external-editor-for-workflow-builder.md",
 		"docs/adr/20260424120000-workflow-builder-save-durability.md",
 		"docs/code-packages/atomicwrite.md",
 		"docs/code-packages/ansi.md",
 		"docs/code-packages/workflowmodel.md",
 		"docs/code-packages/workflowio.md",
 		"docs/code-packages/workflowvalidate.md",
-		"docs/code-packages/workflowedit.md",
 	}
 	// linkRe matches markdown links: [text](target) — captures the target.
 	linkRe := regexp.MustCompile(`\]\(([^)]+)\)`)

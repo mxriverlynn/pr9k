@@ -426,4 +426,4 @@ The rule: every exported or package-visible symbol that ships must have at least
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
-- [Workflow Builder](../features/workflow-builder.md) — `Hidden: true` on `workflow` cobra command as the canonical incomplete-command example; `workflowDeps` removal as the canonical dead-scaffolding example (workflow-builder branch)
+- `src/cmd/pr9k/workflow.go` — `Hidden: true` on the `workflow` cobra command is the canonical incomplete-command example (workflow-builder branch, PR-1 scope)

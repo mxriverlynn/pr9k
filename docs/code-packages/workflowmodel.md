@@ -132,5 +132,4 @@ The three-state `IsClaudeSet` flag distinguishes a step that has never been type
 ## Related Documentation
 
 - [`docs/code-packages/workflowio.md`](workflowio.md) — Load and Save operations that consume WorkflowDoc
-- [`docs/code-packages/workflowedit.md`](workflowedit.md) — TUI editor that holds the live WorkflowDoc
 - [`docs/code-packages/workflowvalidate.md`](workflowvalidate.md) — Validates a WorkflowDoc before save

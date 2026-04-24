@@ -29,7 +29,8 @@ func newWorkflowCmd() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runWorkflowBuilder(cmd, workflowDir, projectDir)
+			_ = workflowDir // PR-1: flag accepted but not yet consumed; TUI lands in PR-2.
+			return runWorkflowBuilder(cmd, projectDir)
 		},
 	}
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
@@ -40,7 +41,7 @@ func newWorkflowCmd() *cobra.Command {
 // runWorkflowBuilder is the RunE implementation for the workflow subcommand.
 // It owns its own logger creation, directory resolution, and goroutine lifecycle.
 // It does NOT call startup().
-func runWorkflowBuilder(cmd *cobra.Command, workflowDirFlag, projectDirFlag string) error {
+func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag string) error {
 	ctx := cmd.Context()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

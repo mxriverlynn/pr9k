@@ -174,5 +174,4 @@ The `targets` slice lists the files whose sibling temp names should be checked (
 - [`docs/adr/20260424120000-workflow-builder-save-durability.md`](../adr/20260424120000-workflow-builder-save-durability.md) — Save durability decision record
 - [`docs/code-packages/atomicwrite.md`](atomicwrite.md) — Atomic file write primitive
 - [`docs/code-packages/workflowmodel.md`](workflowmodel.md) — `WorkflowDoc` type consumed by Load and Save
-- [`docs/code-packages/workflowedit.md`](workflowedit.md) — TUI editor that calls Load and Save
 - [`docs/coding-standards/file-writes.md`](../coding-standards/file-writes.md) — When to use `atomicwrite.Write`

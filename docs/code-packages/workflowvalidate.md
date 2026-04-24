@@ -1,6 +1,6 @@
 # workflowvalidate
 
-The `internal/workflowvalidate` package is a thin bridge between the TUI editor packages and `internal/validator`. It converts a `workflowmodel.WorkflowDoc` to the shape `validator.ValidateDoc` expects and delegates — keeping `workflowedit` from importing `internal/validator` directly (D-4).
+The `internal/workflowvalidate` package is a thin bridge that the future workflow-builder TUI calls into instead of importing `internal/validator` directly. It converts a `workflowmodel.WorkflowDoc` to the shape `validator.ValidateDoc` expects and delegates (D-4).
 
 - **Last Updated:** 2026-04-24
 - **Authors:**
@@ -9,7 +9,7 @@ The `internal/workflowvalidate` package is a thin bridge between the TUI editor 
 ## Overview
 
 - Exports a single function: `Validate(doc, workflowDir, companions) []validator.Error`
-- Prevents `workflowedit` from taking a direct dependency on `internal/validator`, keeping the package dependency graph acyclic
+- Lets the future workflow-builder TUI validate a `WorkflowDoc` without importing `internal/validator` directly, keeping the package dependency graph acyclic
 - `companions` is a map of in-memory file bytes keyed by path relative to `workflowDir` (e.g., `"prompts/step-1.md"`); when a key is present, its bytes are used for Rule B validation instead of reading from disk
 
 Key file: `src/internal/workflowvalidate/validate.go`
@@ -30,11 +30,11 @@ func Validate(doc workflowmodel.WorkflowDoc, workflowDir string, companions map[
 The isolation boundary is critical:
 
 ```
-workflowedit  →  workflowvalidate  →  validator
+(future TUI)  →  workflowvalidate  →  validator
                   (bridge only)
 ```
 
-Without `workflowvalidate`, `workflowedit` would import `internal/validator` directly, creating a dependency that crosses the TUI/validator boundary. The bridge keeps the import graph clean and the packages independently testable.
+Without `workflowvalidate`, the eventual TUI would have to import `internal/validator` directly, creating a dependency that crosses the TUI/validator boundary. The bridge keeps the import graph clean and the packages independently testable.
 
 ## Companion Map Semantics
 
@@ -70,5 +70,4 @@ The function delegates to `validator.ValidateDoc`, which runs all D13 categories
 ## Related Documentation
 
 - [`docs/code-packages/validator.md`](validator.md) — `internal/validator` API reference
-- [`docs/code-packages/workflowedit.md`](workflowedit.md) — TUI editor that calls `Validate` before save
 - [`docs/code-packages/workflowmodel.md`](workflowmodel.md) — `WorkflowDoc` passed to `Validate`
