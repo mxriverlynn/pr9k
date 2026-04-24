@@ -154,3 +154,32 @@ func TestLog_NoPromptFileContentsEver(t *testing.T) {
 		}
 	}
 }
+
+// TestEditorFirstToken_PlainBinaryWithArgs_StripsArgs covers the space-stripping
+// branch in isolation: no slash in the editor value, so only the space branch fires.
+func TestEditorFirstToken_PlainBinaryWithArgs_StripsArgs(t *testing.T) {
+	got := editorFirstToken("nano --nomore")
+	if got != "nano" {
+		t.Errorf("editorFirstToken(%q) = %q, want %q", "nano --nomore", got, "nano")
+	}
+}
+
+// TestLog_QuitAndSigintLines_HaveExpectedPrefixes pins the exact strings returned
+// by the fixed-line formatters so downstream log parsers cannot silently break.
+func TestLog_QuitAndSigintLines_HaveExpectedPrefixes(t *testing.T) {
+	cases := []struct {
+		got  string
+		want string
+	}{
+		{fmtQuitClean(), "quit_clean"},
+		{fmtQuitDiscarded(), "quit_discarded_changes"},
+		{fmtQuitCancelled(), "quit_cancelled"},
+		{fmtEditorSigint(), "editor_sigint"},
+		{fmtSharedInstallDetected(), "shared_install_detected"},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
