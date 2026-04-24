@@ -287,6 +287,77 @@ func TestSaveComplete_Success_ClearsUnsavedIndicatorAndFiresBanner(t *testing.T)
 	}
 }
 
+// TestDialogAcknowledgeFindings_Enter_ProceedsToSave — Enter in acknowledgment dialog starts save
+func TestDialogAcknowledgeFindings_Enter_ProceedsToSave(t *testing.T) {
+	m := newLoadedModel(sampleStep("s1"))
+	m.validateFn = warnFindings
+
+	// Open the acknowledgment dialog via validate → warn findings
+	next1, validateCmd := m.Update(keyCtrlS())
+	m1 := next1.(Model)
+	got1 := applyMsg(m1, validateCmd())
+	if got1.dialog.kind != DialogAcknowledgeFindings {
+		t.Fatalf("precondition: want DialogAcknowledgeFindings, got %d", got1.dialog.kind)
+	}
+
+	// Send Enter to confirm acknowledgment
+	next2, saveCmd := got1.Update(keyEnter())
+	got2 := next2.(Model)
+
+	if got2.dialog.kind != DialogNone {
+		t.Errorf("want dialog closed after Enter, got kind %d", got2.dialog.kind)
+	}
+	if !got2.saveInProgress {
+		t.Error("want saveInProgress=true after acknowledgment confirmed")
+	}
+	if saveCmd == nil {
+		t.Error("want non-nil save cmd after acknowledgment confirmed")
+	}
+}
+
+// TestDialogAcknowledgeFindings_Esc_CancelsSave — Esc in acknowledgment dialog cancels save
+func TestDialogAcknowledgeFindings_Esc_CancelsSave(t *testing.T) {
+	m := newLoadedModel(sampleStep("s1"))
+	m.validateFn = warnFindings
+	prevFocus := m.focus
+
+	// Open the acknowledgment dialog
+	next1, validateCmd := m.Update(keyCtrlS())
+	m1 := next1.(Model)
+	got1 := applyMsg(m1, validateCmd())
+	if got1.dialog.kind != DialogAcknowledgeFindings {
+		t.Fatalf("precondition: want DialogAcknowledgeFindings, got %d", got1.dialog.kind)
+	}
+
+	// Send Esc to cancel
+	got2 := applyKey(got1, keyEsc())
+
+	if got2.dialog.kind != DialogNone {
+		t.Errorf("want dialog closed after Esc, got kind %d", got2.dialog.kind)
+	}
+	if got2.saveInProgress {
+		t.Error("saveInProgress should be false after cancel")
+	}
+	if got2.focus != prevFocus {
+		t.Errorf("focus should be restored to %d after cancel, got %d", prevFocus, got2.focus)
+	}
+}
+
+// TestCtrlN_ResetsSnapshot — Ctrl+N resets saveSnapshot to nil (F-98)
+func TestCtrlN_ResetsSnapshot(t *testing.T) {
+	m := newLoadedModel(sampleStep("s1"))
+	m.saveSnapshot = &workflowio.SaveSnapshot{ModTime: time.Now(), Size: 50}
+
+	got := applyKey(m, keyCtrlN())
+
+	if got.saveSnapshot != nil {
+		t.Error("saveSnapshot should be nil after Ctrl+N session transition (F-98)")
+	}
+	if got.dialog.kind != DialogNewChoice {
+		t.Errorf("want DialogNewChoice after Ctrl+N, got %d", got.dialog.kind)
+	}
+}
+
 // TestSaveComplete_Error_OpensKindSpecificDialog — one subtest per SaveErrorKind
 func TestSaveComplete_Error_OpensKindSpecificDialog(t *testing.T) {
 	cases := []struct {
