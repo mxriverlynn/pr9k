@@ -73,15 +73,20 @@ The builder uses a single-slot dialog composition (D-8): at most one dialog is v
 | DialogKind | Trigger | Keys |
 |------------|---------|------|
 | `DialogNone` | — | — |
-| `DialogRemoveConfirm` | `d` in outline | `d` confirm, `Esc` cancel |
+| `DialogPathPicker` | `Ctrl+O` / File→Open | `Tab`/`Shift+Tab` cycle completions, `Enter` load bundle, `Esc` cancel |
+| `DialogNewChoice` | File→New | `e` create empty doc, `c` copy from default bundle, `Esc` cancel |
 | `DialogUnsavedChanges` | `Ctrl+Q` when dirty | `s` save+quit, `d` discard, `Esc` cancel |
-| `DialogSaveInProgress` | `Ctrl+Q` during save/validate | `Esc` cancel |
-| `DialogError` | Save error | `Esc` / `Enter` dismiss |
-| `DialogAcknowledgeFindings` | Warnings-only after validation | `Enter`/`y` proceed, `Esc` cancel |
+| `DialogQuitConfirm` | `Ctrl+Q` when clean | `y` confirm quit, `Esc` cancel |
 | `DialogFindingsPanel` | Fatal errors after validation | scrollable findings, `Enter` jump, `Esc` close |
-| `DialogPathPicker` | `Ctrl+O` when field empty | `Tab`/`Shift+Tab` cycle, `Enter` confirm, `Esc` cancel |
-| `DialogHelpModal` | `?` | `Esc` close |
-| `DialogConflict` | mtime mismatch on save | `r` reload, `f` force-save, `Esc` cancel |
+| `DialogAcknowledgeFindings` | Warnings-only after validation | `Enter`/`y` proceed, `Esc` cancel |
+| `DialogError` | Save error | `Esc` / `Enter` dismiss |
+| `DialogFileConflict` | mtime mismatch on save | `r` reload, `f` force-save, `Esc` cancel |
+| `DialogSaveInProgress` | `Ctrl+Q` during save/validate | `Esc` cancel |
+| `DialogRemoveConfirm` | `d` in outline | `d` confirm, `Esc` cancel |
+| `DialogCrashTempNotice` | Orphaned `.*.tmp` files detected at open | `Esc` dismiss |
+| `DialogFirstSaveConfirm` | First save to external or symlinked workflow | confirm / cancel |
+| `DialogRecovery` | Malformed `config.json` detected on load | recovery view display, `Esc` close |
+| `DialogExternalEditorOpening` | External editor launching | — (auto-dismiss on editor exit) |
 
 ## Async Save Flow
 
@@ -110,8 +115,10 @@ The path picker (`pathPickerModel`) provides async tab completion:
 - `Tab` with cached matches cycles forward synchronously
 - `Shift+Tab` cycles backward
 - Rune input and backspace clear the match cache so the next `Tab` rescans
+- `Enter` dispatches `makeLoadCmd` which calls `workflowio.Load` on the selected path; the result is delivered as `openFileResultMsg` and populates `m.doc` and `m.companions`
 - Hidden files are excluded unless the prefix starts with `.`
 - Matches are sorted alphabetically; directories get a trailing `/`
+- An empty prefix is treated as the current working directory
 
 ## Session Log Formatters
 

@@ -8,7 +8,7 @@ The workflow builder is an interactive TUI editor for `config.json` workflow bun
 
 ## Overview
 
-- Launch with `pr9k workflow [--workflow-dir <path>] [--project-dir <path>]`
+- Launch with `pr9k workflow [--workflow-dir <path>] [--project-dir <path>]` (the command is hidden from `pr9k --help` until the TUI is fully wired; it is functional)
 - Opens a two-panel TUI: a left outline listing all steps, and a right detail pane for editing each step's fields
 - Changes are kept in memory until the user explicitly saves with `Ctrl+S`; unsaved edits are tracked with a dirty flag and a `*` indicator
 - Before writing to disk, the builder runs the D13 validator; fatal errors open the findings panel and block the save, while warnings allow the save to proceed after acknowledgment
@@ -64,9 +64,22 @@ Press `F10` or navigate to the menu bar and press `Enter` to open the File menu.
 
 | Menu Item | Shortcut | Action |
 |-----------|----------|--------|
+| New… | — | Create a new workflow (opens `DialogNewChoice`) |
 | Open… | `Ctrl+O` (from outline) | Load a workflow bundle from disk |
 | Save | `Ctrl+S` | Validate and save to disk |
 | Quit | `Ctrl+Q` | Quit (prompts if unsaved changes) |
+
+### File→New Dialog (`DialogNewChoice`)
+
+After choosing **New…** from the File menu, a dialog opens with two options:
+
+| Key | Action |
+|-----|--------|
+| `e` | Create an empty document (`workflowmodel.Empty()` — one placeholder shell step) |
+| `c` | Copy the default bundle (`workflowmodel.CopyFromDefault`) into memory for editing |
+| `Esc` | Cancel, returning to the current document |
+
+Both options set the dirty flag immediately so the first `Ctrl+S` will prompt for a save path.
 
 ## Save Flow
 
@@ -85,6 +98,10 @@ When the validator finds fatal errors, the findings panel opens and shows each e
 | `↑` / `↓` | Scroll findings |
 | `Enter` | Jump to the first referenced step in the outline |
 | `Esc` | Close findings panel (save remains blocked until errors are fixed) |
+
+### Path-Traversal Protection
+
+`workflowio.Load` and `workflowio.Save` validate every companion path with `pathContainedIn(workflowDir, path)`. If a `promptFile` value such as `../../etc/passwd` would resolve outside `workflowDir` after symlink evaluation, `Load` returns `ErrPathEscape` and `Save` returns `SaveErrorSymlinkEscape`. The TUI surfaces this as a `DialogError`.
 
 ### Conflict Detection
 

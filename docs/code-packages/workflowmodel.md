@@ -33,6 +33,16 @@ const (
     StepKindShell  StepKind = "shell"
 )
 
+// StepPhase identifies which workflow phase a step belongs to.
+// The zero value is StepPhaseIteration so newly created steps default correctly.
+type StepPhase int
+
+const (
+    StepPhaseIteration StepPhase = iota // default: zero value maps new steps to iteration
+    StepPhaseInitialize
+    StepPhaseFinalize
+)
+
 // EnvEntry represents one entry from the env or containerEnv section.
 type EnvEntry struct {
     Key       string
@@ -53,6 +63,7 @@ type StatusLineBlock struct {
 //   - claude step: Kind == StepKindClaude, IsClaudeSet == true
 type Step struct {
     Name               string
+    Phase              StepPhase
     Kind               StepKind
     IsClaudeSet        bool
     Model              string
@@ -69,13 +80,10 @@ type Step struct {
 }
 
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.
-// UnknownFields captures JSON keys not mapped to typed fields; recorded on load,
-// discarded on save.
 type WorkflowDoc struct {
-    DefaultModel  string
-    StatusLine    *StatusLineBlock
-    Steps         []Step
-    UnknownFields map[string]json.RawMessage
+    DefaultModel string
+    StatusLine   *StatusLineBlock
+    Steps        []Step
 }
 ```
 
@@ -108,15 +116,15 @@ The three-state `IsClaudeSet` flag distinguishes a step that has never been type
 
 ## IsDirty Contract
 
-`IsDirty` performs a structural comparison of two `WorkflowDoc` values, field by field. It ignores `UnknownFields` differences — fields loaded from `config.json` but not mapped to typed fields are not tracked for dirtiness. This prevents spurious dirty flags when loading a config that has extra unrecognized keys.
+`IsDirty` performs a structural comparison of two `WorkflowDoc` values, field by field.
 
-## Flat Steps Slice
+## Flat Steps Slice and Phase Bucketing
 
-`WorkflowDoc.Steps` uses a flat list; phase information (initialize / iteration / finalize) is not stored in the model. `CopyFromDefault` merges all phases into the flat list. `workflowio.marshalDoc` writes all steps under the "iteration" phase key. Phase-aware save/load is deferred to a future slice.
+`WorkflowDoc.Steps` is a flat list. Each `Step` carries a `Phase` field (`StepPhaseIteration`, `StepPhaseInitialize`, or `StepPhaseFinalize`) that records which config.json phase section it came from. `CopyFromDefault` sets `Phase` on each step as it merges all phases into the flat list. `workflowio.marshalDoc` buckets steps back into `initialize`/`iteration`/`finalize` sections by `Phase` when writing `config.json`. The zero value `StepPhaseIteration` ensures that newly created steps (e.g. from `Empty()`) are written to the iteration section by default.
 
 ## Testing
 
-- `src/internal/workflowmodel/diff_test.go` — 5 tests (identical, step-added, step-removed, field-changed table, unknown-fields-ignored)
+- `src/internal/workflowmodel/diff_test.go` — 4 tests (identical, step-added, step-removed, field-changed table)
 - `src/internal/workflowmodel/scaffold_test.go` — 3 tests (minimal shape, reads default bundle, input immutability)
 - `src/internal/workflowmodel/model_test.go` — 1 test (IsClaudeSet distinguishes new/shell/claude)
 - `src/internal/workflowmodel/modelsuggestions_test.go` — 2 tests (DefaultScaffoldModel is first entry, ModelSuggestions non-empty)

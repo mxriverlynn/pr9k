@@ -8,8 +8,8 @@ The `internal/workflowio` package provides load, save, and detect operations for
 
 ## Overview
 
-- `Load(workflowDir string) (LoadResult, error)` — reads `config.json` and companion files from a bundle directory; detects symlinks before parsing
-- `Save(fs, workflowDir, diskDoc, memDoc, companions) SaveResult` — atomically writes companion files then `config.json`; companions written first (D-20)
+- `Load(workflowDir string) (LoadResult, error)` — reads `config.json` and companion files from a bundle directory; detects symlinks before parsing; rejects companion paths that escape `workflowDir`
+- `Save(fs, workflowDir, diskDoc, memDoc, companions) SaveResult` — atomically writes companion files then `config.json`; companions written first (D-20); rejects companion keys whose resolved path escapes `workflowDir`
 - `DetectSymlink`, `DetectReadOnly`, `DetectExternalWorkflow`, `DetectSharedInstall` — pre-flight checks for advisory warnings
 - `CreateEmptyCompanion` — creates a companion file with `O_EXCL` if it does not exist
 - `DetectCrashTempFiles` — scans for orphaned `.*.tmp` files from previous crashed sessions (D-16)
@@ -59,6 +59,17 @@ When `config.json` exists but cannot be parsed (invalid JSON), `Load` returns an
 
 Missing companions are silently skipped — the editor creates them via `CreateEmptyCompanion` the first time the user opens them. Non-regular companions return `ErrNotRegularFile`.
 
+### Path-Traversal Hardening
+
+`Load` validates each companion path with `pathContainedIn(workflowDir, candidatePath)` before reading it. If a `promptFile` value such as `../../etc/passwd` would resolve outside `workflowDir`, `Load` returns `ErrPathEscape`:
+
+```go
+// ErrPathEscape is returned when a companion path resolves outside the workflow directory.
+var ErrPathEscape = errors.New("workflowio: path escapes workflow directory")
+```
+
+`pathContainedIn` uses `filepath.EvalSymlinks` on both the directory and the candidate before the prefix check (OI-1 pattern), with `filepath.Abs` as a fallback when `EvalSymlinks` fails (e.g. file does not exist yet).
+
 ## Save
 
 ```go
@@ -100,6 +111,7 @@ type SaveResult struct {
 // Save atomically writes memDoc and dirty companion files to workflowDir.
 // diskDoc is the snapshot from the last Load; IsDirty skips no-op saves.
 // Companions are written before config.json (D-20).
+// Returns SaveErrorSymlinkEscape if any companion key resolves outside workflowDir.
 func Save(fs SaveFS, workflowDir string, diskDoc, memDoc workflowmodel.WorkflowDoc, companions map[string][]byte) SaveResult
 
 // RealSaveFS returns a SaveFS that delegates to atomicwrite.Write and os.Stat.
@@ -151,7 +163,7 @@ The `targets` slice lists the files whose sibling temp names should be checked (
 
 ## Testing
 
-- `src/internal/workflowio/save_test.go` (6 tests): companion-first ordering, no-op save, companion rollback on config failure, EXDEV classification, SaveSnapshot fields, permission error classification
+- `src/internal/workflowio/save_test.go` (7 tests): companion-first ordering, no-op save, companion rollback on config failure, EXDEV classification, SaveSnapshot fields, permission error classification, phase-boundary round-trip
 - `src/internal/workflowio/load_test.go` (5 tests): recovery view on parse error, OSC 8 stripping in recovery view, symlink detected before parse, FIFO rejected, regular file accepted
 - `src/internal/workflowio/crashtemp_test.go` (4 tests): active PID skipped, dead PID detected, atomicwrite pattern match, non-workflow file excluded
 - `src/internal/workflowio/detect_test.go` (6 tests): symlink/non-symlink, writable dir, external/internal workflow, shared-install UID check, `CreateEmptyCompanion` MkdirAll and escape rejection and FIFO rejection
