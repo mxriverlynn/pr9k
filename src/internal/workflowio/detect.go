@@ -44,11 +44,14 @@ func DetectReadOnly(workflowDir string) (bool, error) {
 
 // DetectExternalWorkflow reports whether workflowDir is outside projectDir.
 // EvalSymlinks is used on both paths so a symlinked workflowDir inside
-// projectDir is correctly reported as internal.
+// projectDir is correctly reported as internal. When the workflow path does
+// not exist on disk (e.g. a pristine project with no bundle yet), walkback
+// resolves the nearest existing ancestor so directory-level symlinks
+// (macOS /var → /private/var) are honored consistently on both sides.
 func DetectExternalWorkflow(workflowDir, projectDir string) bool {
 	resolve := func(p string) string {
 		clean := filepath.Clean(p)
-		if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		if resolved, err := resolveWithWalkback(clean); err == nil {
 			return resolved + string(os.PathSeparator)
 		}
 		return clean + string(os.PathSeparator)

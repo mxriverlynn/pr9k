@@ -40,14 +40,14 @@ func (d detailPane) ShortcutLine() string {
 // render builds the visible detail string for the given step.
 func (d detailPane) render(step workflowmodel.Step) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Name: %s\n", step.Name))
-	sb.WriteString(fmt.Sprintf("Kind: %s\n", string(step.Kind)))
+	fmt.Fprintf(&sb, "Name: %s\n", step.Name)
+	fmt.Fprintf(&sb, "Kind: %s\n", string(step.Kind))
 	if step.Kind == workflowmodel.StepKindClaude {
-		sb.WriteString(fmt.Sprintf("Model: %s\n", step.Model))
-		sb.WriteString(fmt.Sprintf("PromptFile: %s\n", step.PromptFile))
+		fmt.Fprintf(&sb, "Model: %s\n", step.Model)
+		fmt.Fprintf(&sb, "PromptFile: %s\n", step.PromptFile)
 	}
 	if step.Kind == workflowmodel.StepKindShell {
-		sb.WriteString(fmt.Sprintf("Command: %v\n", step.Command))
+		fmt.Fprintf(&sb, "Command: %v\n", step.Command)
 	}
 	for i, env := range step.Env {
 		if env.IsLiteral {
@@ -55,9 +55,9 @@ func (d detailPane) render(step workflowmodel.Step) string {
 			if d.revealedField != i {
 				val = GlyphMasked
 			}
-			sb.WriteString(fmt.Sprintf("containerEnv[%d]: %s=%s\n", i, env.Key, val))
+			fmt.Fprintf(&sb, "containerEnv[%d]: %s=%s\n", i, env.Key, val)
 		} else {
-			sb.WriteString(fmt.Sprintf("env[%d]: %s\n", i, env.Key))
+			fmt.Fprintf(&sb, "env[%d]: %s\n", i, env.Key)
 		}
 	}
 	return sb.String()

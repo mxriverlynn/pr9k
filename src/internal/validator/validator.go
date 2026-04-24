@@ -7,6 +7,7 @@ package validator
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -829,9 +830,11 @@ func safePromptPath(workflowDir, promptFile string) (string, error) {
 	}
 
 	// OI-1: resolve symlinks on both sides before the containment check.
-	// If EvalSymlinks fails on the candidate (file doesn't exist yet), fall
-	// back to the abs path — a non-existent file cannot escape via symlink.
-	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	// When the candidate file does not exist yet (EvalSymlinks returns ENOENT),
+	// walk back to the nearest existing ancestor and rejoin the missing suffix
+	// so directory-level symlinks (e.g. macOS /var → /private/var) are honored
+	// even when the prompt file is only present in the in-memory companion map.
+	resolvedPath, err := resolvePathWithWalkback(absPath)
 	if err != nil {
 		resolvedPath = absPath
 	}
@@ -844,6 +847,39 @@ func safePromptPath(workflowDir, promptFile string) (string, error) {
 		return "", fmt.Errorf("prompt path escapes prompts directory: %s", promptFile)
 	}
 	return absPath, nil
+}
+
+// resolvePathWithWalkback resolves path via EvalSymlinks; on ENOENT walks toward
+// the root until an existing ancestor is found, then appends the missing suffix
+// to the ancestor's resolved form. This lets containment checks honor
+// directory-level symlinks (e.g. macOS /var → /private/var) even when the
+// terminal path component does not exist on disk yet.
+func resolvePathWithWalkback(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	remaining := filepath.Base(path)
+	dir := filepath.Dir(path)
+	for {
+		resolved, err = filepath.EvalSymlinks(dir)
+		if err == nil {
+			return filepath.Join(resolved, remaining), nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("no existing ancestor for %s", path)
+		}
+		remaining = filepath.Join(filepath.Base(dir), remaining)
+		dir = parent
+	}
 }
 
 // statCompanionOrDisk reports whether the file at relKey (companion map key,

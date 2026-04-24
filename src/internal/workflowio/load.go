@@ -20,17 +20,20 @@ var ErrPathEscape = errors.New("workflowio: path escapes workflow directory")
 
 // pathContainedIn returns an ErrPathEscape-wrapped error if candidate does not
 // resolve to a path strictly inside dir. EvalSymlinks is used on both sides
-// (OI-1 pattern); if resolution fails the abs path is used as a conservative
-// fallback so a non-existent file cannot escape via an unresolvable symlink.
+// (OI-1 pattern); when the candidate does not exist yet, walkback resolves the
+// nearest existing ancestor and rejoins the missing suffix so directory-level
+// symlinks (e.g. macOS /var → /private/var) are honored consistently on both
+// sides. A non-existent file still cannot escape via an unresolvable symlink
+// because the ancestor resolution applies the same symlink topology to both.
 func pathContainedIn(dir, candidate string) error {
 	absDir, _ := filepath.Abs(dir)
 	absCand, _ := filepath.Abs(candidate)
 
-	resolvedDir, err := filepath.EvalSymlinks(absDir)
+	resolvedDir, err := resolveWithWalkback(absDir)
 	if err != nil {
 		resolvedDir = absDir
 	}
-	resolvedCand, err := filepath.EvalSymlinks(absCand)
+	resolvedCand, err := resolveWithWalkback(absCand)
 	if err != nil {
 		resolvedCand = absCand
 	}
