@@ -487,6 +487,21 @@ func TestNewLogger_BackwardsCompatible(t *testing.T) {
 	}
 }
 
+// T-3: RunStamp() starts with the exact prefix passed to NewLoggerWithPrefix.
+func TestNewLoggerWithPrefix_RunStampHasMatchingPrefix(t *testing.T) {
+	dir := t.TempDir()
+	l, err := NewLoggerWithPrefix(dir, "workflow")
+	if err != nil {
+		t.Fatalf("NewLoggerWithPrefix: %v", err)
+	}
+	_ = l.Close()
+
+	strictRe := regexp.MustCompile(`^workflow-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
+	if !strictRe.MatchString(l.RunStamp()) {
+		t.Errorf("RunStamp() %q must have workflow- prefix", l.RunStamp())
+	}
+}
+
 // readLogLines reads all non-empty lines from the single log file in dir/.pr9k/logs/.
 func readLogLines(t *testing.T, dir string) []string {
 	t.Helper()

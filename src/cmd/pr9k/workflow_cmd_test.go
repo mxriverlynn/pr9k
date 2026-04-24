@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -75,4 +79,36 @@ func allowedKeys(m map[string]bool) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// T-1: runWorkflowBuilder exits cleanly given a valid project directory.
+func TestRunWorkflowBuilder_ExitsCleanly(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newWorkflowCmd()
+	cmd.SetContext(context.Background())
+	if err := runWorkflowBuilder(cmd, "", dir); err != nil {
+		t.Errorf("runWorkflowBuilder returned unexpected error: %v", err)
+	}
+}
+
+// T-2: runWorkflowBuilder propagates a logger error with "workflow:" prefix.
+func TestRunWorkflowBuilder_PropagatesLoggerError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission checks do not apply when running as root")
+	}
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o444); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	cmd := newWorkflowCmd()
+	cmd.SetContext(context.Background())
+	err := runWorkflowBuilder(cmd, "", filepath.Join(parent, "sub"))
+	if err == nil {
+		t.Fatal("expected error from runWorkflowBuilder, got nil")
+	}
+	if !strings.Contains(err.Error(), "workflow:") {
+		t.Errorf("error missing 'workflow:' prefix: %v", err)
+	}
 }
