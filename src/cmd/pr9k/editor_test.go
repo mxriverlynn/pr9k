@@ -140,6 +140,59 @@ func TestRealEditorRunner_Run_ReturnsTeaCmd(t *testing.T) {
 	}
 }
 
+// G-1: ExecCallback with a non-zero, non-130 *exec.ExitError returns editorExitMsg{ok:false, code}.
+func TestExecCallback_NonZeroNon130ExitCode_ReturnsExitMsgNotOk(t *testing.T) {
+	cb := makeExecCallback()
+	exitErr := makeExitError(t, 1)
+	msg := cb(exitErr)
+	exitMsg, ok := msg.(editorExitMsg)
+	if !ok {
+		t.Fatalf("expected editorExitMsg, got %T", msg)
+	}
+	if exitMsg.ok {
+		t.Error("expected exitMsg.ok=false, got true")
+	}
+	if exitMsg.code != 1 {
+		t.Errorf("expected exitMsg.code=1, got %d", exitMsg.code)
+	}
+}
+
+// G-2: EDITOR fallback success path — VISUAL empty, EDITOR set and on PATH.
+func TestResolveEditor_EditorFallback_WhenVisualEmpty(t *testing.T) {
+	orig := lookPath
+	lookPath = func(file string) (string, error) { return "/usr/bin/" + file, nil }
+	t.Cleanup(func() { lookPath = orig })
+
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "vi")
+
+	tokens, err := resolveEditor()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tokens) != 1 || tokens[0] != "vi" {
+		t.Errorf("got %v, want [vi]", tokens)
+	}
+}
+
+// G-3: realEditorRunner.Run returns a non-nil tea.Cmd that yields editorRestoreFailedMsg
+// when resolveEditor fails (neither VISUAL nor EDITOR is set).
+func TestRealEditorRunner_Run_ResolveFailure_ReturnsErrorCmd(t *testing.T) {
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+
+	runner := &realEditorRunner{}
+	cb := makeExecCallback()
+	cmd := runner.Run("/tmp/test.json", cb)
+	if cmd == nil {
+		t.Fatal("Run returned nil tea.Cmd")
+	}
+	msg := cmd()
+	if _, ok := msg.(editorRestoreFailedMsg); !ok {
+		t.Errorf("expected editorRestoreFailedMsg, got %T", msg)
+	}
+}
+
 // makeExitError creates a real *exec.ExitError with the given exit code.
 func makeExitError(t *testing.T, code int) *exec.ExitError {
 	t.Helper()
