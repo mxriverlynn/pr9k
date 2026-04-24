@@ -806,6 +806,41 @@ Apply this whenever a doc file gains a Related documentation section or an expli
 
 When a doc file refers to another doc as a source of further reading, also add the inverse: verify the referenced file links back to the referencing one (e.g., `TestDocIntegrity_ReadingTheTUI_LinksToHowTo`). Cross-links that are asserted in both directions cannot drift independently.
 
+## Add round-trip tests for phase-structured marshaling
+
+When a data model has phase or category structure (e.g., initialize / iteration / finalize steps), add a test that round-trips through marshal → unmarshal and asserts that every phase boundary survives intact. Without this test, a bug that collapses all items into one phase produces no compile error and passes all unit tests — data is silently lost on the first save.
+
+```go
+// TestMarshalDoc_PreservesPhaseBoundaries verifies that steps in different phases
+// are not collapsed into a single phase during a round-trip through marshalDoc.
+func TestMarshalDoc_PreservesPhaseBoundaries(t *testing.T) {
+    doc := workflowmodel.WorkflowDoc{
+        Steps: []workflowmodel.Step{
+            {Name: "init-step",  Phase: workflowmodel.PhaseInitialize},
+            {Name: "iter-step",  Phase: workflowmodel.PhaseIteration},
+            {Name: "final-step", Phase: workflowmodel.PhaseFinalize},
+        },
+    }
+    data, err := marshalDoc(doc)
+    require.NoError(t, err)
+
+    got, err := workflowmodel.ParseConfig(data)
+    require.NoError(t, err)
+
+    phases := make([]string, len(got.Steps))
+    for i, s := range got.Steps {
+        phases[i] = s.Phase.String()
+    }
+    require.Equal(t, []string{"initialize", "iteration", "finalize"}, phases,
+        "each step must retain its original phase after a round-trip")
+}
+```
+
+Checklist when adding a new marshal/unmarshal path:
+1. If the data model has a phase or category field, add a round-trip test that covers at least two distinct categories.
+2. Assert the category field — not just the name — so a flattening bug is caught even if item names survive.
+3. Place the test in the same package as the marshal function, not in an external integration test, so it runs on every `go test ./...`.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -825,3 +860,4 @@ When a doc file refers to another doc as a source of further reading, also add t
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `fakeExecutor.writeRunSummaryCalls` counter added to distinguish `WriteRunSummary` from `WriteToLog` call assertions (issue #93)
 - [Status Line](../code-packages/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)
 - [Config Validation](../code-packages/validator.md) — `prompts_structure_test.go` as the canonical t.Run + sorted-iteration test example (issue #125); `production_steps_test.go` as the canonical production-config integration test (issue #124)
+- [Workflow IO](../code-packages/workflowio.md) — `TestSave_PreservesPhaseBoundaries` as the canonical round-trip phase-boundary test; the missing test allowed all steps to silently collapse into the iteration phase on marshal (workflow-builder branch)

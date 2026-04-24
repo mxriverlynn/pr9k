@@ -639,6 +639,37 @@ if stats.InputTokens > resumeInputTokenLimit {
 
 The threshold is one: even a single use of a non-obvious number warrants a constant if the number encodes a domain rule. Numbers like `0`, `1`, `-1`, and small loop bounds are exempt.
 
+## Use lipgloss.JoinHorizontal for side-by-side TUI panels
+
+When placing two panels next to each other in a Bubble Tea view, use `lipgloss.JoinHorizontal` rather than string concatenation. String concatenation produces incorrect results when either string contains Lip Gloss styling (ANSI sequences inflate byte length vs. visual width), and it does not align the tops of multi-line panels.
+
+```go
+// Bad — string concatenation; breaks when either panel has ANSI styling
+return outlineStr + " | " + detailStr
+
+// Good — accounts for visual width and aligns panel tops
+return lipgloss.JoinHorizontal(lipgloss.Top, outlineStr, detailStr)
+```
+
+`lipgloss.JoinHorizontal(lipgloss.Top, ...)` aligns all panels at their top edge. Use `lipgloss.Center` or `lipgloss.Bottom` when those alignments are needed. Apply any time two rendered strings are placed side by side and at least one may contain ANSI escapes.
+
+## Open log files with O_APPEND
+
+When opening a log file that may be re-opened across the lifetime of a process (e.g., a session log that survives a restart), always include `O_APPEND` in the open flags. Without `O_APPEND`, the write position is reset to the beginning of the file on each `Open` call — subsequent writes overwrite earlier content instead of appending to it.
+
+```go
+// Good — O_APPEND ensures new writes go to the end of an existing file
+f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+
+// Bad — without O_APPEND, re-opening an existing file resets the write position;
+// the second open session overwrites the first session's log entries
+f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
+```
+
+`O_APPEND` is also safe for the first open (when the file does not yet exist): `O_CREATE` creates the file and `O_APPEND` becomes a no-op because the file starts empty.
+
+Apply to every log file or session-state file that may be re-opened. One-shot write-once files (e.g., an atomic replacement via `atomicwrite.Write`) do not need `O_APPEND` because they are always written from scratch.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -658,3 +689,5 @@ The threshold is one: even a single use of a non-obvious number warrants a const
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `fullStdoutCapture` uses `utf8.RuneStart` backward walk for truncation (issue #123)
 - [Docker Sandbox](../features/docker-sandbox.md) — `Setpgid: true` + `syscall.Kill(-pid, sig)` for host subprocess process-group signals (issue #130)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `resumeInputTokenLimit` constant replacing 200_000 magic number (issue #131)
+- [Workflow Edit](../code-packages/workflowedit.md) — `renderEditView` fix replacing string concatenation with `lipgloss.JoinHorizontal` as the canonical side-by-side panel example (workflow-builder branch)
+- [File Logging](../code-packages/logger.md) — `O_APPEND` added to logger open flags to prevent write-position reset on re-open (workflow-builder branch)

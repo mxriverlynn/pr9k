@@ -381,6 +381,38 @@ func copySelectedText(text string) tea.Cmd { ... } // in clipboard.go
 
 When creating a new helper, ask: "which file would a maintainer look in first for this logic?" Place it there, not in the file where you first needed it.
 
+## Mark incomplete commands Hidden before shipping
+
+When a cobra command's `RunE` body is wired to a stub or placeholder (e.g., a struct that is initialized but never used), set `Hidden: true` on the command before it ships. A command that appears in `--help` output but does nothing when invoked is a silent no-op: users run it, see no output, and assume they did something wrong. `Hidden: true` removes the command from help listings while still allowing explicit invocation during development.
+
+```go
+cmd := &cobra.Command{
+    Use:    "workflow",
+    Short:  "Open the interactive workflow builder",
+    Hidden: true, // TUI not yet wired; avoids silent-no-op user surprise
+    RunE: func(cmd *cobra.Command, args []string) error {
+        // ... partial implementation ...
+        return nil
+    },
+}
+```
+
+The same principle applies to scaffolding structs: if you add a struct to hold dependencies for a future integration, remove it before the PR merges. A struct with fields that are written at construction but never read is dead code; it accumulates confusion and forces future readers to verify that the struct is truly unused rather than part of an active code path.
+
+```go
+// Bad — added as a placeholder for "future use", never read
+type workflowDeps struct {
+    log *logger.Logger
+}
+
+deps := &workflowDeps{log: log}
+_ = deps // explicit suppression is a signal the struct is not ready
+
+// Good — remove the struct entirely until it has real consumers
+```
+
+The rule: every exported or package-visible symbol that ships must have at least one real read site. If the read site does not exist yet, keep the symbol out of the main branch.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -394,3 +426,4 @@ When creating a new helper, ask: "which file would a maintainer look in first fo
 - [Go Patterns](go-patterns.md) — Complementary Go-specific patterns
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
+- [Workflow Builder](../features/workflow-builder.md) — `Hidden: true` on `workflow` cobra command as the canonical incomplete-command example; `workflowDeps` removal as the canonical dead-scaffolding example (workflow-builder branch)
