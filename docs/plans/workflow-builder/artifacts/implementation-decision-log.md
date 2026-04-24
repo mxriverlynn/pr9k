@@ -786,3 +786,87 @@ the three files stay in sync.
 - **Driven by rounds:** R1
 - **Dependent decisions:** D-15
 - **Referenced in plan:** Operational Readiness — Observability
+
+## D-45: `internal/ansi.StripAll` strict ANSI stripper for untrusted bytes
+
+- **Question:** How does the builder strip ANSI escape sequences from untrusted `config.json` bytes rendered in the recovery view, given that `statusline.Sanitize` preserves OSC 8 hyperlinks by design?
+- **Decision:** Introduce a new `internal/ansi` package with one exported function: `StripAll(data []byte) []byte`. It removes ALL ANSI escapes, including OSC 8 hyperlinks, CSI, SGR, RIS, and bare ESC bytes. `workflowio.Load` applies `ansi.StripAll` + an 8 KiB content cap before returning recovery-view content to `workflowedit`. `statusline.Sanitize` remains unchanged — its OSC 8 preservation is correct for trusted status-line script output. `workflowedit` never imports `internal/ansi` directly — content is stripped at the `workflowio` boundary.
+- **Rationale:** Verified against source ([`src/internal/statusline/sanitize.go:95-98`](../../../../src/internal/statusline/sanitize.go)) that OSC 8 is preserved. Reusing that function for untrusted config content would leave a terminal-injection surface open. The previous rejection of `internal/ansi` (at plan synthesis time) was grounded in "one caller" — this review creates the second caller, satisfying the revisit criterion. Isolating stripping at the `workflowio` boundary keeps the cross-subsystem edge in one place instead of letting every UI package import `statusline` for a utility function.
+- **Evidence:** F-94 (security Finding SV-03); F-99 (architecture Item 8); V7 (adversarial); `statusline/sanitize.go:95-98` source inspection.
+- **Rejected alternatives:**
+  - Continue reusing `statusline.Sanitize` — leaves OSC 8 terminal-injection live.
+  - Add a "strict mode" flag to `statusline.Sanitize` — couples the status-line sanitizer to an untrusted-input concern.
+  - Put `StripAll` in `workflowio` — couples I/O to a pure byte-processing utility; any future third caller would have to import `workflowio` for sanitization.
+- **Specialist owner:** `adversarial-security-analyst`
+- **Revisit criterion:** Reopen if a terminal emulator gains a new escape-sequence class the stripper does not handle, or if OSC 8 preservation semantics in `statusline.Sanitize` change.
+- **Dissent (if any):** —
+- **Driven by rounds:** R4
+- **Dependent decisions:** supersedes part of D-23 (recovery-view ANSI handling)
+- **Referenced in plan:** Architecture and Integration Points; Data Model and Persistence; Decomposition (WU-1, WU-10); Security Posture (item 3); Definition of Done
+
+## D-46: `SaveFS` interface for testability
+
+- **Question:** What is the concrete interface shape of `workflowio.SaveFS`, the DI seam named by the plan's Testing Strategy?
+- **Decision:** Three-method interface:
+
+  ```go
+  type SaveFS interface {
+      Save(doc workflowmodel.WorkflowDoc, workflowDir string) (SaveResult, error)
+      CreateEmptyCompanion(workflowDir, promptFile string) error
+      DetectCrashTempFiles(workflowDir string) ([]CrashTemp, error)
+  }
+  ```
+
+  Production value is a `realSaveFS` struct implementing all three methods against the real filesystem via `atomicwrite.Write`. Test doubles (`fakeSaveFS`) capture every call per method (per `docs/coding-standards/testing.md`). `workflowedit.Model` holds a `workflowio.SaveFS` field, injected at construction (matches the D-6 `EditorRunner` pattern and the `sandbox_create.go` `sandboxCreateDeps.dockerRun` pattern).
+- **Rationale:** Without a committed interface, `workflowedit` could call `workflowio.Save` as a concrete function — defeating the fake-FS testing pattern the plan names. Three methods cover every I/O the TUI layer triggers from Update; more would violate ISP; fewer would fail to cover the create-on-editor-open or crash-era code paths.
+- **Evidence:** F-102 (software-architect Item 1); D-6 (`EditorRunner` precedent); `sandbox.go` `dockerRunFunc` pattern.
+- **Rejected alternatives:**
+  - Concrete function calls — breaks TUI-level model-update testing without a real filesystem.
+  - Single `Save` method — misses `CreateEmptyCompanion` and `DetectCrashTempFiles`, which are TUI-dispatched.
+  - Five+ granular methods — over-abstraction; internal helpers don't need to be at the interface boundary.
+- **Specialist owner:** `software-architect`
+- **Revisit criterion:** Reopen if a new TUI-dispatched filesystem operation emerges that doesn't fit the three-method shape.
+- **Dissent (if any):** —
+- **Driven by rounds:** R4
+- **Dependent decisions:** D-6 (EditorRunner precedent); D-47 (SaveResult consumed through this interface)
+- **Referenced in plan:** Architecture and Integration Points (DI seams); Decomposition (WU-4); Testing Strategy
+
+## D-47: `SaveResult` typed error kind enum
+
+- **Question:** How does the builder surface save-time error conditions to the TUI without the TUI importing `syscall` or `os`-specific error types?
+- **Decision:** `workflowio.SaveResult` carries error classification via a typed enum, not via `errors.Is` inspection in the caller:
+
+  ```go
+  type SaveErrorKind int
+  const (
+      SaveErrorNone SaveErrorKind = iota
+      SaveErrorGeneric
+      SaveErrorEXDEV
+      SaveErrorPermission
+      SaveErrorDiskFull
+      SaveErrorConflict
+      SaveErrorSymlinkEscape
+      SaveErrorTargetNotRegularFile
+      SaveErrorParseError
+  )
+
+  type SaveResult struct {
+      Err      error
+      Kind     SaveErrorKind
+      Snapshot *SaveSnapshot  // nil on failure
+  }
+  ```
+
+  `workflowio.Save` classifies the underlying error via `errors.Is(err, syscall.EXDEV)`, `errors.Is(err, syscall.EACCES)`, disk-full detection, etc., and sets `Kind`. The TUI switches on `result.Kind` only — `syscall` stays out of `workflowedit`.
+- **Rationale:** Without this enum, the TUI would call `errors.Is(err, syscall.EXDEV)` directly — pushing OS-level knowledge into the UI layer and violating DIP. The closed enumeration also supports the D-27 logger `reason=<short>` closed set — the same taxonomy covers both logger-side reporting and UI-side dialog routing, preventing drift.
+- **Evidence:** F-103 (software-architect Item 6); D-19 (EXDEV wrapping); F-113 (logger reason enumeration).
+- **Rejected alternatives:**
+  - Pass raw `error` to TUI; TUI uses `errors.Is` — leaks `syscall` into the UI layer.
+  - Error-kind as a string — weaker type safety; silent typos.
+  - Separate enums for save-error and log-reason — drift risk between two coupled taxonomies.
+- **Specialist owner:** `software-architect`
+- **Revisit criterion:** Reopen if a new save-time error condition emerges that doesn't fit the enum — add a new constant rather than `SaveErrorGeneric`.
+- **Dissent (if any):** —
+- **Driven by rounds:** R4
+- **Dependent decisions:** D-19 (EXDEV wrapping); D-27 (logger reason enumeration, shares taxonomy)
+- **Referenced in plan:** Data Model and Persistence; Runtime Behavior (save flow); External Interfaces (Logger)

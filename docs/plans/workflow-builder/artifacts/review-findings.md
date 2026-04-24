@@ -638,3 +638,334 @@ Round 3 (user-initiated Quit-flow simplification) adds F92-F93.
 - **Affected decisions:** D73 (new), D7 (updated)
 - **Affected tech-notes:** —
 - **Changed in spec:** Primary Flow step 10; Alternate Flows — Quit confirmation (no unsaved changes)
+
+---
+
+<!--
+Findings F94 onward are from the iterative-plan-review of the
+feature-implementation-plan.md (distinct from the prior review cycles
+which were of the feature-specification.md). Numbering continues so
+cross-references stay globally unique within this artifacts/ folder.
+These findings reference the implementation plan's D-N identifiers
+(D-1 through D-44) and the new D-45+ decisions this review adds.
+-->
+
+## F94: `statusline.Sanitize` preserves OSC 8 hyperlinks (plan-blocking)
+
+- **Agent:** adversarial-security-analyst (SV-03); adversarial-validator (V7)
+- **Category:** Safety / plan claim contradicted by code
+- **Finding:** The plan claims D-23's reuse of `statusline.Sanitize` "fully closes the terminal-injection threat" in the parse-error recovery view. The actual shipped code at `src/internal/statusline/sanitize.go:95-98` explicitly preserves OSC 8 hyperlinks by design (for status-line use). A malicious `config.json` that fails to parse can embed OSC 8 hyperlink sequences that survive sanitization and render as clickable links in iTerm2 / WezTerm / modern xterm. Verified against source.
+- **Evidence considered:** `src/internal/statusline/sanitize.go` lines 6–7 ("Preserved: SGR color escapes and OSC 8 hyperlinks"), 68, 95–98. Grep confirms no alternate stripper exists in the codebase.
+- **Resolution:** Introduce a strict stripper. `workflowio.Load` passes raw recovery-view bytes through a new `internal/ansi.StripAll(bytes) []byte` that strips every ANSI escape including OSC 8. `statusline.Sanitize` remains unchanged (its preservation is correct for its own use). Update D-23 and Security Posture. 8 KiB cap also applied in `workflowio.Load` before stripping.
+- **Resolved by:** plan-edit — new decision D-45; D-23 referenced
+- **Raised in round:** R4 (this review)
+- **Changed in plan:** Architecture and Integration Points; Data Model and Persistence; Decomposition (WU-10 amended); Security Posture
+
+## F95: `filepath.EvalSymlinks` ENOENT on non-existent paths (plan-blocking)
+
+- **Agent:** junior-developer (JrF-03); adversarial-validator (V6); adversarial-security-analyst (SV-02)
+- **Category:** Correctness / every first-save blocked
+- **Finding:** D-5's `atomicwrite.Write` step 1 and D-21's `CreateEmptyCompanion` call `filepath.EvalSymlinks` on paths that may not exist yet. Stdlib returns `fs.PathError{Err: syscall.ENOENT}` when the final path component is absent. Every File > New → File > Save is first-save. Every empty-scaffold `prompts/step-1.md` is a non-existent file. As written, the common case fails. For a brand-new workflow, even `prompts/` itself is absent — EvalSymlinks ENOENTs on the parent.
+- **Evidence considered:** POSIX `realpath(3)`; Go stdlib `filepath.EvalSymlinks` documented behavior.
+- **Resolution:** `atomicwrite.Write` algorithm changed: on ENOENT from `EvalSymlinks(path)`, walk to the lowest-existing parent, EvalSymlinks that, then append the unresolved suffix. The real temp directory is the resolved existing parent. `CreateEmptyCompanion` additionally calls `os.MkdirAll(resolvedParentDir, 0o700)` for missing intermediate directories after confirming containment. Test matrix gains `TestWrite_FirstSave_NonExistentTarget_Succeeds` and `TestCreateEmptyCompanion_MissingPromptsDir_CreatesItContained`.
+- **Resolved by:** plan-edit — D-5 and D-21 amended; T1 matrix expanded
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence; Runtime Behavior (Create-on-editor-open); Testing Strategy; Security Posture (items 2 and 4)
+
+## F96: `TestValidate_ProductionStepsJSON` breaks under OI-1 (plan-blocking)
+
+- **Agent:** adversarial-validator (V9)
+- **Category:** Evidence / plan commitment contradicted by existing scaffold
+- **Finding:** D-37 commits "unchanged pass" after OI-1 adds EvalSymlinks + containment to `safePromptPath`. But `assembleWorkflowDir` at `production_steps_test.go:51-57` creates directory-level symlinks (`<tempdir>/prompts -> <repo>/workflow/prompts`). `EvalSymlinks(<tempdir>/prompts/foo.md)` resolves to `<repo>/workflow/prompts/foo.md` — fails the `HasPrefix(<tempdir>/prompts/)` check. Every prompt validates as fatal. Verified against source.
+- **Evidence considered:** `src/internal/validator/production_steps_test.go:51-57`.
+- **Resolution:** OI-1 containment is `HasPrefix(resolvedTarget, resolvedBundleRoot)` — resolve BOTH sides via `EvalSymlinks`. Directory-level symlinks that keep content inside the resolved bundle pass. The threat OI-1 addresses (symlink escaping OUTSIDE the bundle) is still caught — the resolved target's prefix will not match the resolved bundle root.
+- **Resolved by:** plan-edit — D-37 and D-38 amended; OI-1 containment logic clarified
+- **Raised in round:** R4
+- **Changed in plan:** External Interfaces (Validator); Decomposition (WU-5); Security Posture (item 1)
+
+## F97: `Ctrl+Q` during save in flight discards `saveCompleteMsg` (plan-blocking)
+
+- **Agent:** concurrency-analyst (CV-02)
+- **Category:** Correctness / silent failure
+- **Finding:** D-13's save flow blocks double-save via `saveInProgress` but does not gate `Ctrl+Q`. If the user confirms quit during save, `program.Run()` returns, `cancel()` fires, the save goroutine completes, `saveCompleteMsg` is enqueued to a stopped loop and discarded. No user feedback for the save.
+- **Evidence considered:** Plan Runtime Behavior; D-33 cancellation semantics.
+- **Resolution:** Add `pendingQuit bool` to Model. `handleGlobalKey` on `Ctrl+Q` with `saveInProgress` true: set `pendingQuit = true`, open a "Save in progress — please wait" dialog. On `saveCompleteMsg` receipt with `pendingQuit == true`, re-trigger the quit flow (routes through QuitConfirm or unsaved-changes dialog). Invariant: every save produces user-visible feedback before exit.
+- **Resolved by:** plan-edit — Runtime Behavior amended
+- **Raised in round:** R4
+- **Changed in plan:** Runtime Behavior (save flow + Update routing)
+
+## F98: `saveSnapshot` not reset on session transition (plan-blocking)
+
+- **Agent:** concurrency-analyst (CV-09)
+- **Category:** Correctness / false-positive conflict
+- **Finding:** D-13 describes `saveSnapshot` but is silent on File > Open / File > New session transitions. Snapshot from workflow A carries over → workflow B's first save compares B's mtime against A's snapshot → false-positive conflict dialog on every switch.
+- **Evidence considered:** Spec D57 session lifecycle.
+- **Resolution:** `saveSnapshot` becomes `*SaveSnapshot`. Session transition sets to `nil`. Save flow step 1: if `saveSnapshot == nil`, skip conflict check. First successful save populates the snapshot.
+- **Resolved by:** plan-edit — D-13 amended
+- **Raised in round:** R4
+- **Changed in plan:** Runtime Behavior (save flow step 1)
+
+## F99: `workflowedit → internal/statusline` coupling (architecture)
+
+- **Agent:** software-architect (Item 8)
+- **Category:** DIP / SRP
+- **Finding:** The plan has `workflowedit` call `statusline.Sanitize` directly — new cross-subsystem edge from a TUI package into an orchestrator-runtime package for a utility function. D-23's "only one caller" rationale breaks once this PR creates the second caller.
+- **Evidence considered:** Plan dependency diagram; D-23 rationale.
+- **Resolution:** Resolved jointly with F-94. `internal/ansi.StripAll` is the canonical stripper. `workflowio.Load` applies it before returning recovery content to `workflowedit`. `workflowedit` never imports `statusline`. The cross-subsystem edge stays in `workflowio → internal/ansi` only.
+- **Resolved by:** plan-edit (joint with F-94)
+- **Raised in round:** R4
+- **Changed in plan:** Architecture and Integration Points (layering)
+
+## F100: 28-entry TUI mode-coverage table lives in `/tmp`, unreachable
+
+- **Agent:** test-engineer (TV-05)
+- **Category:** Traceability
+- **Finding:** Plan references "28 TUI mode-coverage entries" but the table exists only at `/tmp/wb-test-findings.md` (ephemeral planning artifact). An implementer cannot trace the commitment.
+- **Evidence considered:** Plan Testing Strategy; absence at any committed path.
+- **Resolution:** Write `docs/plans/workflow-builder/artifacts/tui-mode-coverage.md` enumerating the 28 modes with starting state / input / expected next state / observable change. Reference from plan Testing Strategy.
+- **Resolved by:** plan-edit — artifact file written; plan references it
+- **Raised in round:** R4
+- **Changed in plan:** Testing Strategy
+
+## F101: Test file naming inconsistency across plan sections
+
+- **Agent:** test-engineer (TV-01, TV-04); junior-developer (JrF-04)
+- **Category:** Internal consistency
+- **Finding:** Plan Work-Units table uses `wf`-prefixed short names (`wfmodel_test.go` etc.) that collide on two packages; Testing Strategy uses co-located `<source>_test.go` names (correct per coding standard).
+- **Evidence considered:** `docs/coding-standards/testing.md`.
+- **Resolution:** Normalize every plan reference to co-located convention: `<package>/<source>_test.go`. Enumerated list appended to Testing Strategy.
+- **Resolved by:** plan-edit
+- **Raised in round:** R4
+- **Changed in plan:** Decomposition; Testing Strategy
+
+## F102: `SaveFS` interface shape uncommitted (architecture)
+
+- **Agent:** software-architect (Item 1)
+- **Category:** DIP / testability
+- **Finding:** Plan names `workflowio.SaveFS` as a DI seam but commits no shape. Implementer could call `workflowio.Save` as a concrete function, defeating fake-FS testing.
+- **Evidence considered:** Plan Testing Strategy; D-6 (EditorRunner precedent); `sandbox.go` `dockerRunFunc`.
+- **Resolution:** New decision D-46: `workflowio.SaveFS` is an interface with `Save(doc, workflowDir)`, `CreateEmptyCompanion(workflowDir, promptFile)`, `DetectCrashTempFiles(workflowDir)`. Production is `realSaveFS` struct. `workflowedit.Model` holds the interface, injected at construction.
+- **Resolved by:** plan-edit — D-46 added
+- **Raised in round:** R4
+- **Changed in plan:** Architecture and Integration Points; Decomposition (WU-4); Testing Strategy
+
+## F103: `SaveResult`/`SaveErrorKind` typed enum (architecture)
+
+- **Agent:** software-architect (Item 6)
+- **Category:** DIP / layering
+- **Finding:** D-19's EXDEV detection uses `errors.Is(err, syscall.EXDEV)` but the plan is silent on where the check happens. If `workflowedit.Update` calls it, the TUI layer imports `syscall`.
+- **Evidence considered:** D-19; plan save-flow.
+- **Resolution:** New decision D-47: `workflowio.SaveResult{Err error, Kind SaveErrorKind, Snapshot SaveSnapshot}`. `SaveErrorKind` enum closes the error taxonomy (`None | Generic | EXDEV | Permission | DiskFull | Conflict | SymlinkEscape | TargetNotRegularFile | ParseError`). `workflowio.Save` sets `Kind` via `errors.Is` checks. TUI switches on `Kind` only.
+- **Resolved by:** plan-edit — D-47 added
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence; Runtime Behavior
+
+## F104: `NewLoggerWithPrefix` API shape uncommitted
+
+- **Agent:** software-architect (Item 10); evidence-based-investigator (EB-09)
+- **Category:** API stability
+- **Finding:** D-15 says "new `NewLoggerWithPrefix` or extended `NewLogger`." Changing `NewLogger`'s signature breaks `main.go:82`.
+- **Evidence considered:** `src/internal/logger/logger.go:33`; current `NewLogger(projectDir)` signature.
+- **Resolution:** D-15 amended: add `NewLoggerWithPrefix(projectDir, prefix string) (*Logger, error)`. `NewLogger(projectDir)` preserved, internally calls `NewLoggerWithPrefix(projectDir, "ralph")`.
+- **Resolved by:** plan-edit — D-15 amended
+- **Raised in round:** R4
+- **Changed in plan:** External Interfaces (Logger)
+
+## F105: Synchronous validation violates concurrency standard on NFS/FUSE
+
+- **Agent:** concurrency-analyst (CV-05); adversarial-validator (V3)
+- **Category:** Concurrency / TUI freeze
+- **Finding:** D-13 runs validation synchronously on Update. Post-OI-1, `safePromptPath` does `EvalSymlinks`'s per-component `os.Lstat`. On NFS/FUSE with a 100-step workflow this is seconds of TUI freeze. Coding standard requires file I/O in `tea.Cmd` closures.
+- **Evidence considered:** `docs/coding-standards/concurrency.md`; OI-1 adds EvalSymlinks.
+- **Resolution:** Move validation into `tea.Cmd`. Deep copy already required for T3 correctness. `validateInProgress` flag gates double-save. `validateCompleteMsg{findings}` arrives asynchronously. Save flow becomes three-stage: idle → validating → saving → idle.
+- **Resolved by:** plan-edit — D-13 amended
+- **Raised in round:** R4
+- **Changed in plan:** Runtime Behavior (save flow)
+
+## F106: mtime precision on FAT32 / exFAT / NFS v3 silently defeats detector
+
+- **Agent:** concurrency-analyst (CV-08); adversarial-validator (V4)
+- **Category:** Known limitation / documentation gap
+- **Finding:** Assumption A2 bounds "verified on APFS and ext4." FAT32 (1s), exFAT (10ms), NFS v3 (1s), HFS+ (1s) fall back to seconds precision silently.
+- **Evidence considered:** POSIX stat precision by filesystem; spec Edge Cases table.
+- **Resolution:** A2 scope bounded: "verified on APFS and ext4; FAT32/exFAT/NFS v3/HFS+ degrade to seconds — known limitation." Operational Readiness documents the filesystem recommendation. How-to guide mirrors.
+- **Resolved by:** plan-edit — A2 amended; Operational Readiness amended
+- **Raised in round:** R4
+- **Changed in plan:** RAID Log (Assumptions); Operational Readiness
+
+## F107: `ExecCallback` RestoreTerminal-failure branch unspecified
+
+- **Agent:** concurrency-analyst (CV-10)
+- **Category:** Correctness / terminal safety
+- **Finding:** D-7's two-way branch (exit-130 / other) misses the third error type: `RestoreTerminal` failure that is not `*exec.ExitError`. Exit-code extraction returns 0 or -1, builder takes "normal exit → re-read" path despite degraded terminal.
+- **Evidence considered:** Bubble Tea `exec.go:103-129`.
+- **Resolution:** D-7 amended: three-way type-switch in callback. nil → editor-normal; `*exec.ExitError` with 130 → `editorSigintMsg`; `*exec.ExitError` other → `editorExitMsg`; otherwise → `editorRestoreFailedMsg` → opens DialogError with "terminal may be degraded — run `reset`." No re-read on RestoreFailed.
+- **Resolved by:** plan-edit — D-7 amended
+- **Raised in round:** R4
+- **Changed in plan:** Runtime Behavior (editor handoff); Security Posture (item 6)
+
+## F108: Parent-directory fsync missing after rename
+
+- **Agent:** adversarial-security-analyst (SV-04)
+- **Category:** Durability / power-loss
+- **Finding:** `atomicwrite.Write` fsyncs the file but not the parent directory. POSIX durability requires parent-dir fsync for the rename entry to survive power loss. Plan's "durable against crash" Outcome claim is partial.
+- **Evidence considered:** POSIX `fsync(2)`; Linux "Safe File Updates" documentation.
+- **Resolution:** `atomicwrite.Write` step 5 amended: after `os.Rename`, open the parent directory and Sync() it. Best-effort (no-op on some filesystems like ZFS). Test case `TestWrite_ParentDirSyncCalled` verifies the call sequence via fake FS.
+- **Resolved by:** plan-edit — D-5 step 5 amended
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence; Testing Strategy
+
+## F109: FIFOs / named pipes in bundle pass containment, block editor
+
+- **Agent:** adversarial-security-analyst (SV-09)
+- **Category:** Availability / DoS
+- **Finding:** Containment accepts a FIFO at `prompts/step-1.md` (path resolves inside bundle). Opening the editor on a FIFO blocks indefinitely.
+- **Evidence considered:** POSIX FIFO semantics; `os.FileInfo.Mode().IsRegular()`.
+- **Resolution:** `workflowio.Load` and `CreateEmptyCompanion` verify `FileInfo.Mode().IsRegular()`. Non-regular (FIFO, socket, device, directory) rejected with D56 error template. Check applies to EvalSymlinks-resolved target.
+- **Resolved by:** plan-edit — D-21 and D-23 amended
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence; Runtime Behavior; Security Posture
+
+## F110: Temp-file naming scheme inconsistent across decisions
+
+- **Agent:** junior-developer (JrF-04, JrF-05)
+- **Category:** Internal consistency / crash-era correctness
+- **Finding:** D-5 says `os.CreateTemp(realDir, "*"+TempFileSuffix)` (Go random-digit convention); D-16 says `<basename>.<pid>-<epoch-ns>.tmp`; crash-era glob `*.*.*.tmp` matches different files per scheme.
+- **Evidence considered:** Go stdlib `os.CreateTemp` naming rules.
+- **Resolution:** Canonical scheme: explicit `os.OpenFile(tempPath, O_CREATE|O_EXCL|O_WRONLY, 0o600)` with `tempPath = filepath.Join(realDir, fmt.Sprintf("%s.%d-%d.tmp", filepath.Base(realPath), os.Getpid(), time.Now().UnixNano()))`. NOT `os.CreateTemp`. Crash-era glob narrowed to `<basename>.*.tmp` — matches only this basename's temp files. D-5 and D-16 aligned.
+- **Resolved by:** plan-edit — D-5 and D-16 aligned
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence; Testing Strategy
+
+## F111: Signal-handler 10-second fallback rationale and DoD gap
+
+- **Agent:** junior-developer (JrF-07); adversarial-validator (V2)
+- **Category:** UX / rationale
+- **Finding:** D-34's 10s grace vs existing main-loop 2s is a 5× user-visible increase with no rationale and no DoD criterion.
+- **Evidence considered:** `main.go:266-279`.
+- **Resolution:** D-34 rationale amended: 10s accommodates slow-starting editors (vim heavy init, VS Code plugin load) that may be mid-launch during the ExecProcess window. 2s insufficient for cold VS Code on spinning disk. Alternative (dynamic 2s / 10s based on ExecProcess state) rejected as complexity. Aspirational DoD criterion: "SIGINT response ≤ 10s any state; ≤ 2s when no editor pending launch."
+- **Resolved by:** plan-edit — D-34 rationale amended
+- **Raised in round:** R4
+- **Changed in plan:** Runtime Behavior (signal handler); Definition of Done
+
+## F112: Version-bump-first-commit interpretation of versioning.md
+
+- **Agent:** adversarial-validator (V1)
+- **Category:** Standards conformance
+- **Finding:** versioning.md says bump is its own commit, not a drive-by edit in a feature PR. D-18's interpretation (commit #1 of feature PR with `--no-ff`) satisfies the letter but is cosmetic vs the prior 0.7.1 bump which was its own PR.
+- **Evidence considered:** `docs/coding-standards/versioning.md:42`; git history of 0.7.1 bump.
+- **Resolution:** DEFER TO USER. Recommended: land bump as separate PR before feature PR (matches precedent). Documented as OI-3.
+- **Resolved by:** deferred to open item — OI-3
+- **Raised in round:** R4
+- **Changed in plan:** Open Items
+
+## F113: Logger `reason=<short>` value enumeration underspecified
+
+- **Agent:** adversarial-validator (V8)
+- **Category:** Logging contract precision
+- **Finding:** D-27 specifies `save_failed reason=<short>` without enumerating allowed values. Naive implementer deriving `<short>` from validator findings could leak content.
+- **Evidence considered:** D-27 event catalog.
+- **Resolution:** D-27 amended with closed enumeration: `validator_fatals | permission_error | disk_full | cross_device | conflict_detected | symlink_escape | target_not_regular_file | parse_error | other`. Any failure outside the set → `reason=other` with no free-form detail.
+- **Resolved by:** plan-edit — D-27 amended
+- **Raised in round:** R4
+- **Changed in plan:** External Interfaces (Logger); Security Posture (item 7)
+
+## F114: Single-PR scope at 8-14K LOC
+
+- **Agent:** adversarial-validator (V10)
+- **Category:** Reviewability
+- **Finding:** 6 new packages + validator + logger + 8 docs + tests ≈ 8-14K LOC. No split commitment; no named domain reviewers.
+- **Evidence considered:** Existing codebase sizes; prior PR sizes in git log.
+- **Resolution:** DEFER TO USER with recommendation. Split into two PRs at natural boundary: PR 1 = WU-1..WU-5 + version bump (data layer + security); PR 2 = WU-6..WU-12 (TUI). PR 1 makes `pr9k workflow` available with empty editor; PR 2 lands the edit machinery. Documented as OI-4.
+- **Resolved by:** deferred to open item — OI-4
+- **Raised in round:** R4
+- **Changed in plan:** Open Items
+
+## F115: Evidence drift — line numbers and file-reference gaps
+
+- **Agent:** evidence-based-investigator (EB-01, EB-02, EB-08, EB-18, EB-23)
+- **Category:** Evidence accuracy
+- **Finding:** Minor drifts: (EB-02) heartbeat goroutine `main.go:204-212` should be `:204-210`; (EB-08) `iterationlog.go:47` is actually `:49`; (EB-01) `cli.Execute` current signature is single-arg (plan correctly describes the change but wording is ambiguous); (EB-18) `bundle_integration_test.go` already exists for bundle-layout smoke (different purpose); (EB-23) dependency diagram missing the new `workflowio → internal/ansi` edge from F-94.
+- **Evidence considered:** Source-tree verification.
+- **Resolution:** Line numbers corrected. Builder smoke test renamed to `bundle_builder_integration_test.go`. Dependency diagram updated.
+- **Resolved by:** plan-edit — corrections applied
+- **Raised in round:** R4
+- **Changed in plan:** Architecture and Integration Points (diagram, citations); Decomposition (WU-12 file rename)
+
+## F116: Rename-guard test commitment missing
+
+- **Agent:** test-engineer (TV-08)
+- **Category:** Test coverage
+- **Finding:** `pr9k workflow` name + `workflow-` log prefix are new identifiers. Testing standard says rename-guard is for renames, but the spirit applies to new-name introductions — confirm no accidental collision with existing `ralph-` log files or subcommand help text.
+- **Evidence considered:** `docs/coding-standards/testing.md`.
+- **Resolution:** Testing Strategy amended: WU-12 extends `rename_guard_test.go` (or adds parallel new-name guard) asserting `"workflow-"` filename prefix and `"pr9k workflow"` command name don't collide with existing identifiers.
+- **Resolved by:** plan-edit — Testing Strategy amended
+- **Raised in round:** R4
+- **Changed in plan:** Testing Strategy
+
+## F117: PID reuse in crash-era detection — accepted limitation
+
+- **Agent:** adversarial-validator (V5)
+- **Category:** Known limitation
+- **Finding:** `syscall.Kill(pid, 0)` cannot distinguish original-owner PID from reused PID. A long-dead crash-era temp file from a recycled PID is misclassified "active."
+- **Evidence considered:** POSIX PID reuse semantics.
+- **Resolution:** ACCEPTED LIMITATION. D-16 amended with explicit note about PID reuse false-negative. User-visible consequence: the temp file is not surfaced until a later session's scan catches it.
+- **Resolved by:** accepted as documented limitation
+- **Raised in round:** R4
+- **Changed in plan:** Data Model and Persistence (crash-era); RAID Log
+
+## F118: T1/T2 test matrix enumeration gap
+
+- **Agent:** test-engineer (TV-02, TV-03)
+- **Category:** Traceability
+- **Finding:** Plan claims 11 T1 and 8 T2 test cases but names only ~7 and ~5 respectively. Implementer cannot trace each case.
+- **Evidence considered:** D41-b; plan Testing Strategy.
+- **Resolution:** Testing Strategy expanded with enumerated test names. Each T1 case → `TestWrite_*`; each T2 case → `TestEditor_*` or `TestResolveEditor_*`.
+- **Resolved by:** plan-edit — Testing Strategy enumeration added
+- **Raised in round:** R4
+- **Changed in plan:** Testing Strategy
+
+## F119: Path picker tab-completion — not a vulnerability
+
+- **Agent:** adversarial-security-analyst (SV-01) — dispositive
+- **Category:** Scope analysis
+- **Finding:** Path picker surfaces arbitrary directories. A user typing `/etc/` is user intent, not an injection.
+- **Evidence considered:** Distinction between user-typed path vs attacker-controlled config content.
+- **Resolution:** NOT A PLAN EDIT. The downstream concern (opening a non-JSON file as the workflow target; recovery view displays its content) is closed by F-109 (regular-file check) and F-94 (strict ANSI + 8 KiB cap).
+- **Resolved by:** evidence — not a vulnerability
+- **Raised in round:** R4
+- **Changed in plan:** —
+
+## F120: Orphaned-companion detection already accepted (restated)
+
+- **Agent:** adversarial-validator parent; edge-case AS-4 from synthesis
+- **Category:** Known limitation (restated)
+- **Finding:** SIGHUP or power-loss between companion write and config write leaves orphaned companion files.
+- **Evidence considered:** D-24 accepts this.
+- **Resolution:** Already addressed by D-24. No new plan edit.
+- **Resolved by:** evidence — already addressed
+- **Raised in round:** R4
+- **Changed in plan:** —
+
+## F121: `ValidateDoc` companion-file key convention — documentation only
+
+- **Agent:** software-architect (Item 3)
+- **Category:** Type safety / documentation
+- **Finding:** `map[string][]byte` with bare-filename convention is untyped — caller could pass full-path key, silent cache miss.
+- **Evidence considered:** D-3 signature; single call site.
+- **Resolution:** Package doc comment pins the convention. Test case in `workflowvalidate/validate_test.go` pins the behavior (full-path key → cache miss). No type change (over-abstraction for one caller).
+- **Resolved by:** evidence — documentation + test pin
+- **Raised in round:** R4
+- **Changed in plan:** Testing Strategy (test-case note added)
+
+## F122: Expected-absent evidence — pending items
+
+- **Agent:** evidence-based-investigator (EB-06, EB-15, EB-21, EB-25)
+- **Category:** Evidence — expected absent
+- **Finding:** `google/shlex` not in `go.mod`, `docs/coding-standards/file-writes.md` doesn't exist, OI-1 hardening not present, file-writes.md four rules not written. Plan correctly marks these as pending WUs.
+- **Evidence considered:** Current state verified.
+- **Resolution:** No plan change. Pending is pending.
+- **Resolved by:** evidence — expected-absent
+- **Raised in round:** R4
+- **Changed in plan:** —
+
