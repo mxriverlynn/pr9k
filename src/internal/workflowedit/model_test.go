@@ -675,3 +675,66 @@ func TestModel_EC_12_Init_ReturnsNil(t *testing.T) {
 		t.Error("Init should return nil")
 	}
 }
+
+// ============================================================
+// Gap tests (T-1..T-3)
+// ============================================================
+
+// T-1: DialogRemoveConfirm 'd' — removes step, clamps cursor, marks dirty
+func TestDialogRemoveConfirm_D_DeletesStep(t *testing.T) {
+	m := newLoadedModel(sampleStep("alpha"), sampleStep("beta"))
+	m.focus = focusOutline
+	m.outline.cursor = 0
+	m.dialog = dialogState{kind: DialogRemoveConfirm, payload: "alpha"}
+	got := applyKey(m, keyRune('d'))
+	if got.dialog.kind != DialogNone {
+		t.Error("dialog should close after confirm")
+	}
+	if len(got.doc.Steps) != 1 {
+		t.Errorf("want 1 step, got %d", len(got.doc.Steps))
+	}
+	if got.doc.Steps[0].Name != "beta" {
+		t.Errorf("wrong step remaining, want beta got %q", got.doc.Steps[0].Name)
+	}
+	if !got.dirty {
+		t.Error("dirty should be true")
+	}
+}
+
+// T-2: handleOpenFileResult success — loads doc and marks loaded=true
+func TestHandleOpenFileResult_Success_LoadsDoc(t *testing.T) {
+	m := newTestModel()
+	doc := workflowmodel.WorkflowDoc{Steps: []workflowmodel.Step{sampleStep("s1")}}
+	msg := openFileResultMsg{doc: doc, diskDoc: doc, workflowDir: "/some/dir"}
+	got := applyMsg(m, msg)
+	if !got.loaded {
+		t.Error("loaded should be true after success")
+	}
+	if got.dirty {
+		t.Error("dirty should be false after load")
+	}
+	if len(got.doc.Steps) != 1 {
+		t.Errorf("want 1 step, got %d", len(got.doc.Steps))
+	}
+	if got.workflowDir != "/some/dir" {
+		t.Errorf("workflowDir not updated, got %q", got.workflowDir)
+	}
+	if got.outline.cursor != 0 {
+		t.Errorf("cursor should be 0, got %d", got.outline.cursor)
+	}
+}
+
+// T-3: DialogUnsavedChanges 'd' — produces tea.Quit command
+func TestDialogUnsavedChanges_D_DiscardsAndQuits(t *testing.T) {
+	m := newLoadedModel(sampleStep("s1"))
+	m.dirty = true
+	m.dialog = dialogState{kind: DialogUnsavedChanges}
+	_, cmd := m.Update(keyRune('d'))
+	if cmd == nil {
+		t.Fatal("want tea.Quit cmd after d in UnsavedChanges")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("cmd should produce tea.QuitMsg, got %T", msg)
+	}
+}

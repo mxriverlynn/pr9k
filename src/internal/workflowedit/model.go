@@ -43,9 +43,8 @@ type Model struct {
 	dialog   dialogState
 	helpOpen bool
 
-	saveInProgress     bool
-	validateInProgress bool
-	pendingQuit        bool
+	saveInProgress bool
+	pendingQuit    bool
 
 	outline outlinePanel
 	detail  detailPane
