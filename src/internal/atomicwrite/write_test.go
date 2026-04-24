@@ -414,6 +414,32 @@ func TestWrite_CrossDeviceRenameSurfacedAsEXDEV(t *testing.T) {
 	}
 }
 
+// Gap test: multi-level ENOENT walkback — intermediate directory missing.
+// resolveRealPath walks back through dir/subdir/file.txt; the rename then
+// fails because "subdir" doesn't exist, and the temp file must be cleaned up.
+func TestWrite_FirstSave_IntermediateDirMissing_FailsCleanly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// "subdir" is intentionally absent.
+	path := filepath.Join(dir, "subdir", "file.txt")
+
+	err := Write(path, []byte("data"), 0o644)
+	if err == nil {
+		t.Fatal("want error for missing intermediate dir, got nil")
+	}
+
+	// No .tmp file must be left behind in dir.
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("ReadDir: %v", readErr)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("leftover temp file found: %s", e.Name())
+		}
+	}
+}
+
 // --- Fake helpers ---
 
 // fakeWriteFS is a configurable implementation of writeFS for tests.
