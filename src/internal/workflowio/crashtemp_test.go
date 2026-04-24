@@ -105,6 +105,45 @@ func TestDetectCrashTempFiles_GlobPatternMatchesAtomicWriteTempFiles(t *testing.
 	}
 }
 
+func TestDetectCrashTempFiles_CompanionTempFile_Detected(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// config.json references a companion so companionBasenames returns "step-1.md".
+	configJSON := `{"iteration":[{"name":"step","isClaude":true,"promptFile":"prompts/step-1.md"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o600); err != nil {
+		t.Fatalf("setup config.json: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o700); err != nil {
+		t.Fatalf("setup prompts dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "step-1.md"), []byte("# prompt"), 0o600); err != nil {
+		t.Fatalf("setup companion: %v", err)
+	}
+
+	// Write a crash-temp file matching the companion basename pattern.
+	pid := os.Getpid()
+	ns := time.Now().UnixNano()
+	tempName := fmt.Sprintf("step-1.md.%d-%d.tmp", pid, ns)
+	if err := os.WriteFile(filepath.Join(dir, tempName), []byte("tmp"), 0o600); err != nil {
+		t.Fatalf("setup companion temp file: %v", err)
+	}
+
+	files, err := workflowio.DetectCrashTempFiles(dir)
+	if err != nil {
+		t.Fatalf("DetectCrashTempFiles: %v", err)
+	}
+
+	found := false
+	for _, f := range files {
+		if filepath.Base(f.Path) == tempName {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DetectCrashTempFiles: companion temp file %q not found in results %v", tempName, files)
+	}
+}
+
 func TestDetectCrashTempFiles_NonWorkflowTempFiles_NotMatched(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

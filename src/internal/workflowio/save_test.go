@@ -1,6 +1,7 @@
 package workflowio_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -160,6 +161,64 @@ func TestSave_EXDEV_ClassifiedAsSaveErrorEXDEV(t *testing.T) {
 	result := workflowio.Save(fs, "/fake/dir", diskDoc, memDoc, nil)
 	if result.Kind != workflowio.SaveErrorEXDEV {
 		t.Errorf("Save: expected SaveErrorEXDEV, got %v (err: %v)", result.Kind, result.Err)
+	}
+}
+
+func TestSave_ErrPermission_ClassifiedAsSaveErrorPermission(t *testing.T) {
+	t.Parallel()
+	diskDoc := workflowmodel.WorkflowDoc{}
+	memDoc := dirtyDoc()
+
+	permErr := &os.PathError{Op: "open", Path: "/fake/dir/config.json", Err: syscall.EACCES}
+	fs := &fakeSaveFS{
+		writeErr: map[string]error{"config.json": permErr},
+	}
+
+	result := workflowio.Save(fs, "/fake/dir", diskDoc, memDoc, nil)
+	if result.Kind != workflowio.SaveErrorPermission {
+		t.Errorf("Save: expected SaveErrorPermission, got %v (err: %v)", result.Kind, result.Err)
+	}
+}
+
+func TestMarshalDoc_IsClaudeOmittedWhenNotSet(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	diskDoc := workflowmodel.WorkflowDoc{}
+
+	// Step with IsClaudeSet == false: isClaude key must be absent.
+	memDocShell := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{Name: "shell-step", Kind: workflowmodel.StepKindShell},
+		},
+	}
+	result := workflowio.Save(workflowio.RealSaveFS(), dir, diskDoc, memDocShell, nil)
+	if result.Kind != workflowio.SaveErrorNone {
+		t.Fatalf("Save (no flag): %v", result.Err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if bytes.Contains(data, []byte(`"isClaude"`)) {
+		t.Errorf("isClaude key present in JSON when IsClaudeSet == false:\n%s", data)
+	}
+
+	// Step with IsClaudeSet == true, Kind == Claude: isClaude must be true.
+	memDocClaude := workflowmodel.WorkflowDoc{
+		Steps: []workflowmodel.Step{
+			{Name: "claude-step", Kind: workflowmodel.StepKindClaude, IsClaudeSet: true},
+		},
+	}
+	result2 := workflowio.Save(workflowio.RealSaveFS(), dir, diskDoc, memDocClaude, nil)
+	if result2.Kind != workflowio.SaveErrorNone {
+		t.Fatalf("Save (claude): %v", result2.Err)
+	}
+	data2, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Contains(data2, []byte(`"isClaude": true`)) {
+		t.Errorf("isClaude: true not found in JSON when IsClaudeSet == true:\n%s", data2)
 	}
 }
 
