@@ -65,6 +65,7 @@ func fmtEditorOpened(editorEnv string, exitCode int, d time.Duration) string {
 // editorFirstToken extracts the binary basename from an editor string.
 // VISUAL="/opt/Sublime Text/subl --wait" → "subl".
 // It finds the last '/' first (handles paths with spaces), then strips any args.
+// Bare binary names (no '/') are assumed not to contain spaces themselves.
 func editorFirstToken(s string) string {
 	s = strings.TrimSpace(s)
 	// Find the last '/' to identify the start of the binary name even when

@@ -15,6 +15,7 @@ func Empty() WorkflowDoc {
 		Steps: []Step{
 			{
 				Name:        "step-1",
+				Phase:       StepPhaseIteration,
 				Kind:        StepKindClaude,
 				IsClaudeSet: true,
 				Model:       DefaultScaffoldModel,
@@ -80,13 +81,13 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 
 	var steps []Step
 	for _, rs := range rc.Initialize {
-		steps = append(steps, convertStep(rs))
+		steps = append(steps, convertStep(rs, StepPhaseInitialize))
 	}
 	for _, rs := range rc.Iteration {
-		steps = append(steps, convertStep(rs))
+		steps = append(steps, convertStep(rs, StepPhaseIteration))
 	}
 	for _, rs := range rc.Finalize {
-		steps = append(steps, convertStep(rs))
+		steps = append(steps, convertStep(rs, StepPhaseFinalize))
 	}
 
 	doc := WorkflowDoc{Steps: steps}
@@ -103,9 +104,10 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 	return doc, nil
 }
 
-func convertStep(rs rawStep) Step {
+func convertStep(rs rawStep, phase StepPhase) Step {
 	s := Step{
 		Name:               rs.Name,
+		Phase:              phase,
 		Model:              rs.Model,
 		PromptFile:         rs.PromptFile,
 		CaptureAs:          rs.CaptureAs,

@@ -2,6 +2,7 @@ package workflowio_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -112,7 +113,7 @@ func TestSave_CompanionWriteFailure_RollsBack(t *testing.T) {
 	t.Parallel()
 	diskDoc := workflowmodel.WorkflowDoc{}
 	memDoc := dirtyDoc()
-	companions := map[string][]byte{"step-1.md": []byte("# prompt")}
+	companions := map[string][]byte{"prompts/step-1.md": []byte("# prompt")}
 
 	writeErr := errors.New("permission denied")
 	fs := &fakeSaveFS{
@@ -244,5 +245,63 @@ func TestSave_ReturnsSnapshotOnSuccess(t *testing.T) {
 	}
 	if result.Snapshot.Size != 42 {
 		t.Errorf("Snapshot.Size = %d, want 42", result.Snapshot.Size)
+	}
+}
+
+func TestSave_PreservesPhaseBoundaries(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write a config.json with 2 initialize, 1 iteration, 3 finalize steps.
+	raw := `{
+  "initialize": [
+    {"name": "init-1", "isClaude": true},
+    {"name": "init-2", "isClaude": true}
+  ],
+  "iteration": [
+    {"name": "iter-1", "isClaude": true}
+  ],
+  "finalize": [
+    {"name": "final-1", "isClaude": true},
+    {"name": "final-2", "isClaude": true},
+    {"name": "final-3", "isClaude": true}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(raw), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Load, then save back with an empty diskDoc to force a write.
+	result, err := workflowio.Load(dir)
+	if err != nil || result.RecoveryView != nil {
+		t.Fatalf("Load: err=%v recoveryView=%v", err, result.RecoveryView != nil)
+	}
+
+	saveResult := workflowio.Save(workflowio.RealSaveFS(), dir, workflowmodel.WorkflowDoc{}, result.Doc, nil)
+	if saveResult.Kind != workflowio.SaveErrorNone {
+		t.Fatalf("Save: %v", saveResult.Err)
+	}
+
+	// Read saved JSON and verify each phase array length.
+	data, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var cfg struct {
+		Initialize []json.RawMessage `json:"initialize"`
+		Iteration  []json.RawMessage `json:"iteration"`
+		Finalize   []json.RawMessage `json:"finalize"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got := len(cfg.Initialize); got != 2 {
+		t.Errorf("initialize phase len = %d, want 2", got)
+	}
+	if got := len(cfg.Iteration); got != 1 {
+		t.Errorf("iteration phase len = %d, want 1", got)
+	}
+	if got := len(cfg.Finalize); got != 3 {
+		t.Errorf("finalize phase len = %d, want 3", got)
 	}
 }

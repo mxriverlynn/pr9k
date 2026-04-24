@@ -17,12 +17,6 @@ import (
 // osGetwd is a var so tests can inject a failing implementation (D-44).
 var osGetwd = os.Getwd
 
-// workflowDeps captures injected dependencies for the workflow builder.
-// Shape to be finalized in later tickets.
-type workflowDeps struct {
-	log *logger.Logger
-}
-
 // newWorkflowCmd returns the `workflow` cobra command with --workflow-dir and
 // --project-dir flags. It does NOT expose --iterations or any other run-only flag.
 func newWorkflowCmd() *cobra.Command {
@@ -31,6 +25,7 @@ func newWorkflowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "workflow",
 		Short:         "Open the interactive workflow builder",
+		Hidden:        true, // TUI not yet wired; avoids silent-no-op user surprise
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -58,9 +53,6 @@ func runWorkflowBuilder(cmd *cobra.Command, workflowDirFlag, projectDirFlag stri
 		return fmt.Errorf("workflow: %w", err)
 	}
 	defer func() { _ = log.Close() }()
-
-	deps := &workflowDeps{log: log}
-	_ = deps
 
 	// Signal handling: SIGINT/SIGTERM cancels the context, then waits up to
 	// 10 s for the TUI to quit cleanly before falling back to os.Exit(130) (D-7).

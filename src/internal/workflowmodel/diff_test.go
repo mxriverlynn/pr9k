@@ -1,7 +1,6 @@
 package workflowmodel_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
@@ -84,21 +83,5 @@ func TestIsDirty_StepFieldChanged_True(t *testing.T) {
 				t.Errorf("IsDirty: changing Step.%s should mark dirty", tc.name)
 			}
 		})
-	}
-}
-
-func TestIsDirty_UnknownFieldsIgnored(t *testing.T) {
-	disk := workflowmodel.WorkflowDoc{
-		UnknownFields: map[string]json.RawMessage{
-			"foo": json.RawMessage(`"bar"`),
-		},
-	}
-	mem := workflowmodel.WorkflowDoc{
-		UnknownFields: map[string]json.RawMessage{
-			"baz": json.RawMessage(`"qux"`),
-		},
-	}
-	if workflowmodel.IsDirty(disk, mem) {
-		t.Error("IsDirty: differences in UnknownFields should not mark dirty")
 	}
 }

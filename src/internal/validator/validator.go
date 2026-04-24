@@ -772,6 +772,8 @@ func validateCommandPath(workflowDir, cmd string) string {
 			realParent = parentDir
 		}
 		// Check that the resolved command is within its resolved parent directory.
+		// realCmd == realParent cannot happen (LookPath/Abs always produces a
+		// longer path), but the HasPrefix check alone makes a reader wonder.
 		if !strings.HasPrefix(realCmd, realParent+string(filepath.Separator)) {
 			return fmt.Sprintf("command %q escapes its directory", cmd)
 		}

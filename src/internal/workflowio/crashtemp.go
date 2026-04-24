@@ -79,12 +79,13 @@ func DetectCrashTempFiles(workflowDir string) ([]CrashTempFile, error) {
 }
 
 // companionBasenames returns the basenames of companion files listed in
-// config.json. Errors are silently ignored so callers still get config.json
-// crash-temp detection even when config.json is unreadable.
+// config.json. On any failure (unreadable or unparseable config.json) it
+// returns nil, nil so DetectCrashTempFiles still covers config.json temps.
 func companionBasenames(workflowDir string) ([]string, error) {
 	result, err := Load(workflowDir)
 	if err != nil || result.RecoveryView != nil {
-		return nil, err
+		// Advisory only: callers degrade gracefully without companion names.
+		return nil, nil
 	}
 	seen := map[string]bool{}
 	var names []string

@@ -43,9 +43,17 @@ func DetectReadOnly(workflowDir string) (bool, error) {
 }
 
 // DetectExternalWorkflow reports whether workflowDir is outside projectDir.
+// EvalSymlinks is used on both paths so a symlinked workflowDir inside
+// projectDir is correctly reported as internal.
 func DetectExternalWorkflow(workflowDir, projectDir string) bool {
-	clean := func(p string) string { return filepath.Clean(p) + string(os.PathSeparator) }
-	return !strings.HasPrefix(clean(workflowDir), clean(projectDir))
+	resolve := func(p string) string {
+		clean := filepath.Clean(p)
+		if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+			return resolved + string(os.PathSeparator)
+		}
+		return clean + string(os.PathSeparator)
+	}
+	return !strings.HasPrefix(resolve(workflowDir), resolve(projectDir))
 }
 
 // CreateEmptyCompanion creates an empty file at workflowDir/promptFile.

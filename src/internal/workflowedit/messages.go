@@ -21,6 +21,7 @@ type openFileResultMsg struct {
 	doc         workflowmodel.WorkflowDoc
 	diskDoc     workflowmodel.WorkflowDoc
 	workflowDir string
+	companions  map[string][]byte
 	err         error
 	rawBytes    []byte
 }

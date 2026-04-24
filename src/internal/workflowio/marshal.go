@@ -6,9 +6,8 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 )
 
-// marshalDoc serialises doc to config.json-compatible JSON. All steps are
-// written under the "iteration" phase; phases are flat in WorkflowDoc
-// (WU-5 will reintroduce phase-aware save/load).
+// marshalDoc serialises doc to config.json-compatible JSON. Steps are bucketed
+// into initialize/iteration/finalize by their Phase field.
 func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 	type outStep struct {
 		Name               string   `json:"name"`
@@ -36,8 +35,8 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 		StatusLine *outStatusLine `json:"statusLine,omitempty"`
 	}
 
-	steps := make([]outStep, len(doc.Steps))
-	for i, s := range doc.Steps {
+	var initSteps, iterSteps, finalSteps []outStep
+	for _, s := range doc.Steps {
 		os := outStep{
 			Name:               s.Name,
 			Model:              s.Model,
@@ -59,13 +58,30 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 			b := s.Kind == workflowmodel.StepKindClaude
 			os.IsClaude = &b
 		}
-		steps[i] = os
+		switch s.Phase {
+		case workflowmodel.StepPhaseInitialize:
+			initSteps = append(initSteps, os)
+		case workflowmodel.StepPhaseFinalize:
+			finalSteps = append(finalSteps, os)
+		default:
+			iterSteps = append(iterSteps, os)
+		}
+	}
+
+	if initSteps == nil {
+		initSteps = []outStep{}
+	}
+	if iterSteps == nil {
+		iterSteps = []outStep{}
+	}
+	if finalSteps == nil {
+		finalSteps = []outStep{}
 	}
 
 	cfg := outConfig{
-		Initialize: []outStep{},
-		Iteration:  steps,
-		Finalize:   []outStep{},
+		Initialize: initSteps,
+		Iteration:  iterSteps,
+		Finalize:   finalSteps,
 	}
 	if doc.StatusLine != nil {
 		cfg.StatusLine = &outStatusLine{

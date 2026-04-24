@@ -35,7 +35,7 @@ func NewLoggerWithPrefix(projectDir, prefix string) (*Logger, error) {
 	runStamp := now.Format(layout)
 	logPath := filepath.Join(logsDir, filename)
 
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("logger: could not create log file: %w", err)
 	}

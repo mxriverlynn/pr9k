@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowvalidate"
@@ -209,7 +210,7 @@ func (m Model) renderEditView() string {
 	if len(m.doc.Steps) > 0 && m.outline.cursor < len(m.doc.Steps) {
 		detailStr = m.detail.render(m.doc.Steps[m.outline.cursor])
 	}
-	return outlineStr + " | " + detailStr
+	return lipgloss.JoinHorizontal(lipgloss.Top, outlineStr, detailStr)
 }
 
 // --- update helpers ---
@@ -261,7 +262,23 @@ func (m Model) updateDialogNewChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if km.Type == tea.KeyEsc {
+	switch {
+	case km.Type == tea.KeyEsc:
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	case string(km.Runes) == "e":
+		m.doc = workflowmodel.Empty()
+		m.dirty = true
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	case string(km.Runes) == "c":
+		doc, err := workflowmodel.CopyFromDefault(m.workflowDir)
+		if err != nil {
+			m.dialog = dialogState{kind: DialogError, payload: "copy from default: " + err.Error()}
+			return m, nil
+		}
+		m.doc = doc
+		m.dirty = true
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	}
@@ -290,8 +307,10 @@ func (m Model) updateDialogPathPicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = m.prevFocus
 
 		case tea.KeyEnter:
+			path := picker.input
 			m.dialog = dialogState{}
 			m.focus = m.prevFocus
+			return m, makeLoadCmd(path)
 
 		case tea.KeyTab:
 			if picker.matches == nil {
@@ -781,6 +800,7 @@ func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) 
 	}
 	m.doc = msg.doc
 	m.diskDoc = msg.diskDoc
+	m.companions = msg.companions
 	if msg.workflowDir != "" {
 		m.workflowDir = msg.workflowDir
 	}
@@ -841,6 +861,33 @@ func (m Model) makeValidateCmd() tea.Cmd {
 			}
 		}
 		return validateCompleteMsg{items: items}
+	}
+}
+
+// makeLoadCmd returns a tea.Cmd that asynchronously loads a workflow bundle.
+// path may point to config.json directly or to the workflow directory.
+func makeLoadCmd(path string) tea.Cmd {
+	workflowDir := path
+	if filepath.Base(path) == "config.json" {
+		workflowDir = filepath.Dir(path)
+	}
+	return func() tea.Msg {
+		result, err := workflowio.Load(workflowDir)
+		if err != nil {
+			return openFileResultMsg{err: err}
+		}
+		if result.RecoveryView != nil {
+			return openFileResultMsg{
+				rawBytes: result.RecoveryView,
+				err:      fmt.Errorf("workflowedit: parse error in %s", workflowDir),
+			}
+		}
+		return openFileResultMsg{
+			doc:         result.Doc,
+			diskDoc:     result.Doc,
+			workflowDir: workflowDir,
+			companions:  result.Companions,
+		}
 	}
 }
 

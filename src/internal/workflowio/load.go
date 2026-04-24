@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mxriverlynn/pr9k/src/internal/ansi"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
@@ -13,6 +14,32 @@ import (
 // ErrNotRegularFile is returned when config.json (or a companion) resolves to
 // a non-regular file (FIFO, socket, block/char device, directory).
 var ErrNotRegularFile = errors.New("workflowio: target is not a regular file")
+
+// ErrPathEscape is returned when a companion path resolves outside the workflow directory.
+var ErrPathEscape = errors.New("workflowio: path escapes workflow directory")
+
+// pathContainedIn returns an ErrPathEscape-wrapped error if candidate does not
+// resolve to a path strictly inside dir. EvalSymlinks is used on both sides
+// (OI-1 pattern); if resolution fails the abs path is used as a conservative
+// fallback so a non-existent file cannot escape via an unresolvable symlink.
+func pathContainedIn(dir, candidate string) error {
+	absDir, _ := filepath.Abs(dir)
+	absCand, _ := filepath.Abs(candidate)
+
+	resolvedDir, err := filepath.EvalSymlinks(absDir)
+	if err != nil {
+		resolvedDir = absDir
+	}
+	resolvedCand, err := filepath.EvalSymlinks(absCand)
+	if err != nil {
+		resolvedCand = absCand
+	}
+
+	if !strings.HasPrefix(resolvedCand, resolvedDir+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %s", ErrPathEscape, candidate)
+	}
+	return nil
+}
 
 // LoadResult holds the outcome of a Load call. RecoveryView is non-nil when
 // parsing failed; it contains up to 8 KiB of ANSI-stripped raw bytes.
@@ -88,6 +115,12 @@ func Load(workflowDir string) (LoadResult, error) {
 		}
 		relKey := filepath.Join("prompts", step.PromptFile)
 		companionPath := filepath.Join(workflowDir, relKey)
+
+		// Guard against path traversal (e.g. promptFile: "../../etc/passwd").
+		if err := pathContainedIn(workflowDir, companionPath); err != nil {
+			return LoadResult{}, err
+		}
+
 		_, err := os.Lstat(companionPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {

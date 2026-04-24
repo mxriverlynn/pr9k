@@ -77,8 +77,11 @@ func resolveEditor() ([]string, error) {
 }
 
 // rejectShellMeta rejects shell metacharacters from the raw env var value (D-33).
+// The value is split by shlex and passed to exec.Command (never a shell), so
+// most metacharacters are inert. We still block the common injection vectors
+// as defence-in-depth.
 func rejectShellMeta(val string) error {
-	for _, meta := range []string{"`", ";", "|", "\n"} {
+	for _, meta := range []string{"`", ";", "|", "$", "\n"} {
 		if strings.Contains(val, meta) {
 			return fmt.Errorf("resolveEditor: value contains shell metacharacter %q — set a safe editor path", meta)
 		}

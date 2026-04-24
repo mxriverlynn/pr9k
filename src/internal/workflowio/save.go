@@ -67,6 +67,10 @@ func Save(fs SaveFS, workflowDir string, diskDoc, memDoc workflowmodel.WorkflowD
 	// Companion-first ordering (D-20).
 	for relPath, data := range companions {
 		fullPath := filepath.Join(workflowDir, relPath)
+		// Guard against path traversal via a malicious companion key.
+		if err := pathContainedIn(workflowDir, fullPath); err != nil {
+			return SaveResult{Kind: SaveErrorSymlinkEscape, Err: err}
+		}
 		if err := fs.WriteAtomic(fullPath, data, 0o600); err != nil {
 			return classifySaveError(err)
 		}
@@ -82,6 +86,7 @@ func Save(fs SaveFS, workflowDir string, diskDoc, memDoc workflowmodel.WorkflowD
 		return classifySaveError(err)
 	}
 
+	// os.Stat (not Lstat) follows symlinks — correct for symlinked config.json.
 	fi, err := fs.Stat(configPath)
 	if err != nil {
 		return SaveResult{Kind: SaveErrorOther, Err: fmt.Errorf("workflowio: stat after save: %w", err)}

@@ -3,14 +3,22 @@
 // on other pr9k internal packages.
 package workflowmodel
 
-import "encoding/json"
-
 // StepKind identifies whether a step runs Claude or a shell command.
 type StepKind string
 
 const (
 	StepKindClaude StepKind = "claude"
 	StepKindShell  StepKind = "shell"
+)
+
+// StepPhase identifies which workflow phase a step belongs to.
+// The zero value is StepPhaseIteration so newly created steps default correctly.
+type StepPhase int
+
+const (
+	StepPhaseIteration StepPhase = iota // default: zero value maps new steps to iteration
+	StepPhaseInitialize
+	StepPhaseFinalize
 )
 
 // EnvEntry represents one entry from the env or containerEnv section.
@@ -36,6 +44,7 @@ type StatusLineBlock struct {
 //   - claude step:      Kind == StepKindClaude, IsClaudeSet == true
 type Step struct {
 	Name               string
+	Phase              StepPhase
 	Kind               StepKind
 	IsClaudeSet        bool
 	Model              string
@@ -52,11 +61,8 @@ type Step struct {
 }
 
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.
-// UnknownFields captures any JSON keys not mapped to typed fields; they are
-// recorded on load and discarded on save.
 type WorkflowDoc struct {
-	DefaultModel  string
-	StatusLine    *StatusLineBlock
-	Steps         []Step
-	UnknownFields map[string]json.RawMessage
+	DefaultModel string
+	StatusLine   *StatusLineBlock
+	Steps        []Step
 }

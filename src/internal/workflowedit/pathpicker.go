@@ -61,6 +61,9 @@ func scanMatches(prefix string) ([]string, error) {
 		dir = prefix
 		base = ""
 	} else {
+		// filepath.Dir("") == "." — empty prefix intentionally reads from the
+		// process cwd as a sane fallback; the dialog pre-fills a default path
+		// so this only triggers on a fully cleared input.
 		dir = filepath.Dir(prefix)
 		base = filepath.Base(prefix)
 	}
