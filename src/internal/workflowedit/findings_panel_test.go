@@ -121,8 +121,9 @@ func TestFindingsPanel_EnterJumpsToReferencedField(t *testing.T) {
 	if got.dialog.kind != DialogNone {
 		t.Errorf("dialog should close after Enter, got %d", got.dialog.kind)
 	}
-	// Outline cursor should jump to step "s2" (index 1)
-	if got.outline.cursor != 1 {
-		t.Errorf("want outline.cursor=1 (step 's2'), got %d", got.outline.cursor)
+	// Outline cursor should jump to step "s2" (stepIdx=1, flat row=4:
+	// 0=init hdr, 1=+Add init, 2=iter hdr, 3=s1, 4=s2).
+	if got.outline.cursor != 4 {
+		t.Errorf("want outline.cursor=4 (flat row for step 's2'), got %d", got.outline.cursor)
 	}
 }

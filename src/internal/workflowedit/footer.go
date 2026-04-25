@@ -8,7 +8,7 @@ func (m Model) ShortcutLine() string {
 	var base string
 	switch m.focus {
 	case focusOutline:
-		base = m.outline.ShortcutLine(m.reorderMode)
+		base = m.outline.ShortcutLine(m.reorderMode, m.doc)
 	case focusDetail:
 		base = m.detail.ShortcutLine()
 	default:

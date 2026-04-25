@@ -229,10 +229,12 @@ func (m Model) renderEmptyEditor() string {
 }
 
 func (m Model) renderEditView() string {
-	outlineStr := m.outline.render(m.doc.Steps, m.outline.cursor, m.reorderMode)
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	outlineStr := m.outline.render(m.doc, m.outline.cursor, m.reorderMode)
 	var detailStr string
-	if len(m.doc.Steps) > 0 && m.outline.cursor < len(m.doc.Steps) {
-		detailStr = m.detail.render(m.doc.Steps[m.outline.cursor])
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+	if stepIdx >= 0 {
+		detailStr = m.detail.render(m.doc.Steps[stepIdx])
 	}
 	return outlineStr + " | " + detailStr
 }
@@ -385,14 +387,17 @@ func (m Model) updateDialogRemoveConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	case km.Type == tea.KeyEnter, string(km.Runes) == "d":
-		idx := m.outline.cursor
+		rows := buildOutlineRows(m.doc, m.outline.collapsed)
+		idx := cursorStepIdx(rows, m.outline.cursor)
 		if idx >= 0 && idx < len(m.doc.Steps) {
 			steps := make([]workflowmodel.Step, 0, len(m.doc.Steps)-1)
 			steps = append(steps, m.doc.Steps[:idx]...)
 			steps = append(steps, m.doc.Steps[idx+1:]...)
 			m.doc.Steps = steps
-			if m.outline.cursor >= len(m.doc.Steps) && m.outline.cursor > 0 {
-				m.outline.cursor--
+			// Rebuild rows after deletion; clamp cursor to valid range.
+			newRows := buildOutlineRows(m.doc, m.outline.collapsed)
+			if m.outline.cursor >= len(newRows) && m.outline.cursor > 0 {
+				m.outline.cursor = len(newRows) - 1
 			}
 			m.dirty = true
 		}
@@ -422,7 +427,7 @@ func (m Model) updateDialogFindings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Jump to the first finding's referenced step (if any).
 		stepIdx := m.findingsPanel.firstStepIdx()
 		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
-			m.outline.cursor = stepIdx
+			m.outline.cursor = findStepCursorByIdx(m, stepIdx)
 		}
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
@@ -718,6 +723,7 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.reorderMode {
 		return m.handleReorderKey(km)
 	}
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	// Alt+Up/Down moves the step (checked before regular Up/Down).
 	if km.Alt {
 		switch km.Type {
@@ -732,7 +738,7 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch km.Type {
 	case tea.KeyDown:
-		if m.outline.cursor < len(m.doc.Steps)-1 {
+		if m.outline.cursor < len(rows)-1 {
 			m.outline.cursor++
 		}
 	case tea.KeyUp:
@@ -740,24 +746,117 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.outline.cursor--
 		}
 	case tea.KeyTab:
-		m.prevFocus = m.focus
-		m.focus = focusDetail
-		m.detail.cursor = 0
+		// Tab switches to detail only when cursor is on a step row.
+		if cursorStepIdx(rows, m.outline.cursor) >= 0 {
+			m.prevFocus = m.focus
+			m.focus = focusDetail
+			m.detail.cursor = 0
+		}
 	case tea.KeyDelete:
-		if len(m.doc.Steps) > 0 {
-			name := m.doc.Steps[m.outline.cursor].Name
+		stepIdx := cursorStepIdx(rows, m.outline.cursor)
+		if stepIdx >= 0 {
+			name := m.doc.Steps[stepIdx].Name
 			m.prevFocus = m.focus
 			m.dialog = dialogState{kind: DialogRemoveConfirm, payload: name}
 		}
+	case tea.KeyEnter:
+		// Enter on an add row creates a new empty item in that section.
+		if m.outline.cursor < len(rows) && rows[m.outline.cursor].kind == rowKindAddRow {
+			m = doAddItemInSection(m, rows[m.outline.cursor].section)
+		}
 	default:
-		if string(km.Runes) == "r" {
-			m.reorderMode = true
-			m.reorderOrigin = m.outline.cursor
-			m.reorderSnapshot = make([]workflowmodel.Step, len(m.doc.Steps))
-			copy(m.reorderSnapshot, m.doc.Steps)
+		switch string(km.Runes) {
+		case "r":
+			stepIdx := cursorStepIdx(rows, m.outline.cursor)
+			if stepIdx >= 0 {
+				m.reorderMode = true
+				m.reorderOrigin = m.outline.cursor
+				m.reorderSnapshot = make([]workflowmodel.Step, len(m.doc.Steps))
+				copy(m.reorderSnapshot, m.doc.Steps)
+			}
+		case " ":
+			// Space toggles collapse of the section the cursor is in.
+			if m.outline.cursor < len(rows) {
+				m = doToggleCollapse(m, rows, m.outline.cursor)
+			}
+		case "a":
+			// 'a' on a section header triggers add for that section.
+			if m.outline.cursor < len(rows) && rows[m.outline.cursor].kind == rowKindSectionHeader {
+				m = doAddItemInSection(m, rows[m.outline.cursor].section)
+			}
 		}
 	}
 	return m, nil
+}
+
+// doToggleCollapse toggles the collapsed state of the section containing the
+// row at cursorPos. If collapsing while the cursor is inside the section
+// (not on the header), the cursor is moved to the section header.
+func doToggleCollapse(m Model, rows []outlineRow, cursorPos int) Model {
+	if cursorPos >= len(rows) {
+		return m
+	}
+	sk := rows[cursorPos].section
+	curRowKind := rows[cursorPos].kind
+
+	if m.outline.collapsed == nil {
+		m.outline.collapsed = make(map[sectionKey]bool)
+	}
+	m.outline.collapsed[sk] = !m.outline.collapsed[sk]
+
+	// If we just collapsed and cursor was inside (not on header), move to header.
+	if m.outline.collapsed[sk] && curRowKind != rowKindSectionHeader {
+		newRows := buildOutlineRows(m.doc, m.outline.collapsed)
+		for i, row := range newRows {
+			if row.kind == rowKindSectionHeader && row.section == sk {
+				m.outline.cursor = i
+				break
+			}
+		}
+	}
+	return m
+}
+
+// doAddItemInSection appends a new empty item to the given section.
+// For phase sections, a new empty Step is appended with the matching Phase.
+// For env/containerEnv sections, a new empty entry is added.
+func doAddItemInSection(m Model, sk sectionKey) Model {
+	switch sk {
+	case sectionInitialize:
+		m.doc.Steps = append(m.doc.Steps, workflowmodel.Step{Phase: workflowmodel.StepPhaseInitialize})
+		m.dirty = true
+		m.outline.cursor = findAddedStepCursor(m)
+	case sectionIteration:
+		m.doc.Steps = append(m.doc.Steps, workflowmodel.Step{Phase: workflowmodel.StepPhaseIteration})
+		m.dirty = true
+		m.outline.cursor = findAddedStepCursor(m)
+	case sectionFinalize:
+		m.doc.Steps = append(m.doc.Steps, workflowmodel.Step{Phase: workflowmodel.StepPhaseFinalize})
+		m.dirty = true
+		m.outline.cursor = findAddedStepCursor(m)
+	case sectionEnv:
+		m.doc.Env = append(m.doc.Env, "")
+		m.dirty = true
+	case sectionContainerEnv:
+		if m.doc.ContainerEnv == nil {
+			m.doc.ContainerEnv = make(map[string]string)
+		}
+		// Add a placeholder key; the detail pane (WU-PR2-9b) handles editing.
+		m.dirty = true
+	}
+	return m
+}
+
+// findAddedStepCursor returns the flat-row index of the last step in doc.Steps.
+func findAddedStepCursor(m Model) int {
+	newIdx := len(m.doc.Steps) - 1
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	for i, row := range rows {
+		if row.kind == rowKindStep && row.stepIdx == newIdx {
+			return i
+		}
+	}
+	return m.outline.cursor
 }
 
 func (m Model) handleReorderKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -779,10 +878,11 @@ func (m Model) handleReorderKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// doMoveStepUp swaps the step at m.outline.cursor with the one above it.
+// doMoveStepUp swaps the step at cursor with the previous step in doc.Steps.
 // Returns a new Model to preserve value semantics.
 func doMoveStepUp(m Model) Model {
-	i := m.outline.cursor
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	i := cursorStepIdx(rows, m.outline.cursor)
 	if i <= 0 {
 		return m
 	}
@@ -790,22 +890,35 @@ func doMoveStepUp(m Model) Model {
 	copy(steps, m.doc.Steps)
 	steps[i], steps[i-1] = steps[i-1], steps[i]
 	m.doc.Steps = steps
-	m.outline.cursor--
+	// Move cursor to the swapped step's new position.
+	m.outline.cursor = findStepCursorByIdx(m, i-1)
 	return m
 }
 
-// doMoveStepDown swaps the step at m.outline.cursor with the one below it.
+// doMoveStepDown swaps the step at cursor with the next step in doc.Steps.
 func doMoveStepDown(m Model) Model {
-	i := m.outline.cursor
-	if i >= len(m.doc.Steps)-1 {
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	i := cursorStepIdx(rows, m.outline.cursor)
+	if i < 0 || i >= len(m.doc.Steps)-1 {
 		return m
 	}
 	steps := make([]workflowmodel.Step, len(m.doc.Steps))
 	copy(steps, m.doc.Steps)
 	steps[i], steps[i+1] = steps[i+1], steps[i]
 	m.doc.Steps = steps
-	m.outline.cursor++
+	m.outline.cursor = findStepCursorByIdx(m, i+1)
 	return m
+}
+
+// findStepCursorByIdx returns the flat-row index for doc.Steps[stepIdx].
+func findStepCursorByIdx(m Model, stepIdx int) int {
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	for i, row := range rows {
+		if row.kind == rowKindStep && row.stepIdx == stepIdx {
+			return i
+		}
+	}
+	return m.outline.cursor
 }
 
 func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {

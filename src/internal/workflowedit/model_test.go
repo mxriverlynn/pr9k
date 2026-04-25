@@ -92,9 +92,11 @@ func TestModel_Mode_6_EditView_OutlineFocus_Down_AdvancesCursor(t *testing.T) {
 }
 
 // TestModel_Mode_7 — EditView, outline focus, Tab → focus moves to detail pane
+// Step "a" is at flat row 3 (0=init hdr, 1=+Add init, 2=iter hdr, 3=step).
 func TestModel_Mode_7_EditView_OutlineFocus_Tab_MovesToDetail(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"))
 	m.focus = focusOutline
+	m.outline.cursor = 3 // must be on a step row for Tab to switch focus
 	got := applyKey(m, keyTab())
 	if got.focus != focusDetail {
 		t.Fatalf("want focusDetail, got %d", got.focus)
@@ -105,9 +107,11 @@ func TestModel_Mode_7_EditView_OutlineFocus_Tab_MovesToDetail(t *testing.T) {
 }
 
 // TestModel_Mode_8 — EditView, outline focus, Del → DialogRemoveConfirm
+// Step "myStep" is at flat row 3.
 func TestModel_Mode_8_EditView_OutlineFocus_Del_OpensRemoveConfirm(t *testing.T) {
 	m := newLoadedModel(sampleStep("myStep"))
 	m.focus = focusOutline
+	m.outline.cursor = 3 // must be on a step row for Del to open dialog
 	got := applyKey(m, keyDel())
 	if got.dialog.kind != DialogRemoveConfirm {
 		t.Fatalf("want DialogRemoveConfirm, got %d", got.dialog.kind)
@@ -118,10 +122,12 @@ func TestModel_Mode_8_EditView_OutlineFocus_Del_OpensRemoveConfirm(t *testing.T)
 }
 
 // TestModel_Mode_9 — EditView, outline focus, Alt+↑ → step moves up
+// With two iteration steps, step "b" is at flat row 4
+// (0=init hdr, 1=+Add, 2=iter hdr, 3=a, 4=b).
 func TestModel_Mode_9_EditView_OutlineFocus_AltUp_MovesStepUp(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"), sampleStep("b"))
 	m.focus = focusOutline
-	m.outline.cursor = 1 // focus on "b"
+	m.outline.cursor = 4 // step "b" at flat row 4
 	got := applyKey(m, keyAltUp())
 	if got.doc.Steps[0].Name != "b" {
 		t.Fatalf("want b at index 0, got %q", got.doc.Steps[0].Name)
@@ -132,9 +138,11 @@ func TestModel_Mode_9_EditView_OutlineFocus_AltUp_MovesStepUp(t *testing.T) {
 }
 
 // TestModel_Mode_10 — EditView, outline focus, r → reorder mode
+// 'r' only activates when cursor is on a step row. Step "a" is at flat row 3.
 func TestModel_Mode_10_EditView_OutlineFocus_R_EntersReorderMode(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"), sampleStep("b"))
 	m.focus = focusOutline
+	m.outline.cursor = 3 // step "a" at flat row 3
 	got := applyKey(m, keyRune('r'))
 	if !got.reorderMode {
 		t.Error("reorderMode should be true after r")
@@ -147,13 +155,14 @@ func TestModel_Mode_10_EditView_OutlineFocus_R_EntersReorderMode(t *testing.T) {
 }
 
 // TestModel_Mode_11 — reorder mode, ↑ → step moved up
+// Step "b" is at flat row 4 with two iteration steps.
 func TestModel_Mode_11_ReorderMode_Up_MovesStep(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"), sampleStep("b"))
 	m.focus = focusOutline
 	m.reorderMode = true
-	m.reorderOrigin = 1
+	m.reorderOrigin = 4
 	m.reorderSnapshot = []workflowmodel.Step{sampleStep("a"), sampleStep("b")}
-	m.outline.cursor = 1
+	m.outline.cursor = 4 // step "b" at flat row 4
 	got := applyKey(m, keyUp())
 	if got.doc.Steps[0].Name != "b" {
 		t.Fatalf("want b at index 0, got %q", got.doc.Steps[0].Name)
@@ -531,10 +540,12 @@ func TestUpdate_Default_RoutesToEditView(t *testing.T) {
 // Del scoping tests (D-10)
 // ============================================================
 
-// TestDel_OutlineFocused_RemovesStep
+// TestDel_OutlineFocused_RemovesStep — Del on a step row opens remove dialog.
+// Step "alpha" is at flat row 3.
 func TestDel_OutlineFocused_OpensRemoveDialog(t *testing.T) {
 	m := newLoadedModel(sampleStep("alpha"))
 	m.focus = focusOutline
+	m.outline.cursor = 3 // step row
 	got := applyKey(m, keyDel())
 	if got.dialog.kind != DialogRemoveConfirm {
 		t.Errorf("want DialogRemoveConfirm, got %d", got.dialog.kind)
@@ -607,14 +618,15 @@ func TestModel_EC_4_ZeroWidthTerminal_UsesMinimumOutlineWidth(t *testing.T) {
 	}
 }
 
-// EC-5: Outline cursor at last item, ↓ — cursor stays bounded
+// EC-5: Outline cursor at last flat row, ↓ — cursor stays bounded
+// Two iteration steps yield 8 flat rows (0..7); last row is 7.
 func TestModel_EC_5_OutlineCursorAtLast_DownBounded(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"), sampleStep("b"))
 	m.focus = focusOutline
-	m.outline.cursor = 1 // last item
+	m.outline.cursor = 7 // last flat row (+Add finalize)
 	got := applyKey(m, keyDown())
-	if got.outline.cursor != 1 {
-		t.Errorf("cursor should stay at 1, got %d", got.outline.cursor)
+	if got.outline.cursor != 7 {
+		t.Errorf("cursor should stay at 7, got %d", got.outline.cursor)
 	}
 }
 
@@ -701,10 +713,11 @@ func TestModel_EC_12_Init_ReturnsNil(t *testing.T) {
 // ============================================================
 
 // T-1: DialogRemoveConfirm 'd' — removes step, clamps cursor, marks dirty
+// Step "alpha" is at flat row 3 (stepIdx=0).
 func TestDialogRemoveConfirm_D_DeletesStep(t *testing.T) {
 	m := newLoadedModel(sampleStep("alpha"), sampleStep("beta"))
 	m.focus = focusOutline
-	m.outline.cursor = 0
+	m.outline.cursor = 3 // step "alpha" at flat row 3
 	m.dialog = dialogState{kind: DialogRemoveConfirm, payload: "alpha"}
 	got := applyKey(m, keyRune('d'))
 	if got.dialog.kind != DialogNone {

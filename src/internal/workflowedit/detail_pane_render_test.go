@@ -9,10 +9,12 @@ import (
 )
 
 // TestDetailPane_ClaudeStep_ShowsModelAndPromptFile verifies claude-specific fields.
+// Cursor must be on the step row (row 3 for a single iteration step).
 func TestDetailPane_ClaudeStep_ShowsModelAndPromptFile(t *testing.T) {
 	step := sampleClaudeStep("sonnet-step")
 	m := newLoadedModel(step)
 	m.focus = focusDetail
+	m.outline.cursor = 3 // step at flat row 3 (0=init hdr, 1=+Add, 2=iter hdr, 3=step)
 	view := m.View()
 	if !strings.Contains(view, "claude-sonnet-4-6") {
 		t.Errorf("detail pane should show model name, view: %q", view)
@@ -27,6 +29,7 @@ func TestDetailPane_ShellStep_ShowsCommand(t *testing.T) {
 	step := sampleStep("shell-step")
 	m := newLoadedModel(step)
 	m.focus = focusDetail
+	m.outline.cursor = 3 // step at flat row 3
 	view := m.View()
 	if !strings.Contains(view, "echo") {
 		t.Errorf("detail pane should show command, view: %q", view)
@@ -42,6 +45,7 @@ func TestDetailPane_MaskedEnv_ShowsMaskedValue(t *testing.T) {
 	}
 	m := newLoadedModel(step)
 	m.focus = focusDetail
+	m.outline.cursor = 3 // step at flat row 3
 	// revealedField = -1 (default) means the value should be masked.
 	view := m.View()
 	if strings.Contains(view, "hunter2") {

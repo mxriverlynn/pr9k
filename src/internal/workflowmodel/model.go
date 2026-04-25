@@ -64,5 +64,7 @@ type Step struct {
 type WorkflowDoc struct {
 	DefaultModel string
 	StatusLine   *StatusLineBlock
+	Env          []string          // passthrough env var names (top-level env array)
+	ContainerEnv map[string]string // literal key-value env vars (top-level containerEnv)
 	Steps        []Step
 }

@@ -63,10 +63,12 @@ type rawStatusLine struct {
 
 // rawConfig is the JSON shape of config.json.
 type rawConfig struct {
-	Initialize []rawStep      `json:"initialize"`
-	Iteration  []rawStep      `json:"iteration"`
-	Finalize   []rawStep      `json:"finalize"`
-	StatusLine *rawStatusLine `json:"statusLine,omitempty"`
+	Initialize   []rawStep         `json:"initialize"`
+	Iteration    []rawStep         `json:"iteration"`
+	Finalize     []rawStep         `json:"finalize"`
+	StatusLine   *rawStatusLine    `json:"statusLine,omitempty"`
+	Env          []string          `json:"env,omitempty"`
+	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 }
 
 // ParseConfig parses config.json bytes into a WorkflowDoc. Exported so
@@ -90,7 +92,7 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 		steps = append(steps, convertStep(rs, StepPhaseFinalize))
 	}
 
-	doc := WorkflowDoc{Steps: steps}
+	doc := WorkflowDoc{Steps: steps, Env: rc.Env, ContainerEnv: rc.ContainerEnv}
 	if rc.StatusLine != nil {
 		sl := &StatusLineBlock{
 			Type:    rc.StatusLine.Type,

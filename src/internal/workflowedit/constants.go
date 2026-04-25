@@ -10,9 +10,16 @@ const (
 	// GlyphGripper is shown next to the focused row in reorder mode (F-54).
 	GlyphGripper = "⋮⋮"
 
-	// Section-collapse chevrons.
+	// Section-collapse chevrons (D-28).
 	GlyphSectionOpen  = "▾"
 	GlyphSectionClose = "▸"
+
+	// Aliases used by the structured outline tree (D-PR2-7).
+	GlyphChevronExpanded  = GlyphSectionOpen
+	GlyphChevronCollapsed = GlyphSectionClose
+
+	// GlyphAddItem prefixes the "+ Add" affordance row (D-46).
+	GlyphAddItem = "+"
 
 	// GlyphMasked replaces the visible value of sensitive containerEnv entries.
 	GlyphMasked = "••••••••"
