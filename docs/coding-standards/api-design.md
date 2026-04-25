@@ -413,6 +413,80 @@ _ = deps // explicit suppression is a signal the struct is not ready
 
 The rule: every exported or package-visible symbol that ships must have at least one real read site. If the read site does not exist yet, keep the symbol out of the main branch.
 
+## Always surface visible feedback when a user mutation is rejected or deferred
+
+When a UI action (editing a field, adding an item, selecting a menu option) cannot complete — whether because of a validation failure, a lossy round-trip, or logic that is not yet implemented — always show the user explicit feedback. Closing the dialog or resetting state without any message leaves the user unable to tell whether the action succeeded.
+
+Three categories where silent no-ops are bugs:
+
+**1. Rejected mutation — the edit would corrupt the value.** Use a boolean second return value to communicate rejection, and set an inline error message the user can see.
+
+```go
+// Bad — Command round-trip through strings.Fields is lossy for quoted args;
+// the edit is discarded silently and the user has no idea why.
+step.Command = strings.Fields(val)
+return m, true
+
+// Good — detect the lossy case before committing; surface an editMsg.
+for _, arg := range step.Command {
+    if strings.ContainsAny(arg, " \t\n\r") {
+        m.detail.editMsg = "Command has quoted args — edit in external editor (Ctrl+E)"
+        return m, false
+    }
+}
+```
+
+**2. Invalid input format.** When a field expects a structured value (e.g., `key=value`), surface an error on malformed input instead of silently skipping the write.
+
+```go
+// Bad — silently drops the edit when '=' is absent.
+if len(parts) == 2 {
+    step.Env[idx].Key = parts[0]
+    step.Env[idx].Value = parts[1]
+}
+
+// Good — visible feedback on malformed input.
+if len(parts) == 2 {
+    step.Env[idx].Key = parts[0]
+    step.Env[idx].Value = parts[1]
+} else {
+    m.detail.editMsg = "Expected key=value format"
+    return m, false
+}
+```
+
+**3. Deferred feature — the code path is not yet implemented.** Show an explicit "not yet implemented" error rather than closing the dialog as if the action succeeded.
+
+```go
+// Bad — closes dialog without feedback; user assumes the copy succeeded.
+m.dialog = dialogState{}
+m.focus = m.prevFocus
+
+// Good — explicit message; user knows the action did not complete.
+m.dialog = dialogState{
+    kind:    DialogError,
+    payload: "Copy from default not yet implemented — use Empty or open an existing workflow",
+}
+```
+
+**4. Add-item with no visible result.** When an "add item" action creates a new entry, insert a real placeholder value so the addition is immediately visible. An empty map entry or zero-value struct produces no change in the rendered view, making the action appear to do nothing.
+
+```go
+// Bad — map entry is never inserted; +Add appears to do nothing.
+if m.doc.ContainerEnv == nil {
+    m.doc.ContainerEnv = make(map[string]string)
+}
+// (entry not written — map stays empty looking)
+
+// Good — insert a placeholder that the user can edit.
+if m.doc.ContainerEnv == nil {
+    m.doc.ContainerEnv = make(map[string]string)
+}
+m.doc.ContainerEnv["NEW_KEY"] = ""
+```
+
+The rule: every code path that handles a user-initiated mutation must end with either a visible write or visible feedback. A silent no-op is never acceptable.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -427,3 +501,4 @@ The rule: every exported or package-visible symbol that ships must have at least
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
 - `src/cmd/pr9k/workflow.go` — `Hidden: true` on the `workflow` cobra command is the canonical incomplete-command example (workflow-builder branch, PR-1 scope)
+- `src/internal/workflowedit/model.go` — `commitDetailEdit` returning `(Model, bool)` is the canonical rejected-mutation feedback example; `DialogError` for deferred paths; `"NEW_KEY":""` placeholder for add-item visibility (workflow-builder-pt-2 review issues #4, #6, #7, #9)

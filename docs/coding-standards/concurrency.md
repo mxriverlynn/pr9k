@@ -310,6 +310,48 @@ if executor.WasTimedOut() { // always false now
 
 Apply whenever a retry loop needs an audit trail of failed attempts.
 
+## Deep-copy reference-type fields before passing structs to goroutines
+
+When passing a struct to a goroutine (e.g., as a validator input), a plain value copy is shallow — slice and map fields still share their underlying backing storage with the original. If the UI goroutine appends to a slice or writes a map key while the validator goroutine iterates, you have a data race.
+
+The fix: explicitly copy every reference-type field in the copy function.
+
+```go
+// Bad — shallow copy; doc.Env and doc.ContainerEnv share backing storage
+// with the original; validator goroutine and UI goroutine race on them.
+func shallowCopyDoc(doc WorkflowDoc) WorkflowDoc {
+    return doc
+}
+
+// Good — explicit deep copy; goroutine has its own independent slice and map.
+func deepCopyDoc(doc WorkflowDoc) WorkflowDoc {
+    cp := doc
+    if len(doc.Env) > 0 {
+        cp.Env = make([]string, len(doc.Env))
+        copy(cp.Env, doc.Env)
+    }
+    if len(doc.ContainerEnv) > 0 {
+        cp.ContainerEnv = make(map[string]string, len(doc.ContainerEnv))
+        for k, v := range doc.ContainerEnv {
+            cp.ContainerEnv[k] = v
+        }
+    }
+    // Pointer fields: copy the pointed-to value if the goroutine might write through it.
+    if doc.StatusLine != nil {
+        sl := *doc.StatusLine
+        cp.StatusLine = &sl
+    }
+    return cp
+}
+```
+
+Checklist when writing a copy function for cross-goroutine use:
+1. Slice fields → `make` a new slice and `copy` the elements.
+2. Map fields → `make` a new map and range-copy every entry.
+3. Pointer fields the goroutine may write through → copy the pointed-to value and take the address of the copy.
+
+The `go test -race` flag catches these races at test time — always run it before marking a cross-goroutine data path safe.
+
 ## Wrap blocking operations in tea.Cmd closures
 
 In Bubble Tea, the `Update` goroutine is the single-threaded event loop. Never block it with long-running calls (file I/O, subprocess waits, channel blocks, or external process invocations). Wrap any blocking operation in a `tea.Cmd` closure so it runs in a separate goroutine and sends a message back when done.
@@ -366,3 +408,4 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 - [Testing](testing.md) — Standards for test doubles with shared state needing mutexes; injecting signals for blocking receives
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `terminated` / `timeoutFired` mutual exclusion and reset-then-record ordering in `stepDispatcher` (issue #130)
+- [Workflow Builder](../code-packages/workflowedit.md) — `deepCopyDoc` as the canonical reference-type deep-copy example; race between validator goroutine and UI goroutine on `doc.Env` / `doc.ContainerEnv` (workflow-builder-pt-2 review issue #1)
