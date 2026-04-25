@@ -433,10 +433,29 @@ Cross-referencing invariants:
   - **Use `time.NewTimer` and `Stop()` explicitly** — accepted as functionally equivalent; the `select`-with-ctx.Done is more idiomatic for the pattern.
   - **Don't fire the fallback at all** — rejected: D-34 commits to the 10-second hard floor.
 - **Specialist owner:** `concurrency-analyst`
-- **Revisit criterion:** If the test suite shows residual timer leaks, audit other long-lived `time.After` usages.
+- **Revisit criterion:** If the test suite shows residual timer leaks, audit other long-lived `time.After` usages. Note: this pattern relies on Go 1.23+ garbage collection of unreferenced `time.After` timers (the project uses Go 1.26.2). On Go 1.22 or earlier, convert to `t := time.NewTimer(10*time.Second); defer t.Stop()` with `<-t.C` in the select ([F-PR2-34](../artifacts/review-findings.md#f-pr2-34--d-pr2-23-timeafter-go-version-dependency-unrecorded)).
 - **Dissent (if any):** None.
-- **Driven by rounds:** R1 (CV-PR2-009), Synthesis (committed)
+- **Driven by rounds:** R1 (CV-PR2-009), Synthesis (committed), Review-R1 (F-PR2-34 Go-version annotation)
 - **Dependent decisions:** D-PR2-21, D-PR2-22
 - **Referenced in plan:** Implementation Approach > Runtime Behavior > Signal handler; Testing Strategy
+
+## D-PR2-24: Ctrl+E handler applies safePromptPath containment AND regular-file check before editor invocation
+
+- **Question:** Should the Ctrl+E external-editor invocation (D-PR2-8) verify the focused field's path is contained within `workflowDir` and points to a regular file before calling `m.editor.Run`?
+- **Decision:** Yes. The Ctrl+E handler calls `validator.safePromptPath(workflowDir, fieldValue)` to enforce containment AND `os.Lstat` to enforce regular-file requirements (rejecting symlinks-that-escape, FIFOs, sockets, directories, char/block devices) BEFORE invoking `m.editor.Run(filePath, cb)`. On either check failing, the handler opens `DialogError` with the D56 four-element template; no editor is launched.
+
+  This rule applies regardless of whether the file already exists. For not-yet-existing files, `workflowio.CreateEmptyCompanion` is called after the containment check (its own containment check is defense-in-depth). For already-existing files (the gap SEC-PR2-002 flagged), the check is the only barrier — `workflowio.CreateEmptyCompanion` is not invoked because the file already exists.
+- **Rationale:** The original plan's §"Security Posture" mitigation 1 (path traversal via symlinks) is enforced by `validator.safePromptPath` at save-time validation. But Ctrl+E launches the editor BEFORE save runs — and the editor opens, displays, and may write back to the file. Without an editor-launch-time containment check, an attacker who supplies a `config.json` with `promptFile: ../../.ssh/authorized_keys` and tricks the user into pressing Ctrl+E on that field gets the editor opened on a sensitive system file. The validator's save-time check fires too late. This decision adds the containment check at the launch point, where the threat actually applies.
+- **Evidence:** [F-PR2-6](../artifacts/review-findings.md#f-pr2-6--ctrle-editor-invocation-has-no-containment-check-for-already-existing-files); SEC-PR2-002 (R1 security review); SEC-PR2-006 (9-mitigation audit); existing `validator.safePromptPath` and `os.Lstat` in PR-1's main; spec D5 external-editor-for-multi-line-content; D-21 create-on-editor-open containment (parallel decision for the not-yet-existing case).
+- **Rejected alternatives:**
+  - **Rely on save-time validation alone** — rejected: editor opens before save runs, so the file content is exposed (and possibly modified) regardless of subsequent validator rejection.
+  - **Refuse Ctrl+E for already-existing files entirely** — rejected: legitimate workflows have prompt files that already exist (the bundled default has them), so refusing breaks the primary use case.
+  - **Containment check only, no regular-file check** — rejected: a FIFO at the contained path causes the editor to block indefinitely on read; the regular-file check is needed to prevent DoS-via-misconfiguration.
+- **Specialist owner:** `adversarial-security-analyst`
+- **Revisit criterion:** If `safePromptPath`'s signature changes in a future validator update, audit the Ctrl+E call site.
+- **Dissent (if any):** None.
+- **Driven by rounds:** Review-R1 ([F-PR2-6](../artifacts/review-findings.md#f-pr2-6--ctrle-editor-invocation-has-no-containment-check-for-already-existing-files))
+- **Dependent decisions:** D-PR2-8 (Ctrl+E binding); inherited D-21 (create-on-editor-open containment); inherited validator OI-1 (safePromptPath EvalSymlinks).
+- **Referenced in plan:** Decomposition and Sequencing > WU-PR2-4; Security Posture; Testing Strategy.
 
 <!-- End of decision log. New decisions append below as needed. -->
