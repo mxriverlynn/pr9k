@@ -6,8 +6,6 @@
 
 Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-started-with-ralph).
 
-<img src="images/ralph-tui-screenshot.png">
-
 ## Getting Started
 
 ### Prerequisites
@@ -16,6 +14,8 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 - [GitHub CLI (`gh`)](https://cli.github.com/) — authenticated with access to your target repo
 - [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) — installed and authenticated
 - A GitHub repo with issues labeled `ralph` assigned to your user
+
+<img src="images/ralph-tui-screenshot.png">
 
 ### Installation
 
