@@ -75,6 +75,7 @@ User-facing behavior, configuration, and cross-package integration. Each file li
 - [`docs/features/status-line.md`](docs/features/status-line.md) — Status-line feature: purpose, config schema, path resolution, script contract (stdin JSON payload, stdout rules, timeout), refresh triggers, cold-start fallback, help modal, concurrency model, lifecycle, observability, and out-of-scope list
 - [`docs/features/docker-sandbox.md`](docs/features/docker-sandbox.md) — Docker sandbox architecture: mount layout (`<projectDir>` → `/home/agent/workspace`, `<profileDir>` → `/home/agent/.claude`), `BuildRunArgs` command shape, env allowlist behavior, UID/GID mapping, cidfile-driven termination, and residual risks
 - [`docs/features/sandbox-subcommand.md`](docs/features/sandbox-subcommand.md) — `sandbox create` and `sandbox login` subcommands: Docker check, image pull, smoke test with ANSI sanitization for create; interactive claude REPL with auto-pull and profile-dir auto-create for login; shared helpers and dependency injection design
+- [`docs/features/workflow-builder.md`](docs/features/workflow-builder.md) — `pr9k workflow` interactive workflow-builder TUI: edit-view layout (menu bar + session header + outline + detail pane + footer), keyboard map (menu activation, global shortcuts, outline navigation, detail-pane field kinds), File menu flows (New/Open/Save/Quit), session header banners, external editor integration, validator integration, session-event logging, and save durability
 
 ## Code Package Documentation
 
@@ -94,6 +95,7 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 - [`docs/code-packages/workflowmodel.md`](docs/code-packages/workflowmodel.md) — `internal/workflowmodel`: `WorkflowDoc`, `Step`, `StepKind`, `EnvEntry`, `StatusLineBlock` types; `IsDirty` diff (ignores UnknownFields); `Empty` scaffold; `CopyFromDefault` bundle reader; `DefaultScaffoldModel` and `ModelSuggestions`
 - [`docs/code-packages/workflowio.md`](docs/code-packages/workflowio.md) — `internal/workflowio`: `Load` (symlink-before-parse ordering, ANSI-stripped recovery view, non-regular file rejection), `Save` (companion-first D-20, atomic writes, SaveErrorKind classification), detect functions (`DetectSymlink`, `DetectReadOnly`, `DetectExternalWorkflow`, `DetectSharedInstall`), `CreateEmptyCompanion`, `DetectCrashTempFiles`
 - [`docs/code-packages/workflowvalidate.md`](docs/code-packages/workflowvalidate.md) — `internal/workflowvalidate`: thin bridge `Validate(doc, workflowDir, companions)` that delegates to `validator.ValidateDoc`; designed so the future TUI layer can call into the validator without importing `internal/validator` directly (D-4)
+- [`docs/code-packages/workflowedit.md`](docs/code-packages/workflowedit.md) — `internal/workflowedit`: Bubble Tea Model for the workflow-builder TUI; exported API (Model, New, EditorRunner, ExecCallback, DialogKind, PickerKind, constants); Update routing (pre-dispatch → help → dialog → global keys → edit view); outline row kinds, detail field kinds (text/choice/numeric/modelSuggest/secretMask), save pipeline, conflict detection, session-event logging, load-pipeline banner forwarding, and Bubble Tea ctx exemption (D-PR2-13)
 
 ## ADRs
 
@@ -139,6 +141,8 @@ Problem-focused guides for users running pr9k against their own projects. When a
 - [`docs/how-to/configuring-a-status-line.md`](docs/how-to/configuring-a-status-line.md) — Add a `statusLine` block to `config.json`, use the sample script, read stdin JSON with `jq`, tune `refreshIntervalSeconds`, debug via log file, and recover the shortcut bar
 - [`docs/how-to/caching-build-artifacts.md`](docs/how-to/caching-build-artifacts.md) — Use `containerEnv` to redirect Go/Node/Python/Rust cache dirs into `.ralph-cache/` for persistent, writable caches across iterations; language-to-env-var matrix and per-language example blocks
 - [`docs/how-to/resuming-sessions.md`](docs/how-to/resuming-sessions.md) — Using `resumePrevious` to continue a prior Claude step's conversation via `--resume`, the five runtime gates (G1–G5), skip-chain interaction, and how to verify resume via `iteration.jsonl`
+- [`docs/how-to/using-the-workflow-builder.md`](docs/how-to/using-the-workflow-builder.md) — Step-by-step guide to launching `pr9k workflow`, creating or opening a workflow, navigating the outline, editing step fields, opening companion files in an external editor (`Ctrl+E`), saving, and quitting
+- [`docs/how-to/configuring-external-editor-for-workflow-builder.md`](docs/how-to/configuring-external-editor-for-workflow-builder.md) — How the builder resolves `$VISUAL`/`$EDITOR`, accepted and rejected values, recommended settings (`code --wait`, `nvim`, `nano`), the `--wait` requirement for GUI editors, verifying configuration via `Ctrl+E`, and SIGINT behavior during editor invocation
 
 ## Project Discovery
 
