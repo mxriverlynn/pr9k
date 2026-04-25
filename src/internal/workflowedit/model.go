@@ -151,6 +151,34 @@ func (m Model) WithLog(w io.Writer) Model {
 	return m
 }
 
+// IsDirty reports whether the in-memory document differs from the on-disk
+// baseline (last load or last successful save).
+func (m Model) IsDirty() bool {
+	return workflowmodel.IsDirty(m.diskDoc, m.doc)
+}
+
+// WithNoValidation returns a copy of the Model that skips the real validator
+// during the save pipeline, delivering zero findings to Update immediately.
+func (m Model) WithNoValidation() Model {
+	m.validateFn = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) []findingResult {
+		return nil
+	}
+	return m
+}
+
+// LoadResultMsg returns the tea.Msg that delivers a loaded workflow document
+// into the model's Update loop. doc is the in-memory state; diskDoc is the
+// save-baseline for dirty detection; companions is the companion-file cache;
+// workflowDir overrides the model's workflow directory when non-empty.
+func LoadResultMsg(doc, diskDoc workflowmodel.WorkflowDoc, companions map[string][]byte, workflowDir string) tea.Msg {
+	return openFileResultMsg{
+		doc:         doc,
+		diskDoc:     diskDoc,
+		companions:  companions,
+		workflowDir: workflowDir,
+	}
+}
+
 // logEvent writes a session-event line to logW if it is set. It never writes
 // containerEnv values, env entry values, prompt-file content, or editor
 // argument lists (field-exclusion contract R7).
