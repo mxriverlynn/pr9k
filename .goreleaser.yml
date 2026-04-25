@@ -1,0 +1,113 @@
+version: 2
+
+project_name: pr9k
+
+before:
+  hooks:
+    - cmd: go mod download
+      dir: src
+
+builds:
+  - id: pr9k
+    dir: src
+    main: ./cmd/pr9k
+    binary: pr9k
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # docs/coding-standards/versioning.md:10 forbids -ldflags "-X ..." version
+    # injection. version.Version is the single source of truth; strip debug
+    # info only.
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
+archives:
+  - id: pr9k
+    ids:
+      - pr9k
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - src: workflow/config.json
+        dst: .pr9k/workflow/config.json
+      - src: ralph-art.txt
+        dst: .pr9k/workflow/ralph-art.txt
+      - src: workflow/prompts/*.md
+        dst: .pr9k/workflow/prompts
+      - src: workflow/scripts/*
+        dst: .pr9k/workflow/scripts
+        info:
+          mode: 0755
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^test:'
+      - Merge pull request
+
+release:
+  github:
+    owner: mxriverlynn
+    name: pr9k
+  draft: false
+  prerelease: auto
+
+brews:
+  - name: pr9k
+    ids:
+      - pr9k
+    repository:
+      owner: mxriverlynn
+      name: homebrew-pr9k
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/mxriverlynn/pr9k
+    description: Automated development workflow orchestrator for the claude CLI
+    license: Apache-2.0
+    commit_author:
+      name: pr9k-release-bot
+      email: noreply@github.com
+    commit_msg_template: "pr9k {{ .Tag }}"
+    dependencies:
+      - name: gh
+      - name: jq
+      - name: git
+    install: |
+      libexec.install "pr9k"
+      libexec.install ".pr9k"
+      bin.install_symlink libexec/"pr9k"
+    test: |
+      assert_match "pr9k version #{version}", shell_output("#{bin}/pr9k --version")
+    caveats: |
+      pr9k runs every claude step inside a Docker sandbox. Docker is a required
+      runtime dependency but cannot be declared as a Homebrew formula dependency
+      (formulae cannot depend on casks). Install it separately:
+
+        brew install --cask docker       # macOS — Docker Desktop
+        https://docs.docker.com/engine/install/   # Linux — Docker Engine
+
+      Then initialize the claude sandbox image and authenticate the profile:
+
+        pr9k sandbox create
+        pr9k sandbox login
+
+      See https://github.com/mxriverlynn/pr9k#getting-started for a walk-through.
