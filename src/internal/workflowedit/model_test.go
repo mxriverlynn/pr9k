@@ -213,13 +213,16 @@ func TestModel_Mode_13_ReorderMode_Esc_CancelsReorder(t *testing.T) {
 	}
 }
 
-// TestModel_Mode_14 — detail-pane focus on a field, Enter → dropdown open
+// TestModel_Mode_14 — detail-pane focus on a choice field, Enter → dropdown open.
+// CaptureMode (index 4 for shell step) is a choice field.
 func TestModel_Mode_14_DetailFocus_Enter_OpensDropdown(t *testing.T) {
 	m := newLoadedModel(sampleStep("a"))
 	m.focus = focusDetail
+	m.outline.cursor = 3 // step at flat row 3
+	m.detail.cursor = 4  // CaptureMode (choice field for shell step)
 	got := applyKey(m, keyEnter())
 	if !got.detail.dropdownOpen {
-		t.Error("dropdownOpen should be true after Enter on detail field")
+		t.Error("dropdownOpen should be true after Enter on choice field")
 	}
 }
 
@@ -237,39 +240,48 @@ func TestModel_Mode_15_DropdownOpen_TypedChar_Handled(t *testing.T) {
 	}
 }
 
-// TestModel_Mode_16 — detail-pane focus on masked containerEnv field, r → revealed
+// TestModel_Mode_16 — detail-pane focus on masked containerEnv field, r → revealed.
+// Key "MY_SECRET" matches the _SECRET suffix pattern; field index 9 for a shell step
+// (0=Name,1=Kind,2=Command,3=CaptureAs,4=CaptureMode,5=Timeout,6=OnTimeout,
+//
+//	7=BreakLoopIfEmpty,8=SkipIfCaptureEmpty,9=containerEnv[0]).
 func TestModel_Mode_16_DetailFocus_MaskedField_R_Reveals(t *testing.T) {
 	step := workflowmodel.Step{
 		Name: "s",
 		Kind: workflowmodel.StepKindShell,
-		Env:  []workflowmodel.EnvEntry{{Key: "SECRET", Value: "abc123", IsLiteral: true}},
+		Env:  []workflowmodel.EnvEntry{{Key: "MY_SECRET", Value: "abc123", IsLiteral: true}},
 	}
 	m := newLoadedModel(step)
 	m.focus = focusDetail
-	m.detail.cursor = 0
+	m.outline.cursor = 3 // step at flat row 3
+	m.detail.cursor = 9  // containerEnv[0]
 	got := applyKey(m, keyRune('r'))
-	if got.detail.revealedField != 0 {
-		t.Fatalf("want revealedField=0, got %d", got.detail.revealedField)
+	if got.detail.revealedField != 9 {
+		t.Fatalf("want revealedField=9, got %d", got.detail.revealedField)
 	}
-	// View should show plain value, not masked
+	// View should show plain value, not masked.
 	view := got.View()
 	if strings.Contains(view, GlyphMasked) {
 		t.Error("value should be revealed, not masked")
 	}
+	if !strings.Contains(view, "abc123") {
+		t.Error("revealed value should be visible in view")
+	}
 }
 
-// TestModel_Mode_17 — detail-pane loses focus → masked field re-masked
+// TestModel_Mode_17 — detail-pane loses focus → masked field re-masked.
 func TestModel_Mode_17_DetailFocus_Leave_ReMasksField(t *testing.T) {
 	step := workflowmodel.Step{
 		Name: "s",
 		Kind: workflowmodel.StepKindShell,
-		Env:  []workflowmodel.EnvEntry{{Key: "SECRET", Value: "abc123", IsLiteral: true}},
+		Env:  []workflowmodel.EnvEntry{{Key: "MY_SECRET", Value: "abc123", IsLiteral: true}},
 	}
 	m := newLoadedModel(step)
 	m.focus = focusDetail
-	m.detail.cursor = 0
-	m.detail.revealedField = 0 // field is currently revealed
-	// Tab away from detail
+	m.outline.cursor = 3       // step at flat row 3
+	m.detail.cursor = 9        // containerEnv[0]
+	m.detail.revealedField = 9 // field is currently revealed
+	// Tab away from detail.
 	got := applyKey(m, keyTab())
 	if got.focus != focusOutline {
 		t.Fatalf("want focusOutline, got %d", got.focus)

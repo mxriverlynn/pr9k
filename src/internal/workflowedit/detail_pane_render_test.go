@@ -37,11 +37,13 @@ func TestDetailPane_ShellStep_ShowsCommand(t *testing.T) {
 }
 
 // TestDetailPane_MaskedEnv_ShowsMaskedValue verifies containerEnv masking.
+// Keys matching the secret-suffix pattern (_TOKEN, _SECRET, etc.) are masked.
 func TestDetailPane_MaskedEnv_ShowsMaskedValue(t *testing.T) {
 	step := workflowmodel.Step{
-		Name: "s",
-		Kind: workflowmodel.StepKindShell,
-		Env:  []workflowmodel.EnvEntry{{Key: "SECRET", Value: "hunter2", IsLiteral: true}},
+		Name:    "s",
+		Kind:    workflowmodel.StepKindShell,
+		Command: []string{"echo"},
+		Env:     []workflowmodel.EnvEntry{{Key: "MY_API_SECRET", Value: "hunter2", IsLiteral: true}},
 	}
 	m := newLoadedModel(step)
 	m.focus = focusDetail

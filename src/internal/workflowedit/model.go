@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -186,6 +187,14 @@ func (m Model) renderDialog() string {
 		return "New Workflow: Copy / Empty / Cancel"
 	case DialogPathPicker:
 		if picker, ok := m.dialog.payload.(pathPickerModel); ok {
+			if picker.kind == PickerKindNew {
+				warning := ""
+				targetConfig := filepath.Join(strings.TrimSuffix(picker.input, "/"), "config.json")
+				if _, err := os.Stat(targetConfig); err == nil {
+					warning = " — That path already contains a config.json — overwrite?"
+				}
+				return "New: " + picker.input + warning + "\nCreate / Cancel"
+			}
 			return "Open: " + picker.input
 		}
 		return "Open: "
@@ -922,38 +931,328 @@ func findStepCursorByIdx(m Model, stepIdx int) int {
 }
 
 func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Dispatch to sub-mode handlers first.
 	if m.detail.dropdownOpen {
-		return m.handleDropdownKey(km)
+		return m.handleChoiceListKey(km)
 	}
+	if m.detail.modelSuggFocus {
+		return m.handleModelSuggKey(km)
+	}
+	if m.detail.editing {
+		return m.handleEditingKey(km)
+	}
+
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+
 	switch km.Type {
 	case tea.KeyTab:
 		m.prevFocus = m.focus
 		m.focus = focusOutline
-		m.detail.revealedField = -1 // re-mask on focus-leave
+		m.detail.revealedField = -1 // re-mask on focus-leave (D-47)
+		m.detail.modelSuggFocus = false
+
 	case tea.KeyDown:
+		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+			fields := buildDetailFields(m.doc.Steps[stepIdx])
+			if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindModelSuggest {
+				// First Down from model field moves focus into suggestion list.
+				m.detail.modelSuggFocus = true
+				m.detail.modelSuggIdx = 0
+				return m, nil
+			}
+		}
 		m.detail.cursor++
+
 	case tea.KeyUp:
 		if m.detail.cursor > 0 {
 			m.detail.cursor--
 		}
+
 	case tea.KeyEnter:
-		m.detail.dropdownOpen = true
+		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+			fields := buildDetailFields(m.doc.Steps[stepIdx])
+			if m.detail.cursor < len(fields) {
+				f := fields[m.detail.cursor]
+				switch f.kind {
+				case fieldKindChoice:
+					m.detail.dropdownOpen = true
+					m.detail.choiceOptions = f.choices
+					current := fieldValue(m.doc.Steps[stepIdx], f)
+					m.detail.choiceIdx = 0
+					for i, c := range f.choices {
+						if c == current {
+							m.detail.choiceIdx = i
+							break
+						}
+					}
+				default:
+					// Text, numeric, model-suggest, secret-mask all use text editing.
+					m.detail.editing = true
+					m.detail.editBuf = fieldValue(m.doc.Steps[stepIdx], f)
+					m.detail.editMsg = ""
+				}
+			}
+		}
+
 	default:
-		if string(km.Runes) == "r" {
-			m.detail.revealedField = m.detail.cursor
+		if string(km.Runes) == "r" && stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+			fields := buildDetailFields(m.doc.Steps[stepIdx])
+			if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindSecretMask {
+				if m.detail.revealedField == m.detail.cursor {
+					m.detail.revealedField = -1 // toggle: re-mask
+				} else {
+					m.detail.revealedField = m.detail.cursor
+				}
+			}
 		}
 	}
 	return m, nil
 }
 
-func (m Model) handleDropdownKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+// handleChoiceListKey handles keyboard input while a choice-list dropdown is open.
+func (m Model) handleChoiceListKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyEsc:
 		m.detail.dropdownOpen = false
+	case tea.KeyDown:
+		if m.detail.choiceIdx < len(m.detail.choiceOptions)-1 {
+			m.detail.choiceIdx++
+		}
+	case tea.KeyUp:
+		if m.detail.choiceIdx > 0 {
+			m.detail.choiceIdx--
+		}
 	case tea.KeyEnter:
+		m = commitChoiceSelection(m)
 		m.detail.dropdownOpen = false
+	default:
+		// Typed char: jump to first option starting with that character.
+		if len(km.Runes) == 1 {
+			ch := strings.ToLower(string(km.Runes))
+			for i, opt := range m.detail.choiceOptions {
+				if strings.HasPrefix(strings.ToLower(opt), ch) {
+					m.detail.choiceIdx = i
+					break
+				}
+			}
+		}
 	}
 	return m, nil
+}
+
+// handleEditingKey handles keyboard input while a text or numeric field is
+// in editing mode. Field kind is checked to dispatch numeric behaviour.
+func (m Model) handleEditingKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+	isNumeric := false
+	if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+		fields := buildDetailFields(m.doc.Steps[stepIdx])
+		if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindNumeric {
+			isNumeric = true
+		}
+	}
+
+	switch km.Type {
+	case tea.KeyEsc:
+		m.detail.editing = false
+		m.detail.editBuf = ""
+		m.detail.editMsg = ""
+		return m, nil
+
+	case tea.KeyEnter:
+		m = commitDetailEdit(m)
+		m.detail.editing = false
+		m.detail.editMsg = ""
+		return m, nil
+
+	case tea.KeyBackspace:
+		if len(m.detail.editBuf) > 0 {
+			runes := []rune(m.detail.editBuf)
+			m.detail.editBuf = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	}
+
+	if len(km.Runes) == 0 {
+		return m, nil
+	}
+
+	isPaste := len(km.Runes) > 1
+	raw := string(km.Runes)
+
+	if isNumeric {
+		if isPaste {
+			sanitized := stripAtFirstNonDigit(raw)
+			if sanitized != raw {
+				m.detail.editMsg = "pasted content sanitized"
+			}
+			m.detail.editBuf += sanitized
+		} else {
+			// Single rune: silently drop non-digits.
+			if r := km.Runes[0]; r >= '0' && r <= '9' {
+				m.detail.editBuf += string(r)
+			}
+		}
+		m = clampNumericEdit(m)
+	} else {
+		m.detail.editBuf += sanitizePlainText(raw)
+	}
+	return m, nil
+}
+
+// handleModelSuggKey handles keyboard input while the model suggestion list
+// has focus (modelSuggFocus == true).
+func (m Model) handleModelSuggKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	sugs := workflowmodel.ModelSuggestions
+	switch km.Type {
+	case tea.KeyEsc:
+		m.detail.modelSuggFocus = false
+	case tea.KeyDown:
+		if m.detail.modelSuggIdx < len(sugs)-1 {
+			m.detail.modelSuggIdx++
+		}
+	case tea.KeyUp:
+		if m.detail.modelSuggIdx > 0 {
+			m.detail.modelSuggIdx--
+		}
+	case tea.KeyEnter:
+		rows := buildOutlineRows(m.doc, m.outline.collapsed)
+		stepIdx := cursorStepIdx(rows, m.outline.cursor)
+		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) && m.detail.modelSuggIdx < len(sugs) {
+			m.doc.Steps[stepIdx].Model = sugs[m.detail.modelSuggIdx]
+			m.dirty = true
+		}
+		m.detail.modelSuggFocus = false
+	}
+	return m, nil
+}
+
+// commitChoiceSelection writes the selected choice value into the doc step.
+func commitChoiceSelection(m Model) Model {
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+	if stepIdx < 0 || stepIdx >= len(m.doc.Steps) {
+		return m
+	}
+	fields := buildDetailFields(m.doc.Steps[stepIdx])
+	if m.detail.cursor >= len(fields) || m.detail.choiceIdx >= len(m.detail.choiceOptions) {
+		return m
+	}
+	chosen := m.detail.choiceOptions[m.detail.choiceIdx]
+	step := m.doc.Steps[stepIdx]
+	switch fields[m.detail.cursor].label {
+	case "Kind":
+		step.Kind = workflowmodel.StepKind(chosen)
+		step.IsClaudeSet = step.Kind == workflowmodel.StepKindClaude
+	case "CaptureMode":
+		step.CaptureMode = chosen
+	case "OnTimeout":
+		step.OnTimeout = chosen
+	case "ResumePrevious":
+		step.ResumePrevious = chosen == "true"
+	case "BreakLoopIfEmpty":
+		step.BreakLoopIfEmpty = chosen == "true"
+	}
+	m.doc.Steps[stepIdx] = step
+	m.dirty = true
+	return m
+}
+
+// commitDetailEdit writes editBuf into the doc step field at detail.cursor.
+func commitDetailEdit(m Model) Model {
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+	if stepIdx < 0 || stepIdx >= len(m.doc.Steps) {
+		return m
+	}
+	fields := buildDetailFields(m.doc.Steps[stepIdx])
+	if m.detail.cursor >= len(fields) {
+		return m
+	}
+	f := fields[m.detail.cursor]
+	step := m.doc.Steps[stepIdx]
+	val := m.detail.editBuf
+	switch f.label {
+	case "Name":
+		step.Name = val
+	case "Model":
+		step.Model = val
+	case "PromptFile":
+		step.PromptFile = val
+	case "Command":
+		if val == "" {
+			step.Command = nil
+		} else {
+			step.Command = strings.Fields(val)
+		}
+	case "CaptureAs":
+		step.CaptureAs = val
+	case "SkipIfCaptureEmpty":
+		step.SkipIfCaptureEmpty = val
+	case "TimeoutSeconds":
+		n, _ := strconv.Atoi(val)
+		step.TimeoutSeconds = n
+	}
+	if strings.HasPrefix(f.label, "containerEnv[") {
+		idx := envFieldIndex(f.label)
+		if idx >= 0 && idx < len(step.Env) {
+			parts := strings.SplitN(val, "=", 2)
+			if len(parts) == 2 {
+				step.Env[idx].Key = parts[0]
+				step.Env[idx].Value = parts[1]
+			}
+		}
+	}
+	if strings.HasPrefix(f.label, "env[") {
+		idx := envFieldIndex(f.label)
+		if idx >= 0 && idx < len(step.Env) {
+			step.Env[idx].Key = val
+		}
+	}
+	m.doc.Steps[stepIdx] = step
+	m.dirty = true
+	return m
+}
+
+// clampNumericEdit clamps editBuf to the [numMin, numMax] range of the current field.
+func clampNumericEdit(m Model) Model {
+	if m.detail.editBuf == "" {
+		return m
+	}
+	rows := buildOutlineRows(m.doc, m.outline.collapsed)
+	stepIdx := cursorStepIdx(rows, m.outline.cursor)
+	if stepIdx < 0 || stepIdx >= len(m.doc.Steps) {
+		return m
+	}
+	fields := buildDetailFields(m.doc.Steps[stepIdx])
+	if m.detail.cursor >= len(fields) {
+		return m
+	}
+	f := fields[m.detail.cursor]
+	n, err := strconv.Atoi(m.detail.editBuf)
+	if err != nil {
+		return m
+	}
+	if n < f.numMin {
+		n = f.numMin
+	}
+	if n > f.numMax {
+		n = f.numMax
+	}
+	m.detail.editBuf = strconv.Itoa(n)
+	return m
+}
+
+// stripAtFirstNonDigit returns s truncated at the first non-digit rune.
+func stripAtFirstNonDigit(s string) string {
+	for i, r := range s {
+		if r < '0' || r > '9' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {

@@ -9,15 +9,26 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// PickerKind discriminates the intent of a DialogPathPicker: opening an
+// existing workflow (PickerKindOpen, the default) or creating a new one
+// (PickerKindNew). The kind drives pre-fill, button label, and guidance text.
+type PickerKind int
+
+const (
+	PickerKindOpen PickerKind = iota // Ctrl+O: browse to existing config.json
+	PickerKindNew                    // File>New: choose where to create a workflow
+)
+
 // pathPickerModel holds the state for the DialogPathPicker dialog.
 // Stored as dialogState.payload when DialogPathPicker is active.
 // pathCompletionGen tracks the current input generation so stale async
 // completion results are discarded (D-PR2-20).
 type pathPickerModel struct {
-	input             string   // current text in the path input field
-	matches           []string // nil = not yet scanned; empty = scanned, no results
-	matchIdx          int      // cycling position within matches
-	pathCompletionGen uint64   // increments on each mutating keystroke or new async dispatch
+	input             string     // current text in the path input field
+	matches           []string   // nil = not yet scanned; empty = scanned, no results
+	matchIdx          int        // cycling position within matches
+	pathCompletionGen uint64     // increments on each mutating keystroke or new async dispatch
+	kind              PickerKind // PickerKindOpen (default) or PickerKindNew
 }
 
 // pathCompletionMsg is dispatched when an async completePath scan finishes.
@@ -28,9 +39,16 @@ type pathCompletionMsg struct {
 	gen     uint64
 }
 
-// newPathPicker returns a pathPickerModel pre-filled with defaultPath.
+// newPathPicker returns a PickerKindOpen pathPickerModel pre-filled with defaultPath.
 func newPathPicker(defaultPath string) pathPickerModel {
-	return pathPickerModel{input: defaultPath}
+	return pathPickerModel{input: defaultPath, kind: PickerKindOpen}
+}
+
+// newPathPickerForNew returns a PickerKindNew pathPickerModel whose pre-fill
+// is <projectDir>/.pr9k/workflow/ (a directory, not a config.json path).
+func newPathPickerForNew(projectDir string) pathPickerModel {
+	dir := filepath.Join(projectDir, ".pr9k", "workflow") + "/"
+	return pathPickerModel{input: dir, kind: PickerKindNew}
 }
 
 // completePath returns a tea.Cmd that scans for path completions
