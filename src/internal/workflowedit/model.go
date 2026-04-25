@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowvalidate"
@@ -365,7 +366,8 @@ func (m Model) renderEditView() string {
 	if stepIdx >= 0 {
 		detailStr = m.detail.render(m.doc.Steps[stepIdx])
 	}
-	return header + "\n" + outlineStr + " | " + detailStr
+	columns := lipgloss.JoinHorizontal(lipgloss.Top, outlineStr, detailStr)
+	return header + "\n" + columns
 }
 
 // renderSessionHeader renders the third row of the edit view:
@@ -451,15 +453,16 @@ func (m Model) updateDialogNewChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Copy from default: pre-copy integrity check (GAP-021).
 		// Attempt to load the default bundle; on any error open the
 		// Copy-anyway/Cancel dialog (DialogCopyBrokenRef). On success,
-		// also open the dialog as the confirm step (copy wiring deferred).
+		// show a not-yet-implemented error (full copy wiring deferred to PR-3).
 		_, err := workflowmodel.CopyFromDefault(m.workflowDir)
 		if err != nil {
 			m.dialog = dialogState{kind: DialogCopyBrokenRef}
 			return m, nil
 		}
-		// TODO: copy companions and load the doc (full copy wiring deferred).
-		m.dialog = dialogState{}
-		m.focus = m.prevFocus
+		m.dialog = dialogState{
+			kind:    DialogError,
+			payload: "Copy from default not yet implemented — use Empty or open an existing workflow",
+		}
 	}
 	return m, nil
 }
@@ -822,9 +825,12 @@ func (m Model) updateDialogCopyBrokenRef(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch string(km.Runes) {
 	case "y":
-		// Copy anyway: close dialog and return to empty editor (full copy wiring deferred).
-		m.dialog = dialogState{}
-		m.focus = m.prevFocus
+		// Copy anyway: full copy wiring deferred to PR-3; show explicit message
+		// so the user knows the action did not complete silently.
+		m.dialog = dialogState{
+			kind:    DialogError,
+			payload: "Copy from default not yet implemented — use Empty or open an existing workflow",
+		}
 	case "c":
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
@@ -1036,7 +1042,7 @@ func doAddItemInSection(m Model, sk sectionKey) Model {
 		if m.doc.ContainerEnv == nil {
 			m.doc.ContainerEnv = make(map[string]string)
 		}
-		// Add a placeholder key; the detail pane (WU-PR2-9b) handles editing.
+		m.doc.ContainerEnv["NEW_KEY"] = ""
 		m.dirty = true
 	}
 	return m
@@ -1147,8 +1153,12 @@ func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.detail.modelSuggIdx = 0
 				return m, nil
 			}
+			if m.detail.cursor < len(fields)-1 {
+				m.detail.cursor++
+			}
+		} else {
+			m.detail.cursor++
 		}
-		m.detail.cursor++
 
 	case tea.KeyUp:
 		if m.detail.cursor > 0 {
@@ -1248,9 +1258,12 @@ func (m Model) handleEditingKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
-		m = commitDetailEdit(m)
-		m.detail.editing = false
-		m.detail.editMsg = ""
+		var ok bool
+		m, ok = commitDetailEdit(m)
+		if ok {
+			m.detail.editing = false
+			m.detail.editMsg = ""
+		}
 		return m, nil
 
 	case tea.KeyBackspace:
@@ -1347,15 +1360,17 @@ func commitChoiceSelection(m Model) Model {
 }
 
 // commitDetailEdit writes editBuf into the doc step field at detail.cursor.
-func commitDetailEdit(m Model) Model {
+// Returns (updated model, true) on success, or (model with editMsg set, false)
+// when the commit is rejected (e.g. Command round-trip would corrupt quoted args).
+func commitDetailEdit(m Model) (Model, bool) {
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	stepIdx := cursorStepIdx(rows, m.outline.cursor)
 	if stepIdx < 0 || stepIdx >= len(m.doc.Steps) {
-		return m
+		return m, true
 	}
 	fields := buildDetailFields(m.doc.Steps[stepIdx])
 	if m.detail.cursor >= len(fields) {
-		return m
+		return m, true
 	}
 	f := fields[m.detail.cursor]
 	step := m.doc.Steps[stepIdx]
@@ -1368,6 +1383,15 @@ func commitDetailEdit(m Model) Model {
 	case "PromptFile":
 		step.PromptFile = val
 	case "Command":
+		// Reject the commit if any original argv element contains whitespace:
+		// strings.Join→Fields is lossy for such elements and would silently corrupt
+		// the command (e.g. ["bash","-c","echo hello"] → ["bash","-c","echo","hello"]).
+		for _, arg := range step.Command {
+			if strings.ContainsAny(arg, " \t\n\r") {
+				m.detail.editMsg = "Command has quoted args — edit in external editor (Ctrl+E)"
+				return m, false
+			}
+		}
 		if val == "" {
 			step.Command = nil
 		} else {
@@ -1388,6 +1412,9 @@ func commitDetailEdit(m Model) Model {
 			if len(parts) == 2 {
 				step.Env[idx].Key = parts[0]
 				step.Env[idx].Value = parts[1]
+			} else {
+				m.detail.editMsg = "Expected key=value format"
+				return m, false
 			}
 		}
 	}
@@ -1399,7 +1426,7 @@ func commitDetailEdit(m Model) Model {
 	}
 	m.doc.Steps[stepIdx] = step
 	m.dirty = true
-	return m
+	return m, true
 }
 
 // clampNumericEdit clamps editBuf to the [numMin, numMax] range of the current field.
@@ -1747,6 +1774,16 @@ func deepCopyDoc(doc workflowmodel.WorkflowDoc) workflowmodel.WorkflowDoc {
 	if doc.StatusLine != nil {
 		sl := *doc.StatusLine
 		cp.StatusLine = &sl
+	}
+	if len(doc.Env) > 0 {
+		cp.Env = make([]string, len(doc.Env))
+		copy(cp.Env, doc.Env)
+	}
+	if len(doc.ContainerEnv) > 0 {
+		cp.ContainerEnv = make(map[string]string, len(doc.ContainerEnv))
+		for k, v := range doc.ContainerEnv {
+			cp.ContainerEnv[k] = v
+		}
 	}
 	if len(doc.Steps) > 0 {
 		cp.Steps = make([]workflowmodel.Step, len(doc.Steps))

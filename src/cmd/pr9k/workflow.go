@@ -47,6 +47,11 @@ func (realEditorRunner) Run(filePath string, cb workflowedit.ExecCallback) tea.C
 		}
 	}
 	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		return func() tea.Msg {
+			return cb(fmt.Errorf("workflow: no editor configured: set $VISUAL or $EDITOR"))
+		}
+	}
 	args := append(parts[1:], filePath)
 	return tea.ExecProcess(exec.Command(parts[0], args...), func(err error) tea.Msg {
 		return cb(err)
@@ -105,7 +110,8 @@ func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag, workflowDirFlag stri
 		}
 	}()
 
-	model := workflowedit.New(workflowio.RealSaveFS(), realEditorRunner{}, logBaseDir, workflowDirFlag)
+	model := workflowedit.New(workflowio.RealSaveFS(), realEditorRunner{}, logBaseDir, workflowDirFlag).
+		WithLog(log.Writer())
 	prog := newBuilderTeaProgram(model)
 	_, runErr := prog.Run()
 	return runErr

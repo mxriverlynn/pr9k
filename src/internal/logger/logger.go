@@ -3,6 +3,7 @@ package logger
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,6 +91,13 @@ func (l *Logger) Log(stepName string, line string) error {
 
 	_, err := fmt.Fprintln(l.writer, prefix+line)
 	return err
+}
+
+// Writer returns an io.Writer that writes directly to the underlying log file,
+// bypassing the timestamp/prefix formatting. Used to thread the file handle into
+// subsystems (e.g. workflowedit.Model.WithLog) that format their own log lines.
+func (l *Logger) Writer() io.Writer {
+	return l.file
 }
 
 // Close flushes buffered content and closes the log file.
