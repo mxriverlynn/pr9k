@@ -145,6 +145,24 @@ func (l *Logger) SetContext(iteration string, _ string) {
 
 The second parameter is reserved for future use (e.g., a step label) and is intentionally ignored.
 
+### Writer
+
+`Writer` returns the underlying `*os.File` as an `io.Writer`, bypassing the timestamp/prefix formatting. Used to thread the log file handle into subsystems that format their own log lines:
+
+```go
+func (l *Logger) Writer() io.Writer {
+    return l.file
+}
+```
+
+The primary caller is `runWorkflowBuilder`, which passes `log.Writer()` to `workflowedit.Model.WithLog` so session-event logging is active on every builder run:
+
+```go
+model := workflowedit.New(...).WithLog(log.Writer())
+```
+
+**Concurrency note:** `Writer()` returns the raw file handle without acquiring `l.mu`. The workflowedit model writes to this handle via `fmt.Fprintln` from the Bubble Tea goroutine; the main `pr9k` logger writes to the same file via `Log()` which holds `l.mu` and calls `bufio.Writer.Write`. Since the Bubble Tea model and the main pr9k logger do not share a session, concurrent writes do not occur in practice.
+
 ### Close
 
 `Close` flushes the buffered writer and closes the file. Idempotent — safe to call multiple times:

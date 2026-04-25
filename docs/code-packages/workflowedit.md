@@ -16,7 +16,11 @@ func (m Model) Init() tea.Cmd
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 func (m Model) View() string
 func (m Model) WithLog(w io.Writer) Model
+func (m Model) WithNoValidation() Model
+func (m Model) IsDirty() bool
 func (m Model) ShortcutLine() string
+
+func LoadResultMsg(doc, diskDoc workflowmodel.WorkflowDoc, companions map[string][]byte, workflowDir string) tea.Msg
 ```
 
 **New** constructs the Model with dependency injection:
@@ -25,7 +29,13 @@ func (m Model) ShortcutLine() string
 - `projectDir` — governs log file location and default path-picker pre-fill
 - `workflowDir` — governs `--workflow-dir` auto-open and default path-picker pre-fill
 
-**WithLog** returns a copy of the Model with the session-event `io.Writer` set. The writer receives structured log lines for security-relevant events (symlink detected, external workflow, shared install, editor invoked/exited). `containerEnv` secret values are never written to the log.
+**WithLog** returns a copy of the Model with the session-event `io.Writer` set. The writer receives structured log lines for security-relevant events (symlink detected, external workflow, shared install, editor invoked/exited). `containerEnv` secret values are never written to the log. In production, `runWorkflowBuilder` passes `log.Writer()` here so session events land in the same `.pr9k/logs/` file as the main run log.
+
+**WithNoValidation** returns a copy of the Model that stubs out the validator: validation always returns zero findings, so the save pipeline never opens the findings panel or the acknowledgment dialog. Used by integration tests that need to drive the save pipeline without triggering real disk reads.
+
+**IsDirty** reports whether the in-memory `WorkflowDoc` differs from the on-disk baseline (`diskDoc`, last set at load time or after a successful save). Delegates to `workflowmodel.IsDirty`.
+
+**LoadResultMsg** constructs the `tea.Msg` that delivers a freshly loaded document into the Model's Update loop. The `diskDoc` argument sets the save-baseline for dirty detection; passing an empty `workflowmodel.WorkflowDoc{}` forces `IsDirty()` to return `true` immediately (used in integration tests to guarantee a write on the first save). When `workflowDir` is non-empty it overrides the Model's configured workflow directory.
 
 **ShortcutLine** returns the footer hint string for the current focus state and overlay. Called by the parent `program` runner to update the status bar.
 
@@ -151,6 +161,21 @@ Collapsing a section while the cursor is inside it moves the cursor to the secti
 
 Secret detection pattern (`isSensitiveKey`): key must end with one of `_TOKEN`, `_SECRET`, `_KEY`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, `_APIKEY` (case-insensitive suffix match).
 
+#### commitDetailEdit rejection rules
+
+`commitDetailEdit` returns `(Model, bool)`. On rejection it returns `false` with an `editMsg` visible in the detail pane; the Model stays in editing mode:
+
+| Field | Rejection condition | Message |
+|-------|---------------------|---------|
+| `Command` | Any original argv element (before editing) contains whitespace | `"Command has quoted args — edit in external editor (Ctrl+E)"` |
+| `containerEnv` value | Committed value does not contain `=` | `"Expected key=value format"` |
+
+The Command rejection prevents a silent round-trip corruption: `strings.Join(argv, " ")` followed by `strings.Fields(joined)` is lossy when any element contains whitespace (e.g. `["bash", "-c", "echo hello"]` → `["bash", "-c", "echo", "hello"]`). Affected Command values must be edited via external editor (`Ctrl+E`).
+
+#### deepCopyDoc and the validator-goroutine data race
+
+Before starting the async validator goroutine, the Model takes a deep copy of the document via `deepCopyDoc`. The copy performs explicit `make`+`copy` for `doc.Env` (slice) and `make`+range-assign for `doc.ContainerEnv` (map), preventing the goroutine from aliasing the UI goroutine's backing arrays. Without this, a concurrent `append` or map write from the UI thread could corrupt the slice or map mid-iteration in the validator.
+
 ### Save pipeline
 
 1. `handleSaveRequest()` runs the validator via `validateFn` (injectable for testing).
@@ -159,6 +184,10 @@ Secret detection pattern (`isSensitiveKey`): key must end with one of `_TOKEN`, 
 4. If no findings (or all acknowledged), `makeSaveCmd()` is called.
 5. `makeSaveCmd()` writes the ackSet to disk first, then dispatches an async save via `workflowio.Save`.
 6. The async save completes as `saveCompleteMsg`; `handleSaveResult` processes success/failure and updates banners, the dirty flag, and the mtime snapshot.
+
+### Copy-from-default (deferred)
+
+`DialogNewChoice` option `c` (Copy from default) and `DialogCopyBrokenRef` option `y` (Copy anyway) are both deferred to PR-3. In the current build these options open `DialogError` with the message `"Copy from default not yet implemented — use Empty or open an existing workflow"` so the action does not silently no-op.
 
 ### Conflict detection
 
@@ -182,13 +211,16 @@ The Model snapshots the `config.json` mtime and size at load time. At save time,
 
 ```go
 type openFileResultMsg struct {
-    doc            *workflowmodel.WorkflowDoc
-    companions     map[string]string
-    err            error
-    isSymlink      bool
-    symlinkTarget  string
-    isExternal     bool
-    isReadOnly     bool
+    doc         workflowmodel.WorkflowDoc
+    diskDoc     workflowmodel.WorkflowDoc
+    companions  map[string][]byte
+    workflowDir string
+    err         error
+    rawBytes    []byte       // non-nil only for parse errors (routes to DialogRecovery)
+    isSymlink       bool
+    symlinkTarget   string
+    isExternal      bool
+    isReadOnly      bool
     isSharedInstall bool
 }
 ```

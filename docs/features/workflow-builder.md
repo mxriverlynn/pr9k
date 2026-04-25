@@ -110,7 +110,8 @@ The help modal is unconditionally reachable from the edit view or the findings p
 
 1. If a workflow is loaded with unsaved edits, a three-option dialog intercepts: **Save** / **Cancel** (keyboard default) / **Discard**.
 2. A choice dialog offers: **Copy from default workflow** / **Start with empty workflow** / **Cancel** (keyboard default).
-3. For the Copy option, the builder performs a pre-copy integrity check; a broken default triggers a **Copy anyway** / **Cancel** dialog.
+   - **Copy from default** is not yet fully implemented. Selecting it shows an error dialog explaining that the feature is deferred; use **Start with empty workflow** or **File > Open** in the meantime.
+3. For the Copy option (once implemented), the builder performs a pre-copy integrity check; a broken default triggers a **Copy anyway** / **Cancel** dialog — also currently deferred.
 4. A path picker (pre-filled with `<projectDir>/.pr9k/workflow/`) asks where to place the new workflow.
 5. The new in-memory workflow loads into the edit view. Nothing is written to disk until File > Save.
 
@@ -162,6 +163,16 @@ When multiple banners are active, a `[N more warnings]` affordance appears; sele
 | Numeric | Integer with visible bounds; non-numeric input silently ignored; pasted input stripped at first non-digit | Digits only |
 | Model suggest | Free-text with hardcoded suggestion list; values outside the list accepted | Any printable character; suggestion list navigable with `↑`/`↓` |
 | Secret mask | containerEnv value whose key matches a secret pattern (`_TOKEN`, `_SECRET`, `_KEY`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, `_APIKEY`); rendered as `••••••••`; `[press r to reveal]` label | `r` toggles mask; re-masks on focus leave |
+
+### Command field and quoted arguments
+
+The `Command` field on shell steps stores an argv array (`[]string`). When any element in the existing array contains whitespace (e.g. `["bash", "-c", "echo hello"]`), the builder cannot safely round-trip the field through a plain-text edit box — `strings.Join` followed by `strings.Fields` would split `"echo hello"` into two elements and silently corrupt the config. In this case the detail pane shows:
+
+```
+Command has quoted args — edit in external editor (Ctrl+E)
+```
+
+Press `Ctrl+E` on the Prompt File field to open the companion file in your external editor, or edit `config.json` directly. The restriction only applies to steps whose argv already contains whitespace; simple commands like `["make", "build"]` can be edited freely in the TUI.
 
 ## External Editor Integration
 
