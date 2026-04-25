@@ -15,8 +15,6 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 - [Claude CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-cli) — installed and authenticated
 - A GitHub repo with issues labeled `ralph` assigned to your user
 
-<img src="images/ralph-tui-screenshot.png">
-
 ### Installation
 
 ```bash
@@ -40,6 +38,8 @@ path/to/pr9k/bin/pr9k -n 3
 ```
 
 Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue. When run without `-n`, Ralph keeps going until `get_next_issue` finds no more issues.
+
+<img src="images/ralph-tui-screenshot.png">
 
 ## How To
 
