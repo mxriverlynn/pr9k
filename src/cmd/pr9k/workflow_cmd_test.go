@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/pflag"
 )
 
@@ -83,10 +84,15 @@ func allowedKeys(m map[string]bool) []string {
 
 // T-1: runWorkflowBuilder exits cleanly given a valid project directory.
 func TestRunWorkflowBuilder_ExitsCleanly(t *testing.T) {
+	// Inject a no-op tea program so the test does not start a real TUI.
+	saved := newBuilderTeaProgram
+	t.Cleanup(func() { newBuilderTeaProgram = saved })
+	newBuilderTeaProgram = func(_ tea.Model) teaProgram { return &fakeTeaProgram{} }
+
 	dir := t.TempDir()
 	cmd := newWorkflowCmd()
 	cmd.SetContext(context.Background())
-	if err := runWorkflowBuilder(cmd, dir); err != nil {
+	if err := runWorkflowBuilder(cmd, dir, ""); err != nil {
 		t.Errorf("runWorkflowBuilder returned unexpected error: %v", err)
 	}
 }
@@ -143,7 +149,7 @@ func TestRunWorkflowBuilder_PropagatesLoggerError(t *testing.T) {
 
 	cmd := newWorkflowCmd()
 	cmd.SetContext(context.Background())
-	err := runWorkflowBuilder(cmd, filepath.Join(parent, "sub"))
+	err := runWorkflowBuilder(cmd, filepath.Join(parent, "sub"), "")
 	if err == nil {
 		t.Fatal("expected error from runWorkflowBuilder, got nil")
 	}
