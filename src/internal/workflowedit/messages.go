@@ -19,6 +19,8 @@ type saveCompleteMsg struct {
 // the loaded document or an error + raw bytes for the recovery view.
 // rawBytes is non-nil only for parse errors (recovery view); other errors
 // leave rawBytes nil, routing to DialogError instead of DialogRecovery.
+// The banner-signal fields (isSymlink, isExternal, isReadOnly, isSharedInstall)
+// are forwarded from workflowio detection at load time (D-23, GAP-035).
 type openFileResultMsg struct {
 	doc         workflowmodel.WorkflowDoc
 	diskDoc     workflowmodel.WorkflowDoc
@@ -26,6 +28,12 @@ type openFileResultMsg struct {
 	workflowDir string
 	err         error
 	rawBytes    []byte
+	// Load-pipeline banner signals.
+	isSymlink       bool
+	symlinkTarget   string
+	isExternal      bool
+	isReadOnly      bool
+	isSharedInstall bool
 }
 
 // quitMsg is dispatched to signal a clean shutdown request. It is pre-dispatched

@@ -2,6 +2,7 @@ package workflowedit
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,54 @@ const (
 	focusDetail
 	focusMenu
 )
+
+// bannerState holds the set of active warning banners for the session header.
+// Priority order (highest first): read-only > external-workflow > symlink >
+// shared-install > unknown-field. Only the highest-priority banner is rendered;
+// remaining active banners contribute to the "[N more warnings]" affordance.
+type bannerState struct {
+	isReadOnly         bool
+	isExternalWorkflow bool
+	isSymlink          bool
+	symlinkTarget      string
+	isSharedInstall    bool
+	hasUnknownField    bool
+}
+
+// activeBanner returns the text of the highest-priority active banner and the
+// count of lower-priority active banners (for the "[N more warnings]" affordance).
+func (b bannerState) activeBanner() (string, int) {
+	all := b.allBannerTexts()
+	if len(all) == 0 {
+		return "", 0
+	}
+	return all[0], len(all) - 1
+}
+
+func (b bannerState) allBannerTexts() []string {
+	var out []string
+	if b.isReadOnly {
+		out = append(out, "[read-only]")
+	}
+	if b.isExternalWorkflow {
+		out = append(out, "[external workflow]")
+	}
+	if b.isSymlink {
+		target := b.symlinkTarget
+		if target != "" {
+			out = append(out, "[symlink → "+target+"]")
+		} else {
+			out = append(out, "[symlink]")
+		}
+	}
+	if b.isSharedInstall {
+		out = append(out, "[shared install]")
+	}
+	if b.hasUnknownField {
+		out = append(out, "[unknown fields]")
+	}
+	return out
+}
 
 // Model is the top-level Bubble Tea model for the workflow-builder TUI.
 // SaveFS and EditorRunner are injected at construction time so tests can
@@ -73,6 +122,10 @@ type Model struct {
 
 	saveBanner string // "Saved at HH:MM:SS" after a successful save
 
+	banners bannerState // active warning banners set from load-pipeline signals
+
+	logW io.Writer // session-event log destination; nil disables logging
+
 	// validateFn overrides the real validator when non-nil; used by tests.
 	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
 }
@@ -90,6 +143,44 @@ func New(saveFS workflowio.SaveFS, editor EditorRunner, projectDir, workflowDir 
 		detail:      newDetailPane(defaultDetailW, defaultH),
 		menu:        newMenuBar(),
 	}
+}
+
+// WithLog returns a copy of the Model configured to write session events to w.
+func (m Model) WithLog(w io.Writer) Model {
+	m.logW = w
+	return m
+}
+
+// logEvent writes a session-event line to logW if it is set. It never writes
+// containerEnv values, env entry values, prompt-file content, or editor
+// argument lists (field-exclusion contract R7).
+func (m Model) logEvent(event string) {
+	if m.logW == nil {
+		return
+	}
+	_, _ = fmt.Fprintln(m.logW, event)
+}
+
+// fmtEditorInvoked returns the session-event string for the editor_invoked event.
+func fmtEditorInvoked(binary string) string {
+	return "editor_invoked binary=" + binary
+}
+
+// fmtEditorExited returns the session-event string for the editor_exit event.
+func fmtEditorExited(binary string, exitCode int, d time.Duration) string {
+	return fmt.Sprintf("editor_exit binary=%s exit_code=%d duration_ms=%d", binary, exitCode, d.Milliseconds())
+}
+
+func fmtSymlinkDetected(target string) string {
+	return "symlink_detected target=" + target
+}
+
+func fmtExternalWorkflowDetected(workflowDir string) string {
+	return "external_workflow_detected workflowDir=" + workflowDir
+}
+
+func fmtReadOnlyDetected(workflowDir string) string {
+	return "read_only_detected workflowDir=" + workflowDir
 }
 
 // Init satisfies tea.Model. No startup commands are needed.
@@ -238,6 +329,7 @@ func (m Model) renderEmptyEditor() string {
 }
 
 func (m Model) renderEditView() string {
+	header := m.renderSessionHeader()
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	outlineStr := m.outline.render(m.doc, m.outline.cursor, m.reorderMode)
 	var detailStr string
@@ -245,7 +337,25 @@ func (m Model) renderEditView() string {
 	if stepIdx >= 0 {
 		detailStr = m.detail.render(m.doc.Steps[stepIdx])
 	}
-	return outlineStr + " | " + detailStr
+	return header + "\n" + outlineStr + " | " + detailStr
+}
+
+// renderSessionHeader renders the third row of the edit view:
+// target path + dirty glyph + at-most-one banner + "[N more warnings]" affordance.
+func (m Model) renderSessionHeader() string {
+	path := m.workflowDir
+	if m.dirty {
+		path += "*"
+	}
+	banner, extra := m.banners.activeBanner()
+	if banner == "" {
+		return path
+	}
+	header := path + " " + banner
+	if extra > 0 {
+		header += fmt.Sprintf(" [%d more warnings]", extra)
+	}
+	return header
 }
 
 // --- update helpers ---
@@ -288,6 +398,8 @@ func (m Model) updateDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDialogCrashTempNotice(msg)
 	case DialogRecovery:
 		return m.updateDialogRecovery(msg)
+	case DialogCopyBrokenRef:
+		return m.updateDialogCopyBrokenRef(msg)
 	default:
 		km, ok := msg.(tea.KeyMsg)
 		if ok && km.Type == tea.KeyEsc {
@@ -303,7 +415,21 @@ func (m Model) updateDialogNewChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if km.Type == tea.KeyEsc {
+	switch {
+	case km.Type == tea.KeyEsc:
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	case string(km.Runes) == "c":
+		// Copy from default: pre-copy integrity check (GAP-021).
+		// Attempt to load the default bundle; on any error open the
+		// Copy-anyway/Cancel dialog (DialogCopyBrokenRef). On success,
+		// also open the dialog as the confirm step (copy wiring deferred).
+		_, err := workflowmodel.CopyFromDefault(m.workflowDir)
+		if err != nil {
+			m.dialog = dialogState{kind: DialogCopyBrokenRef}
+			return m, nil
+		}
+		// TODO: copy companions and load the doc (full copy wiring deferred).
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	}
@@ -454,6 +580,13 @@ func (m Model) updateDialogAcknowledgeFindings(msg tea.Msg) (tea.Model, tea.Cmd)
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	case string(km.Runes) == "y", km.Type == tea.KeyEnter:
+		// GAP-027/028: Write acknowledged finding keys into ackSet BEFORE save.
+		if m.findingsPanel.ackSet == nil {
+			m.findingsPanel.ackSet = make(map[string]bool)
+		}
+		for _, e := range m.findingsPanel.entries {
+			m.findingsPanel.ackSet[e.key] = true
+		}
 		m.dialog = dialogState{}
 		m.saveInProgress = true
 		return m, m.makeSaveCmd()
@@ -645,6 +778,31 @@ func (m Model) updateDialogRecovery(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if km.Type == tea.KeyEsc {
 			m.dialog = dialogState{}
 			m.loaded = false
+			m.focus = m.prevFocus
+		}
+	}
+	return m, nil
+}
+
+// updateDialogCopyBrokenRef handles the Copy-anyway/Cancel dialog shown when
+// the default workflow bundle has broken or missing companion references (GAP-021).
+// y = copy anyway, c/Esc = cancel.
+func (m Model) updateDialogCopyBrokenRef(msg tea.Msg) (tea.Model, tea.Cmd) {
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch string(km.Runes) {
+	case "y":
+		// Copy anyway: close dialog and return to empty editor (full copy wiring deferred).
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	case "c":
+		m.dialog = dialogState{}
+		m.focus = m.prevFocus
+	default:
+		if km.Type == tea.KeyEsc {
+			m.dialog = dialogState{}
 			m.focus = m.prevFocus
 		}
 	}
@@ -1306,13 +1464,25 @@ func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.C
 		}
 	}
 	if len(msg.items) > 0 {
-		// Warn/info-only findings: show acknowledgment dialog.
-		m.prevFocus = m.focus
+		// Check if all non-fatal findings are already acknowledged (GAP-027/028).
+		allAcked := true
+		for _, item := range msg.items {
+			if !m.findingsPanel.ackSet[item.text] {
+				allAcked = false
+				break
+			}
+		}
+		if !allAcked {
+			// Warn/info-only findings: show acknowledgment dialog.
+			m.prevFocus = m.focus
+			m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
+			m.dialog = dialogState{kind: DialogAcknowledgeFindings}
+			return m, nil
+		}
+		// All acknowledged: rebuild panel to preserve ackSet, then proceed.
 		m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
-		m.dialog = dialogState{kind: DialogAcknowledgeFindings}
-		return m, nil
 	}
-	// Zero findings: proceed directly to save.
+	// Zero findings or all acknowledged: proceed directly to save.
 	m.saveInProgress = true
 	return m, m.makeSaveCmd()
 }
@@ -1372,6 +1542,30 @@ func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) 
 	m.outline.cursor = 0
 	m.saveSnapshot = nil // F-98: reset snapshot on session transition
 	m.dialog = dialogState{}
+
+	// Set banner state from load-pipeline signals (D-23, GAP-035).
+	m.banners = bannerState{
+		isSymlink:          msg.isSymlink,
+		symlinkTarget:      msg.symlinkTarget,
+		isExternalWorkflow: msg.isExternal,
+		isReadOnly:         msg.isReadOnly,
+		isSharedInstall:    msg.isSharedInstall,
+	}
+
+	// Log load-time security signals (F-PR2-9).
+	if msg.isSymlink {
+		m.logEvent(fmtSymlinkDetected(msg.symlinkTarget))
+	}
+	if msg.isExternal {
+		m.logEvent(fmtExternalWorkflowDetected(msg.workflowDir))
+	}
+	if msg.isReadOnly {
+		m.logEvent(fmtReadOnlyDetected(msg.workflowDir))
+	}
+	if msg.isSharedInstall {
+		m.logEvent("shared_install_detected")
+	}
+
 	return m, nil
 }
 

@@ -1,6 +1,7 @@
 package workflowedit
 
 import (
+	"io"
 	"os"
 	"time"
 
@@ -78,6 +79,12 @@ func (f *fakeEditorRunner) Run(filePath string, cb ExecCallback) tea.Cmd {
 // newTestModel returns a Model with fake dependencies and no workflow loaded.
 func newTestModel() Model {
 	return New(&fakeFS{}, &fakeEditorRunner{}, "/testproject", "/testworkflow")
+}
+
+// newTestModelWithLog returns a Model with fake dependencies and the given writer
+// as the session-event log destination.
+func newTestModelWithLog(w io.Writer) Model {
+	return newTestModel().WithLog(w)
 }
 
 // newLoadedModel returns a Model with the given steps already loaded.
