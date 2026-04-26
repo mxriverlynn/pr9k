@@ -122,10 +122,17 @@ type Model struct {
 	reorderSnapshot []workflowmodel.Step
 
 	saveBanner string // "Saved at HH:MM:SS" after a successful save
+	// bannerGen is incremented on each save success so stale clearSaveBannerMsg
+	// ticks from prior saves are ignored (D-7).
+	bannerGen int
 
 	banners bannerState // active warning banners set from load-pipeline signals
 
 	logW io.Writer // session-event log destination; nil disables logging
+
+	// nowFn returns the current time; defaults to time.Now. Replaced in tests
+	// to avoid time.Sleep (D-8).
+	nowFn func() time.Time
 
 	// validateFn overrides the real validator when non-nil; used by tests.
 	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
@@ -143,6 +150,7 @@ func New(saveFS workflowio.SaveFS, editor EditorRunner, projectDir, workflowDir 
 		outline:     newOutlinePanel(defaultOutlineW, defaultH),
 		detail:      newDetailPane(defaultDetailW, defaultH),
 		menu:        newMenuBar(),
+		nowFn:       time.Now,
 	}
 }
 

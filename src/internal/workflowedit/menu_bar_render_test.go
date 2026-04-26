@@ -8,7 +8,7 @@ import (
 // TestMenuBar_ClosedState_ShowsFileLabel verifies the menu bar shows "File" when closed.
 func TestMenuBar_ClosedState_ShowsFileLabel(t *testing.T) {
 	m := newTestModel()
-	view := m.View()
+	view := stripView(m)
 	if !strings.Contains(view, "File") {
 		t.Errorf("view should contain menu label, got %q", view)
 	}
@@ -18,7 +18,7 @@ func TestMenuBar_ClosedState_ShowsFileLabel(t *testing.T) {
 func TestMenuBar_OpenState_ShowsMenuItems(t *testing.T) {
 	m := newTestModel()
 	m.menu.open = true
-	view := m.View()
+	view := stripView(m)
 	for _, item := range []string{"New", "Open", "Save", "Quit"} {
 		if !strings.Contains(view, item) {
 			t.Errorf("open menu should contain %q, got %q", item, view)

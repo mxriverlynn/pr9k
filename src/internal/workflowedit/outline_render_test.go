@@ -10,7 +10,7 @@ import (
 // TestOutline_RendersStepsList verifies that the outline renders all step names.
 func TestOutline_RendersStepsList(t *testing.T) {
 	m := newLoadedModel(sampleStep("alpha"), sampleStep("beta"), sampleStep("gamma"))
-	view := m.View()
+	view := stripView(m)
 	for _, name := range []string{"alpha", "beta", "gamma"} {
 		if !strings.Contains(view, name) {
 			t.Errorf("view should contain step name %q", name)
@@ -36,7 +36,7 @@ func TestOutline_FocusedRowHighlight(t *testing.T) {
 	m := newLoadedModel(sampleStep("first"), sampleStep("second"))
 	m.focus = focusOutline
 	m.outline.cursor = 3 // step "first" is at flat row 3
-	view := m.View()
+	view := stripView(m)
 	// The focused row should be prefixed with ">" or the gripper.
 	if !strings.Contains(view, "> first") && !strings.Contains(view, GlyphGripper+" first") {
 		t.Errorf("focused row should be highlighted; view: %q", view)
@@ -46,7 +46,7 @@ func TestOutline_FocusedRowHighlight(t *testing.T) {
 // TestOutline_UnnamedStep_ShowsPlaceholder verifies unnamed steps use HintNoName.
 func TestOutline_UnnamedStep_ShowsPlaceholder(t *testing.T) {
 	m := newLoadedModel(workflowmodel.Step{Kind: workflowmodel.StepKindShell})
-	view := m.View()
+	view := stripView(m)
 	if !strings.Contains(view, HintNoName) {
 		t.Errorf("unnamed step should show %q, got %q", HintNoName, view)
 	}
@@ -62,7 +62,7 @@ func TestOutline_RendersPhaseSections(t *testing.T) {
 	finalStep.Phase = workflowmodel.StepPhaseFinalize
 
 	m := newLoadedModel(initStep, iterStep, finalStep)
-	view := m.View()
+	view := stripView(m)
 
 	for _, header := range []string{"initialize", "iteration", "finalize"} {
 		if !strings.Contains(view, header) {
@@ -79,7 +79,7 @@ func TestOutline_RendersTopLevelSections(t *testing.T) {
 	m.doc.ContainerEnv = map[string]string{"GOPATH": "/tmp/go"}
 	m.doc.StatusLine = &workflowmodel.StatusLineBlock{Command: "echo"}
 
-	view := m.View()
+	view := stripView(m)
 	for _, header := range []string{"env", "containerEnv", "statusLine"} {
 		if !strings.Contains(view, header) {
 			t.Errorf("view should contain top-level section %q; got: %q", header, view)
@@ -99,7 +99,7 @@ func TestOutline_AddRowFocused_ShortcutFooterShowsAdd(t *testing.T) {
 	m.focus = focusOutline
 	m.outline.cursor = 4 // + Add step (iteration)
 
-	line := m.ShortcutLine()
+	line := stripStr(m.ShortcutLine())
 	if !strings.Contains(line, "Enter") {
 		t.Errorf("shortcut line should contain 'Enter' on add row, got %q", line)
 	}
