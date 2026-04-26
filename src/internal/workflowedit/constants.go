@@ -29,4 +29,9 @@ const (
 
 	// HintEmpty is the centred hint shown when no workflow is loaded (D-30).
 	HintEmpty = "No workflow open.  Ctrl+N  new  ·  Ctrl+O  open"
+
+	// ChromeRows is the number of terminal rows consumed by the fixed chrome
+	// (menu bar + session header + save banner row + footer row + padding).
+	// The panel height is m.height - ChromeRows (D-20).
+	ChromeRows = 8
 )

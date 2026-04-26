@@ -19,6 +19,7 @@ const (
 	fieldKindNumeric                             // integer with min/max clamping
 	fieldKindModelSuggest                        // free text + suggestion overlay
 	fieldKindSecretMask                          // masked unless key-pattern matched
+	fieldKindMultiLine                           // multi-line companion file; Ctrl+E opens editor
 )
 
 // detailField describes one editable row in the detail pane.
@@ -101,11 +102,11 @@ func buildDetailFields(step workflowmodel.Step) []detailField {
 	if step.Kind == workflowmodel.StepKindClaude {
 		fields = append(fields,
 			detailField{label: "Model", kind: fieldKindModelSuggest},
-			detailField{label: "PromptFile", kind: fieldKindText},
+			detailField{label: "PromptFile", kind: fieldKindMultiLine},
 		)
 	} else {
 		fields = append(fields,
-			detailField{label: "Command", kind: fieldKindText},
+			detailField{label: "Command", kind: fieldKindMultiLine},
 		)
 	}
 	fields = append(fields,

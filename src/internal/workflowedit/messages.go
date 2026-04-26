@@ -46,3 +46,10 @@ type quitMsg struct{}
 type clearSaveBannerMsg struct {
 	gen int
 }
+
+// clearBoundaryFlashMsg is dispatched via tea.Tick(150ms) after a phase-boundary
+// decline to clear the cursor-row inversion. The seq field guards against stale
+// ticks: the handler clears m.boundaryFlash only when msg.seq == m.boundaryFlash (D-12).
+type clearBoundaryFlashMsg struct {
+	seq uint64
+}
