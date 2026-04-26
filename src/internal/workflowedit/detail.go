@@ -232,20 +232,20 @@ func (d detailPane) render(step workflowmodel.Step) string {
 			sb.WriteString(line)
 
 		case i == d.cursor && d.dropdownOpen:
-			sb.WriteString(fmt.Sprintf("%s%s: ▾\n", prefix, f.label))
+			fmt.Fprintf(&sb, "%s%s: ▾\n", prefix, f.label)
 			for j, opt := range d.choiceOptions {
 				optPrefix := "    "
 				if j == d.choiceIdx {
 					optPrefix = "  > "
 				}
-				sb.WriteString(fmt.Sprintf("%s%s", optPrefix, opt))
+				fmt.Fprintf(&sb, "%s%s", optPrefix, opt)
 				if j < len(d.choiceOptions)-1 {
 					sb.WriteString("\n")
 				}
 			}
 
 		case f.kind == fieldKindModelSuggest && i == d.cursor:
-			sb.WriteString(fmt.Sprintf("%s%s: %s", prefix, f.label, val))
+			fmt.Fprintf(&sb, "%s%s: %s", prefix, f.label, val)
 			sugs := workflowmodel.ModelSuggestions
 			if len(sugs) > 0 {
 				sb.WriteString("\n")
@@ -263,13 +263,13 @@ func (d detailPane) render(step workflowmodel.Step) string {
 
 		case f.kind == fieldKindSecretMask:
 			if d.revealedField == i {
-				sb.WriteString(fmt.Sprintf("%s%s: %s", prefix, f.label, val))
+				fmt.Fprintf(&sb, "%s%s: %s", prefix, f.label, val)
 			} else {
-				sb.WriteString(fmt.Sprintf("%s%s: %s [press r to reveal]", prefix, f.label, GlyphMasked))
+				fmt.Fprintf(&sb, "%s%s: %s [press r to reveal]", prefix, f.label, GlyphMasked)
 			}
 
 		default:
-			sb.WriteString(fmt.Sprintf("%s%s: %s", prefix, f.label, val))
+			fmt.Fprintf(&sb, "%s%s: %s", prefix, f.label, val)
 		}
 		sb.WriteString("\n")
 	}

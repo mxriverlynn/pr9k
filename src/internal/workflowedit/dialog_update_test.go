@@ -191,7 +191,7 @@ func TestDialog_CrashTempDiscard_RejectsFIFO(t *testing.T) {
 	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
 		t.Skipf("cannot create FIFO: %v", err)
 	}
-	defer os.Remove(fifoPath)
+	defer func() { _ = os.Remove(fifoPath) }()
 
 	m := newTestModel()
 	m.workflowDir = dir
