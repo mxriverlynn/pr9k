@@ -29,10 +29,12 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 		RefreshIntervalSeconds int    `json:"refreshIntervalSeconds,omitempty"`
 	}
 	type outConfig struct {
-		Initialize []outStep      `json:"initialize"`
-		Iteration  []outStep      `json:"iteration"`
-		Finalize   []outStep      `json:"finalize"`
-		StatusLine *outStatusLine `json:"statusLine,omitempty"`
+		Initialize   []outStep         `json:"initialize"`
+		Iteration    []outStep         `json:"iteration"`
+		Finalize     []outStep         `json:"finalize"`
+		StatusLine   *outStatusLine    `json:"statusLine,omitempty"`
+		Env          []string          `json:"env,omitempty"`
+		ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 	}
 
 	var initSteps, iterSteps, finalSteps []outStep
@@ -79,9 +81,11 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 	}
 
 	cfg := outConfig{
-		Initialize: initSteps,
-		Iteration:  iterSteps,
-		Finalize:   finalSteps,
+		Initialize:   initSteps,
+		Iteration:    iterSteps,
+		Finalize:     finalSteps,
+		Env:          doc.Env,
+		ContainerEnv: doc.ContainerEnv,
 	}
 	if doc.StatusLine != nil {
 		cfg.StatusLine = &outStatusLine{

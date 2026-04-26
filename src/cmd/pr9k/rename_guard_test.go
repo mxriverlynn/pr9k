@@ -314,6 +314,34 @@ func TestRenameGuard_WorkflowLogPrefix_PrefixStringIsWorkflow(t *testing.T) {
 		`workflow.go: literal "workflow" prefix string required for D-27 log-file namespace`)
 }
 
+// TestRenameGuard_WorkflowSubcommand_NotHidden asserts that no line in workflow.go
+// sets Hidden to true in the cobra.Command struct. This pins the un-hide commit
+// (D-PR2-2): reverting to Hidden: true would silently re-hide the subcommand from
+// pr9k --help. gofmt aligns struct fields with spaces, so we check each line
+// independently rather than requiring a specific whitespace form.
+func TestRenameGuard_WorkflowSubcommand_NotHidden(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "src/cmd/pr9k/workflow.go")
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Hidden:") && strings.Contains(trimmed, "true") {
+			t.Errorf(`workflow.go: found "Hidden: true" on line %q — subcommand must be visible in pr9k --help`, trimmed)
+			return
+		}
+	}
+}
+
+// TestRenameGuard_WorkflowSubcommand_HasTeaNewProgram asserts that workflow.go
+// contains a tea.NewProgram call. This pins the wiring of the workflowedit TUI
+// (D-PR2-2): removing tea.NewProgram would silently reduce runWorkflowBuilder
+// to a no-op that exits immediately without launching the builder.
+func TestRenameGuard_WorkflowSubcommand_HasTeaNewProgram(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "src/cmd/pr9k/workflow.go")
+	assertContains(t, content, "tea.NewProgram",
+		`workflow.go: "tea.NewProgram" required — TUI must be wired into runWorkflowBuilder`)
+}
+
 // TestRenameGuard_PR9kWorkflowCommand_DoesNotCollideWithSubcommands asserts
 // that the workflow subcommand constructor lives only in workflow.go and that
 // the sandbox subcommand does not also claim the workflow command name.

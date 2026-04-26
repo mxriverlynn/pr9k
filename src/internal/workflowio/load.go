@@ -112,42 +112,73 @@ func Load(workflowDir string) (LoadResult, error) {
 	// Companions live in the prompts/ subdirectory; keys are relative to workflowDir
 	// (e.g., "prompts/feature-work.md") to match the validator's relKey convention.
 	companions := make(map[string][]byte)
-	for _, step := range doc.Steps {
-		if step.PromptFile == "" {
-			continue
-		}
-		relKey := filepath.Join("prompts", step.PromptFile)
+
+	// loadCompanion is a helper that reads a single relative companion into companions.
+	// It skips missing files, rejects non-regular files, and guards against path traversal.
+	loadCompanion := func(relKey string) error {
 		companionPath := filepath.Join(workflowDir, relKey)
-
-		// Guard against path traversal (e.g. promptFile: "../../etc/passwd").
 		if err := pathContainedIn(workflowDir, companionPath); err != nil {
-			return LoadResult{}, err
+			return err
 		}
-
 		_, err := os.Lstat(companionPath)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				continue
+				return nil
 			}
-			return LoadResult{}, fmt.Errorf("workflowio: stat companion %s: %w", companionPath, err)
+			return fmt.Errorf("workflowio: stat companion %s: %w", companionPath, err)
 		}
 		realCompanion, err := filepath.EvalSymlinks(companionPath)
 		if err != nil {
-			return LoadResult{}, fmt.Errorf("workflowio: eval symlinks companion %s: %w", companionPath, err)
+			return fmt.Errorf("workflowio: eval symlinks companion %s: %w", companionPath, err)
 		}
 		rci, err := os.Stat(realCompanion)
 		if err != nil {
-			return LoadResult{}, fmt.Errorf("workflowio: stat real companion %s: %w", realCompanion, err)
+			return fmt.Errorf("workflowio: stat real companion %s: %w", realCompanion, err)
 		}
 		if !rci.Mode().IsRegular() {
-			return LoadResult{}, fmt.Errorf("%w: companion %s", ErrNotRegularFile, realCompanion)
+			return fmt.Errorf("%w: companion %s", ErrNotRegularFile, realCompanion)
 		}
 		data, err := os.ReadFile(realCompanion)
 		if err != nil {
-			return LoadResult{}, fmt.Errorf("workflowio: read companion %s: %w", realCompanion, err)
+			return fmt.Errorf("workflowio: read companion %s: %w", realCompanion, err)
 		}
 		companions[relKey] = data
+		return nil
 	}
+
+	// isWorkflowRelative reports whether a path token is a relative, non-template
+	// path that could reside in the workflow bundle directory.
+	isWorkflowRelative := func(token string) bool {
+		return token != "" &&
+			!filepath.IsAbs(token) &&
+			!strings.Contains(token, "{{") &&
+			!strings.Contains(token, "/..") &&
+			token != "." && token != ".."
+	}
+
+	for _, step := range doc.Steps {
+		// Prompt-file companions (claude steps).
+		if step.PromptFile != "" {
+			relKey := filepath.Join("prompts", step.PromptFile)
+			if err := loadCompanion(relKey); err != nil {
+				return LoadResult{}, err
+			}
+		}
+		// Shell-step script companions: Command[0] when workflow-bundle-relative (GAP-037).
+		if len(step.Command) > 0 && isWorkflowRelative(step.Command[0]) {
+			if err := loadCompanion(step.Command[0]); err != nil {
+				return LoadResult{}, err
+			}
+		}
+	}
+
+	// StatusLine script companion: Command when workflow-bundle-relative (GAP-037).
+	if doc.StatusLine != nil && isWorkflowRelative(doc.StatusLine.Command) {
+		if err := loadCompanion(doc.StatusLine.Command); err != nil {
+			return LoadResult{}, err
+		}
+	}
+
 	if len(companions) > 0 {
 		result.Companions = companions
 	}

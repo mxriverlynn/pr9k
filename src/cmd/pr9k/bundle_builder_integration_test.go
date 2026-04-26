@@ -5,12 +5,47 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/src/internal/version"
+	"github.com/mxriverlynn/pr9k/src/internal/workflowedit"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowvalidate"
 )
+
+// countingFS implements workflowio.SaveFS for integration tests, recording
+// how many WriteAtomic calls were made and returning a synthetic FileInfo
+// from Stat so the save pipeline can capture a non-nil SaveSnapshot.
+type countingFS struct {
+	writeAtomicCalls int
+	modTime          time.Time
+}
+
+func (f *countingFS) WriteAtomic(_ string, _ []byte, _ os.FileMode) error {
+	f.writeAtomicCalls++
+	return nil
+}
+
+func (f *countingFS) Stat(_ string) (os.FileInfo, error) {
+	return countingFSFileInfo{modTime: f.modTime}, nil
+}
+
+type countingFSFileInfo struct{ modTime time.Time }
+
+func (i countingFSFileInfo) Name() string       { return "config.json" }
+func (i countingFSFileInfo) Size() int64        { return 512 }
+func (i countingFSFileInfo) Mode() os.FileMode  { return 0o600 }
+func (i countingFSFileInfo) ModTime() time.Time { return i.modTime }
+func (i countingFSFileInfo) IsDir() bool        { return false }
+func (i countingFSFileInfo) Sys() any           { return nil }
+
+// noopEditorRunner implements workflowedit.EditorRunner, dropping all
+// invocations so the test never spawns a real editor process.
+type noopEditorRunner struct{}
+
+func (noopEditorRunner) Run(_ string, _ workflowedit.ExecCallback) tea.Cmd { return nil }
 
 // TestVersion_WorkflowBuilderBumped verifies that the version has been
 // incremented for the workflow-builder feature (WU-12 / issue #163).
@@ -112,6 +147,56 @@ func TestBundleBuilderSmoke_NoOpSave_DoesNotWrite(t *testing.T) {
 	}
 	if workflowmodel.IsDirty(result.Doc, result.Doc) {
 		t.Error("IsDirty(doc, doc) is true for a freshly-loaded bundle; expected false (save would be no-op)")
+	}
+}
+
+// TestBundleBuilderSmoke_DefaultBundleDrivesModelEndToEnd drives
+// workflowedit.Model through the full load → Ctrl+S → save pipeline against
+// the bundled default workflow (F-PR2-25, GAP-044).
+func TestBundleBuilderSmoke_DefaultBundleDrivesModelEndToEnd(t *testing.T) {
+	root := docTestRepoRoot(t)
+	srcBundle := filepath.Join(root, "workflow")
+
+	tmpDir := t.TempDir()
+	bundleMirrorDir(t, srcBundle, tmpDir)
+
+	result, err := workflowio.Load(tmpDir)
+	if err != nil {
+		t.Fatalf("workflowio.Load: %v", err)
+	}
+
+	// Step 1: construct model with a counting fake FS and no-op editor.
+	fs := &countingFS{modTime: time.Now()}
+	m := workflowedit.New(fs, noopEditorRunner{}, "/testproject", tmpDir).WithNoValidation()
+
+	// Step 2: inject bundle. diskDoc is empty so the model is dirty and
+	// Ctrl+S triggers a real config.json write. companions is nil so
+	// writeAtomicCalls stays at exactly 1 (config.json only).
+	loadMsg := workflowedit.LoadResultMsg(result.Doc, workflowmodel.WorkflowDoc{}, nil, tmpDir)
+	next, _ := m.Update(loadMsg)
+	m = next.(workflowedit.Model)
+
+	// Step 3: send Ctrl+S to start the validate → save pipeline.
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = next.(workflowedit.Model)
+	if cmd == nil {
+		t.Fatal("Ctrl+S returned nil cmd; expected validate command")
+	}
+
+	// Steps 4–5: drain the async command chain (validate → save) until
+	// the model reaches quiescence.
+	for cmd != nil {
+		msg := cmd()
+		next, cmd = m.Update(msg)
+		m = next.(workflowedit.Model)
+	}
+
+	// Step 6: assert save pipeline completed correctly.
+	if fs.writeAtomicCalls != 1 {
+		t.Errorf("WriteAtomic call count = %d; want 1", fs.writeAtomicCalls)
+	}
+	if m.IsDirty() {
+		t.Error("model.IsDirty() is true after save; want false")
 	}
 }
 

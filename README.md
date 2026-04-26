@@ -1,10 +1,10 @@
 # PR9K: Power-Ralph.9000
 
+<img src="images/pr9k-banner.png">
+
 **pr9k (Power-Ralph.9000)** is an automated development workflow orchestrator that drives the `claude` CLI through multi-step coding loops. It picks up GitHub issues labeled "ralph", implements features, writes tests, runs code reviews, and pushes — all unattended.
 
 Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-started-with-ralph).
-
-<img src="images/ralph-tui-screenshot.png">
 
 ## Getting Started
 
@@ -38,6 +38,8 @@ path/to/pr9k/bin/pr9k -n 3
 ```
 
 Ralph will find the next open issue labeled `ralph`, implement the feature, write tests, run a code review, fix review findings, close the issue, update docs, and push — then repeat for the next issue. When run without `-n`, Ralph keeps going until `get_next_issue` finds no more issues.
+
+<img src="images/ralph-tui-screenshot.png">
 
 ## How To
 

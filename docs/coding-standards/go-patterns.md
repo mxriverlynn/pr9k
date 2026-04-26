@@ -670,6 +670,43 @@ f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0o600)
 
 Apply to every log file or session-state file that may be re-opened. One-shot write-once files (e.g., an atomic replacement via `atomicwrite.Write`) do not need `O_APPEND` because they are always written from scratch.
 
+## Guard len > 0 after strings.Fields or strings.Split before indexing
+
+`strings.Fields` returns an empty slice when the input is empty or whitespace-only. `strings.Split` always returns at least one element, but the split parts may themselves be empty. Accessing `parts[0]` without a length guard panics at runtime; Go does not implicitly skip the index if the slice is empty.
+
+```go
+// Bad — panics when $VISUAL is "" or "   "
+parts := strings.Fields(os.Getenv("VISUAL"))
+return tea.ExecProcess(exec.Command(parts[0], parts[1:]...), cb) // index out of range
+
+// Good — guard before indexing
+parts := strings.Fields(os.Getenv("VISUAL"))
+if len(parts) == 0 {
+    return func() tea.Msg { return cb(fmt.Errorf("no editor configured: set $VISUAL or $EDITOR")) }
+}
+return tea.ExecProcess(exec.Command(parts[0], parts[1:]...), cb)
+```
+
+Apply after every `strings.Fields` call whose result is indexed immediately. Also applies to `strings.Split` when you cannot prove the input is non-empty. `strings.SplitN` with a positive N is exempt — it always returns exactly N elements.
+
+## Prefer stdlib sort over hand-rolled implementations
+
+When sorting a slice, use `sort.Strings`, `sort.Ints`, or `sort.Slice` from the standard library rather than a hand-rolled sort. Hand-rolled insertion sorts and selection sorts are harder to verify for edge cases, slower for larger slices, and add noise to code reviews.
+
+```go
+// Bad — hand-rolled insertion sort; O(n²) and easy to get wrong
+for i := 1; i < len(keys); i++ {
+    for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+        keys[j], keys[j-1] = keys[j-1], keys[j]
+    }
+}
+
+// Good — stdlib sort; correct, fast, and instantly readable
+sort.Strings(keys)
+```
+
+The stdlib sort uses an adaptive introsort and degrades gracefully across all real-world slice sizes. Hand-roll only when you have profiling evidence of a performance problem — which is essentially never for in-memory sorting.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -690,3 +727,5 @@ Apply to every log file or session-state file that may be re-opened. One-shot wr
 - [Docker Sandbox](../features/docker-sandbox.md) — `Setpgid: true` + `syscall.Kill(-pid, sig)` for host subprocess process-group signals (issue #130)
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `resumeInputTokenLimit` constant replacing 200_000 magic number (issue #131)
 - [File Logging](../code-packages/logger.md) — `O_APPEND` added to logger open flags to prevent write-position reset on re-open (workflow-builder branch)
+- `src/cmd/pr9k/workflow.go` — `realEditorRunner.Run` as the canonical `strings.Fields` length-guard example (workflow-builder-pt-2 review issue #3)
+- `src/internal/workflowedit/outline.go` — `sortedKeys` as the canonical stdlib-sort example; replaced hand-rolled insertion sort with `sort.Strings` (workflow-builder-pt-2 review issue #8)

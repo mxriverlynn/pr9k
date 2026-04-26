@@ -286,8 +286,6 @@ pr9k --version
 
 The `workflow` subcommand opens the interactive workflow builder TUI. It accepts `--workflow-dir` and `--project-dir` with the same semantics as the root command, but does **not** expose `--iterations` / `-n` — the builder is a standalone editor, not a runner.
 
-> **Note:** The `workflow` subcommand is registered with `Hidden: true` and does not appear in `pr9k --help` output until the TUI wiring is complete. The command is fully functional; run `pr9k workflow --help` to see its flags.
-
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--workflow-dir` | `<projectDir>/.pr9k/workflow/`, then `<executableDir>/.pr9k/workflow/` | Path to the workflow bundle to open and edit |

@@ -4,18 +4,59 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"github.com/mxriverlynn/pr9k/src/internal/logger"
+	"github.com/mxriverlynn/pr9k/src/internal/workflowedit"
+	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 )
 
 // osGetwd is a var so tests can inject a failing implementation (D-44).
 var osGetwd = os.Getwd
+
+// newBuilderTeaProgram is a var so tests can inject a no-op program that exits
+// immediately without requiring a real terminal (D-44 pattern).
+var newBuilderTeaProgram func(tea.Model) teaProgram = func(m tea.Model) teaProgram {
+	return tea.NewProgram(m,
+		tea.WithAltScreen(),
+		tea.WithoutSignalHandler(),
+	)
+}
+
+// realEditorRunner resolves $VISUAL or $EDITOR and launches the editor via
+// tea.ExecProcess. The editor value may contain flags (e.g. "code --wait");
+// they are split on whitespace before exec (D-6).
+type realEditorRunner struct{}
+
+func (realEditorRunner) Run(filePath string, cb workflowedit.ExecCallback) tea.Cmd {
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		return func() tea.Msg {
+			return cb(fmt.Errorf("workflow: no editor configured: set $VISUAL or $EDITOR"))
+		}
+	}
+	parts := strings.Fields(editor)
+	if len(parts) == 0 {
+		return func() tea.Msg {
+			return cb(fmt.Errorf("workflow: no editor configured: set $VISUAL or $EDITOR"))
+		}
+	}
+	args := append(parts[1:], filePath)
+	return tea.ExecProcess(exec.Command(parts[0], args...), func(err error) tea.Msg {
+		return cb(err)
+	})
+}
 
 // newWorkflowCmd returns the `workflow` cobra command with --workflow-dir and
 // --project-dir flags. It does NOT expose --iterations or any other run-only flag.
@@ -25,12 +66,10 @@ func newWorkflowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "workflow",
 		Short:         "Open the interactive workflow builder",
-		Hidden:        true, // TUI not yet wired; avoids silent-no-op user surprise
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = workflowDir // PR-1: flag accepted but not yet consumed; TUI lands in PR-2.
-			return runWorkflowBuilder(cmd, projectDir)
+			return runWorkflowBuilder(cmd, projectDir, workflowDir)
 		},
 	}
 	cmd.Flags().StringVar(&workflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
@@ -41,7 +80,7 @@ func newWorkflowCmd() *cobra.Command {
 // runWorkflowBuilder is the RunE implementation for the workflow subcommand.
 // It owns its own logger creation, directory resolution, and goroutine lifecycle.
 // It does NOT call startup().
-func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag string) error {
+func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag, workflowDirFlag string) error {
 	ctx := cmd.Context()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -64,7 +103,6 @@ func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag string) error {
 		select {
 		case <-sigChan:
 			cancel()
-			// program.Send(quitMsg{}) — wired when workflowedit is added.
 			time.AfterFunc(10*time.Second, func() {
 				os.Exit(130)
 			})
@@ -72,8 +110,11 @@ func runWorkflowBuilder(cmd *cobra.Command, projectDirFlag string) error {
 		}
 	}()
 
-	// TUI (workflowedit.Model) not yet wired — stub exits cleanly.
-	return nil
+	model := workflowedit.New(workflowio.RealSaveFS(), realEditorRunner{}, logBaseDir, workflowDirFlag).
+		WithLog(log.Writer())
+	prog := newBuilderTeaProgram(model)
+	_, runErr := prog.Run()
+	return runErr
 }
 
 // resolveBuilderLogBaseDir returns the base directory under which the builder
