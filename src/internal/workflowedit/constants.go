@@ -34,4 +34,15 @@ const (
 	// (menu bar + session header + save banner row + footer row + padding).
 	// The panel height is m.height - ChromeRows (D-20).
 	ChromeRows = 8
+
+	// Step-kind glyphs used in the outline pane (D21 visual spec).
+	GlyphKindClaude = "[≡]"
+	GlyphKindShell  = "[$]"
+	GlyphKindUnset  = "[?]"
+
+	// Scroll-indicator glyphs for the rightmost column of the outline pane
+	// (D25 visual spec).
+	GlyphScrollUp    = "▲"
+	GlyphScrollDown  = "▼"
+	GlyphScrollThumb = "█"
 )
