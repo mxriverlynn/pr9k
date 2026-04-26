@@ -323,55 +323,8 @@ func (m Model) renderHelpModal() string {
 }
 
 func (m Model) renderDialog() string {
-	switch m.dialog.kind {
-	case DialogNewChoice:
-		return "New Workflow: Copy / Empty / Cancel"
-	case DialogPathPicker:
-		if picker, ok := m.dialog.payload.(pathPickerModel); ok {
-			if picker.kind == PickerKindNew {
-				warning := ""
-				targetConfig := filepath.Join(strings.TrimSuffix(picker.input, "/"), "config.json")
-				if _, err := os.Stat(targetConfig); err == nil {
-					warning = " — That path already contains a config.json — overwrite?"
-				}
-				return "New: " + picker.input + warning + "\nCreate / Cancel"
-			}
-			return "Open: " + picker.input
-		}
-		return "Open: "
-	case DialogUnsavedChanges:
-		return "Unsaved changes: Save / Cancel / Discard"
-	case DialogQuitConfirm:
-		return "Quit? Yes / No"
-	case DialogFindingsPanel:
-		return "Findings: validation errors found"
-	case DialogAcknowledgeFindings:
-		return "Validation warnings: acknowledge and save (Enter/y) or cancel (Esc)"
-	case DialogSaveInProgress:
-		return "Save in progress — please wait"
-	case DialogRemoveConfirm:
-		name, _ := m.dialog.payload.(string)
-		return fmt.Sprintf("Delete step %q? Delete / Cancel", name)
-	case DialogRecovery:
-		raw, _ := m.dialog.payload.(string)
-		return "Recovery — o  open editor  r  reload  d  discard  c  cancel\n" + raw
-	case DialogError:
-		msg, _ := m.dialog.payload.(string)
-		return "Error: " + msg
-	case DialogFileConflict:
-		return "File changed on disk — o  overwrite  r  reload  c  cancel"
-	case DialogCrashTempNotice:
-		path, _ := m.dialog.payload.(string)
-		return "Crash temp file detected: " + path + "\nd  discard  l  leave"
-	case DialogFirstSaveConfirm:
-		return "Save to external/symlinked workflow? y  yes  n  no"
-	case DialogExternalEditorOpening:
-		return "Opening external editor…"
-	case DialogCopyBrokenRef:
-		return "Default model reference is broken — copy anyway? y  copy anyway  c  cancel"
-	default:
-		return ""
-	}
+	body := dialogBodyFor(m.dialog.kind, m.dialog.payload)
+	return renderDialogShell(body, m.width, m.height)
 }
 
 func (m Model) renderEmptyEditor() string {

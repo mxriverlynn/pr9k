@@ -181,3 +181,201 @@ func TestDialog_CopyBrokenRef_RendersCopyAnywayCancel(t *testing.T) {
 		t.Errorf("DialogCopyBrokenRef should show 'copy anyway' and 'cancel', got %q", view)
 	}
 }
+
+// --- WU-9 acceptance tests: D36/D37 dialog render shape (issue #190) ---
+// Each test asserts D36 bordered chrome (╭) and D37 bracket button grammar ([ ).
+
+func TestDialog_QuitConfirm_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogQuitConfirm}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogQuitConfirm should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogQuitConfirm should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_SaveConfirm_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogFirstSaveConfirm}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogFirstSaveConfirm should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogFirstSaveConfirm should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_OpenPath_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{kind: PickerKindOpen, input: "/some/path"}}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogPathPicker (open) should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogPathPicker (open) should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_NewPath_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogPathPicker, payload: pathPickerModel{kind: PickerKindNew, input: "/new/path"}}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogPathPicker (new) should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogPathPicker (new) should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_Recovery_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogRecovery, payload: "broken content here"}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogRecovery should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogRecovery should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ValidationResults_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogAcknowledgeFindings}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogAcknowledgeFindings should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogAcknowledgeFindings should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ChoosePath_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogNewChoice}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogNewChoice should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogNewChoice should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ConflictReload_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogFileConflict}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogFileConflict should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogFileConflict should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_FindingsPanel_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogFindingsPanel}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogFindingsPanel should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogFindingsPanel should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ReorderPrompt_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogSaveInProgress}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogSaveInProgress should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogSaveInProgress should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_StepKindPicker_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogExternalEditorOpening}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogExternalEditorOpening should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogExternalEditorOpening should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ModelSuggest_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogCopyBrokenRef}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogCopyBrokenRef should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogCopyBrokenRef should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_ConfirmDelete_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogRemoveConfirm, payload: "my-step"}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogRemoveConfirm should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogRemoveConfirm should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_UnsavedExit_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogUnsavedChanges}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogUnsavedChanges should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogUnsavedChanges should have D37 bracket button grammar ([ )")
+	}
+}
+
+func TestDialog_SaveError_RenderShape(t *testing.T) {
+	m := newTestModel()
+	m.dialog = dialogState{kind: DialogError, payload: "disk full"}
+	assertModalFits(t, m)
+	view := stripView(m)
+	if !strings.Contains(view, "╭") {
+		t.Error("DialogError should have D36 bordered chrome (╭)")
+	}
+	if !strings.Contains(view, "[ ") {
+		t.Error("DialogError should have D37 bracket button grammar ([ )")
+	}
+}
