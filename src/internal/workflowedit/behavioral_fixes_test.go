@@ -238,9 +238,9 @@ func TestRender_DirtyFromIsDirty(t *testing.T) {
 	m.dirty = false // stale cache says "not dirty"
 
 	view := stripView(m)
-	// renderSessionHeader should show the dirty marker (*) because IsDirty() is true.
-	if !strings.Contains(view, "*") {
-		t.Errorf("renderSessionHeader should show '*' when IsDirty() is true even if m.dirty==false; view=%q", view)
+	// renderSessionHeader should show the dirty marker (●) because IsDirty() is true.
+	if !strings.Contains(view, "●") {
+		t.Errorf("renderSessionHeader should show '●' when IsDirty() is true even if m.dirty==false; view=%q", view)
 	}
 }
 

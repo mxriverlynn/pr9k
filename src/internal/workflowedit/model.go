@@ -38,16 +38,6 @@ type bannerState struct {
 	hasUnknownField    bool
 }
 
-// activeBanner returns the text of the highest-priority active banner and the
-// count of lower-priority active banners (for the "[N more warnings]" affordance).
-func (b bannerState) activeBanner() (string, int) {
-	all := b.allBannerTexts()
-	if len(all) == 0 {
-		return "", 0
-	}
-	return all[0], len(all) - 1
-}
-
 func (b bannerState) allBannerTexts() []string {
 	var out []string
 	if b.isReadOnly {
@@ -141,6 +131,11 @@ type Model struct {
 
 	// validateFn overrides the real validator when non-nil; used by tests.
 	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
+
+	// lastValidateOK tracks the outcome of the most recent validation run.
+	// nil = no validation has run yet; &true = last run had no fatal findings;
+	// &false = last run had fatal findings.
+	lastValidateOK *bool
 }
 
 // New constructs a workflow-builder Model with the provided dependency
@@ -394,24 +389,6 @@ func (m Model) renderEditView() string {
 	}
 	columns := lipgloss.JoinHorizontal(lipgloss.Top, outlineStr, detailStr)
 	return header + "\n" + columns
-}
-
-// renderSessionHeader renders the third row of the edit view:
-// target path + dirty glyph + at-most-one banner + "[N more warnings]" affordance.
-func (m Model) renderSessionHeader() string {
-	path := m.workflowDir
-	if m.IsDirty() {
-		path += "*"
-	}
-	banner, extra := m.banners.activeBanner()
-	if banner == "" {
-		return path
-	}
-	header := path + " " + banner
-	if extra > 0 {
-		header += fmt.Sprintf(" [%d more warnings]", extra)
-	}
-	return header
 }
 
 // --- update helpers ---
@@ -1591,6 +1568,14 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // Step 3–5 of the three-stage save state machine (D-13).
 func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.Cmd) {
 	m.validateInProgress = false
+	ok := true
+	for _, item := range msg.items {
+		if item.isFatal {
+			ok = false
+			break
+		}
+	}
+	m.lastValidateOK = &ok
 	for _, item := range msg.items {
 		if item.isFatal {
 			// Fatal findings block save.
