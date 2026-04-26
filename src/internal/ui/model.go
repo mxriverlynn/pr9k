@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 )
 
 // headerModel wraps StatusHeader and applies header messages from the
@@ -386,26 +388,12 @@ func (m Model) View() string {
 		innerWidth = 0
 	}
 
-	gray := lipgloss.NewStyle().Foreground(LightGray)
-	vbar := gray.Render("│")
-
-	// wrapLine wraps a single content line in side borders, truncating to
-	// innerWidth and right-padding with spaces so the right border stays
-	// vertically aligned across all rows.
 	wrapLine := func(content string) string {
-		if innerWidth <= 0 {
-			return vbar + vbar
-		}
-		truncated := lipgloss.NewStyle().MaxWidth(innerWidth).Render(content)
-		pad := innerWidth - lipgloss.Width(truncated)
-		if pad < 0 {
-			pad = 0
-		}
-		return vbar + truncated + strings.Repeat(" ", pad) + vbar
+		return uichrome.WrapLine(content, innerWidth)
 	}
 
-	hruleLine := gray.Render("├" + strings.Repeat("─", innerWidth) + "┤")
-	bottomBorder := gray.Render("╰" + strings.Repeat("─", innerWidth) + "╯")
+	hruleLine := uichrome.HRuleLine(innerWidth)
+	bottomBorder := uichrome.BottomBorder(innerWidth)
 
 	var sb strings.Builder
 
@@ -554,7 +542,7 @@ func (m Model) View() string {
 		if left < 0 {
 			left = 0
 		}
-		return overlay(frame, modal, top, left)
+		return uichrome.Overlay(frame, modal, top, left)
 	}
 
 	return frame
@@ -573,17 +561,9 @@ func (m Model) renderHelpModal() string {
 
 	gray := lipgloss.NewStyle().Foreground(LightGray)
 	white := lipgloss.NewStyle().Foreground(White)
-	vbar := gray.Render("│")
 
-	// wrapLine centres a content string in the modal's inner width, truncating
-	// long lines and padding short ones so the right border stays aligned.
 	wrapLine := func(content string) string {
-		truncated := lipgloss.NewStyle().MaxWidth(innerW).Render(content)
-		pad := innerW - lipgloss.Width(truncated)
-		if pad < 0 {
-			pad = 0
-		}
-		return vbar + truncated + strings.Repeat(" ", pad) + vbar
+		return uichrome.WrapLine(content, innerW)
 	}
 
 	// Top border: "╭─ Help: Keyboard Shortcuts ──...──╮"
@@ -631,14 +611,12 @@ func (m Model) renderHelpModal() string {
 	}
 	rows = append(rows, wrapLine(strings.Repeat(" ", footerPad)+footerText+"  "))
 
-	bottomBorder := gray.Render("╰" + strings.Repeat("─", innerW) + "╯")
-
 	var sb strings.Builder
 	sb.WriteString(topBorder + "\n")
 	for _, row := range rows {
 		sb.WriteString(row + "\n")
 	}
-	sb.WriteString(bottomBorder)
+	sb.WriteString(uichrome.BottomBorder(innerW))
 	return sb.String()
 }
 
@@ -654,14 +632,12 @@ func (m Model) titleString() string {
 	return AppTitle + " — " + iter + m.header.header.heartbeatSuffix
 }
 
-// colorShortcutLine applies the footer shortcut bar's two-tone palette: the
-// mapped key token at the start of each "  "-separated group renders white,
-// and its trailing description renders gray. When the footer instead shows
-// a status message (quit-confirm prompt, quitting line) the whole string
-// renders white so it reads as a foreground message rather than key-mapping
-// chrome — with one exception: within the quit-confirm prompt, the embedded
-// AppTitle substring renders green to match the top-border title's brand
-// color.
+// colorShortcutLine applies the footer shortcut bar's two-tone palette. When
+// the footer shows a mode-specific prompt string (quit-confirm, next-confirm,
+// quitting line), the whole string renders white — with one exception: within
+// the quit-confirm prompt, the embedded AppTitle substring renders green to
+// match the top-border brand color. For all other strings the generic
+// two-tone delegate uichrome.ColorShortcutLine is used.
 func colorShortcutLine(s string) string {
 	white := lipgloss.NewStyle().Foreground(White)
 	if s == QuitConfirmPrompt {
@@ -679,71 +655,17 @@ func colorShortcutLine(s string) string {
 	if s == QuittingLine {
 		return white.Render(s)
 	}
-	gray := lipgloss.NewStyle().Foreground(LightGray)
-	groups := strings.Split(s, "  ")
-	for i, g := range groups {
-		if idx := strings.IndexByte(g, ' '); idx >= 0 {
-			groups[i] = white.Render(g[:idx]) + gray.Render(g[idx:])
-		} else {
-			groups[i] = white.Render(g)
-		}
-	}
-	return strings.Join(groups, gray.Render("  "))
+	return uichrome.ColorShortcutLine(s)
 }
 
-// colorTitle applies the top-border title's two-tone palette: the app name
-// (everything before the first " — " separator) renders green, and the
-// iteration detail that follows renders white. When the title has no
-// separator (e.g. the bare app name before any iteration starts), the
-// whole string renders green.
+// colorTitle delegates to uichrome.ColorTitle: the app name (before the first
+// " — " separator) renders green; the iteration detail renders white.
 func colorTitle(title string) string {
-	const sep = " — "
-	green := lipgloss.NewStyle().Foreground(Green)
-	white := lipgloss.NewStyle().Foreground(White)
-	if idx := strings.Index(title, sep); idx >= 0 {
-		return green.Render(title[:idx]) + white.Render(title[idx:])
-	}
-	return green.Render(title)
+	return uichrome.ColorTitle(title)
 }
 
-// renderTopBorder constructs the hand-built top border row with the dynamic
-// title embedded. When the terminal is too narrow to fit even the corners,
-// a plain rule is returned.
-//
-// Target shape: "╭── Power-Ralph.9000 — Iteration 2/5 — Issue #42 ─ … ─╮"
+// renderTopBorder delegates to uichrome.RenderTopBorder, passing the model's
+// current terminal width.
 func (m Model) renderTopBorder(title string) string {
-	const tl, tr, h = "╭", "╮", "─"
-	innerWidth := m.width - 2 // subtract corner glyphs
-	const leadDashes = 2
-	titleBudget := innerWidth - leadDashes - 1
-	if titleBudget < 0 || m.width == 0 {
-		// Terminal is so narrow we can't fit "╭──╮". Emit a plain rule.
-		rule := strings.Repeat(h, max(innerWidth, 0))
-		return lipgloss.NewStyle().Foreground(LightGray).Render(tl + rule + tr)
-	}
-
-	// Do width math on the plain title, then apply coloring as the last
-	// step so the visible width stays accurate regardless of ANSI codes.
-	plainTitle := title
-	plainSegment := " " + plainTitle + " "
-	titleWidth := lipgloss.Width(plainSegment)
-	if titleWidth > titleBudget {
-		// Title overflows: truncate to titleBudget-2 (leave room for the two
-		// surrounding spaces) using Lip Gloss MaxWidth (rune-and-ANSI-aware),
-		// then re-wrap in the spacer pair.
-		plainTitle = lipgloss.NewStyle().MaxWidth(titleBudget - 2).Render(plainTitle)
-		plainSegment = " " + plainTitle + " "
-		titleWidth = lipgloss.Width(plainSegment)
-	}
-	titleSegment := " " + colorTitle(plainTitle) + " "
-
-	fillCount := innerWidth - leadDashes - titleWidth
-	if fillCount < 0 {
-		fillCount = 0
-	}
-
-	grayStyle := lipgloss.NewStyle().Foreground(LightGray)
-	return grayStyle.Render(tl+strings.Repeat(h, leadDashes)) +
-		titleSegment +
-		grayStyle.Render(strings.Repeat(h, fillCount)+tr)
+	return uichrome.RenderTopBorder(title, m.width)
 }
