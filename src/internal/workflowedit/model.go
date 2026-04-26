@@ -257,7 +257,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// that save completions, load results, and programmatic quit are never
 	// swallowed by an active dialog (D-PR2-19).
 	switch msg.(type) {
-	case validateCompleteMsg, saveCompleteMsg, openFileResultMsg, quitMsg, clearBoundaryFlashMsg:
+	case validateCompleteMsg, saveCompleteMsg, openFileResultMsg, quitMsg, clearBoundaryFlashMsg, clearSaveBannerMsg:
 		return m.updateAsyncCompletion(msg)
 	}
 
@@ -298,6 +298,11 @@ func (m Model) updateAsyncCompletion(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.boundaryFlash = 0
 		}
 		return m, nil
+	case clearSaveBannerMsg:
+		if msg.gen == m.bannerGen {
+			m.saveBanner = ""
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -314,33 +319,6 @@ func isGlobalKey(msg tea.Msg) bool {
 		return true
 	}
 	return false
-}
-
-// View satisfies tea.Model and returns the full TUI string.
-func (m Model) View() string {
-	// D48 minimum-size guard: return a centred hint when the terminal is too small.
-	if m.width > 0 && m.height > 0 && (m.width < 60 || m.height < 16) {
-		return "Terminal too small — resize to at least 60×16"
-	}
-	var sb strings.Builder
-	sb.WriteString(m.menu.render())
-	sb.WriteString("\n")
-	if m.helpOpen {
-		sb.WriteString(m.renderHelpModal())
-	} else if m.dialog.kind != DialogNone {
-		sb.WriteString(m.renderDialog())
-	} else if !m.loaded {
-		sb.WriteString(m.renderEmptyEditor())
-	} else {
-		sb.WriteString(m.renderEditView())
-	}
-	sb.WriteString("\n")
-	if m.saveBanner != "" {
-		sb.WriteString(m.saveBanner)
-		sb.WriteString("\n")
-	}
-	sb.WriteString(m.ShortcutLine())
-	return sb.String()
 }
 
 // --- rendering helpers ---
@@ -1665,14 +1643,20 @@ func (m Model) handleSaveResult(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
 	if msg.result.Snapshot != nil {
 		m.diskDoc = m.doc
 	}
-	m.saveBanner = "Saved at " + time.Now().Format("15:04:05")
+	m.saveBanner = "Saved at " + m.nowFn().Format("15:04:05")
+	m.bannerGen++
+	clearGen := m.bannerGen
+	bannerCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+		return clearSaveBannerMsg{gen: clearGen}
+	})
 	if m.pendingQuit {
 		m.pendingQuit = false
 		// D-PR2-10: re-route to QuitConfirm so user explicitly confirms exit.
 		// dirty=false now, so handleGlobalKey will open DialogQuitConfirm.
-		return m.handleGlobalKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+		nextM, nextCmd := m.handleGlobalKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+		return nextM, tea.Batch(bannerCmd, nextCmd)
 	}
-	return m, nil
+	return m, bannerCmd
 }
 
 func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) {
