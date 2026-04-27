@@ -99,17 +99,25 @@ The picker pre-fills differently and labels its confirm button differently (`Ope
 
 ```go
 const (
-    GlyphGripper         = "⋮⋮"       // drag-handle shown next to steps in reorder mode
-    GlyphSectionOpen     = "▾"        // section-collapse chevron, expanded state
-    GlyphSectionClose    = "▸"        // section-collapse chevron, collapsed state
-    GlyphChevronExpanded = GlyphSectionOpen
+    GlyphGripper          = "⋮⋮"       // drag-handle shown next to steps in reorder mode
+    GlyphSectionOpen      = "▾"        // section-collapse chevron, expanded state
+    GlyphSectionClose     = "▸"        // section-collapse chevron, collapsed state
+    GlyphChevronExpanded  = GlyphSectionOpen
     GlyphChevronCollapsed = GlyphSectionClose
-    GlyphAddItem         = "+"        // prefixes "+ Add step" affordance rows
-    GlyphMasked          = "••••••••" // replaces visible value of sensitive containerEnv entries
-    HintNoName           = "(unnamed)"
-    HintEmpty            = "No workflow open.  Ctrl+N  new  ·  Ctrl+O  open"
+    GlyphAddItem          = "+"        // prefixes "+ Add step" affordance rows
+    GlyphMasked           = "••••••••" // replaces visible value of sensitive containerEnv entries
+    HintNoName            = "(unnamed)"
+    ChromeRows            = 8          // fixed rows consumed by chrome; panelH = height - ChromeRows
+    GlyphKindClaude       = "[≡]"      // step-kind glyph for claude steps
+    GlyphKindShell        = "[$]"      // step-kind glyph for shell steps
+    GlyphKindUnset        = "[?]"      // step-kind glyph when kind is not set
+    GlyphScrollUp         = "▲"        // scroll-indicator top
+    GlyphScrollDown       = "▼"        // scroll-indicator bottom
+    GlyphScrollThumb      = "█"        // scroll-indicator thumb
 )
 ```
+
+`ChromeRows` is shared with `render_frame.go` and is the only source of truth for the chrome budget; changing it automatically adjusts the content panel height.
 
 ## Internal Architecture
 
@@ -237,6 +245,60 @@ The Model does not propagate a `context.Context` into blocking syscalls (filesys
 
 A `context.Context` parameter would give false safety signals without actually cancelling the underlying operations. If cancellation of a save or load is needed in the future, the correct approach is to run the operation in a goroutine and check a channel, not to propagate ctx.
 
+## Visual Layout
+
+### Per-surface render files
+
+View() is decomposed into one file per visual surface. Each file is responsible for rendering exactly one region of the TUI:
+
+| File | Surface | Key decision |
+|------|---------|--------------|
+| `render_frame.go` | Top-level `View()` — 9-row chrome assembly, overlay splice, D48 minimum-size guard | Calls all other render functions; applies `uichrome.Overlay` for dialogs, help, and dropdown |
+| `render_session_header.go` | Session-header row: path, dirty indicator, banner, `[N more]`, findings+validation right-aligned | D5 5-slot layout; D17 overflow priority (drop [N more] → drop right → drop banner → truncate path) |
+| `render_outline.go` | Bordered outline pane with scrolling, sections, step rows, collapse chevrons | D18–D25 section ordering; D49 step-name truncation; scroll indicators |
+| `render_detail.go` | Bordered detail pane with field rows, bracket grammar, dropdown flip | D26–D33 field-row anatomy; D47 scroll; D50 label truncation; D51 dropdown flip |
+| `render_menu.go` | Menu bar (closed/open states) and D11 dropdown overlay | D4 File label with `Alt` mnemonic accent; D12 greyed-out Save |
+| `render_dialogs.go` | All 15 non-None `DialogKind` bodies via `dialogBodyFor` dispatcher and `renderDialogShell` | D36 bordered overlay; D37 button-row `[ Label ]` bracket grammar |
+| `render_findings.go` | Findings panel with finding entries and D39 acknowledged-finding `[WARN ✓]` glyph | D38 findings panel; dim-under-help coexistence |
+| `render_help.go` | Help modal overlay centered in the frame | D40 help modal; `uichrome.Overlay` positions it |
+| `render_empty.go` | Empty-editor state: `(no workflow open)` outline and bordered detail-pane hint | D43 split pane layout |
+| `render_footer.go` | `ShortcutLine()` with D17 transient guards and D18 browse-only dim hint | Delegates to focused widget's `ShortcutLine`; adds `?  help` when appropriate |
+
+### Dialog render grammar
+
+All dialogs share the same shell via `renderDialogShell(body dialogBody, w, h int)`:
+
+```
+╭── Dialog Title ─────╮
+│  body row 1          │
+│  body row 2          │
+│  [ Confirm ]  [ Cancel ]  │
+╰─────────────────────╯
+```
+
+The footer row uses `[ Label ]` bracket grammar (D37). Dialog inner width is clamped to `[DialogMinWidth, min(termW-4, DialogMaxWidth)]`. These constants are defined in `internal/uichrome`.
+
+### Detail-pane field render grammar
+
+Each field row follows the D29/D30/D31 anatomy:
+
+```
+focus(2) + label(16 chars, D50 truncated) + ": " + "[ " + value + " ]" + optional ▾
+```
+
+For `fieldKindSecretMask` the value renders as `••••••••` unless `r` has been pressed. For `fieldKindChoice` an optional dropdown renders below the field row, flipping above (D51) when the field is near the bottom of the visible pane.
+
+### Dependency on internal/uichrome
+
+All render files import `internal/uichrome` for:
+- `WrapLine` — every content row inside the outer frame
+- `HRuleLine` / `BottomBorder` / `RenderTopBorder` — chrome borders
+- `Overlay` — dialog, help modal, and dropdown splicing
+- Color palette (`LightGray`, `Green`, `Red`, `Yellow`, `Cyan`, `Dim`, `White`) — all coloring
+- Geometry constants (`MinTerminalWidth`, `MinTerminalHeight`, `DialogMaxWidth`, `DialogMinWidth`, `HelpModalMaxWidth`) — guard and sizing logic
+
+See [`docs/code-packages/uichrome.md`](uichrome.md) for the full API.
+
 ## Dependencies
 
 ```
@@ -244,6 +306,7 @@ internal/workflowedit
     ├── internal/workflowio        (Load, Save, detect functions, SaveFS interface)
     ├── internal/workflowmodel     (WorkflowDoc, Step, StepKind, EnvEntry, StatusLineBlock)
     ├── internal/workflowvalidate  (Validate bridge)
+    ├── internal/uichrome          (border helpers, color palette, overlay, geometry constants)
     └── internal/ansi              (StripAll for plain-text sanitization)
 ```
 
@@ -266,7 +329,8 @@ A `newTestModelWithLog` helper (`helpers_test.go`) constructs a Model with an in
 
 ## Related Documentation
 
-- [`docs/features/workflow-builder.md`](../features/workflow-builder.md) — user-facing TUI behavior, keyboard map, and all dialog flows
+- [`docs/features/workflow-builder.md`](../features/workflow-builder.md) — user-facing TUI behavior, keyboard map, visual layout, and all dialog flows
+- [`docs/code-packages/uichrome.md`](uichrome.md) — shared chrome primitives (border helpers, palette, overlay, geometry constants)
 - [`docs/code-packages/workflowio.md`](workflowio.md) — Load, Save, and detect functions
 - [`docs/code-packages/workflowmodel.md`](workflowmodel.md) — WorkflowDoc types
 - [`docs/code-packages/workflowvalidate.md`](workflowvalidate.md) — validator bridge

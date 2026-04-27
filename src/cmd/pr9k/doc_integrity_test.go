@@ -1142,6 +1142,74 @@ func TestDocIntegrity_SaveDurabilityADR_CompanionFirstOrderingDocumented(t *test
 	assertContains(t, content, "nanosecond", "ADR: nanosecond-precision mtime conflict detection documented")
 }
 
+// WU-13-DI-1: docs/features/workflow-builder.md has a Visual Layout section documenting
+// the 9-row chrome frame, minimum-size guard, and session-header slots (D1, D48, D5).
+func TestDocIntegrity_WorkflowBuilder_HasVisualLayoutSection(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/features/workflow-builder.md")
+	assertContains(t, content, "## Visual Layout", "docs/features/workflow-builder.md: Visual Layout section")
+	assertContains(t, content, "ChromeRows", "docs/features/workflow-builder.md: chrome row count constant")
+}
+
+// WU-13-DI-2: docs/code-packages/workflowedit.md has a Visual Layout section listing
+// the per-surface render files and the uichrome dependency.
+func TestDocIntegrity_WorkflowEdit_HasVisualLayoutSection(t *testing.T) {
+	root := docTestRepoRoot(t)
+	content := readFile(t, root, "docs/code-packages/workflowedit.md")
+	assertContains(t, content, "## Visual Layout", "docs/code-packages/workflowedit.md: Visual Layout section")
+	assertContains(t, content, "render_frame.go", "docs/code-packages/workflowedit.md: render_frame.go listed")
+	assertContains(t, content, "uichrome", "docs/code-packages/workflowedit.md: uichrome dependency noted")
+}
+
+// WU-13-DI-3: docs/code-packages/uichrome.md exists and is linked from CLAUDE.md.
+func TestDocIntegrity_UichromeDocExists(t *testing.T) {
+	root := docTestRepoRoot(t)
+	assertFileExists(t, filepath.Join(root, "docs/code-packages/uichrome.md"))
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	assertContains(t, claudeMD, "docs/code-packages/uichrome.md", "CLAUDE.md Code Package Documentation section")
+}
+
+// WU-13-DI-4: CLAUDE.md carries pointers to both the visual spec and the implementation plan
+// in docs/plans/workflow-builder-tui-design/.
+func TestDocIntegrity_CLAUDEmd_VisualPlanLinked(t *testing.T) {
+	root := docTestRepoRoot(t)
+	claudeMD := readFile(t, root, "CLAUDE.md")
+	assertContains(t, claudeMD, "feature-specification.md", "CLAUDE.md: visual spec link")
+	assertContains(t, claudeMD, "feature-implementation-plan.md", "CLAUDE.md: implementation plan link")
+}
+
+// WU-13-DI-5: Live docs do not reference m.dirty as the dirty-render source.
+// D-11 requires m.IsDirty() — the method — not the raw field.
+func TestDocIntegrity_NoRawDirtyFieldInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, "m.dirty") {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("WU-13-DI-5: live docs contain %q — use m.IsDirty() instead:\n  %s",
+			"m.dirty", strings.Join(offenders, "\n  "))
+	}
+}
+
+// WU-13-DI-6: No "HintEmpty" constant name in live doc files (per WU-11, the hint
+// text was inlined and the old constant name should not appear in docs).
+func TestDocIntegrity_NoHintEmptyInLiveDocs(t *testing.T) {
+	root := docTestRepoRoot(t)
+	var offenders []string
+	forEachLiveDocFile(t, root, func(rel, content string) {
+		if strings.Contains(content, "HintEmpty") {
+			offenders = append(offenders, rel)
+		}
+	})
+	if len(offenders) > 0 {
+		t.Errorf("WU-13-DI-6: live docs reference %q — remove this constant reference:\n  %s",
+			"HintEmpty", strings.Join(offenders, "\n  "))
+	}
+}
+
 // TP-005: git actually ignores logs/ and .ralph-cache/ (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
