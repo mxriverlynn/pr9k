@@ -262,7 +262,7 @@ View() is decomposed into one file per visual surface. Each file is responsible 
 | `render_findings.go` | Findings panel with finding entries and D39 acknowledged-finding `[WARN ✓]` glyph | D38 findings panel; dim-under-help coexistence |
 | `render_help.go` | Help modal overlay centered in the frame | D40 help modal; `uichrome.Overlay` positions it |
 | `render_empty.go` | Empty-editor state: `(no workflow open)` outline and bordered detail-pane hint | D43 split pane layout |
-| `render_footer.go` | `ShortcutLine()` with D17 transient guards and D18 browse-only dim hint | Delegates to focused widget's `ShortcutLine`; adds `?  help` when appropriate |
+| `render_footer.go` | `ShortcutLine()` with D34 two-tone palette, D17 transient guards, and D18 browse-only dim hint | Delegates to focused widget's `ShortcutLine`; appends `? help` when no dialog is active; applies `uichrome.ColorShortcutLine` for two-tone styling; appends the pre-styled `Dim` browse-only hint after two-toning |
 
 ### Dialog render grammar
 

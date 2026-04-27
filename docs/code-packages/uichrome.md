@@ -2,7 +2,7 @@
 
 Shared chrome primitives consumed by both the run-mode TUI (`internal/ui`) and the workflow-builder TUI (`internal/workflowedit`). Centralising border helpers, color palette, overlay utilities, and geometry constants here avoids an import cycle: `workflowedit` cannot import `internal/ui` (which imports bubbletea program-level types), and `internal/ui` should not know about workflow-builder details. `uichrome` is the neutral meeting point (D-2).
 
-- **Last Updated:** 2026-04-27
+- **Last Updated:** 2026-04-27 (P1 fixes: ColorShortcutLine caller contract)
 - **Authors:**
   - River Bailey
 
@@ -44,6 +44,10 @@ func ColorTitle(plain string) string
 ```
 
 **ColorShortcutLine** applies two-tone shortcut-bar coloring: key labels in `White`, descriptions in `LightGray`. Accepts the raw shortcut line and returns the ANSI-colored version.
+
+The input string must follow the `"  "`-separated group format: adjacent groups are delimited by two consecutive spaces, and within each group the key token and its description are separated by a single space (e.g. `"Ctrl+S save  ·  Ctrl+Q quit"`). Splitting on two spaces extracts each `"key desc"` group; the first space within the group marks the boundary between the white key and the gray description.
+
+**Caller contract:** Callers must detect and render `QuitConfirmPrompt`, `NextConfirmPrompt`, and `QuittingLine` themselves **before** invoking this function — those modes use single-tone styling and do not fit the key/description split pattern.
 
 **ColorTitle** splits a title at the ` — ` separator and colors the left segment `Green` and the right segment `White`. Used by `RenderTopBorder` for the workflow-builder title.
 

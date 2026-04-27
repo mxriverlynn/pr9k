@@ -2,7 +2,7 @@
 
 An interactive terminal interface for authoring and editing pr9k workflow bundles — configuration, prompt files, and scripts — without hand-editing JSON.
 
-- **Last Updated:** 2026-04-25
+- **Last Updated:** 2026-04-27
 - **Authors:**
   - River Bailey
 
@@ -63,7 +63,7 @@ Five persistent surfaces:
 | 5 | `├──────────────────────────────┤` separator | `uichrome.HRuleLine` |
 | 6–N | Content panel (outline + detail, panelH = height − ChromeRows) | `renderContentPanel` |
 | N+1 | `├──────────────────────────────┤` separator | `uichrome.HRuleLine` |
-| N+2 | Shortcut footer | `ShortcutLine()` wrapped in `uichrome.WrapLine` |
+| N+2 | Shortcut footer — two-tone: key labels in `White`, descriptions in `LightGray` (D34) | `ShortcutLine()` → `uichrome.ColorShortcutLine` → `uichrome.WrapLine` |
 | N+3 | `╰──────────────────────────────╯` bottom border | `uichrome.BottomBorder` |
 
 `ChromeRows = 8` is the fixed row count consumed by rows 1–5 and N+1–N+3. The content panel occupies `height − ChromeRows` rows. All border characters use the `LightGray` palette token from `internal/uichrome`.
@@ -77,6 +77,17 @@ Terminal too small — resize to at least 60×16
 ```
 
 This prevents layout corruption at sub-minimum sizes. The constants are defined in `internal/uichrome`.
+
+### Shortcut footer styling (D34)
+
+The shortcut footer uses a two-tone palette applied by `uichrome.ColorShortcutLine`:
+
+- **Key labels** — rendered in `White` (e.g. `Ctrl+S`, `?`)
+- **Descriptions** — rendered in `LightGray` (e.g. `save`, `help`)
+
+The `? help` hint is included in the base shortcut string before two-toning so it receives the same styling as every other key/description pair (`?` in `White`, `help` in `LightGray`). The hint is suppressed while any dialog is open (except the findings panel).
+
+The browse-only `save  [ro]` hint is appended **after** two-toning, styled separately with the `Dim` palette token, so it remains visually distinct from the two-tone shortcut pairs.
 
 ### Session header slots (D5)
 
