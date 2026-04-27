@@ -212,8 +212,18 @@ func sanitizePlainText(s string) string {
 	return s
 }
 
-// render builds the visible detail string for the given step.
+// render dispatches to renderBordered when the pane has been sized (D26–D33),
+// or falls back to the flat text render for unsized models.
 func (d detailPane) render(step workflowmodel.Step) string {
+	if d.width > 0 {
+		return d.renderBordered(step)
+	}
+	return d.renderFlat(step)
+}
+
+// renderFlat is the legacy flat render used when d.width == 0 (no WindowSizeMsg yet).
+// Preserves backward-compatibility for tests that do not send a WindowSizeMsg.
+func (d detailPane) renderFlat(step workflowmodel.Step) string {
 	fields := buildDetailFields(step)
 	var sb strings.Builder
 
