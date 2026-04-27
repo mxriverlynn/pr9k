@@ -3,6 +3,7 @@ package workflowedit
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 )
 
@@ -69,6 +70,28 @@ func (m Model) View() string {
 		frame = uichrome.Overlay(frame, m.renderMenuDropdown(), 2, 1)
 	}
 
+	// D40: overlay the help modal centered in the frame when m.helpOpen.
+	if m.helpOpen {
+		helpStr := m.renderHelpModal()
+		helpLines := strings.Split(helpStr, "\n")
+		helpH := len(helpLines)
+		helpW := 0
+		for _, l := range helpLines {
+			if w := lipgloss.Width(l); w > helpW {
+				helpW = w
+			}
+		}
+		top := (m.height - helpH) / 2
+		left := (m.width - helpW) / 2
+		if top < 0 {
+			top = 0
+		}
+		if left < 0 {
+			left = 0
+		}
+		frame = uichrome.Overlay(frame, helpStr, top, left)
+	}
+
 	return frame
 }
 
@@ -77,8 +100,18 @@ func (m Model) View() string {
 // WU-7 and WU-8 replace those renders with the full bordered pane layouts.
 func (m Model) renderContentPanel(panelH, innerW int) string {
 	var raw string
-	if m.helpOpen {
-		raw = m.renderHelpModal()
+	if m.dialog.kind == DialogFindingsPanel {
+		// D38: render actual findings entries; D39: acknowledged-finding glyph.
+		// When help modal is open above, findings are dimmed (dim-under-help coexistence).
+		raw = m.renderFindingsPanel()
+	} else if m.helpOpen {
+		// Help modal open over edit/empty view: render the base content as background.
+		// The help modal is overlaid on the full frame in View() via uichrome.Overlay.
+		if !m.loaded {
+			raw = m.renderEmptyEditor()
+		} else {
+			raw = m.renderEditView()
+		}
 	} else if m.dialog.kind != DialogNone {
 		raw = m.renderDialog()
 	} else if !m.loaded {
@@ -110,7 +143,9 @@ func (m Model) viewFallback() string {
 		sb.WriteString(m.renderMenuDropdown())
 		sb.WriteString("\n")
 	}
-	if m.helpOpen {
+	if m.dialog.kind == DialogFindingsPanel {
+		sb.WriteString(m.renderFindingsPanel())
+	} else if m.helpOpen {
 		sb.WriteString(m.renderHelpModal())
 	} else if m.dialog.kind != DialogNone {
 		sb.WriteString(m.renderDialog())

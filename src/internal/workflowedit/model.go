@@ -318,10 +318,6 @@ func isGlobalKey(msg tea.Msg) bool {
 
 // --- rendering helpers ---
 
-func (m Model) renderHelpModal() string {
-	return "Help: Ctrl+N new  Ctrl+O open  Ctrl+S save  Ctrl+Q quit  ?  close help"
-}
-
 func (m Model) renderDialog() string {
 	body := dialogBodyFor(m.dialog.kind, m.dialog.payload)
 	return renderDialogShell(body, m.width, m.height)
