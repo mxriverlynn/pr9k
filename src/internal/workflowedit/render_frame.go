@@ -38,8 +38,8 @@ func (m Model) View() string {
 	// 1. Top border.
 	parts = append(parts, uichrome.RenderTopBorder("pr9k workflow builder", m.width))
 
-	// 2. Menu bar (placeholder).
-	parts = append(parts, uichrome.WrapLine(m.menu.render(), innerW))
+	// 2. Menu bar — D4 label with mnemonic accent; open state uses reverse video.
+	parts = append(parts, uichrome.WrapLine(m.renderMenuBar(), innerW))
 
 	// 3. Session header row 1 — title/path.
 	parts = append(parts, uichrome.WrapLine(m.renderSessionHeader(), innerW))
@@ -62,7 +62,14 @@ func (m Model) View() string {
 	// 9. Bottom border.
 	parts = append(parts, uichrome.BottomBorder(innerW))
 
-	return strings.Join(parts, "\n")
+	frame := strings.Join(parts, "\n")
+
+	// D11: overlay the dropdown below the menu bar (row 2, col 1) when File menu open.
+	if m.menu.open {
+		frame = uichrome.Overlay(frame, m.renderMenuDropdown(), 2, 1)
+	}
+
+	return frame
 }
 
 // renderContentPanel renders the content area as exactly panelH wrapped lines.
@@ -97,8 +104,12 @@ func (m Model) renderContentPanel(panelH, innerW int) string {
 // backward-compatibility for tests that do not send a WindowSizeMsg.
 func (m Model) viewFallback() string {
 	var sb strings.Builder
-	sb.WriteString(m.menu.render())
+	sb.WriteString(m.renderMenuBar())
 	sb.WriteString("\n")
+	if m.menu.open {
+		sb.WriteString(m.renderMenuDropdown())
+		sb.WriteString("\n")
+	}
 	if m.helpOpen {
 		sb.WriteString(m.renderHelpModal())
 	} else if m.dialog.kind != DialogNone {
