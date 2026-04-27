@@ -111,13 +111,13 @@ func TestDialog_ExternalEditorOpening_ContainsOpeningLabel(t *testing.T) {
 	}
 }
 
-// TestDialog_None_NoDialogInView verifies DialogNone shows normal content.
+// TestDialog_None_NoDialogInView verifies DialogNone shows normal content (not a dialog overlay).
 func TestDialog_None_NoDialogInView(t *testing.T) {
 	m := newTestModel()
-	// No dialog — should show empty editor hint.
+	// No dialog — should show the D43 empty-editor layout (outline + hint panes).
 	view := stripView(m)
-	if !strings.Contains(view, "No workflow") {
-		t.Errorf("with no dialog and no workflow, should show empty hint, got %q", view)
+	if !strings.Contains(view, "no workflow") {
+		t.Errorf("with no dialog and no workflow, should show empty-editor layout, got %q", view)
 	}
 }
 

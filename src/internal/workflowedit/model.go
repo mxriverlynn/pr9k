@@ -327,10 +327,6 @@ func (m Model) renderDialog() string {
 	return renderDialogShell(body, m.width, m.height)
 }
 
-func (m Model) renderEmptyEditor() string {
-	return HintEmpty
-}
-
 func (m Model) renderEditView() string {
 	header := m.renderSessionHeader()
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
