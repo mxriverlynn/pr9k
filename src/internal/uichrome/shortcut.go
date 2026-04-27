@@ -10,9 +10,10 @@ import (
 // mapped key token at the start of each "  "-separated group renders white,
 // and its trailing description renders gray.
 //
-// This function handles only the generic two-tone case. Callers that need
-// special handling for mode-specific prompt strings (e.g. quit-confirm,
-// quitting line) should apply those checks before calling this function.
+// This function handles only the generic two-tone case. Callers must detect
+// and render QuitConfirmPrompt, NextConfirmPrompt, and QuittingLine themselves
+// before invoking this function — those modes use single-tone styling, not
+// the generic key/description split.
 func ColorShortcutLine(s string) string {
 	white := lipgloss.NewStyle().Foreground(White)
 	gray := lipgloss.NewStyle().Foreground(LightGray)

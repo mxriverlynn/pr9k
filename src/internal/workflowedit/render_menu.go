@@ -59,7 +59,7 @@ func (m Model) renderMenuDropdown() string {
 		if it.label == "Save" && saveGreyed {
 			// D12: greyed — label in Dim, shortcut omitted, padded to full width.
 			label := lipgloss.NewStyle().Foreground(uichrome.Dim).Render(it.label)
-			padW := innerW - 2 - len(it.label) // visual width == len (ASCII labels)
+			padW := innerW - 2 - lipgloss.Width(label)
 			if padW < 0 {
 				padW = 0
 			}

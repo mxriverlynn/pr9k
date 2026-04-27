@@ -132,18 +132,18 @@ func cursorStepIdx(rows []outlineRow, cursor int) int {
 // state (D-11). It needs the doc to determine the current row kind.
 func (o outlinePanel) ShortcutLine(reorderMode bool, doc workflowmodel.WorkflowDoc) string {
 	if reorderMode {
-		return "↑/↓  move  ·  Enter  commit  ·  Esc  cancel"
+		return "↑/↓ move  ·  Enter commit  ·  Esc cancel"
 	}
 	rows := buildOutlineRows(doc, o.collapsed)
 	if o.cursor >= 0 && o.cursor < len(rows) {
 		switch rows[o.cursor].kind {
 		case rowKindSectionHeader:
-			return "↑/↓  navigate  ·  Space  collapse  ·  a  add"
+			return "↑/↓ navigate  ·  Space collapse  ·  a add"
 		case rowKindAddRow:
-			return "↑/↓  navigate  ·  Enter  add"
+			return "↑/↓ navigate  ·  Enter add"
 		}
 	}
-	return "↑/↓  navigate  ·  Tab  detail  ·  Del  delete  ·  r  reorder  ·  Alt+↑/↓  move"
+	return "↑/↓ navigate  ·  Tab detail  ·  Del delete  ·  r reorder  ·  Alt+↑/↓ move"
 }
 
 // render dispatches to renderBordered when the pane has been sized (D18–D25),

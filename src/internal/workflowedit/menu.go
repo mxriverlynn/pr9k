@@ -9,5 +9,5 @@ func newMenuBar() menuBar { return menuBar{} }
 
 // ShortcutLine returns shortcut hints for menu-bar focus (D-11).
 func (mb menuBar) ShortcutLine() string {
-	return "↑/↓  navigate  ·  Enter  select  ·  Esc  close"
+	return "↑/↓ navigate  ·  Enter select  ·  Esc close"
 }

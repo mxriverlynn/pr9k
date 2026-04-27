@@ -6,7 +6,22 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 )
+
+// containsDimStyling reports whether s contains the ANSI escape sequence that
+// lipgloss emits for the uichrome.Dim color. This avoids hardcoding
+// escape codes that may change across lipgloss versions.
+func containsDimStyling(s string) bool {
+	dimStyle := lipgloss.NewStyle().Foreground(uichrome.Dim)
+	rendered := dimStyle.Render("x")
+	xIdx := strings.LastIndex(rendered, "x")
+	if xIdx <= 0 {
+		return false
+	}
+	openEsc := rendered[:xIdx]
+	return len(openEsc) > 0 && strings.Contains(s, openEsc)
+}
 
 // TestFindingsPanel_RenderInDetailPane verifies that actual finding entries appear
 // in the view when DialogFindingsPanel is active (D38).
@@ -67,8 +82,7 @@ func TestFindingsPanel_DimUnderHelp(t *testing.T) {
 	found := false
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.Contains(stripStr(line), "step-model-required") {
-			// Color("8") renders as ANSI bright-black: [90m (16-color) or 38;5;8 (256-color).
-			if strings.Contains(line, "[90m") || strings.Contains(line, "38;5;8") {
+			if containsDimStyling(line) {
 				found = true
 				break
 			}
@@ -99,8 +113,7 @@ func TestFindingsPanel_FullColorWithoutHelp(t *testing.T) {
 	raw := m.renderFindingsPanel()
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.Contains(stripStr(line), "step-model-required") {
-			// When help is closed, the dim Color("8") code ([90m or 38;5;8) must not appear.
-			if strings.Contains(line, "[90m") || strings.Contains(line, "38;5;8") {
+			if containsDimStyling(line) {
 				t.Errorf("finding text should NOT be dimmed when help modal is closed; line: %q", line)
 			}
 		}

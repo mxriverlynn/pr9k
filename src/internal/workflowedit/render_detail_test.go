@@ -57,9 +57,8 @@ func TestDetail_LabelTruncation(t *testing.T) {
 	// Must not panic and the view must not overflow beyond the terminal width.
 	view := m.View()
 	for _, line := range strings.Split(view, "\n") {
-		// lipgloss.Width would be better here but this catches gross overflows.
-		if len(line) > 200 {
-			t.Errorf("line too long (%d chars), truncation broken: %q", len(line), line)
+		if lipgloss.Width(line) > m.width {
+			t.Errorf("line too wide (%d cols), truncation broken: %q", lipgloss.Width(line), line)
 		}
 	}
 	_ = view

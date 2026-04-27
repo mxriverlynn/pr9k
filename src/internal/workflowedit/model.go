@@ -316,8 +316,7 @@ func focusTargetName(f focusTarget) string {
 func (m Model) Init() tea.Cmd { return nil }
 
 // Update satisfies tea.Model. The routing order (D-9 + D-PR2-19 + D-14) is:
-//  0. typed-message pre-dispatch — validateCompleteMsg | saveCompleteMsg | quitMsg |
-//     clearBoundaryFlashMsg
+//  0. typed-message pre-dispatch (see updateAsyncCompletion)
 //     0b. WindowSizeMsg — always handled first to keep dimensions current, then routing
 //     continues to the active tier so dialogs/help remain in control.
 //  1. helpOpen  → updateHelpModal

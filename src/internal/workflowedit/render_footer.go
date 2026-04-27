@@ -34,16 +34,22 @@ func (m Model) ShortcutLine() string {
 		base = m.menu.ShortcutLine()
 	}
 
-	// D-18: browse-only: append a greyed "save  [ro]" hint to signal that
-	// saving is unavailable because the workflow file is read-only.
-	if m.banners.isReadOnly && m.loaded {
-		dim := lipgloss.NewStyle().Foreground(uichrome.Dim)
-		base += "  ·  " + dim.Render("save  [ro]")
+	// Append the help hint to the plain-text base before two-toning so
+	// ColorShortcutLine can style "?" white and " help" gray in one pass.
+	// Suppress "? help" for all dialog kinds except DialogFindingsPanel.
+	if m.dialog.kind == DialogNone || m.dialog.kind == DialogFindingsPanel {
+		base += "  ·  ? help"
 	}
 
-	// Suppress "?  help" for all dialog kinds except DialogFindingsPanel.
-	if m.dialog.kind != DialogNone && m.dialog.kind != DialogFindingsPanel {
-		return base
+	// Apply two-tone palette (D34): keys white, descriptions gray.
+	result := uichrome.ColorShortcutLine(base)
+
+	// D-18: browse-only hint appended after two-toning so the pre-styled
+	// Dim text is not re-processed by ColorShortcutLine.
+	if m.banners.isReadOnly && m.loaded {
+		dim := lipgloss.NewStyle().Foreground(uichrome.Dim)
+		result += "  ·  " + dim.Render("save  [ro]")
 	}
-	return base + "  ·  ?  help"
+
+	return result
 }

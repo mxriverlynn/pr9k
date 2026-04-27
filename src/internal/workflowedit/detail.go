@@ -67,15 +67,15 @@ func newDetailPane(width, height int) detailPane {
 // ShortcutLine returns the shortcut hints for the current detail pane state.
 func (d detailPane) ShortcutLine() string {
 	if d.dropdownOpen {
-		return "↑/↓  navigate  ·  Enter  confirm  ·  Esc  cancel"
+		return "↑/↓ navigate  ·  Enter confirm  ·  Esc cancel"
 	}
 	if d.editing {
-		return "type to edit  ·  Enter  confirm  ·  Esc  cancel"
+		return "type to edit  ·  Enter confirm  ·  Esc cancel"
 	}
 	if d.modelSuggFocus {
-		return "↑/↓  navigate  ·  Enter  pick  ·  Esc  collapse"
+		return "↑/↓ navigate  ·  Enter pick  ·  Esc collapse"
 	}
-	return "Tab  outline  ·  ↑/↓  navigate  ·  Enter  edit  ·  r  reveal/mask"
+	return "Tab outline  ·  ↑/↓ navigate  ·  Enter edit  ·  r reveal/mask"
 }
 
 // isSensitiveKey returns true when key contains a standard secret-suffix
