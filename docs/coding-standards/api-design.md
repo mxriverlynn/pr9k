@@ -487,6 +487,47 @@ m.doc.ContainerEnv["NEW_KEY"] = ""
 
 The rule: every code path that handles a user-initiated mutation must end with either a visible write or visible feedback. A silent no-op is never acceptable.
 
+## Use function-field injection seams for simple dependencies
+
+When a long-lived type has a simple dependency (a time source, a validation function, a random number source) that is a pure function with no methods, inject it as an unexported function field rather than constructing a full interface. Initialize the field to its production implementation in the constructor.
+
+This is the struct-field complement to the `...With` naming convention used for one-off function calls (see [Go Patterns](go-patterns.md)). Use function fields when:
+- The dependency is used across multiple methods of a long-lived type (not a single call site).
+- The dependency is a pure function (`time.Now`, a validator, a source of randomness).
+- Swapping it in tests avoids time-sensitivity, expensive I/O, or goroutine spawning.
+
+```go
+type Model struct {
+    // nowFn returns the current time; defaults to time.Now.
+    // Tests replace it with a fixed clock to avoid time.Sleep.
+    nowFn func() time.Time
+
+    // validateFn runs the config validator; defaults to the real validator.
+    // Tests replace it with a no-op to skip validation goroutines.
+    validateFn func(doc WorkflowDoc, dir string, companions map[string][]byte) []findingResult
+}
+
+func New(...) Model {
+    return Model{
+        nowFn:      time.Now,
+        validateFn: runRealValidator,
+    }
+}
+```
+
+Tests in the same package swap the field directly without a setter:
+
+```go
+m.nowFn = func() time.Time { return fixedTime }
+m.validateFn = func(_ workflowmodel.WorkflowDoc, _ string, _ map[string][]byte) []findingResult {
+    return nil
+}
+```
+
+Document each seam field with a comment explaining: what the production default is and what condition warrants swapping it in tests. Without that comment, a reader encountering the field in a test cannot quickly determine whether it is safe to reset.
+
+This pattern differs from the package-level var seam (see `testing.md` — "Document no-parallel constraint for package-level var mutation"): function fields are per-instance, so parallel tests that construct separate model values are safe. Package-level var seams require serial execution and save/restore discipline.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -501,4 +542,4 @@ The rule: every code path that handles a user-initiated mutation must end with e
 - [Testing](testing.md) — Standards for testing bounds guards and nil/uninitialized guard paths
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
 - `src/cmd/pr9k/workflow.go` — `Hidden: true` on the `workflow` cobra command is the canonical incomplete-command example (workflow-builder branch, PR-1 scope)
-- `src/internal/workflowedit/model.go` — `commitDetailEdit` returning `(Model, bool)` is the canonical rejected-mutation feedback example; `DialogError` for deferred paths; `"NEW_KEY":""` placeholder for add-item visibility (workflow-builder-pt-2 review issues #4, #6, #7, #9)
+- `src/internal/workflowedit/model.go` — `commitDetailEdit` returning `(Model, bool)` is the canonical rejected-mutation feedback example; `DialogError` for deferred paths; `"NEW_KEY":""` placeholder for add-item visibility (workflow-builder-pt-2 review issues #4, #6, #7, #9); `nowFn`/`validateFn` as the canonical function-field injection seam examples

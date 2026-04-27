@@ -639,6 +639,25 @@ if stats.InputTokens > resumeInputTokenLimit {
 
 The threshold is one: even a single use of a non-obvious number warrants a constant if the number encodes a domain rule. Numbers like `0`, `1`, `-1`, and small loop bounds are exempt.
 
+## Use lipgloss.Width() for visual width of styled strings
+
+`len()` counts bytes, not terminal columns. ANSI escape sequences inflate `len()` by their byte length, which has no relation to the number of visible columns they occupy. Using `len()` for padding or alignment on Lip Gloss-styled strings produces silently wrong layout.
+
+```go
+label := lipgloss.NewStyle().Foreground(uichrome.Dim).Render("Save  [ro]")
+
+// Bad — escape bytes inflate the count; padding is too small
+pad := strings.Repeat(" ", targetWidth-len(label))
+
+// Bad — rune count is also wrong for ANSI-containing strings
+pad := strings.Repeat(" ", targetWidth-len([]rune(label)))
+
+// Good — visual column count; escape sequences are not counted
+pad := strings.Repeat(" ", targetWidth-lipgloss.Width(label))
+```
+
+Apply `lipgloss.Width()` anywhere a styled string's column count matters: padding, alignment, overflow guards, and test assertions.
+
 ## Use lipgloss.JoinHorizontal for side-by-side TUI panels
 
 When placing two panels next to each other in a Bubble Tea view, use `lipgloss.JoinHorizontal` rather than string concatenation. String concatenation produces incorrect results when either string contains Lip Gloss styling (ANSI sequences inflate byte length vs. visual width), and it does not align the tops of multi-line panels.
@@ -722,6 +741,7 @@ The stdlib sort uses an adaptive introsort and degrades gracefully across all re
 - [Error Handling](error-handling.md) — Complementary error handling conventions
 - [TUI Display](../features/tui-display.md) — `substitute` helper as the canonical strings.NewReplacer usage example
 - [TUI Display](../features/tui-display.md) — HeartbeatTickMsg handler nil guard fix as the canonical nil-guard completeness example (issue #94)
+- [TUI Rendering](tui-rendering.md) — `lipgloss.Width()` for visual width in padding/alignment; generation counter for stale async banner rejection; render file decomposition convention
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `timeoutSeconds` goroutine uses `time.NewTimer` + `defer Stop()` with non-blocking done re-check (issue #130)
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `fullStdoutCapture` uses `utf8.RuneStart` backward walk for truncation (issue #123)
 - [Docker Sandbox](../features/docker-sandbox.md) — `Setpgid: true` + `syscall.Kill(-pid, sig)` for host subprocess process-group signals (issue #130)
