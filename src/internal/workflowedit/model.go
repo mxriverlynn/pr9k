@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowvalidate"
@@ -199,6 +200,7 @@ func resetSecretMask(m Model) Model {
 // mask so sensitive values are never visible across a dialog boundary (D-13).
 func openDialog(m Model, ds dialogState) Model {
 	m = resetSecretMask(m)
+	m.logEvent(fmtDialogOpen(ds.kind))
 	m.dialog = ds
 	return m
 }
@@ -233,6 +235,81 @@ func fmtExternalWorkflowDetected(workflowDir string) string {
 
 func fmtReadOnlyDetected(workflowDir string) string {
 	return "read_only_detected workflowDir=" + workflowDir
+}
+
+func fmtResize(w, h int) string {
+	return fmt.Sprintf("resize width=%d height=%d", w, h)
+}
+
+func fmtDialogOpen(kind DialogKind) string {
+	return "dialog_open kind=" + dialogKindName(kind)
+}
+
+func fmtDialogClose(kind DialogKind) string {
+	return "dialog_close kind=" + dialogKindName(kind)
+}
+
+func fmtFocusChanged(focus focusTarget) string {
+	return "focus_changed focus=" + focusTargetName(focus)
+}
+
+func fmtValidateComplete(ok bool) string {
+	if ok {
+		return "validate_complete ok=true"
+	}
+	return "validate_complete ok=false"
+}
+
+// dialogKindName returns a short snake_case name for a DialogKind value.
+func dialogKindName(k DialogKind) string {
+	switch k {
+	case DialogPathPicker:
+		return "path_picker"
+	case DialogNewChoice:
+		return "new_choice"
+	case DialogUnsavedChanges:
+		return "unsaved_changes"
+	case DialogQuitConfirm:
+		return "quit_confirm"
+	case DialogExternalEditorOpening:
+		return "external_editor_opening"
+	case DialogFindingsPanel:
+		return "findings_panel"
+	case DialogError:
+		return "error"
+	case DialogCrashTempNotice:
+		return "crash_temp_notice"
+	case DialogFirstSaveConfirm:
+		return "first_save_confirm"
+	case DialogRemoveConfirm:
+		return "remove_confirm"
+	case DialogFileConflict:
+		return "file_conflict"
+	case DialogSaveInProgress:
+		return "save_in_progress"
+	case DialogRecovery:
+		return "recovery"
+	case DialogAcknowledgeFindings:
+		return "acknowledge_findings"
+	case DialogCopyBrokenRef:
+		return "copy_broken_ref"
+	default:
+		return fmt.Sprintf("unknown_%d", int(k))
+	}
+}
+
+// focusTargetName returns a short name for a focusTarget value.
+func focusTargetName(f focusTarget) string {
+	switch f {
+	case focusOutline:
+		return "outline"
+	case focusDetail:
+		return "detail"
+	case focusMenu:
+		return "menu"
+	default:
+		return "unknown"
+	}
 }
 
 // Init satisfies tea.Model. No startup commands are needed.
@@ -296,6 +373,7 @@ func (m Model) updateAsyncCompletion(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case clearSaveBannerMsg:
 		if msg.gen == m.bannerGen {
 			m.saveBanner = ""
+			m.logEvent("save_banner_cleared")
 		}
 		return m, nil
 	}
@@ -381,6 +459,7 @@ func (m Model) updateDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		km, ok := msg.(tea.KeyMsg)
 		if ok && km.Type == tea.KeyEsc {
+			m.logEvent(fmtDialogClose(m.dialog.kind))
 			m.dialog = dialogState{}
 			m.focus = m.prevFocus
 		}
@@ -582,6 +661,7 @@ func (m Model) updateDialogQuitConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case string(km.Runes) == "y", km.Type == tea.KeyEnter:
 		return m, tea.Quit
 	case string(km.Runes) == "n", km.Type == tea.KeyEsc:
+		m.logEvent(fmtDialogClose(m.dialog.kind))
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	}
@@ -834,6 +914,7 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.forceSave = false // clear after use
 		m.validateInProgress = true
+		m.logEvent("validate_started")
 		return m, m.makeValidateCmd()
 	case tea.KeyCtrlQ:
 		if m.saveInProgress || m.validateInProgress {
@@ -915,6 +996,7 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.prevFocus = m.focus
 			m.focus = focusDetail
 			m.detail.cursor = 0
+			m.logEvent(fmtFocusChanged(focusDetail))
 		}
 	case tea.KeyDelete:
 		stepIdx := cursorStepIdx(rows, m.outline.cursor)
@@ -1064,6 +1146,7 @@ func doMoveStepUp(m Model) (Model, tea.Cmd) {
 	// Phase-boundary guard (D-12): decline the swap if phases differ.
 	if m.doc.Steps[i].Phase != m.doc.Steps[i-1].Phase {
 		m.boundaryFlash++
+		m.logEvent("phase_boundary_decline")
 		return m, boundaryDeclineCmd(m.boundaryFlash)
 	}
 	steps := make([]workflowmodel.Step, len(m.doc.Steps))
@@ -1087,6 +1170,7 @@ func doMoveStepDown(m Model) (Model, tea.Cmd) {
 	// Phase-boundary guard (D-12): decline the swap if phases differ.
 	if m.doc.Steps[i].Phase != m.doc.Steps[i+1].Phase {
 		m.boundaryFlash++
+		m.logEvent("phase_boundary_decline")
 		return m, boundaryDeclineCmd(m.boundaryFlash)
 	}
 	steps := make([]workflowmodel.Step, len(m.doc.Steps))
@@ -1126,9 +1210,13 @@ func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyTab:
 		m.prevFocus = m.focus
+		if m.detail.revealedField >= 0 {
+			m.logEvent("secret_remasked")
+		}
 		m.focus = focusOutline
 		m.detail.revealedField = -1 // re-mask on focus-leave (D-47)
 		m.detail.modelSuggFocus = false
+		m.logEvent(fmtFocusChanged(focusOutline))
 
 	case tea.KeyCtrlE:
 		// Ctrl+E on a multiline field opens the companion file in the external
@@ -1201,8 +1289,10 @@ func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindSecretMask {
 				if m.detail.revealedField == m.detail.cursor {
 					m.detail.revealedField = -1 // toggle: re-mask
+					m.logEvent("secret_remasked")
 				} else {
 					m.detail.revealedField = m.detail.cursor
+					m.logEvent("secret_revealed")
 				}
 			}
 		}
@@ -1489,6 +1579,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
+	m.logEvent(fmtResize(msg.Width, msg.Height))
+	if msg.Width < uichrome.MinTerminalWidth || msg.Height < uichrome.MinTerminalHeight {
+		m.logEvent("terminal_too_small")
+	}
 	ow := outlineWidth(m.width)
 	dw := m.width - ow
 	if dw < 1 {
@@ -1521,6 +1615,7 @@ func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.C
 		}
 	}
 	m.lastValidateOK = &ok
+	m.logEvent(fmtValidateComplete(ok))
 	for _, item := range msg.items {
 		if item.isFatal {
 			// Fatal findings block save.
@@ -1574,6 +1669,7 @@ func (m Model) handleSaveResult(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
 		m.diskDoc = m.doc
 	}
 	m.saveBanner = "Saved at " + m.nowFn().Format("15:04:05")
+	m.logEvent("save_banner_set")
 	m.bannerGen++
 	clearGen := m.bannerGen
 	bannerCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg {
