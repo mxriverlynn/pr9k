@@ -25,8 +25,9 @@ func TestModel_LoadPipeline_SymlinkBannerFires(t *testing.T) {
 	if got.banners.symlinkTarget != "/real/config.json" {
 		t.Errorf("banners.symlinkTarget wrong, got %q", got.banners.symlinkTarget)
 	}
-	if !strings.Contains(got.View(), "symlink") {
-		t.Errorf("view should show symlink banner; view: %q", got.View())
+	view := stripView(got)
+	if !strings.Contains(view, "[sym") {
+		t.Errorf("view should show symlink banner [sym ...]; view: %q", view)
 	}
 }
 
@@ -43,8 +44,9 @@ func TestModel_LoadPipeline_ExternalWorkflowBanner(t *testing.T) {
 	if !got.banners.isExternalWorkflow {
 		t.Error("banners.isExternalWorkflow should be true after load with isExternal=true")
 	}
-	if !strings.Contains(got.View(), "external") {
-		t.Errorf("view should show external-workflow banner; view: %q", got.View())
+	view := stripView(got)
+	if !strings.Contains(view, "[ext]") {
+		t.Errorf("view should show external-workflow banner [ext]; view: %q", view)
 	}
 }
 
@@ -57,9 +59,9 @@ func TestModel_BannerPriority_ReadOnlyWinsOverSymlink(t *testing.T) {
 		isSymlink:     true,
 		symlinkTarget: "/some/target",
 	}
-	view := m.View()
-	if !strings.Contains(view, "read-only") {
-		t.Errorf("view should show read-only banner (highest priority); view: %q", view)
+	view := stripView(m)
+	if !strings.Contains(view, "[ro]") {
+		t.Errorf("view should show read-only banner [ro] (highest priority); view: %q", view)
 	}
 	if !strings.Contains(view, "[1 more") {
 		t.Errorf("view should show [1 more warnings] affordance; view: %q", view)

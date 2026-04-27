@@ -19,6 +19,7 @@ const (
 	fieldKindNumeric                             // integer with min/max clamping
 	fieldKindModelSuggest                        // free text + suggestion overlay
 	fieldKindSecretMask                          // masked unless key-pattern matched
+	fieldKindMultiLine                           // multi-line companion file; Ctrl+E opens editor
 )
 
 // detailField describes one editable row in the detail pane.
@@ -66,15 +67,15 @@ func newDetailPane(width, height int) detailPane {
 // ShortcutLine returns the shortcut hints for the current detail pane state.
 func (d detailPane) ShortcutLine() string {
 	if d.dropdownOpen {
-		return "↑/↓  navigate  ·  Enter  confirm  ·  Esc  cancel"
+		return "↑/↓ navigate  ·  Enter confirm  ·  Esc cancel"
 	}
 	if d.editing {
-		return "type to edit  ·  Enter  confirm  ·  Esc  cancel"
+		return "type to edit  ·  Enter confirm  ·  Esc cancel"
 	}
 	if d.modelSuggFocus {
-		return "↑/↓  navigate  ·  Enter  pick  ·  Esc  collapse"
+		return "↑/↓ navigate  ·  Enter pick  ·  Esc collapse"
 	}
-	return "Tab  outline  ·  ↑/↓  navigate  ·  Enter  edit  ·  r  reveal/mask"
+	return "Tab outline  ·  ↑/↓ navigate  ·  Enter edit  ·  r reveal/mask"
 }
 
 // isSensitiveKey returns true when key contains a standard secret-suffix
@@ -101,11 +102,11 @@ func buildDetailFields(step workflowmodel.Step) []detailField {
 	if step.Kind == workflowmodel.StepKindClaude {
 		fields = append(fields,
 			detailField{label: "Model", kind: fieldKindModelSuggest},
-			detailField{label: "PromptFile", kind: fieldKindText},
+			detailField{label: "PromptFile", kind: fieldKindMultiLine},
 		)
 	} else {
 		fields = append(fields,
-			detailField{label: "Command", kind: fieldKindText},
+			detailField{label: "Command", kind: fieldKindMultiLine},
 		)
 	}
 	fields = append(fields,
@@ -211,8 +212,18 @@ func sanitizePlainText(s string) string {
 	return s
 }
 
-// render builds the visible detail string for the given step.
+// render dispatches to renderBordered when the pane has been sized (D26–D33),
+// or falls back to the flat text render for unsized models.
 func (d detailPane) render(step workflowmodel.Step) string {
+	if d.width > 0 {
+		return d.renderBordered(step)
+	}
+	return d.renderFlat(step)
+}
+
+// renderFlat is the legacy flat render used when d.width == 0 (no WindowSizeMsg yet).
+// Preserves backward-compatibility for tests that do not send a WindowSizeMsg.
+func (d detailPane) renderFlat(step workflowmodel.Step) string {
 	fields := buildDetailFields(step)
 	var sb strings.Builder
 

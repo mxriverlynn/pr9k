@@ -93,22 +93,36 @@ If no editor is configured, a dialog explains how to set one. See [Configuring a
 
 Press `Ctrl+S` (or **File > Save** via `F10`).
 
+While the validator is running, the footer briefly shows `Validating…`; while the file is being written it shows `Saving…`. These transient messages replace the normal shortcuts until the operation completes.
+
 - If there are **fatal validation findings**, the findings panel opens. Jump to each field using the affordance in the panel, fix the issue, and press `Ctrl+S` again.
 - If there are **warnings or info findings only**, a one-time acknowledgment dialog appears. After acknowledging, warnings are suppressed for the rest of the session.
-- If there are **no findings**, the file writes atomically and a `Saved at HH:MM:SS` banner appears in the session header for ~3 seconds.
+- If there are **no findings**, the file writes atomically and a `Saved at HH:MM:SS` banner appears in the session header row for ~3 seconds.
 - If there are **no changes**, the save is a no-op and the feedback shows `No changes to save`.
 
 **Note on `Ctrl+S` in some terminals:** terminals with XON/XOFF flow control enabled intercept `Ctrl+S`. Run `stty -ixon` in your shell to disable it, or use **File > Save** from the menu as a fallback.
 
 ## Understanding the Session Header
 
-The session header (third row) always shows:
+The session header (third row) assembles up to five pieces of information left-to-right:
 
-- The target path
-- An unsaved-changes indicator (when there are unsaved edits)
-- At most one warning banner (read-only, external workflow, symlink, shared install, or unknown fields); `[N more warnings]` when multiple are active
+1. **Target path** (or `(unsaved)` before the first save)
+2. **Dirty indicator `●`** (green) — shown when there are unsaved edits and the file is writable
+3. **Warning banner** — one of the tags below, colored by severity
+4. **`[N more warnings]`** — when more than one banner is active; opens an all-banners panel
+5. **Validation indicator · findings summary** — right-aligned; shows after any `Ctrl+S` attempt
 
-**Read-only mode:** If the target is not writable, File > Save is greyed out. Navigate to a writable target using File > New or File > Open.
+**Banner priority and colors** (highest first):
+
+| Priority | Banner | Color | Condition |
+|----------|--------|-------|-----------|
+| 1 | `[ro]` | Red | Target file is not writable |
+| 2 | `[ext]` | Yellow | Target is outside project dir and home dir |
+| 3 | `[sym]` or `[sym → target]` | Yellow | config.json or a companion is a symlink |
+| 4 | `[shared]` | Yellow | Target is the bundled default on a shared install |
+| 5 | `[?fields]` | Cyan | Config contains fields the builder does not recognize |
+
+**Read-only mode:** when `[ro]` is active, File > Save is greyed out in the menu and the footer appends a dim `save  [ro]` hint. Navigate to a writable target using File > New or File > Open.
 
 ## Quitting
 
@@ -121,7 +135,7 @@ Escape is always equivalent to Cancel or No.
 
 ## Getting Help
 
-Press `?` at any time to open the help modal, which lists every available keyboard shortcut for the current mode. Press `?` or `Escape` to close it.
+Press `?` at any time to open the help modal, which lists every keyboard shortcut for the current focus state. Press `?` or `Escape` to close it. The `?  help` hint in the footer is always available unless a dialog (other than the findings panel) is open.
 
 ## Related Documentation
 

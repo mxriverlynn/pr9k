@@ -2,7 +2,7 @@
 
 An interactive terminal interface for authoring and editing pr9k workflow bundles — configuration, prompt files, and scripts — without hand-editing JSON.
 
-- **Last Updated:** 2026-04-25
+- **Last Updated:** 2026-04-27
 - **Authors:**
   - River Bailey
 
@@ -47,6 +47,100 @@ Five persistent surfaces:
 | **Workflow outline** (left pane) | Collapsible sections for env, containerEnv, statusLine, and three phases (initialize, iteration, finalize); each phase section ends with a `+ Add step` row |
 | **Detail pane** (right pane) | Fields for the currently selected outline item; choice lists, plain text, numeric, model-suggest, and secret-masked field kinds; independently scrollable |
 | **Shortcut footer** (bottom row) | Context-sensitive keyboard hints; updates when focus changes |
+
+## Visual Layout
+
+### 9-row chrome frame
+
+`View()` in `render_frame.go` assembles exactly 9 rows regardless of terminal height. The rows are:
+
+| Row | Element | Implementation |
+|-----|---------|----------------|
+| 1 | `╭── pr9k workflow builder ───╮` top border | `uichrome.RenderTopBorder` |
+| 2 | Menu bar | `renderMenuBar()` wrapped in `uichrome.WrapLine` |
+| 3 | Session header (path, dirty indicator, banner) | `renderSessionHeader()` wrapped in `uichrome.WrapLine` |
+| 4 | Save-banner slot (transient `Saved at HH:MM:SS` or blank) | `m.saveBanner` wrapped in `uichrome.WrapLine` |
+| 5 | `├──────────────────────────────┤` separator | `uichrome.HRuleLine` |
+| 6–N | Content panel (outline + detail, panelH = height − ChromeRows) | `renderContentPanel` |
+| N+1 | `├──────────────────────────────┤` separator | `uichrome.HRuleLine` |
+| N+2 | Shortcut footer — two-tone: key labels in `White`, descriptions in `LightGray` (D34) | `ShortcutLine()` → `uichrome.ColorShortcutLine` → `uichrome.WrapLine` |
+| N+3 | `╰──────────────────────────────╯` bottom border | `uichrome.BottomBorder` |
+
+`ChromeRows = 8` is the fixed row count consumed by rows 1–5 and N+1–N+3. The content panel occupies `height − ChromeRows` rows. All border characters use the `LightGray` palette token from `internal/uichrome`.
+
+### Minimum-size guard (D48)
+
+When the terminal is smaller than `MinTerminalWidth × MinTerminalHeight` (60 × 16), `View()` returns the single-line message:
+
+```
+Terminal too small — resize to at least 60×16
+```
+
+This prevents layout corruption at sub-minimum sizes. The constants are defined in `internal/uichrome`.
+
+### Shortcut footer styling (D34)
+
+The shortcut footer uses a two-tone palette applied by `uichrome.ColorShortcutLine`:
+
+- **Key labels** — rendered in `White` (e.g. `Ctrl+S`, `?`)
+- **Descriptions** — rendered in `LightGray` (e.g. `save`, `help`)
+
+The `? help` hint is included in the base shortcut string before two-toning so it receives the same styling as every other key/description pair (`?` in `White`, `help` in `LightGray`). The hint is suppressed while any dialog is open (except the findings panel).
+
+The browse-only `save  [ro]` hint is appended **after** two-toning, styled separately with the `Dim` palette token, so it remains visually distinct from the two-tone shortcut pairs.
+
+### Session header slots (D5)
+
+Row 3 carries five slots assembled left-to-right:
+
+| Slot | Content | Color |
+|------|---------|-------|
+| 1 | Workflow path (or `(unsaved)`) | default |
+| 2 | Dirty indicator `●` when `m.IsDirty()` is true and target is not read-only | `Green` |
+| 3 | Highest-priority banner tag | severity color (see below) |
+| 4 | `[N more warnings]` when multiple banners are active | `White` |
+| 5 | Right-aligned: validation indicator · findings summary | default |
+
+**Dirty indicator source:** the `●` glyph is rendered when `m.IsDirty()` returns true. `IsDirty()` delegates to `workflowmodel.IsDirty(m.diskDoc, m.doc)` — it is a deep structural diff, not a raw field read.
+
+**D17 overflow priority:** when the full row exceeds the terminal width, slots are dropped in this order: (1) `[N more warnings]`, (2) right-side findings+validation, (3) banner, (4) path truncation. The dirty indicator is never dropped while the document is dirty.
+
+### Banner short-form tags and colors
+
+| Priority | Short-form tag | Color |
+|----------|----------------|-------|
+| 1 (highest) | `[ro]` | `Red` |
+| 2 | `[ext]` | `Yellow` |
+| 3 | `[sym → target]` or `[sym]` | `Yellow` |
+| 4 | `[shared]` | `Yellow` |
+| 5 (lowest) | `[?fields]` | `Cyan` |
+
+### Findings summary and validation indicator
+
+Right-aligned in the session header, these show after the most recent validation run:
+
+- **Validation indicator:** `Validated ✓` (no fatal findings), `Validation failed` (fatal findings found), or `Validating…` (run in progress). Returns empty before any validation has run.
+- **Findings summary:** `<F> fatal · <W> warn` for non-zero fatal or warn counts.
+
+### Browse-only signals
+
+When the loaded workflow file is read-only (`banners.isReadOnly`):
+
+- The session header suppresses the dirty indicator `●`
+- The shortcut footer appends a dim `save  [ro]` hint (using `Dim` palette token) to signal that saving is unavailable
+- File > Save is greyed out in the menu dropdown
+
+### Transient Validating… / Saving… footer
+
+When validation or save operations are in flight, `ShortcutLine()` returns a transient string instead of the normal shortcut hints:
+
+| State | Footer text |
+|-------|-------------|
+| `m.validateInProgress` | `Validating…` |
+| `m.saveInProgress` | `Saving…` |
+| Normal | Context-sensitive shortcut hints |
+
+This gives immediate feedback when the user presses `Ctrl+S` and validation is running. The transient states take absolute priority over normal shortcuts.
 
 ## Keyboard Map
 

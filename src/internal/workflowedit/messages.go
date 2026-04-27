@@ -39,3 +39,17 @@ type openFileResultMsg struct {
 // quitMsg is dispatched to signal a clean shutdown request. It is pre-dispatched
 // in Update (tier-0) to prevent dialogs from swallowing a programmatic quit.
 type quitMsg struct{}
+
+// clearSaveBannerMsg is dispatched via tea.Tick after a successful save to clear
+// the transient save banner. The gen field guards against stale ticks: the
+// handler clears m.saveBanner only when msg.gen == m.bannerGen (D-7).
+type clearSaveBannerMsg struct {
+	gen int
+}
+
+// clearBoundaryFlashMsg is dispatched via tea.Tick(150ms) after a phase-boundary
+// decline to clear the cursor-row inversion. The seq field guards against stale
+// ticks: the handler clears m.boundaryFlash only when msg.seq == m.boundaryFlash (D-12).
+type clearBoundaryFlashMsg struct {
+	seq uint64
+}

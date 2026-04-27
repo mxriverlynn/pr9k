@@ -3,7 +3,6 @@ package workflowedit
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
@@ -133,75 +132,27 @@ func cursorStepIdx(rows []outlineRow, cursor int) int {
 // state (D-11). It needs the doc to determine the current row kind.
 func (o outlinePanel) ShortcutLine(reorderMode bool, doc workflowmodel.WorkflowDoc) string {
 	if reorderMode {
-		return "↑/↓  move  ·  Enter  commit  ·  Esc  cancel"
+		return "↑/↓ move  ·  Enter commit  ·  Esc cancel"
 	}
 	rows := buildOutlineRows(doc, o.collapsed)
 	if o.cursor >= 0 && o.cursor < len(rows) {
 		switch rows[o.cursor].kind {
 		case rowKindSectionHeader:
-			return "↑/↓  navigate  ·  Space  collapse  ·  a  add"
+			return "↑/↓ navigate  ·  Space collapse  ·  a add"
 		case rowKindAddRow:
-			return "↑/↓  navigate  ·  Enter  add"
+			return "↑/↓ navigate  ·  Enter add"
 		}
 	}
-	return "↑/↓  navigate  ·  Tab  detail  ·  Del  delete  ·  r  reorder  ·  Alt+↑/↓  move"
+	return "↑/↓ navigate  ·  Tab detail  ·  Del delete  ·  r reorder  ·  Alt+↑/↓ move"
 }
 
-// render builds the visible outline string from the doc.
+// render dispatches to renderBordered when the pane has been sized (D18–D25),
+// or falls back to the flat text render for unsized models.
 func (o outlinePanel) render(doc workflowmodel.WorkflowDoc, cursor int, reorderMode bool) string {
-	rows := buildOutlineRows(doc, o.collapsed)
-	if len(rows) == 0 {
-		return "(no steps)\n"
+	if o.width > 0 {
+		return o.renderBordered(doc, cursor, reorderMode)
 	}
-	var sb strings.Builder
-	for i, row := range rows {
-		focused := i == cursor
-		switch row.kind {
-		case rowKindSectionHeader:
-			chevron := GlyphChevronExpanded
-			if o.collapsed[row.section] {
-				chevron = GlyphChevronCollapsed
-			}
-			label := sectionLabel(row.section, doc)
-			prefix := "  "
-			if focused {
-				prefix = "> "
-			}
-			sb.WriteString(prefix + chevron + " " + label + "\n")
-
-		case rowKindStep:
-			name := doc.Steps[row.stepIdx].Name
-			if name == "" {
-				name = HintNoName
-			}
-			var prefix string
-			switch {
-			case reorderMode && focused:
-				prefix = GlyphGripper + " "
-			case focused:
-				prefix = "> "
-			default:
-				prefix = "  "
-			}
-			sb.WriteString("  " + prefix + name + "\n")
-
-		case rowKindEnvItem, rowKindContainerEnvItem:
-			prefix := "  "
-			if focused {
-				prefix = "> "
-			}
-			sb.WriteString("    " + prefix + row.label + "\n")
-
-		case rowKindAddRow:
-			prefix := "  "
-			if focused {
-				prefix = "> "
-			}
-			addLabel := addRowLabel(row.section)
-			sb.WriteString("  " + prefix + GlyphAddItem + " " + addLabel + "\n")
-		}
-	}
-	return sb.String()
+	return o.renderFlat(doc, cursor, reorderMode)
 }
 
 // sectionLabel returns the display label for a section header including item count.

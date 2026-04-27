@@ -131,6 +131,7 @@ func keyCtrlN() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlN} }
 func keyCtrlO() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlO} }
 func keyCtrlS() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlS} }
 func keyCtrlQ() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlQ} }
+func keyCtrlE() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyCtrlE} }
 func keyF10() tea.KeyMsg      { return tea.KeyMsg{Type: tea.KeyF10} }
 func keyAltUp() tea.KeyMsg    { return tea.KeyMsg{Type: tea.KeyUp, Alt: true} }
 func keyShiftTab() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyShiftTab} }

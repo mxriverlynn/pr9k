@@ -841,6 +841,52 @@ Checklist when adding a new marshal/unmarshal path:
 2. Assert the category field — not just the name — so a flattening bug is caught even if item names survive.
 3. Place the test in the same package as the marshal function, not in an external integration test, so it runs on every `go test ./...`.
 
+## Strip ANSI before asserting on TUI render output
+
+When testing a Bubble Tea `View()` or any render function that produces styled terminal output, strip ANSI escape sequences before text assertions. Raw styled strings contain library-internal escape encodings that change across Lip Gloss versions — asserting on them directly produces brittle tests that fail on upgrades and are unreadable to reviewers.
+
+Use `ansi.StripAll([]byte(output))` (from `internal/ansi`) before all substring and equality checks:
+
+```go
+// render_helpers_test.go — shared in the same test package
+func stripView(m Model) string {
+    return string(ansi.StripAll([]byte(m.View())))
+}
+
+func stripStr(s string) string {
+    return string(ansi.StripAll([]byte(s)))
+}
+
+// Usage in test files:
+func TestView_ShowsSavedBanner(t *testing.T) {
+    m := newTestModel(t)
+    // ... trigger save ...
+    require.Contains(t, stripView(m), "Saved at")  // strip, then assert
+}
+
+func TestShortcutLine_ShowsHelpHint(t *testing.T) {
+    m := newTestModel(t)
+    require.Contains(t, stripStr(m.ShortcutLine()), "? help")
+}
+```
+
+Place shared strip helpers in a `render_helpers_test.go` file within the same package so all test files in the package can use them without import.
+
+**Exception — asserting styling is present:** When a test must verify that a specific style is applied (not just the text content), derive the expected escape envelope from the style constant at runtime instead of hardcoding escape codes:
+
+```go
+// Bad — brittle; breaks if lipgloss emits different escapes in a future version
+require.Contains(t, result, "\x1b[90m")
+require.Contains(t, result, "38;5;8")
+
+// Good — derive from the constant itself; survives lipgloss version changes
+dimSample := uichrome.Dim.Render("x")
+dimPrefix := strings.SplitN(dimSample, "x", 2)[0]
+require.True(t, strings.Contains(result, dimPrefix), "expected dim styling in result")
+```
+
+This decouples the test from the library's internal escape encoding.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -861,3 +907,4 @@ Checklist when adding a new marshal/unmarshal path:
 - [Status Line](../code-packages/statusline.md) — `TestRunWithShutdown_PropagatesRunError` as the canonical error-propagation test example; `assertModalFits` as the canonical fixture validation helper example (issue #118/119)
 - [Config Validation](../code-packages/validator.md) — `prompts_structure_test.go` as the canonical t.Run + sorted-iteration test example (issue #125); `production_steps_test.go` as the canonical production-config integration test (issue #124)
 - [Workflow IO](../code-packages/workflowio.md) — `TestSave_PreservesPhaseBoundaries` as the canonical round-trip phase-boundary test; the missing test allowed all steps to silently collapse into the iteration phase on marshal (workflow-builder branch)
+- [TUI Rendering](tui-rendering.md) — generation counter pattern for stale async banner rejection; `render_helpers_test.go` as the canonical shared strip-helper convention; runtime-derived styling assertions

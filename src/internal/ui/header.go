@@ -7,37 +7,38 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 )
 
 // heartbeatSilenceThreshold is the minimum silence duration before the
 // heartbeat indicator is shown in the iteration line (D23).
 const heartbeatSilenceThreshold = 15 * time.Second
 
-// Status-header color scheme. These are package vars so main.go can bind
-// fixed colors by value for static widgets (iteration line, HRules, footer)
-// while the grid cells bind their per-cell color fields by pointer for
-// dynamic repaints as step state changes.
+// Status-header color scheme. These vars alias the shared uichrome palette so
+// that code in this package (and callers that reference them via package path)
+// continues to work without change. The canonical values live in uichrome.
 var (
 	// LightGray is the default foreground color for the header and footer
 	// chrome: brackets, pending/done/failed/skipped markers, step names,
 	// iteration line, shortcut bar, version label, and the box border.
-	LightGray = lipgloss.Color("245")
+	LightGray = uichrome.LightGray
 	// ActiveStepFG is the foreground color for the currently running
 	// step's brackets and name — white so the active row pops against
 	// the light-gray chrome.
-	ActiveStepFG = lipgloss.Color("15")
+	ActiveStepFG = uichrome.ActiveStepFG
 	// ActiveMarkerFG is the foreground color for the active step's
 	// marker glyph (▸) so the triangle reads as "this one is running"
 	// at a glance, independently of the rest of the cell text.
-	ActiveMarkerFG = lipgloss.Color("10")
+	ActiveMarkerFG = uichrome.ActiveMarkerFG
 	// White is the foreground color for the main log content area —
 	// brighter than LightGray so streamed subprocess output stands out
 	// from the surrounding chrome.
-	White = lipgloss.Color("15")
+	White = uichrome.White
 	// Green is the foreground color for the app name in the top-border
 	// title ("Power-Ralph.9000") so it reads as a brand/name glyph
 	// distinct from the white iteration detail that follows it.
-	Green = lipgloss.Color("10")
+	Green = uichrome.Green
 )
 
 // StepState represents the display state of a single workflow step.

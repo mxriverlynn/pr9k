@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowio"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowmodel"
 	"github.com/mxriverlynn/pr9k/src/internal/workflowvalidate"
@@ -38,37 +39,27 @@ type bannerState struct {
 	hasUnknownField    bool
 }
 
-// activeBanner returns the text of the highest-priority active banner and the
-// count of lower-priority active banners (for the "[N more warnings]" affordance).
-func (b bannerState) activeBanner() (string, int) {
-	all := b.allBannerTexts()
-	if len(all) == 0 {
-		return "", 0
-	}
-	return all[0], len(all) - 1
-}
-
 func (b bannerState) allBannerTexts() []string {
 	var out []string
 	if b.isReadOnly {
-		out = append(out, "[read-only]")
+		out = append(out, "[ro]")
 	}
 	if b.isExternalWorkflow {
-		out = append(out, "[external workflow]")
+		out = append(out, "[ext]")
 	}
 	if b.isSymlink {
 		target := b.symlinkTarget
 		if target != "" {
-			out = append(out, "[symlink → "+target+"]")
+			out = append(out, "[sym → "+target+"]")
 		} else {
-			out = append(out, "[symlink]")
+			out = append(out, "[sym]")
 		}
 	}
 	if b.isSharedInstall {
-		out = append(out, "[shared install]")
+		out = append(out, "[shared]")
 	}
 	if b.hasUnknownField {
-		out = append(out, "[unknown fields]")
+		out = append(out, "[?fields]")
 	}
 	return out
 }
@@ -122,13 +113,30 @@ type Model struct {
 	reorderSnapshot []workflowmodel.Step
 
 	saveBanner string // "Saved at HH:MM:SS" after a successful save
+	// bannerGen is incremented on each save success so stale clearSaveBannerMsg
+	// ticks from prior saves are ignored (D-7).
+	bannerGen int
 
 	banners bannerState // active warning banners set from load-pipeline signals
 
+	// boundaryFlash is non-zero when the outline should invert the cursor row
+	// to signal a phase-boundary decline. A clearBoundaryFlashMsg with the same
+	// seq value resets it to 0 (D-12).
+	boundaryFlash uint64
+
 	logW io.Writer // session-event log destination; nil disables logging
+
+	// nowFn returns the current time; defaults to time.Now. Replaced in tests
+	// to avoid time.Sleep (D-8).
+	nowFn func() time.Time
 
 	// validateFn overrides the real validator when non-nil; used by tests.
 	validateFn func(workflowmodel.WorkflowDoc, string, map[string][]byte) []findingResult
+
+	// lastValidateOK tracks the outcome of the most recent validation run.
+	// nil = no validation has run yet; &true = last run had no fatal findings;
+	// &false = last run had fatal findings.
+	lastValidateOK *bool
 }
 
 // New constructs a workflow-builder Model with the provided dependency
@@ -143,6 +151,7 @@ func New(saveFS workflowio.SaveFS, editor EditorRunner, projectDir, workflowDir 
 		outline:     newOutlinePanel(defaultOutlineW, defaultH),
 		detail:      newDetailPane(defaultDetailW, defaultH),
 		menu:        newMenuBar(),
+		nowFn:       time.Now,
 	}
 }
 
@@ -180,6 +189,22 @@ func LoadResultMsg(doc, diskDoc workflowmodel.WorkflowDoc, companions map[string
 	}
 }
 
+// resetSecretMask resets the detail pane's revealedField to -1 (masked) so that
+// sensitive values are not visible after any dialog opens (D-13).
+func resetSecretMask(m Model) Model {
+	m.detail.revealedField = -1
+	return m
+}
+
+// openDialog sets the active dialog, resetting the detail pane's revealed secret
+// mask so sensitive values are never visible across a dialog boundary (D-13).
+func openDialog(m Model, ds dialogState) Model {
+	m = resetSecretMask(m)
+	m.logEvent(fmtDialogOpen(ds.kind))
+	m.dialog = ds
+	return m
+}
+
 // logEvent writes a session-event line to logW if it is set. It never writes
 // containerEnv values, env entry values, prompt-file content, or editor
 // argument lists (field-exclusion contract R7).
@@ -212,11 +237,88 @@ func fmtReadOnlyDetected(workflowDir string) string {
 	return "read_only_detected workflowDir=" + workflowDir
 }
 
+func fmtResize(w, h int) string {
+	return fmt.Sprintf("resize width=%d height=%d", w, h)
+}
+
+func fmtDialogOpen(kind DialogKind) string {
+	return "dialog_open kind=" + dialogKindName(kind)
+}
+
+func fmtDialogClose(kind DialogKind) string {
+	return "dialog_close kind=" + dialogKindName(kind)
+}
+
+func fmtFocusChanged(focus focusTarget) string {
+	return "focus_changed focus=" + focusTargetName(focus)
+}
+
+func fmtValidateComplete(ok bool) string {
+	if ok {
+		return "validate_complete ok=true"
+	}
+	return "validate_complete ok=false"
+}
+
+// dialogKindName returns a short snake_case name for a DialogKind value.
+func dialogKindName(k DialogKind) string {
+	switch k {
+	case DialogPathPicker:
+		return "path_picker"
+	case DialogNewChoice:
+		return "new_choice"
+	case DialogUnsavedChanges:
+		return "unsaved_changes"
+	case DialogQuitConfirm:
+		return "quit_confirm"
+	case DialogExternalEditorOpening:
+		return "external_editor_opening"
+	case DialogFindingsPanel:
+		return "findings_panel"
+	case DialogError:
+		return "error"
+	case DialogCrashTempNotice:
+		return "crash_temp_notice"
+	case DialogFirstSaveConfirm:
+		return "first_save_confirm"
+	case DialogRemoveConfirm:
+		return "remove_confirm"
+	case DialogFileConflict:
+		return "file_conflict"
+	case DialogSaveInProgress:
+		return "save_in_progress"
+	case DialogRecovery:
+		return "recovery"
+	case DialogAcknowledgeFindings:
+		return "acknowledge_findings"
+	case DialogCopyBrokenRef:
+		return "copy_broken_ref"
+	default:
+		return fmt.Sprintf("unknown_%d", int(k))
+	}
+}
+
+// focusTargetName returns a short name for a focusTarget value.
+func focusTargetName(f focusTarget) string {
+	switch f {
+	case focusOutline:
+		return "outline"
+	case focusDetail:
+		return "detail"
+	case focusMenu:
+		return "menu"
+	default:
+		return "unknown"
+	}
+}
+
 // Init satisfies tea.Model. No startup commands are needed.
 func (m Model) Init() tea.Cmd { return nil }
 
-// Update satisfies tea.Model. The routing order (D-9 + D-PR2-19) is:
-//  0. typed-message pre-dispatch — validateCompleteMsg | saveCompleteMsg | quitMsg
+// Update satisfies tea.Model. The routing order (D-9 + D-PR2-19 + D-14) is:
+//  0. typed-message pre-dispatch (see updateAsyncCompletion)
+//     0b. WindowSizeMsg — always handled first to keep dimensions current, then routing
+//     continues to the active tier so dialogs/help remain in control.
 //  1. helpOpen  → updateHelpModal
 //  2. dialog    → updateDialog
 //  3. globalKey → handleGlobalKey
@@ -226,8 +328,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// that save completions, load results, and programmatic quit are never
 	// swallowed by an active dialog (D-PR2-19).
 	switch msg.(type) {
-	case validateCompleteMsg, saveCompleteMsg, openFileResultMsg, quitMsg:
+	case validateCompleteMsg, saveCompleteMsg, openFileResultMsg, quitMsg, clearBoundaryFlashMsg, clearSaveBannerMsg:
 		return m.updateAsyncCompletion(msg)
+	}
+
+	// Tier-0 WindowSizeMsg (D-14): always update dimensions first so the chrome
+	// frame stays correct even while a dialog or help modal is active, then
+	// fall through to the active tier which typically ignores non-key messages.
+	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
+		next, _ := m.handleWindowSize(wsm)
+		m = next.(Model)
 	}
 
 	switch {
@@ -242,8 +352,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// updateAsyncCompletion handles the four pre-dispatched message types that
-// bypass dialog/help state (tier-0, D-PR2-19).
+// updateAsyncCompletion handles the pre-dispatched message types that bypass
+// dialog/help state (tier-0, D-PR2-19).
 func (m Model) updateAsyncCompletion(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case validateCompleteMsg:
@@ -254,6 +364,17 @@ func (m Model) updateAsyncCompletion(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleOpenFileResult(msg)
 	case quitMsg:
 		return m, tea.Quit
+	case clearBoundaryFlashMsg:
+		if msg.seq == m.boundaryFlash {
+			m.boundaryFlash = 0
+		}
+		return m, nil
+	case clearSaveBannerMsg:
+		if msg.gen == m.bannerGen {
+			m.saveBanner = ""
+			m.logEvent("save_banner_cleared")
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -272,89 +393,11 @@ func isGlobalKey(msg tea.Msg) bool {
 	return false
 }
 
-// View satisfies tea.Model and returns the full TUI string.
-func (m Model) View() string {
-	var sb strings.Builder
-	sb.WriteString(m.menu.render())
-	sb.WriteString("\n")
-	if m.helpOpen {
-		sb.WriteString(m.renderHelpModal())
-	} else if m.dialog.kind != DialogNone {
-		sb.WriteString(m.renderDialog())
-	} else if !m.loaded {
-		sb.WriteString(m.renderEmptyEditor())
-	} else {
-		sb.WriteString(m.renderEditView())
-	}
-	sb.WriteString("\n")
-	if m.saveBanner != "" {
-		sb.WriteString(m.saveBanner)
-		sb.WriteString("\n")
-	}
-	sb.WriteString(m.ShortcutLine())
-	return sb.String()
-}
-
 // --- rendering helpers ---
 
-func (m Model) renderHelpModal() string {
-	return "Help: Ctrl+N new  Ctrl+O open  Ctrl+S save  Ctrl+Q quit  ?  close help"
-}
-
 func (m Model) renderDialog() string {
-	switch m.dialog.kind {
-	case DialogNewChoice:
-		return "New Workflow: Copy / Empty / Cancel"
-	case DialogPathPicker:
-		if picker, ok := m.dialog.payload.(pathPickerModel); ok {
-			if picker.kind == PickerKindNew {
-				warning := ""
-				targetConfig := filepath.Join(strings.TrimSuffix(picker.input, "/"), "config.json")
-				if _, err := os.Stat(targetConfig); err == nil {
-					warning = " — That path already contains a config.json — overwrite?"
-				}
-				return "New: " + picker.input + warning + "\nCreate / Cancel"
-			}
-			return "Open: " + picker.input
-		}
-		return "Open: "
-	case DialogUnsavedChanges:
-		return "Unsaved changes: Save / Cancel / Discard"
-	case DialogQuitConfirm:
-		return "Quit? Yes / No"
-	case DialogFindingsPanel:
-		return "Findings: validation errors found"
-	case DialogAcknowledgeFindings:
-		return "Validation warnings: acknowledge and save (Enter/y) or cancel (Esc)"
-	case DialogSaveInProgress:
-		return "Save in progress — please wait"
-	case DialogRemoveConfirm:
-		name, _ := m.dialog.payload.(string)
-		return fmt.Sprintf("Delete step %q? Delete / Cancel", name)
-	case DialogRecovery:
-		raw, _ := m.dialog.payload.(string)
-		return "Recovery — o  open editor  r  reload  d  discard  c  cancel\n" + raw
-	case DialogError:
-		msg, _ := m.dialog.payload.(string)
-		return "Error: " + msg
-	case DialogFileConflict:
-		return "File changed on disk — o  overwrite  r  reload  c  cancel"
-	case DialogCrashTempNotice:
-		path, _ := m.dialog.payload.(string)
-		return "Crash temp file detected: " + path + "\nd  discard  l  leave"
-	case DialogFirstSaveConfirm:
-		return "Save to external/symlinked workflow? y  yes  n  no"
-	case DialogExternalEditorOpening:
-		return "Opening external editor…"
-	case DialogCopyBrokenRef:
-		return "Default model reference is broken — copy anyway? y  copy anyway  c  cancel"
-	default:
-		return ""
-	}
-}
-
-func (m Model) renderEmptyEditor() string {
-	return HintEmpty
+	body := dialogBodyFor(m.dialog.kind, m.dialog.payload)
+	return renderDialogShell(body, m.width, m.height)
 }
 
 func (m Model) renderEditView() string {
@@ -368,24 +411,6 @@ func (m Model) renderEditView() string {
 	}
 	columns := lipgloss.JoinHorizontal(lipgloss.Top, outlineStr, detailStr)
 	return header + "\n" + columns
-}
-
-// renderSessionHeader renders the third row of the edit view:
-// target path + dirty glyph + at-most-one banner + "[N more warnings]" affordance.
-func (m Model) renderSessionHeader() string {
-	path := m.workflowDir
-	if m.dirty {
-		path += "*"
-	}
-	banner, extra := m.banners.activeBanner()
-	if banner == "" {
-		return path
-	}
-	header := path + " " + banner
-	if extra > 0 {
-		header += fmt.Sprintf(" [%d more warnings]", extra)
-	}
-	return header
 }
 
 // --- update helpers ---
@@ -433,6 +458,7 @@ func (m Model) updateDialog(msg tea.Msg) (tea.Model, tea.Cmd) {
 	default:
 		km, ok := msg.(tea.KeyMsg)
 		if ok && km.Type == tea.KeyEsc {
+			m.logEvent(fmtDialogClose(m.dialog.kind))
 			m.dialog = dialogState{}
 			m.focus = m.prevFocus
 		}
@@ -456,13 +482,13 @@ func (m Model) updateDialogNewChoice(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// show a not-yet-implemented error (full copy wiring deferred to PR-3).
 		_, err := workflowmodel.CopyFromDefault(m.workflowDir)
 		if err != nil {
-			m.dialog = dialogState{kind: DialogCopyBrokenRef}
+			m = openDialog(m, dialogState{kind: DialogCopyBrokenRef})
 			return m, nil
 		}
-		m.dialog = dialogState{
+		m = openDialog(m, dialogState{
 			kind:    DialogError,
 			payload: "Copy from default not yet implemented — use Empty or open an existing workflow",
-		}
+		})
 	}
 	return m, nil
 }
@@ -634,6 +660,7 @@ func (m Model) updateDialogQuitConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case string(km.Runes) == "y", km.Type == tea.KeyEnter:
 		return m, tea.Quit
 	case string(km.Runes) == "n", km.Type == tea.KeyEsc:
+		m.logEvent(fmtDialogClose(m.dialog.kind))
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
 	}
@@ -656,7 +683,7 @@ func (m Model) updateDialogUnsavedChanges(msg tea.Msg) (tea.Model, tea.Cmd) {
 		hasFatals, items := m.runValidate()
 		if hasFatals {
 			m.findingsPanel = buildFindingsPanel(items, m.doc.Steps, m.findingsPanel)
-			m.dialog = dialogState{kind: DialogFindingsPanel}
+			m = openDialog(m, dialogState{kind: DialogFindingsPanel})
 		} else {
 			cmd := m.makeSaveCmd()
 			m.saveInProgress = true
@@ -746,7 +773,7 @@ func (m Model) updateDialogCrashTempNotice(msg tea.Msg) (tea.Model, tea.Cmd) {
 		path, _ := m.dialog.payload.(string)
 		if !safeToDelete(m.workflowDir, path) {
 			// Containment or type check failed; show error, do NOT delete.
-			m.dialog = dialogState{kind: DialogError, payload: "Cannot delete: path is outside workflow directory or is not a regular file."}
+			m = openDialog(m, dialogState{kind: DialogError, payload: "Cannot delete: path is outside workflow directory or is not a regular file."})
 			return m, nil
 		}
 		_ = os.Remove(path)
@@ -776,7 +803,8 @@ func (m Model) updateDialogRecovery(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Open in external editor; on exit, attempt reload.
 		filePath := filepath.Join(m.workflowDir, "config.json")
 		workflowDir := m.workflowDir
-		m.dialog = dialogState{kind: DialogExternalEditorOpening}
+		projectDir := m.projectDir
+		m = openDialog(m, dialogState{kind: DialogExternalEditorOpening})
 		return m, m.editor.Run(filePath, func(err error) tea.Msg {
 			// After editor exits, attempt reload regardless of editor error.
 			result, loadErr := workflowio.Load(workflowDir)
@@ -789,11 +817,20 @@ func (m Model) updateDialogRecovery(msg tea.Msg) (tea.Model, tea.Cmd) {
 					rawBytes: result.RecoveryView,
 				}
 			}
+			// Populate all five banner-signal fields (D-15); errors treated as false.
+			isReadOnly, _ := workflowio.DetectReadOnly(workflowDir)
+			isExternal := workflowio.DetectExternalWorkflow(workflowDir, projectDir)
+			isSharedInstall, _ := workflowio.DetectSharedInstall(workflowDir)
 			return openFileResultMsg{
-				doc:         result.Doc,
-				diskDoc:     result.Doc,
-				companions:  result.Companions,
-				workflowDir: workflowDir,
+				doc:             result.Doc,
+				diskDoc:         result.Doc,
+				companions:      result.Companions,
+				workflowDir:     workflowDir,
+				isSymlink:       result.IsSymlink,
+				symlinkTarget:   result.SymlinkTarget,
+				isReadOnly:      isReadOnly,
+				isExternal:      isExternal,
+				isSharedInstall: isSharedInstall,
 			}
 		})
 	case "r":
@@ -827,10 +864,10 @@ func (m Model) updateDialogCopyBrokenRef(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "y":
 		// Copy anyway: full copy wiring deferred to PR-3; show explicit message
 		// so the user knows the action did not complete silently.
-		m.dialog = dialogState{
+		m = openDialog(m, dialogState{
 			kind:    DialogError,
 			payload: "Copy from default not yet implemented — use Empty or open an existing workflow",
-		}
+		})
 	case "c":
 		m.dialog = dialogState{}
 		m.focus = m.prevFocus
@@ -852,11 +889,11 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyCtrlN:
 		m.saveSnapshot = nil // F-98: reset snapshot on session transition
 		m.prevFocus = m.focus
-		m.dialog = dialogState{kind: DialogNewChoice}
+		m = openDialog(m, dialogState{kind: DialogNewChoice})
 	case tea.KeyCtrlO:
 		m.prevFocus = m.focus
 		defaultPath := filepath.Join(m.projectDir, ".pr9k", "workflow", "config.json")
-		m.dialog = dialogState{kind: DialogPathPicker, payload: newPathPicker(defaultPath)}
+		m = openDialog(m, dialogState{kind: DialogPathPicker, payload: newPathPicker(defaultPath)})
 	case tea.KeyCtrlS:
 		if m.validateInProgress || m.saveInProgress {
 			return m, nil
@@ -870,25 +907,26 @@ func (m Model) handleGlobalKey(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fi, err := m.saveFS.Stat(configPath)
 			if err == nil && !m.saveSnapshot.ModTime.Equal(fi.ModTime()) {
 				m.prevFocus = m.focus
-				m.dialog = dialogState{kind: DialogFileConflict}
+				m = openDialog(m, dialogState{kind: DialogFileConflict})
 				return m, nil
 			}
 		}
 		m.forceSave = false // clear after use
 		m.validateInProgress = true
+		m.logEvent("validate_started")
 		return m, m.makeValidateCmd()
 	case tea.KeyCtrlQ:
 		if m.saveInProgress || m.validateInProgress {
 			m.prevFocus = m.focus
-			m.dialog = dialogState{kind: DialogSaveInProgress}
+			m = openDialog(m, dialogState{kind: DialogSaveInProgress})
 			m.pendingQuit = true
 			return m, nil
 		}
 		m.prevFocus = m.focus
 		if m.dirty {
-			m.dialog = dialogState{kind: DialogUnsavedChanges}
+			m = openDialog(m, dialogState{kind: DialogUnsavedChanges})
 		} else {
-			m.dialog = dialogState{kind: DialogQuitConfirm}
+			m = openDialog(m, dialogState{kind: DialogQuitConfirm})
 		}
 	}
 	return m, nil
@@ -927,15 +965,20 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	// Alt+Up/Down moves the step (checked before regular Up/Down).
 	if km.Alt {
+		var cmd tea.Cmd
 		switch km.Type {
 		case tea.KeyUp:
-			m = doMoveStepUp(m)
-			m.dirty = true
+			m, cmd = doMoveStepUp(m)
+			if cmd == nil {
+				m.dirty = true
+			}
 		case tea.KeyDown:
-			m = doMoveStepDown(m)
-			m.dirty = true
+			m, cmd = doMoveStepDown(m)
+			if cmd == nil {
+				m.dirty = true
+			}
 		}
-		return m, nil
+		return m, cmd
 	}
 	switch km.Type {
 	case tea.KeyDown:
@@ -952,13 +995,14 @@ func (m Model) handleOutlineKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.prevFocus = m.focus
 			m.focus = focusDetail
 			m.detail.cursor = 0
+			m.logEvent(fmtFocusChanged(focusDetail))
 		}
 	case tea.KeyDelete:
 		stepIdx := cursorStepIdx(rows, m.outline.cursor)
 		if stepIdx >= 0 {
 			name := m.doc.Steps[stepIdx].Name
 			m.prevFocus = m.focus
-			m.dialog = dialogState{kind: DialogRemoveConfirm, payload: name}
+			m = openDialog(m, dialogState{kind: DialogRemoveConfirm, payload: name})
 		}
 	case tea.KeyEnter:
 		// Enter on an add row creates a new empty item in that section.
@@ -1061,11 +1105,12 @@ func findAddedStepCursor(m Model) int {
 }
 
 func (m Model) handleReorderKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch km.Type {
 	case tea.KeyUp:
-		m = doMoveStepUp(m)
+		m, cmd = doMoveStepUp(m)
 	case tea.KeyDown:
-		m = doMoveStepDown(m)
+		m, cmd = doMoveStepDown(m)
 	case tea.KeyEnter:
 		m.reorderMode = false
 		m.dirty = true
@@ -1076,16 +1121,32 @@ func (m Model) handleReorderKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.outline.cursor = m.reorderOrigin
 		m.reorderMode = false
 	}
-	return m, nil
+	return m, cmd
+}
+
+// boundaryDeclineCmd returns a tea.Cmd that fires clearBoundaryFlashMsg after
+// 150ms. seq must equal m.boundaryFlash at the time of the decline so stale
+// ticks from earlier declines are ignored (D-12).
+func boundaryDeclineCmd(seq uint64) tea.Cmd {
+	return tea.Tick(150*time.Millisecond, func(_ time.Time) tea.Msg {
+		return clearBoundaryFlashMsg{seq: seq}
+	})
 }
 
 // doMoveStepUp swaps the step at cursor with the previous step in doc.Steps.
-// Returns a new Model to preserve value semantics.
-func doMoveStepUp(m Model) Model {
+// Returns (Model, nil) on success or (Model, clearBoundaryFlashMsg cmd) when the
+// swap would cross a phase boundary (D-12).
+func doMoveStepUp(m Model) (Model, tea.Cmd) {
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	i := cursorStepIdx(rows, m.outline.cursor)
 	if i <= 0 {
-		return m
+		return m, nil
+	}
+	// Phase-boundary guard (D-12): decline the swap if phases differ.
+	if m.doc.Steps[i].Phase != m.doc.Steps[i-1].Phase {
+		m.boundaryFlash++
+		m.logEvent("phase_boundary_decline")
+		return m, boundaryDeclineCmd(m.boundaryFlash)
 	}
 	steps := make([]workflowmodel.Step, len(m.doc.Steps))
 	copy(steps, m.doc.Steps)
@@ -1093,22 +1154,30 @@ func doMoveStepUp(m Model) Model {
 	m.doc.Steps = steps
 	// Move cursor to the swapped step's new position.
 	m.outline.cursor = findStepCursorByIdx(m, i-1)
-	return m
+	return m, nil
 }
 
 // doMoveStepDown swaps the step at cursor with the next step in doc.Steps.
-func doMoveStepDown(m Model) Model {
+// Returns (Model, nil) on success or (Model, clearBoundaryFlashMsg cmd) when the
+// swap would cross a phase boundary (D-12).
+func doMoveStepDown(m Model) (Model, tea.Cmd) {
 	rows := buildOutlineRows(m.doc, m.outline.collapsed)
 	i := cursorStepIdx(rows, m.outline.cursor)
 	if i < 0 || i >= len(m.doc.Steps)-1 {
-		return m
+		return m, nil
+	}
+	// Phase-boundary guard (D-12): decline the swap if phases differ.
+	if m.doc.Steps[i].Phase != m.doc.Steps[i+1].Phase {
+		m.boundaryFlash++
+		m.logEvent("phase_boundary_decline")
+		return m, boundaryDeclineCmd(m.boundaryFlash)
 	}
 	steps := make([]workflowmodel.Step, len(m.doc.Steps))
 	copy(steps, m.doc.Steps)
 	steps[i], steps[i+1] = steps[i+1], steps[i]
 	m.doc.Steps = steps
 	m.outline.cursor = findStepCursorByIdx(m, i+1)
-	return m
+	return m, nil
 }
 
 // findStepCursorByIdx returns the flat-row index for doc.Steps[stepIdx].
@@ -1140,9 +1209,31 @@ func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch km.Type {
 	case tea.KeyTab:
 		m.prevFocus = m.focus
+		if m.detail.revealedField >= 0 {
+			m.logEvent("secret_remasked")
+		}
 		m.focus = focusOutline
 		m.detail.revealedField = -1 // re-mask on focus-leave (D-47)
 		m.detail.modelSuggFocus = false
+		m.logEvent(fmtFocusChanged(focusOutline))
+
+	case tea.KeyCtrlE:
+		// Ctrl+E on a multiline field opens the companion file in the external
+		// editor so the user can edit multi-line content (D-16).
+		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
+			fields := buildDetailFields(m.doc.Steps[stepIdx])
+			if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindMultiLine {
+				step := m.doc.Steps[stepIdx]
+				filePath := multiLineFilePath(m.workflowDir, step, fields[m.detail.cursor])
+				if filePath != "" {
+					m = openDialog(m, dialogState{kind: DialogExternalEditorOpening})
+					reloadCmd := m.makeLoadCmd()
+					return m, m.editor.Run(filePath, func(_ error) tea.Msg {
+						return reloadCmd()
+					})
+				}
+			}
+		}
 
 	case tea.KeyDown:
 		if stepIdx >= 0 && stepIdx < len(m.doc.Steps) {
@@ -1197,8 +1288,10 @@ func (m Model) handleDetailKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.detail.cursor < len(fields) && fields[m.detail.cursor].kind == fieldKindSecretMask {
 				if m.detail.revealedField == m.detail.cursor {
 					m.detail.revealedField = -1 // toggle: re-mask
+					m.logEvent("secret_remasked")
 				} else {
 					m.detail.revealedField = m.detail.cursor
+					m.logEvent("secret_revealed")
 				}
 			}
 		}
@@ -1485,12 +1578,16 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	m.width = msg.Width
 	m.height = msg.Height
+	m.logEvent(fmtResize(msg.Width, msg.Height))
+	if msg.Width < uichrome.MinTerminalWidth || msg.Height < uichrome.MinTerminalHeight {
+		m.logEvent("terminal_too_small")
+	}
 	ow := outlineWidth(m.width)
 	dw := m.width - ow
 	if dw < 1 {
 		dw = 1
 	}
-	panelH := m.height - 2 // minus menu row and footer row
+	panelH := m.height - ChromeRows // D-20: subtract full chrome budget
 	if panelH < 1 {
 		panelH = 1
 	}
@@ -1509,12 +1606,21 @@ func (m Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 // Step 3–5 of the three-stage save state machine (D-13).
 func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.Cmd) {
 	m.validateInProgress = false
+	ok := true
+	for _, item := range msg.items {
+		if item.isFatal {
+			ok = false
+			break
+		}
+	}
+	m.lastValidateOK = &ok
+	m.logEvent(fmtValidateComplete(ok))
 	for _, item := range msg.items {
 		if item.isFatal {
 			// Fatal findings block save.
 			m.prevFocus = m.focus
 			m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
-			m.dialog = dialogState{kind: DialogFindingsPanel}
+			m = openDialog(m, dialogState{kind: DialogFindingsPanel})
 			return m, nil
 		}
 	}
@@ -1531,7 +1637,7 @@ func (m Model) handleValidateComplete(msg validateCompleteMsg) (tea.Model, tea.C
 			// Warn/info-only findings: show acknowledgment dialog.
 			m.prevFocus = m.focus
 			m.findingsPanel = buildFindingsPanel(msg.items, m.doc.Steps, m.findingsPanel)
-			m.dialog = dialogState{kind: DialogAcknowledgeFindings}
+			m = openDialog(m, dialogState{kind: DialogAcknowledgeFindings})
 			return m, nil
 		}
 		// All acknowledged: rebuild panel to preserve ackSet, then proceed.
@@ -1551,7 +1657,7 @@ func (m Model) handleSaveResult(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
 	m.saveInProgress = false
 	if msg.result.Kind != workflowio.SaveErrorNone {
 		m.prevFocus = m.focus
-		m.dialog = dialogState{kind: DialogError, payload: saveErrorMsg(msg.result)}
+		m = openDialog(m, dialogState{kind: DialogError, payload: saveErrorMsg(msg.result)})
 		m.pendingQuit = false
 		return m, nil
 	}
@@ -1561,14 +1667,21 @@ func (m Model) handleSaveResult(msg saveCompleteMsg) (tea.Model, tea.Cmd) {
 	if msg.result.Snapshot != nil {
 		m.diskDoc = m.doc
 	}
-	m.saveBanner = "Saved at " + time.Now().Format("15:04:05")
+	m.saveBanner = "Saved at " + m.nowFn().Format("15:04:05")
+	m.logEvent("save_banner_set")
+	m.bannerGen++
+	clearGen := m.bannerGen
+	bannerCmd := tea.Tick(3*time.Second, func(time.Time) tea.Msg {
+		return clearSaveBannerMsg{gen: clearGen}
+	})
 	if m.pendingQuit {
 		m.pendingQuit = false
 		// D-PR2-10: re-route to QuitConfirm so user explicitly confirms exit.
 		// dirty=false now, so handleGlobalKey will open DialogQuitConfirm.
-		return m.handleGlobalKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+		nextM, nextCmd := m.handleGlobalKey(tea.KeyMsg{Type: tea.KeyCtrlQ})
+		return nextM, tea.Batch(bannerCmd, nextCmd)
 	}
-	return m, nil
+	return m, bannerCmd
 }
 
 func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) {
@@ -1576,10 +1689,10 @@ func (m Model) handleOpenFileResult(msg openFileResultMsg) (tea.Model, tea.Cmd) 
 		m.prevFocus = m.focus
 		if len(msg.rawBytes) > 0 {
 			// Parse error: show recovery dialog with raw bytes.
-			m.dialog = dialogState{kind: DialogRecovery, payload: string(msg.rawBytes)}
+			m = openDialog(m, dialogState{kind: DialogRecovery, payload: string(msg.rawBytes)})
 		} else {
 			// Other error (permission, not found, etc.): show error dialog.
-			m.dialog = dialogState{kind: DialogError, payload: msg.err.Error()}
+			m = openDialog(m, dialogState{kind: DialogError, payload: msg.err.Error()})
 		}
 		m.loaded = false
 		return m, nil
@@ -1693,8 +1806,10 @@ func (m Model) makeSaveCmd() tea.Cmd {
 // makeLoadCmd returns a tea.Cmd that loads the workflow from the current
 // workflowDir. On parse error, rawBytes is set (routes to DialogRecovery);
 // on other errors, only err is set (routes to DialogError).
+// All five banner-signal fields are populated from workflowio detect functions (D-15).
 func (m Model) makeLoadCmd() tea.Cmd {
 	workflowDir := m.workflowDir
+	projectDir := m.projectDir
 	return func() tea.Msg {
 		result, err := workflowio.Load(workflowDir)
 		if err != nil {
@@ -1706,13 +1821,41 @@ func (m Model) makeLoadCmd() tea.Cmd {
 				rawBytes: result.RecoveryView,
 			}
 		}
+		// Populate all five banner-signal fields (D-15); errors are treated as false.
+		isReadOnly, _ := workflowio.DetectReadOnly(workflowDir)
+		isExternal := workflowio.DetectExternalWorkflow(workflowDir, projectDir)
+		isSharedInstall, _ := workflowio.DetectSharedInstall(workflowDir)
 		return openFileResultMsg{
-			doc:         result.Doc,
-			diskDoc:     result.Doc,
-			companions:  result.Companions,
-			workflowDir: workflowDir,
+			doc:             result.Doc,
+			diskDoc:         result.Doc,
+			companions:      result.Companions,
+			workflowDir:     workflowDir,
+			isSymlink:       result.IsSymlink,
+			symlinkTarget:   result.SymlinkTarget,
+			isReadOnly:      isReadOnly,
+			isExternal:      isExternal,
+			isSharedInstall: isSharedInstall,
 		}
 	}
+}
+
+// multiLineFilePath returns the companion file path for a fieldKindMultiLine field,
+// or "" when no file path can be derived (e.g. the field value is empty). The
+// returned path is absolute under workflowDir.
+func multiLineFilePath(workflowDir string, step workflowmodel.Step, f detailField) string {
+	switch f.label {
+	case "PromptFile":
+		if step.PromptFile == "" {
+			return ""
+		}
+		return filepath.Join(workflowDir, step.PromptFile)
+	case "Command":
+		if len(step.Command) > 0 && step.Command[0] != "" {
+			return filepath.Join(workflowDir, step.Command[0])
+		}
+		return ""
+	}
+	return ""
 }
 
 // safeToDelete checks whether path is safe to delete:

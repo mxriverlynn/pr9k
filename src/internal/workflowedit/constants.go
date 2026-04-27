@@ -27,6 +27,19 @@ const (
 	// HintNoName is displayed in the outline when a step has no name.
 	HintNoName = "(unnamed)"
 
-	// HintEmpty is the centred hint shown when no workflow is loaded (D-30).
-	HintEmpty = "No workflow open.  Ctrl+N  new  ·  Ctrl+O  open"
+	// ChromeRows is the number of terminal rows consumed by the fixed chrome
+	// (menu bar + session header + save banner row + footer row + padding).
+	// The panel height is m.height - ChromeRows (D-20).
+	ChromeRows = 8
+
+	// Step-kind glyphs used in the outline pane (D21 visual spec).
+	GlyphKindClaude = "[≡]"
+	GlyphKindShell  = "[$]"
+	GlyphKindUnset  = "[?]"
+
+	// Scroll-indicator glyphs for the rightmost column of the outline pane
+	// (D25 visual spec).
+	GlyphScrollUp    = "▲"
+	GlyphScrollDown  = "▼"
+	GlyphScrollThumb = "█"
 )
