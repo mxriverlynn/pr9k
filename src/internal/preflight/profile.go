@@ -60,7 +60,7 @@ func CheckCredentials(profileDir string) (warning string, _ error) {
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Sprintf(
-				"Warning: %s does not exist. The sandboxed claude has no credentials to authenticate with. Run 'pr9k sandbox login' to authenticate, or set ANTHROPIC_API_KEY in the host environment.",
+				"Warning: %s does not exist. The sandboxed claude has no credentials to authenticate with. Run 'pr9k sandbox --interactive' to authenticate, or set ANTHROPIC_API_KEY in the host environment.",
 				path,
 			), nil
 		}
@@ -68,7 +68,7 @@ func CheckCredentials(profileDir string) (warning string, _ error) {
 	}
 	if fi.Size() == 0 {
 		return fmt.Sprintf(
-			"Warning: %s is empty. Claude will likely fail authentication. Re-authenticate with 'claude login' inside the sandbox.",
+			"Warning: %s is empty. Claude will likely fail authentication. Re-authenticate by running 'pr9k sandbox --interactive' and using '/login' inside the sandbox.",
 			path,
 		), nil
 	}

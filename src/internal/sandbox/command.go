@@ -92,12 +92,13 @@ func BuildRunArgs(
 	return args
 }
 
-// BuildLoginArgs constructs the `docker run -it ...` argv for an interactive
-// `claude` REPL session used by `pr9k sandbox login`. The user runs
-// `/login` inside the REPL to write `.credentials.json` to the bind-mounted
-// profile directory. No project directory is mounted — login is an auth-only
-// operation and exposing host files is accidental attack surface.
-func BuildLoginArgs(profileDir string, uid, gid int) []string {
+// BuildInteractiveArgs constructs the `docker run -it ...` argv for an
+// interactive `claude` REPL session used by `pr9k sandbox --interactive`.
+// The user runs `/login` inside the REPL to write `.credentials.json` to
+// the bind-mounted profile directory. No project directory is mounted —
+// authentication is an auth-only operation and exposing host files is
+// accidental attack surface.
+func BuildInteractiveArgs(profileDir string, uid, gid int) []string {
 	args := []string{
 		"docker", "run",
 		"-it",

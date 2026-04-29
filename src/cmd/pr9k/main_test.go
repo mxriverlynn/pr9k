@@ -139,23 +139,25 @@ func TestStartupPreflight_SkippedForSandboxCreate(t *testing.T) {
 	}
 }
 
-// TestStartupPreflight_SkippedForSandboxLogin verifies the same non-dispatch
-// behavior for the `sandbox login` subcommand.
-func TestStartupPreflight_SkippedForSandboxLogin(t *testing.T) {
+// TestStartupPreflight_SkippedForSandboxInteractive verifies the same
+// non-dispatch behavior for `sandbox --interactive` (the replacement for the
+// removed `sandbox login` subcommand).
+func TestStartupPreflight_SkippedForSandboxInteractive(t *testing.T) {
 	cfg := &cli.Config{}
 	rootCmd := cli.NewCommand(cfg)
-	parent := &cobra.Command{Use: "sandbox"}
-	parent.AddCommand(&cobra.Command{
-		Use:  "login",
+	parent := &cobra.Command{
+		Use:  "sandbox",
 		RunE: func(_ *cobra.Command, _ []string) error { return nil },
-	})
+	}
+	var interactive bool
+	parent.Flags().BoolVarP(&interactive, "interactive", "i", false, "")
 	rootCmd.AddCommand(parent)
-	rootCmd.SetArgs([]string{"sandbox", "login"})
+	rootCmd.SetArgs([]string{"sandbox", "--interactive"})
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.WorkflowDir != "" {
-		t.Errorf("root RunE fired for `sandbox login`; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
+		t.Errorf("root RunE fired for `sandbox --interactive`; WorkflowDir = %q, startup() would have been reached", cfg.WorkflowDir)
 	}
 }
 

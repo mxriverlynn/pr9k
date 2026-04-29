@@ -86,7 +86,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
 - [Architecture Overview](docs/architecture.md) — System-level architecture with block diagrams, data flow, and package dependencies
 - **How-To Guides** (in [`docs/how-to/`](docs/how-to/)) — problem-focused guides for using pr9k on your own projects:
   - [Getting Started](docs/how-to/getting-started.md) — Install, first run against your own repo, quick tour of the TUI
-  - [Setting Up Docker Sandbox](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `sandbox create`, authenticate via `sandbox login`, and configure `CLAUDE_CONFIG_DIR`
+  - [Setting Up Docker Sandbox](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `sandbox create`, authenticate via `sandbox --interactive`, and configure `CLAUDE_CONFIG_DIR`
   - [Reading the TUI](docs/how-to/reading-the-tui.md) — The four regions of the screen: header, checkbox grid, log panel, footer
   - [Building Custom Workflows](docs/how-to/building-custom-workflows.md) — Creating custom step sequences and prompt files
   - [Variable Output & Injection](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved and how steps pass data via files
@@ -107,7 +107,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
   - [Signal Handling & Shutdown](docs/features/signal-handling.md) — Clean shutdown on SIGINT/SIGTERM, unified with quit-confirm
   - [Status Line](docs/features/status-line.md) — Custom status-line script contract, refresh triggers, and help modal
   - [Docker Sandbox](docs/features/docker-sandbox.md) — Mount layout, env allowlist, UID/GID mapping, cidfile lifecycle
-  - [Sandbox Subcommand](docs/features/sandbox-subcommand.md) — `sandbox create` / `sandbox login` UX
+  - [Sandbox Subcommand](docs/features/sandbox-subcommand.md) — `sandbox create` / `sandbox --interactive` UX
 - **Code Package Documentation** (in [`docs/code-packages/`](docs/code-packages/)) — per-Go-package API references for contributors:
   - [`internal/steps`](docs/code-packages/steps.md) — JSON step configs and prompt construction
   - [`internal/logger`](docs/code-packages/logger.md) — Timestamped, context-prefixed log file output

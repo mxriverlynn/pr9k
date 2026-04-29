@@ -60,7 +60,7 @@ Key files:
   │  │ [log panel — bubbles/viewport]            │ ││  ← scrollable log viewport (white text)
   │  │├───────────────────────────────────────── ┤ ││  ← HRule (T-junctions)
   │  │ ↑/k up  ↓/j down  n next  q quit          │ ││  ← shortcut footer (ShortcutLine)
-  │  │                     pr9k v0.7.3      │ ││  ← version label (right-aligned, white)
+  │  │                     pr9k v0.7.4      │ ││  ← version label (right-aligned, white)
   │  │╰─────────────────────────────────────────╯  ││  ← bottom border
   │  └──────────────────────────────────────────────┘│
   └──────────────────────────────────────────────────┘

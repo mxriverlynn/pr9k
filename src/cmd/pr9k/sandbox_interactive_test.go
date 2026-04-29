@@ -37,10 +37,11 @@ func (f *fakeInteractive) run(args []string, _ io.Reader, stdout, stderr io.Writ
 	return resp.exitCode, nil
 }
 
-// newLoginTestDeps builds a sandboxLoginDeps with captured stdout/stderr
-// writers and the provided prober/fakeRun/fakeInteractive and profileDir.
-func newLoginTestDeps(prober *fakeProber, fr *fakeRun, fi *fakeInteractive, profileDir string, outBuf, errBuf *bytes.Buffer) *sandboxLoginDeps {
-	return &sandboxLoginDeps{
+// newInteractiveTestDeps builds a sandboxInteractiveDeps with captured
+// stdout/stderr writers and the provided prober/fakeRun/fakeInteractive and
+// profileDir.
+func newInteractiveTestDeps(prober *fakeProber, fr *fakeRun, fi *fakeInteractive, profileDir string, outBuf, errBuf *bytes.Buffer) *sandboxInteractiveDeps {
+	return &sandboxInteractiveDeps{
 		prober:            prober,
 		dockerInteractive: fi.run,
 		dockerRun:         fr.run,
@@ -53,23 +54,15 @@ func newLoginTestDeps(prober *fakeProber, fr *fakeRun, fi *fakeInteractive, prof
 	}
 }
 
-// runLoginCmd builds a command from deps and executes it. Returns the
-// error from cobra's Execute (which equals RunE's return value due to SilenceErrors).
-func runLoginCmd(deps *sandboxLoginDeps) error {
-	cmd := newSandboxLoginCmdWith(deps)
-	cmd.SetArgs([]string{})
-	return cmd.Execute()
-}
-
-func TestSandboxLogin_DockerBinaryMissing(t *testing.T) {
+func TestSandboxInteractive_DockerBinaryMissing(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{binaryAvailable: false}
 	fr := &fakeRun{}
 	fi := &fakeInteractive{}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit, got %v", err)
@@ -82,7 +75,7 @@ func TestSandboxLogin_DockerBinaryMissing(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_DaemonUnreachable(t *testing.T) {
+func TestSandboxInteractive_DaemonUnreachable(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -91,9 +84,9 @@ func TestSandboxLogin_DaemonUnreachable(t *testing.T) {
 	}
 	fr := &fakeRun{}
 	fi := &fakeInteractive{}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit, got %v", err)
@@ -103,7 +96,7 @@ func TestSandboxLogin_DaemonUnreachable(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_ImagePresentErr(t *testing.T) {
+func TestSandboxInteractive_ImagePresentErr(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -112,9 +105,9 @@ func TestSandboxLogin_ImagePresentErr(t *testing.T) {
 	}
 	fr := &fakeRun{}
 	fi := &fakeInteractive{}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit, got %v", err)
@@ -127,7 +120,7 @@ func TestSandboxLogin_ImagePresentErr(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_ImagePresent_RunsInteractive(t *testing.T) {
+func TestSandboxInteractive_ImagePresent_RunsInteractive(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -136,9 +129,9 @@ func TestSandboxLogin_ImagePresent_RunsInteractive(t *testing.T) {
 	}
 	fr := &fakeRun{}
 	fi := &fakeInteractive{responses: []fakeRunResponse{{exitCode: 0}}}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
@@ -154,7 +147,7 @@ func TestSandboxLogin_ImagePresent_RunsInteractive(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_ImageAbsent_PullThenInteractive(t *testing.T) {
+func TestSandboxInteractive_ImageAbsent_PullThenInteractive(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -163,9 +156,9 @@ func TestSandboxLogin_ImageAbsent_PullThenInteractive(t *testing.T) {
 	}
 	fr := &fakeRun{responses: []fakeRunResponse{{exitCode: 0}}}
 	fi := &fakeInteractive{responses: []fakeRunResponse{{exitCode: 0}}}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if err != nil {
 		t.Errorf("want nil, got %v", err)
@@ -184,7 +177,7 @@ func TestSandboxLogin_ImageAbsent_PullThenInteractive(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_PullFails(t *testing.T) {
+func TestSandboxInteractive_PullFails(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -195,9 +188,9 @@ func TestSandboxLogin_PullFails(t *testing.T) {
 		{exitCode: 1, stderr: "Error: manifest unknown"},
 	}}
 	fi := &fakeInteractive{}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit, got %v", err)
@@ -213,7 +206,7 @@ func TestSandboxLogin_PullFails(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_ProfileDirAutoCreated(t *testing.T) {
+func TestSandboxInteractive_ProfileDirAutoCreated(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -225,9 +218,9 @@ func TestSandboxLogin_ProfileDirAutoCreated(t *testing.T) {
 
 	// profileDir is under a temp dir but does not exist yet.
 	profileDir := filepath.Join(t.TempDir(), "nested", "claude")
-	deps := newLoginTestDeps(prober, fr, fi, profileDir, &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, profileDir, &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 	if err != nil {
 		t.Fatalf("want nil, got %v (stderr=%q)", err, errBuf.String())
 	}
@@ -241,7 +234,7 @@ func TestSandboxLogin_ProfileDirAutoCreated(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_ProfileDirIsFile(t *testing.T) {
+func TestSandboxInteractive_ProfileDirIsFile(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -258,9 +251,9 @@ func TestSandboxLogin_ProfileDirIsFile(t *testing.T) {
 
 	fr := &fakeRun{}
 	fi := &fakeInteractive{}
-	deps := newLoginTestDeps(prober, fr, fi, profilePath, &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, profilePath, &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit, got %v", err)
 	}
@@ -272,7 +265,7 @@ func TestSandboxLogin_ProfileDirIsFile(t *testing.T) {
 	}
 }
 
-func TestSandboxLogin_NonZeroInteractiveExit(t *testing.T) {
+func TestSandboxInteractive_NonZeroInteractiveExit(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -281,15 +274,15 @@ func TestSandboxLogin_NonZeroInteractiveExit(t *testing.T) {
 	}
 	fr := &fakeRun{}
 	fi := &fakeInteractive{responses: []fakeRunResponse{{exitCode: 1}}}
-	deps := newLoginTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, t.TempDir(), &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 	if !errors.Is(err, errSilentExit) {
 		t.Errorf("want errSilentExit on non-zero interactive exit, got %v", err)
 	}
 }
 
-func TestSandboxLogin_ArgsIncludeBindMountAndInteractive(t *testing.T) {
+func TestSandboxInteractive_ArgsIncludeBindMountAndInteractive(t *testing.T) {
 	t.Parallel()
 	var outBuf, errBuf bytes.Buffer
 	prober := &fakeProber{
@@ -299,9 +292,9 @@ func TestSandboxLogin_ArgsIncludeBindMountAndInteractive(t *testing.T) {
 	fr := &fakeRun{}
 	fi := &fakeInteractive{responses: []fakeRunResponse{{exitCode: 0}}}
 	profileDir := t.TempDir()
-	deps := newLoginTestDeps(prober, fr, fi, profileDir, &outBuf, &errBuf)
+	deps := newInteractiveTestDeps(prober, fr, fi, profileDir, &outBuf, &errBuf)
 
-	err := runLoginCmd(deps)
+	err := runSandboxInteractive(deps)
 	if err != nil {
 		t.Fatalf("want nil, got %v", err)
 	}

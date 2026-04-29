@@ -105,15 +105,15 @@ pr9k bind-mounts your Claude profile directory (`$CLAUDE_CONFIG_DIR` if set, oth
 
 The sandbox profile lives on disk at `<profileDir>/.credentials.json`. On macOS the host `claude` CLI stores its OAuth token in the Keychain rather than on disk, so you cannot simply `claude login` on the host and expect the sandbox to pick it up — you need to authenticate **inside** the sandbox so the OAuth flow writes `.credentials.json` to the bind-mounted profile directory.
 
-### Preferred: `pr9k sandbox login`
+### Preferred: `pr9k sandbox --interactive`
 
 ```bash
-/path/to/pr9k/bin/pr9k sandbox login
+/path/to/pr9k/bin/pr9k sandbox --interactive
 ```
 
 This launches a one-shot interactive container with `claude` running. Inside the REPL, type `/login` and complete the OAuth flow in your browser. When you exit, `.credentials.json` exists in your profile directory and every subsequent pr9k run picks it up.
 
-If the sandbox image hasn't been pulled yet, `sandbox login` auto-pulls it and prints a note:
+If the sandbox image hasn't been pulled yet, `sandbox --interactive` auto-pulls it and prints a note:
 
 ```
 Sandbox image not found; pulling it first — run 'pr9k sandbox create' next time to separate this step.
@@ -123,7 +123,7 @@ The profile directory is created automatically if it doesn't exist (mode `0700`)
 
 ### Debugging fallback: manual `docker run`
 
-If something about `sandbox login` isn't working and you want to isolate the problem, you can launch the same container by hand:
+If something about `sandbox --interactive` isn't working and you want to isolate the problem, you can launch the same container by hand:
 
 ```bash
 docker run -it --rm --init \
@@ -135,7 +135,7 @@ docker run -it --rm --init \
   claude
 ```
 
-Type `/login` inside the REPL; type `/exit` when done. This is the same argv `sandbox login` builds via `sandbox.BuildLoginArgs` — `-e TERM` is forwarded bare so the container pty inherits the host's `TERM` value and the REPL can read bracketed-paste sequences from modern terminals (without it, pasting the OAuth code into the REPL may silently fail).
+Type `/login` inside the REPL; type `/exit` when done. This is the same argv `sandbox --interactive` builds via `sandbox.BuildInteractiveArgs` — `-e TERM` is forwarded bare so the container pty inherits the host's `TERM` value and the REPL can read bracketed-paste sequences from modern terminals (without it, pasting the OAuth code into the REPL may silently fail).
 
 ### Verifying the profile is authenticated
 
@@ -161,17 +161,17 @@ Warning: /home/you/.claude/.credentials.json is empty. Claude will likely fail a
 Re-authenticate with 'claude login' inside the sandbox.
 ```
 
-An empty credentials file is typically caused by a SIGKILL mid-OAuth-refresh — the file was truncated before the new token could be written. Re-run `pr9k sandbox login` to refresh it.
+An empty credentials file is typically caused by a SIGKILL mid-OAuth-refresh — the file was truncated before the new token could be written. Re-run `pr9k sandbox --interactive` to refresh it.
 
 **Missing file:**
 
 ```
 Warning: /home/you/.claude/.credentials.json does not exist. The sandboxed claude has no credentials
-to authenticate with. Run 'pr9k sandbox login' to authenticate, or set ANTHROPIC_API_KEY in the
+to authenticate with. Run 'pr9k sandbox --interactive' to authenticate, or set ANTHROPIC_API_KEY in the
 host environment.
 ```
 
-A missing credentials file usually means the profile directory is new and you haven't authenticated yet, or `CLAUDE_CONFIG_DIR` points at a different profile directory than the one that was authenticated. Run `pr9k sandbox login` to populate it.
+A missing credentials file usually means the profile directory is new and you haven't authenticated yet, or `CLAUDE_CONFIG_DIR` points at a different profile directory than the one that was authenticated. Run `pr9k sandbox --interactive` to populate it.
 
 **Alternative:** setting `ANTHROPIC_API_KEY` in the host shell satisfies the sandbox without a credentials file — `BuiltinEnvAllowlist` passes that variable into every claude container, so API-key auth works with no on-disk credentials. When `ANTHROPIC_API_KEY` is set, both warnings above are suppressed.
 
@@ -222,7 +222,7 @@ The image was not pulled yet, or was deleted from the local image store. Run:
 
 ### "Claude profile directory not found: /home/you/.claude"
 
-The profile directory does not exist yet. Run `pr9k sandbox login` to create it and authenticate, or set `CLAUDE_CONFIG_DIR` to an existing profile.
+The profile directory does not exist yet. Run `pr9k sandbox --interactive` to create it and authenticate, or set `CLAUDE_CONFIG_DIR` to an existing profile.
 
 ### "Docker is installed but the daemon isn't running"
 
@@ -237,7 +237,7 @@ systemctl start docker
 The bind-mounted credentials may be invalid. Re-authenticate:
 
 ```bash
-/path/to/pr9k/bin/pr9k sandbox login
+/path/to/pr9k/bin/pr9k sandbox --interactive
 ```
 
 Then retry the failed step (press `r` in pr9k's error mode).
@@ -254,7 +254,7 @@ This happens when the `-u` flag is not taking effect (e.g., an older Docker imag
 
 - [Getting Started](getting-started.md) — First-run walkthrough and TUI orientation
 - [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — Architecture, mount layout, env allowlist, and residual risks
-- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create` and `sandbox login` subcommands
+- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create` and `sandbox --interactive` subcommands
 - [Preflight Feature Doc](../code-packages/preflight.md) — Startup checks that enforce sandbox readiness
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision rationale for making Docker a runtime requirement
 - [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars (API tokens, proxy settings) into the sandbox

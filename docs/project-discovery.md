@@ -28,7 +28,7 @@
 - Package manager: Go modules
 - Dependency manifest: `src/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/src`
-- Current version: `0.7.3` (single source of truth: `src/internal/version/version.go`)
+- Current version: `0.7.4` (single source of truth: `src/internal/version/version.go`)
 - External dependencies: `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/spf13/cobra` v1.10.2, `golang.org/x/sys` v0.40.0
 
 ### Frameworks and Tooling
@@ -50,7 +50,7 @@
 
 - Build: `make build` or `cd src && go build -o ../bin/pr9k ./cmd/pr9k`
 - Run: `./bin/pr9k [-n <iterations>] [--workflow-dir <path>] [--project-dir <path>]` (omit `-n` for until-done mode)
-- Setup (Docker sandbox): `./bin/pr9k sandbox create [--force]` pulls the sandbox image and runs a smoke test; `./bin/pr9k sandbox login` launches an interactive `claude` REPL so the user can run `/login` and write `.credentials.json` to the profile directory
+- Setup (Docker sandbox): `./bin/pr9k sandbox create [--force]` pulls the sandbox image and runs a smoke test; `./bin/pr9k sandbox --interactive` launches an interactive `claude` REPL so the user can run `/login` and write `.credentials.json` to the profile directory
 - Test: `make test` or `cd src && go test -race ./...`
 - Lint: `make lint` (requires golangci-lint)
 - Format check: `make format`
@@ -75,7 +75,7 @@
 - [Config Validation](code-packages/validator.md) — D13 validator: ten categories, sandbox rules B and C, env passthrough validation
 - [Docker Sandbox](code-packages/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, cidfile lifecycle, and `NewTerminator`
 - [Preflight Checks](code-packages/preflight.md) — `Prober` interface, `CheckDocker`, profile dir validation, collect-all-errors `Run`
-- [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test) and `sandbox login` (interactive auth REPL)
+- [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test) and `sandbox --interactive` (interactive auth REPL)
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps

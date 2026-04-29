@@ -473,8 +473,8 @@ func TestBuildRunArgs_ContainerEnv_ValueWithEqualsPassesThrough(t *testing.T) {
 	assertContainsConsecutive(t, args, "-e", "FOO=bar=baz")
 }
 
-func TestBuildLoginArgs_Shape(t *testing.T) {
-	args := BuildLoginArgs(testProfileDir, testUID, testGID)
+func TestBuildInteractiveArgs_Shape(t *testing.T) {
+	args := BuildInteractiveArgs(testProfileDir, testUID, testGID)
 
 	wantFlags := []string{"-it", "--rm", "--init"}
 	for _, flag := range wantFlags {
@@ -522,15 +522,15 @@ func TestBuildLoginArgs_Shape(t *testing.T) {
 	}
 }
 
-// TestBuildLoginArgs_ForwardsTERMWhenSet asserts that BuildLoginArgs adds
-// `-e TERM` (name only, value inherited by docker) when the host has TERM set.
-// Without TERM forwarded, the container's pty defaults to a bare "xterm" and
-// the inner claude REPL can silently drop bracketed-paste sequences sent by
+// TestBuildInteractiveArgs_ForwardsTERMWhenSet asserts that BuildInteractiveArgs
+// adds `-e TERM` (name only, value inherited by docker) when the host has TERM
+// set. Without TERM forwarded, the container's pty defaults to a bare "xterm"
+// and the inner claude REPL can silently drop bracketed-paste sequences sent by
 // macOS Terminal.app, making Cmd+V appear to do nothing.
-func TestBuildLoginArgs_ForwardsTERMWhenSet(t *testing.T) {
+func TestBuildInteractiveArgs_ForwardsTERMWhenSet(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 
-	args := BuildLoginArgs(testProfileDir, testUID, testGID)
+	args := BuildInteractiveArgs(testProfileDir, testUID, testGID)
 
 	found := false
 	for i := 0; i < len(args)-1; i++ {

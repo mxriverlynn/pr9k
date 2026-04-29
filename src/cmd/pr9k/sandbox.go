@@ -3,10 +3,14 @@ package main
 import (
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 
 	"github.com/spf13/cobra"
+
+	"github.com/mxriverlynn/pr9k/src/internal/preflight"
+	"github.com/mxriverlynn/pr9k/src/internal/sandbox"
 )
 
 // errSilentExit signals that the subcommand printed its own error to stderr and
@@ -74,16 +78,38 @@ func stripANSI(s string) string {
 	return ansiEscapeRe.ReplaceAllString(s, "")
 }
 
-// newSandboxCmd returns the parent `sandbox` cobra command, with `create` and
-// `login` children attached. The parent has no RunE — running bare
-// `pr9k sandbox` prints help.
+// newSandboxCmd returns the parent `sandbox` cobra command. It accepts
+// `--interactive`/`-i` to launch an interactive sandbox that authenticates
+// the Claude profile (formerly `pr9k sandbox login`). Without that flag, it
+// prints help. The `create` subcommand is attached as a child.
 func newSandboxCmd() *cobra.Command {
+	var interactive bool
+
 	cmd := &cobra.Command{
 		Use:           "sandbox",
 		Short:         "Manage the Claude Code sandbox image and authentication",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !interactive {
+				return cmd.Help()
+			}
+			uid, gid := sandbox.HostUIDGID()
+			return runSandboxInteractive(&sandboxInteractiveDeps{
+				prober:            preflight.RealProber{},
+				dockerInteractive: realDockerInteractive,
+				dockerRun:         realDockerRun,
+				uid:               uid,
+				gid:               gid,
+				profileDir:        preflight.ResolveProfileDir(),
+				stdin:             os.Stdin,
+				stdout:            os.Stdout,
+				stderr:            os.Stderr,
+			})
+		},
 	}
-	cmd.AddCommand(newSandboxCreateCmd(), newSandboxLoginCmd())
+	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false,
+		"launch an interactive sandbox to authenticate the Claude profile")
+	cmd.AddCommand(newSandboxCreateCmd())
 	return cmd
 }

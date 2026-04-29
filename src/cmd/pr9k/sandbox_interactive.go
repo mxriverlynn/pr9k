@@ -6,15 +6,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/spf13/cobra"
-
 	"github.com/mxriverlynn/pr9k/src/internal/preflight"
 	"github.com/mxriverlynn/pr9k/src/internal/sandbox"
 )
 
-// sandboxLoginDeps holds injected dependencies so unit tests can drive every
-// branch without shelling out to a real docker daemon or a real TTY.
-type sandboxLoginDeps struct {
+// sandboxInteractiveDeps holds injected dependencies so unit tests can drive
+// every branch without shelling out to a real docker daemon or a real TTY.
+type sandboxInteractiveDeps struct {
 	prober            preflight.Prober
 	dockerInteractive dockerInteractiveFunc
 	dockerRun         dockerRunFunc
@@ -26,38 +24,11 @@ type sandboxLoginDeps struct {
 	stderr            io.Writer
 }
 
-// newSandboxLoginCmd returns the production `sandbox login` cobra command
-// wired with real docker dependencies and the resolved profile dir.
-func newSandboxLoginCmd() *cobra.Command {
-	uid, gid := sandbox.HostUIDGID()
-	return newSandboxLoginCmdWith(&sandboxLoginDeps{
-		prober:            preflight.RealProber{},
-		dockerInteractive: realDockerInteractive,
-		dockerRun:         realDockerRun,
-		uid:               uid,
-		gid:               gid,
-		profileDir:        preflight.ResolveProfileDir(),
-		stdin:             os.Stdin,
-		stdout:            os.Stdout,
-		stderr:            os.Stderr,
-	})
-}
-
-// newSandboxLoginCmdWith builds the cobra command using the provided deps.
-// Separated from newSandboxLoginCmd so tests can inject fakes.
-func newSandboxLoginCmdWith(deps *sandboxLoginDeps) *cobra.Command {
-	return &cobra.Command{
-		Use:           "login",
-		Short:         "Launch an interactive sandbox to authenticate the Claude profile",
-		SilenceErrors: true,
-		SilenceUsage:  true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSandboxLogin(deps)
-		},
-	}
-}
-
-func runSandboxLogin(deps *sandboxLoginDeps) error {
+// runSandboxInteractive runs the interactive sandbox flow that backs
+// `pr9k sandbox --interactive`: ensure Docker is reachable, pull the
+// sandbox image if missing, prepare the profile directory, and launch
+// an interactive `claude` REPL in the sandbox so the user can authenticate.
+func runSandboxInteractive(deps *sandboxInteractiveDeps) error {
 	// Step 1: Docker reachability check.
 	if !deps.prober.DockerBinaryAvailable() {
 		_, _ = fmt.Fprintln(deps.stderr, "Docker is not installed. Install Docker and try again.")
@@ -100,10 +71,10 @@ func runSandboxLogin(deps *sandboxLoginDeps) error {
 	// Step 4: Interactive run. Claude's REPL output drives the session;
 	// non-zero exit propagates as a silent exit (user has already seen any
 	// error output from inside the container).
-	args := sandbox.BuildLoginArgs(deps.profileDir, deps.uid, deps.gid)
+	args := sandbox.BuildInteractiveArgs(deps.profileDir, deps.uid, deps.gid)
 	exitCode, runErr := deps.dockerInteractive(args, deps.stdin, deps.stdout, deps.stderr)
 	if runErr != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "Sandbox login failed: %v\n", runErr)
+		_, _ = fmt.Fprintf(deps.stderr, "Sandbox interactive session failed: %v\n", runErr)
 		return errSilentExit
 	}
 	if exitCode != 0 {

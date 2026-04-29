@@ -41,7 +41,7 @@ func CheckCredentials(profileDir string) (warning string, _ error)
 When `ANTHROPIC_API_KEY` is set on the host, the credentials file check is skipped entirely — the sandbox authenticates via the `BuiltinEnvAllowlist` passthrough and the file is not required. Returns `("", nil)` immediately.
 
 Otherwise, checks `<profileDir>/.credentials.json`:
-- Missing file → non-empty warning with guidance to run `pr9k sandbox login` or set `ANTHROPIC_API_KEY`, nil error
+- Missing file → non-empty warning with guidance to run `pr9k sandbox --interactive` or set `ANTHROPIC_API_KEY`, nil error
 - Zero-byte file → non-empty warning containing "will likely fail authentication"
 - Non-empty file → empty warning, nil error
 - Any stat error other than `os.ErrNotExist` → propagated as an error (not a warning)

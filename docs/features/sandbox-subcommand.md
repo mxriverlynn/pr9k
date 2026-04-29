@@ -1,44 +1,44 @@
 # sandbox Subcommand
 
-`pr9k sandbox` is the parent command for sandbox-management subcommands. It has two children:
+`pr9k sandbox` is the parent command for sandbox-management functionality. It exposes:
 
 - **`sandbox create`** — one-shot setup. Checks Docker, pulls the sandbox image, smoke-tests it under the current user.
-- **`sandbox login`** — launches an interactive `claude` REPL inside the sandbox so the user can run `/login` and write `.credentials.json` to the bind-mounted profile directory.
+- **`sandbox --interactive`** (alias `-i`) — launches an interactive `claude` REPL inside the sandbox so the user can run `/login` and write `.credentials.json` to the bind-mounted profile directory.
 
-- **Last Updated:** 2026-04-14
+- **Last Updated:** 2026-04-29
 - **Authors:**
   - River Bailey
 
 ## Overview
 
-- `sandbox` is a cobra parent command with no `RunE` — running bare `pr9k sandbox` prints the help text listing its children.
-- Subcommands are registered via `cli.Execute(newSandboxCmd())` in `main.go`. Main-workflow flags (`--iterations`, `--workflow-dir`, `--project-dir`) are not available on either child.
-- `--force` on `sandbox create` re-pulls the image even when it is already present.
-- `sandbox login` mounts **only** the profile directory (never a project directory) — login is an auth-only operation; exposing host files to the container is accidental attack surface.
-- If the sandbox image is missing when `sandbox login` runs, it auto-pulls with a verbose note pointing at `sandbox create` for future runs.
+- `sandbox` is a cobra command. With no flags it prints help. With `--interactive`/`-i` it runs the auth-only sandbox flow (formerly `pr9k sandbox login`).
+- `create` is registered as a child subcommand and exposes only `--force` (re-pull even when the image is present).
+- The `sandbox` parent and its `create` child are registered via `cli.Execute(newSandboxCmd())` in `main.go`. Main-workflow flags (`--iterations`, `--workflow-dir`, `--project-dir`) are not available here.
+- `sandbox --interactive` mounts **only** the profile directory (never a project directory) — authentication is an auth-only operation; exposing host files to the container is accidental attack surface.
+- If the sandbox image is missing when `sandbox --interactive` runs, it auto-pulls with a verbose note pointing at `sandbox create` for future runs.
 
 Key files:
 
-- `src/cmd/src/sandbox.go` — `newSandboxCmd` (parent), shared helpers (`errSilentExit`, `dockerRunFunc`, `realDockerRun`, `dockerInteractiveFunc`, `realDockerInteractive`, `stripANSI`, `ansiEscapeRe`)
-- `src/cmd/src/sandbox_create.go` — `newSandboxCreateCmd`, `newSandboxCreateCmdWith`, `runSandboxCreate`, `sandboxCreateDeps`, `semverRe`
-- `src/cmd/src/sandbox_login.go` — `newSandboxLoginCmd`, `newSandboxLoginCmdWith`, `runSandboxLogin`, `sandboxLoginDeps`
-- `src/cmd/src/sandbox_create_test.go` — test cases for create covering all branches via injected `sandboxCreateDeps`
-- `src/cmd/src/sandbox_login_test.go` — test cases for login using injected `sandboxLoginDeps` with a `fakeInteractive` sibling to `fakeRun`
-- `src/cmd/src/main.go` — registers the parent via `cli.Execute(newSandboxCmd())`
-- `src/internal/sandbox/command.go` — `BuildRunArgs` (workflow) and `BuildLoginArgs` (login)
+- `src/cmd/pr9k/sandbox.go` — `newSandboxCmd` (parent + `--interactive` flag wiring), shared helpers (`errSilentExit`, `dockerRunFunc`, `realDockerRun`, `dockerInteractiveFunc`, `realDockerInteractive`, `stripANSI`, `ansiEscapeRe`)
+- `src/cmd/pr9k/sandbox_create.go` — `newSandboxCreateCmd`, `newSandboxCreateCmdWith`, `runSandboxCreate`, `sandboxCreateDeps`, `semverRe`
+- `src/cmd/pr9k/sandbox_interactive.go` — `runSandboxInteractive`, `sandboxInteractiveDeps`
+- `src/cmd/pr9k/sandbox_create_test.go` — test cases for create covering all branches via injected `sandboxCreateDeps`
+- `src/cmd/pr9k/sandbox_interactive_test.go` — test cases for the interactive flow using injected `sandboxInteractiveDeps` with a `fakeInteractive` sibling to `fakeRun`
+- `src/cmd/pr9k/main.go` — registers the parent via `cli.Execute(newSandboxCmd())`
+- `src/internal/sandbox/command.go` — `BuildRunArgs` (workflow) and `BuildInteractiveArgs` (interactive auth)
 
 ## Usage
 
 ```
-pr9k sandbox                   # prints help
+pr9k sandbox                       # prints help
 pr9k sandbox create [--force]
-pr9k sandbox login
+pr9k sandbox --interactive         # alias: pr9k sandbox -i
 ```
 
 | Command | Flag | Description |
 |---------|------|-------------|
+| `sandbox` | `-i`, `--interactive` | Launch the interactive auth sandbox (replaces the old `sandbox login` subcommand) |
 | `sandbox create` | `--force` | Re-pull the sandbox image even if already present (default: false) |
-| `sandbox login` | — | (no flags) |
 
 ## Architecture — `sandbox create`
 
@@ -62,13 +62,13 @@ pr9k sandbox create
                 stripANSI(output) → semverRe match → "Sandbox verified:" or warning
 ```
 
-## Architecture — `sandbox login`
+## Architecture — `sandbox --interactive`
 
 ```
-pr9k sandbox login
+pr9k sandbox --interactive
         │
         ▼
-  runSandboxLogin(deps)
+  runSandboxInteractive(deps)
         │
         ├─ Step 1: Docker reachability (same prober calls as create)
         │
@@ -81,7 +81,7 @@ pr9k sandbox login
         │       os.MkdirAll(deps.profileDir, 0o700)
         │
         └─ Step 4: Interactive docker run
-                deps.dockerInteractive(sandbox.BuildLoginArgs(profileDir, uid, gid),
+                deps.dockerInteractive(sandbox.BuildInteractiveArgs(profileDir, uid, gid),
                                        deps.stdin, deps.stdout, deps.stderr)
                 (user types /login inside the claude REPL; /login writes .credentials.json
                  into profileDir via the rw bind-mount)
@@ -99,8 +99,8 @@ type sandboxCreateDeps struct {
     stderr    io.Writer
 }
 
-// sandboxLoginDeps holds injected dependencies for the interactive login path.
-type sandboxLoginDeps struct {
+// sandboxInteractiveDeps holds injected dependencies for the interactive auth path.
+type sandboxInteractiveDeps struct {
     prober            preflight.Prober
     dockerInteractive dockerInteractiveFunc
     dockerRun         dockerRunFunc   // used for the auto-pull fallback
@@ -119,7 +119,7 @@ type dockerRunFunc func(args []string, stdout, stderr io.Writer) (exitCode int, 
 type dockerInteractiveFunc func(args []string, stdin io.Reader, stdout, stderr io.Writer) (exitCode int, err error)
 ```
 
-## `BuildLoginArgs` shape
+## `BuildInteractiveArgs` shape
 
 ```
 docker run -it --rm --init
@@ -134,8 +134,9 @@ docker run -it --rm --init
 Differences from `BuildRunArgs`:
 
 - `-it` instead of `-i` (allocates a TTY for interactive use).
-- No project-dir bind-mount. No `-w`. No `--cidfile` (terminator lifecycle isn't needed — user Ctrl-Cs or `/exit`s).
-- No `-p <prompt>`, no `--permission-mode bypassPermissions`, no `--model` — the user drives the session directly.
+- Only the profile directory is bind-mounted (no project dir, no `-w`) — authentication is auth-only and host project files are accidental attack surface.
+- No `--cidfile` and no terminator plumbing — the user exits via Ctrl-C or `/exit`.
+- No `-p <prompt>`, no `--permission-mode bypassPermissions`, no `--model` — the user drives the REPL directly.
 - No `CLAUDE_CONFIG_DIR` env passthrough from `BuiltinEnvAllowlist` — it is set explicitly; `/login` doesn't need API keys.
 - `TERM` is forwarded bare (`-e TERM`, name only) when the host has it set. Without this, Docker's pty defaults `TERM` inside the container to a bare `xterm` and the inner `claude` REPL can silently drop bracketed-paste sequences emitted by modern terminals (e.g. macOS Terminal.app) — making `Cmd+V` of the OAuth code appear to do nothing.
 
@@ -156,7 +157,7 @@ Differences from `BuildRunArgs`:
 | Smoke test unexpected output (warn) | Warning to stdout; still exits 0 | 0 |
 | Success | `"Sandbox verified: <version> under UID <uid>:<gid>."` + `"Sandbox ready."` | 0 |
 
-### `sandbox login`
+### `sandbox --interactive`
 
 | Scenario | Output | Exit |
 |----------|--------|------|
@@ -166,13 +167,13 @@ Differences from `BuildRunArgs`:
 | Image missing | Verbose note to stdout, then pull; if pull succeeds, proceed to Step 3 | cont. |
 | Pull failure | `"Failed to pull sandbox image."` + captured stderr | 1 |
 | Profile dir prep fails (e.g. path is a file) | `"Failed to prepare profile directory <path>: <err>"` | 1 |
-| Interactive exec error | `"Sandbox login failed: <err>"` | 1 |
+| Interactive exec error | `"Sandbox interactive session failed: <err>"` | 1 |
 | Interactive non-zero exit | (no extra message — claude's REPL output stands on its own) | 1 |
 | Success | (user completes `/login` in the REPL, exits) | 0 |
 
 ## Dependency Injection Design
 
-`newSandboxCreateCmd()` and `newSandboxLoginCmd()` wire the production deps (`preflight.RealProber`, `realDockerRun`, `realDockerInteractive`, `sandbox.HostUIDGID()`, `preflight.ResolveProfileDir()`, real `os.Stdin`/`Stdout`/`Stderr`). Tests call the `*With(deps)` variant with a `fakeProber`, `fakeRun`, and (for login) `fakeInteractive`, exercising every branch without a real Docker daemon or TTY.
+`newSandboxCreateCmd()` and `newSandboxCmd()` wire the production deps (`preflight.RealProber`, `realDockerRun`, `realDockerInteractive`, `sandbox.HostUIDGID()`, `preflight.ResolveProfileDir()`, real `os.Stdin`/`Stdout`/`Stderr`). Tests for create call the `*With(deps)` variant with a `fakeProber` and `fakeRun`. Tests for the interactive flow call `runSandboxInteractive` directly with a `sandboxInteractiveDeps` populated from `fakeProber`, `fakeRun`, and `fakeInteractive`.
 
 `realDockerRun` and `realDockerInteractive` both include a bounds guard — they return an error immediately if `args` is empty, preventing a panic from `args[0]` on an empty slice.
 
@@ -186,11 +187,11 @@ Differences from `BuildRunArgs`:
 - OSC sequences: `\x1b]` ... `\x07` (window title manipulation)
 - Fe sequences: `\x1b[@-Z\\-_]`
 
-`sandbox login` does not sanitize its interactive stream — once the user is driving a TTY session, terminal control codes are expected and any filtering would break the REPL UX.
+`sandbox --interactive` does not sanitize its interactive stream — once the user is driving a TTY session, terminal control codes are expected and any filtering would break the REPL UX.
 
 ## Additional Information
 
 - [Architecture Overview](../architecture.md)
-- [Sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuildLoginArgs`, `HostUIDGID`, cidfile lifecycle, and `NewTerminator`
+- [Sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuildInteractiveArgs`, `HostUIDGID`, cidfile lifecycle, and `NewTerminator`
 - [Preflight Package](../code-packages/preflight.md) — `Prober` interface, `RealProber`, `CheckDocker`, `ResolveProfileDir`
 - [API Design Coding Standard](../coding-standards/api-design.md) — bounds guards and dependency injection patterns used here

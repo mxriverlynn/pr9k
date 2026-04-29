@@ -278,7 +278,7 @@ All errors are written to stderr followed by a `Run 'pr9k --help' for usage.` hi
 pr9k [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
 pr9k workflow [--workflow-dir <path>] [--project-dir <path>]
 pr9k sandbox create [--force]
-pr9k sandbox login
+pr9k sandbox --interactive
 pr9k --version
 ```
 
@@ -366,7 +366,7 @@ The two version tests read the expected string from `version.Version` rather tha
 | `TestStepNames_Multiple` | Multiple steps → comma-separated names |
 | `TestStartupPreflight_RunsBeforeOrchestrator` | Fake prober with image missing → startup returns (nil, false) and error message |
 | `TestStartupPreflight_SkippedForSandboxCreate` | `sandbox create` subcommand → root RunE does not fire; preflight is not invoked |
-| `TestStartupPreflight_SkippedForSandboxLogin` | `sandbox login` subcommand → root RunE does not fire; preflight is not invoked |
+| `TestStartupPreflight_SkippedForSandboxInteractive` | `sandbox --interactive` flag → root RunE does not fire; preflight is not invoked |
 | `TestStartupPreflight_CollectsAllErrors` | D13 error + missing profile dir + docker unavailable → all errors appear in output |
 | `TestStartup_HappyPath` (TP-001) | Valid step file + passing prober + zero-byte credentials → ok=true, all services wired, credentials warning in output |
 | `TestStartup_LoadStepsFailure` (TP-002) | Missing `config.json` → early return: ok=false, svc=nil, no .pr9k/logs/ directory created |

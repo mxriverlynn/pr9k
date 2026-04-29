@@ -118,13 +118,13 @@ The closure captures `*exec.Cmd` (not bare `*os.Process`) so `cmd.ProcessState` 
 
 `pollCidfile` validates candidate container IDs with `isValidCID`, which requires exactly 64 lowercase-hex characters. This rejects partial writes (truncated IDs), whitespace-only content, and any non-hex string docker might write on error.
 
-## BuildLoginArgs
+## BuildInteractiveArgs
 
 ```go
-func BuildLoginArgs(profileDir string, uid, gid int) []string
+func BuildInteractiveArgs(profileDir string, uid, gid int) []string
 ```
 
-Constructs the `docker run -it ...` argv for an interactive `claude` REPL used by `pr9k sandbox login`. The user runs `/login` inside the REPL to write `.credentials.json` to the bind-mounted profile directory. Key differences from `BuildRunArgs`:
+Constructs the `docker run -it ...` argv for an interactive `claude` REPL used by `pr9k sandbox --interactive`. The user runs `/login` inside the REPL to write `.credentials.json` to the bind-mounted profile directory. Key differences from `BuildRunArgs`:
 
 - `-it` instead of `-i` — allocates a TTY for interactive use.
 - Only the profile directory is bind-mounted (no project dir, no `-w`) — login is auth-only and host project files are accidental attack surface.
