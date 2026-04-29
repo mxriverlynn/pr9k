@@ -7,3 +7,5 @@ CLOSE_REASON="completed" # Options: completed, not planned
 
 # Close the issue
 gh issue close "$ISSUE_NUM" --comment "$COMMENT_MSG" --reason "$CLOSE_REASON"
+
+sleep 10
