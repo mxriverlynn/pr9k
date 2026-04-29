@@ -110,6 +110,6 @@ func newSandboxCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&interactive, "interactive", "i", false,
 		"launch an interactive sandbox to authenticate the Claude profile")
-	cmd.AddCommand(newSandboxCreateCmd())
+	cmd.AddCommand(newSandboxCreateCmd(), newSandboxShellCmd())
 	return cmd
 }

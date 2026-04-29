@@ -279,6 +279,7 @@ pr9k [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
 pr9k workflow [--workflow-dir <path>] [--project-dir <path>]
 pr9k sandbox create [--force]
 pr9k sandbox --interactive
+pr9k sandbox shell
 pr9k --version
 ```
 

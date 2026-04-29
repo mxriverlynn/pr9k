@@ -107,7 +107,7 @@ See [Recovering from Step Failures](docs/how-to/recovering-from-step-failures.md
   - [Signal Handling & Shutdown](docs/features/signal-handling.md) — Clean shutdown on SIGINT/SIGTERM, unified with quit-confirm
   - [Status Line](docs/features/status-line.md) — Custom status-line script contract, refresh triggers, and help modal
   - [Docker Sandbox](docs/features/docker-sandbox.md) — Mount layout, env allowlist, UID/GID mapping, cidfile lifecycle
-  - [Sandbox Subcommand](docs/features/sandbox-subcommand.md) — `sandbox create` / `sandbox --interactive` UX
+  - [Sandbox Subcommand](docs/features/sandbox-subcommand.md) — `sandbox create` / `sandbox --interactive` / `sandbox shell` UX
 - **Code Package Documentation** (in [`docs/code-packages/`](docs/code-packages/)) — per-Go-package API references for contributors:
   - [`internal/steps`](docs/code-packages/steps.md) — JSON step configs and prompt construction
   - [`internal/logger`](docs/code-packages/logger.md) — Timestamped, context-prefixed log file output

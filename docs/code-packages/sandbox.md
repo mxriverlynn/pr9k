@@ -133,6 +133,18 @@ Constructs the `docker run -it ...` argv for an interactive `claude` REPL used b
 - `CLAUDE_CONFIG_DIR` is the only unconditional env entry; `BuiltinEnvAllowlist` is not consulted here.
 - `TERM` is forwarded bare (`-e TERM`, name only) when the host has it set, so the inner pty reports the host's real terminal capabilities. Without this, Docker defaults `TERM` to `xterm` and modern terminals' bracketed-paste sequences can be silently dropped by the `claude` REPL, making paste of the OAuth code appear to do nothing.
 
+## BuildShellArgs
+
+```go
+func BuildShellArgs(projectDir, profileDir string, uid, gid int) []string
+```
+
+Constructs the `docker run -it ...` argv for an interactive `bash` shell used by `pr9k sandbox shell`. Both the project directory and the profile directory are bind-mounted, the working directory is set to the project mount, and the entrypoint is `bash`. `--rm` removes the container when the shell exits. Key differences from `BuildInteractiveArgs`:
+
+- The host project directory is bind-mounted at `ContainerRepoPath` (read-write) and is the working directory, so the user lands in the project tree.
+- Entrypoint is `bash` instead of `claude` (the `claude` binary is still on `PATH` inside the shell).
+- Otherwise the shape matches `BuildInteractiveArgs`: `-it`, `--rm`, `--init`, profile mount, `CLAUDE_CONFIG_DIR`, optional `-e TERM` passthrough.
+
 ## Package
 
 **Package:** `internal/sandbox/` (`image.go`, `command.go`, `cidfile.go`, `terminator.go`)

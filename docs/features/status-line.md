@@ -68,7 +68,7 @@ The script receives a single JSON object on stdin:
 ```json
 {
   "sessionId": "20260417-093045-123",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "phase": "iteration",
   "iteration": 1,
   "maxIterations": 3,

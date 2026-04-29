@@ -31,7 +31,7 @@ When you are about to make a change, ask: "does this break one of the four items
 
 ## `0.y.z` — initial development
 
-The current release is `0.7.4`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
+The current release is `0.7.5`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
 - Backwards-incompatible changes to the CLI surface or `config.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.6.0` → `0.7.0`), not the major.
 - Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.6.0` → `0.6.1`).

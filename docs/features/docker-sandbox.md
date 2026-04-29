@@ -224,7 +224,7 @@ The following residual risks are accepted:
 ## Additional Information
 
 - [Setting Up Docker Sandbox](../how-to/setting-up-docker-sandbox.md) — User-facing setup guide: install Docker, run `sandbox create`, authenticate via `sandbox --interactive`
-- [sandbox Subcommand](sandbox-subcommand.md) — `pr9k sandbox create` and `pr9k sandbox --interactive` implementations: Docker check, image pull, smoke test, interactive login flow
+- [sandbox Subcommand](sandbox-subcommand.md) — `pr9k sandbox create`, `pr9k sandbox --interactive`, and `pr9k sandbox shell` implementations: Docker check, image pull, smoke test, interactive login flow, interactive bash shell
 - [Preflight](../code-packages/preflight.md) — Startup checks that reject a missing Docker daemon or sandbox image before the TUI starts
 - [Subprocess Execution & Streaming](subprocess-execution.md) — `RunSandboxedStep`, `SandboxOptions`, terminator lifecycle, cidfile cleanup
 - [Config Validation](../code-packages/validator.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)

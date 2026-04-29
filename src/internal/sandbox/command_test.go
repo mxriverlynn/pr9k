@@ -630,3 +630,75 @@ func TestBuildRunArgs_ResumeSessionID_Empty(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildShellArgs_Shape(t *testing.T) {
+	args := BuildShellArgs(testProjectDir, testProfileDir, testUID, testGID)
+
+	wantFlags := []string{"-it", "--rm", "--init"}
+	for _, flag := range wantFlags {
+		if indexOf(args, flag) < 0 {
+			t.Errorf("argv missing %q; got %v", flag, args)
+		}
+	}
+
+	uidArg := fmt.Sprintf("%d:%d", testUID, testGID)
+	uidIdx := indexOf(args, "-u")
+	if uidIdx < 0 || uidIdx+1 >= len(args) || args[uidIdx+1] != uidArg {
+		t.Errorf("expected -u %s; got %v", uidArg, args)
+	}
+
+	projectMount := fmt.Sprintf("type=bind,source=%s,target=%s", testProjectDir, ContainerRepoPath)
+	profileMount := fmt.Sprintf("type=bind,source=%s,target=%s", testProfileDir, ContainerProfilePath)
+	if indexOf(args, projectMount) < 0 {
+		t.Errorf("argv missing project mount %q; got %v", projectMount, args)
+	}
+	if indexOf(args, profileMount) < 0 {
+		t.Errorf("argv missing profile mount %q; got %v", profileMount, args)
+	}
+	if countFlag(args, "--mount") != 2 {
+		t.Errorf("expected exactly 2 --mount entries (project + profile); got %d", countFlag(args, "--mount"))
+	}
+
+	wIdx := indexOf(args, "-w")
+	if wIdx < 0 || wIdx+1 >= len(args) || args[wIdx+1] != ContainerRepoPath {
+		t.Errorf("expected -w %s; got %v", ContainerRepoPath, args)
+	}
+
+	envSpec := "CLAUDE_CONFIG_DIR=" + ContainerProfilePath
+	if indexOf(args, envSpec) < 0 {
+		t.Errorf("argv missing %q; got %v", envSpec, args)
+	}
+
+	// argv must end with [ImageTag, "bash"].
+	if args[len(args)-2] != ImageTag || args[len(args)-1] != "bash" {
+		t.Errorf("argv must end with [ImageTag, 'bash']; got tail %v", args[len(args)-3:])
+	}
+
+	// Must NOT contain claude/workflow plumbing.
+	forbidden := []string{"--cidfile", "--permission-mode", "-p", "claude", "--model"}
+	for _, f := range forbidden {
+		if indexOf(args, f) >= 0 {
+			t.Errorf("argv must NOT contain %q; got %v", f, args)
+		}
+	}
+}
+
+// TestBuildShellArgs_ForwardsTERMWhenSet asserts BuildShellArgs adds
+// `-e TERM` (name only) when the host has TERM set, matching the
+// BuildInteractiveArgs behaviour.
+func TestBuildShellArgs_ForwardsTERMWhenSet(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+
+	args := BuildShellArgs(testProjectDir, testProfileDir, testUID, testGID)
+
+	found := false
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "-e" && args[i+1] == "TERM" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("argv missing consecutive `-e TERM` pair; got %v", args)
+	}
+}

@@ -119,3 +119,33 @@ func BuildInteractiveArgs(profileDir string, uid, gid int) []string {
 	args = append(args, ImageTag, "claude")
 	return args
 }
+
+// BuildShellArgs constructs the `docker run -it ...` argv for an interactive
+// bash session inside the sandbox, used by `pr9k sandbox shell`. The project
+// directory is bind-mounted read-write at the standard workspace path so the
+// user can poke around the same filesystem the workflow runner sees, and the
+// profile directory is bind-mounted so `claude` is usable inside the shell.
+// `--rm` ensures the container is removed when the user exits the shell.
+func BuildShellArgs(projectDir, profileDir string, uid, gid int) []string {
+	args := []string{
+		"docker", "run",
+		"-it",
+		"--rm",
+		"--init",
+		"-u", fmt.Sprintf("%d:%d", uid, gid),
+		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", projectDir, ContainerRepoPath),
+		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),
+		"-w", ContainerRepoPath,
+		"-e", "CLAUDE_CONFIG_DIR=" + ContainerProfilePath,
+	}
+
+	// Forward TERM so bash sees the host's terminal capabilities; without
+	// this Docker's pty defaults TERM to a bare "xterm" and modern terminals'
+	// bracketed-paste / color handling can degrade silently.
+	if _, ok := os.LookupEnv("TERM"); ok {
+		args = append(args, "-e", "TERM")
+	}
+
+	args = append(args, ImageTag, "bash")
+	return args
+}

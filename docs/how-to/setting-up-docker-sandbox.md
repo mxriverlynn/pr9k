@@ -250,11 +250,21 @@ This happens when the `-u` flag is not taking effect (e.g., an older Docker imag
 /path/to/pr9k/bin/pr9k sandbox create --force
 ```
 
+### Opening a shell inside the sandbox
+
+For ad-hoc debugging — running tooling, inspecting filesystem state, or executing one-off `claude` invocations against the same mounts the workflow runner uses — `pr9k sandbox shell` drops you into an interactive bash session inside the sandbox container:
+
+```bash
+/path/to/pr9k/bin/pr9k sandbox shell
+```
+
+The current working directory is bind-mounted at `/home/agent/workspace` and your Claude profile is bind-mounted at `/home/agent/.claude`. The container is removed (`docker run --rm`) when you `exit` the shell. If the sandbox image hasn't been pulled yet, `sandbox shell` auto-pulls it before launching, the same way `sandbox --interactive` does.
+
 ## Related Documentation
 
 - [Getting Started](getting-started.md) — First-run walkthrough and TUI orientation
 - [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — Architecture, mount layout, env allowlist, and residual risks
-- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create` and `sandbox --interactive` subcommands
+- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create`, `sandbox --interactive`, and `sandbox shell` subcommands
 - [Preflight Feature Doc](../code-packages/preflight.md) — Startup checks that enforce sandbox readiness
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision rationale for making Docker a runtime requirement
 - [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars (API tokens, proxy settings) into the sandbox
