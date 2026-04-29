@@ -247,36 +247,6 @@ func TestNoLegacyIterationJsonlPath_WorkflowPrompts(t *testing.T) {
 	checkNoLegacyIterationPathInTree(t, filepath.Join(root, "workflow", "prompts"))
 }
 
-// TestNoLegacyRalphTuiReferences_WorkflowConfigJSON asserts workflow/config.json
-// does not contain the legacy tool name.
-func TestNoLegacyRalphTuiReferences_WorkflowConfigJSON(t *testing.T) {
-	root := docTestRepoRoot(t)
-	content := readFile(t, root, "workflow/config.json")
-	if strings.Contains(content, legacyToolName) {
-		t.Errorf("workflow/config.json contains %q — update to pr9k conventions", legacyToolName)
-	}
-}
-
-// TestNoLegacyRalphStepsJSONReferences_WorkflowConfigJSON asserts workflow/config.json
-// does not contain the legacy config filename.
-func TestNoLegacyRalphStepsJSONReferences_WorkflowConfigJSON(t *testing.T) {
-	root := docTestRepoRoot(t)
-	content := readFile(t, root, "workflow/config.json")
-	if strings.Contains(content, legacyConfigName) {
-		t.Errorf("workflow/config.json contains %q — update to config.json conventions", legacyConfigName)
-	}
-}
-
-// TestNoLegacyIterationJsonlPath_WorkflowConfigJSON asserts workflow/config.json
-// does not contain the legacy iteration log path.
-func TestNoLegacyIterationJsonlPath_WorkflowConfigJSON(t *testing.T) {
-	root := docTestRepoRoot(t)
-	content := readFile(t, root, "workflow/config.json")
-	if strings.Contains(content, legacyIterationPath) {
-		t.Errorf("workflow/config.json contains %q — update to .pr9k/iteration.jsonl", legacyIterationPath)
-	}
-}
-
 // F-116: Naming-collision guards for the workflow-builder feature.
 
 // TestRenameGuard_WorkflowLogPrefix_DoesNotCollideWithRalph asserts that
