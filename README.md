@@ -37,12 +37,18 @@ make build
 
 ### Quick Start
 
-From the **target repo** (the repo where you want pr9k to work):
+From the **target repo** (the repo where you want pr9k to work).
 
+Add the following to your `.gitignore` file:
+```
+# pr9k temp files and logs
+.pr9k/logs/
+.pr9k/iteration.jsonl
+.pr9k/artifacts/
+```
+
+Then run the following:
 ```bash
-# Add .pr9k/ to .gitignore so logs and runtime state aren't committed:
-echo '.pr9k/' >> .gitignore
-
 # Run until no ralph-labeled issues remain (until-done mode):
 /path/to/pr9k/bin/pr9k
 
