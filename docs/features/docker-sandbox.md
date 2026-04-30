@@ -230,7 +230,7 @@ The following residual risks are accepted:
 - [Config Validation](../code-packages/validator.md) — Sandbox rules B and C (prompt-token ban, captureAs+tokens-in-command; Rule A removed in issue #91)
 - [Step Definitions & Prompt Building](../code-packages/steps.md) — `StepFile.Env` field and `BuildRunArgs` call site in `buildStep`
 - [Passing Environment Variables](../how-to/passing-environment-variables.md) — User-facing guide for declaring env vars in `config.json`
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — Why `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are banned in prompt files
+- [Workflow Variables](../how-to/workflow-variables.md) — Why `{{WORKFLOW_DIR}}` and `{{PROJECT_DIR}}` are banned in prompt files
 - [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision to make Docker a runtime requirement
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Why `PROJECT_DIR` means the target repo (not the workflow bundle)
 - [Architecture Overview](../architecture.md) — System-level view including the sandbox layer

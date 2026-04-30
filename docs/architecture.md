@@ -354,7 +354,7 @@ internal/ansi                  (ANSI escape sequence stripper)
 
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
-  - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
+  - [Workflow Variables](how-to/workflow-variables.md) — Variable injection into prompts/commands and file-based data passing between steps
   - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
 - [pr9k Plan](plans/pr9k.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration

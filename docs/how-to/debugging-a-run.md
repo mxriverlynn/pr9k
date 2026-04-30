@@ -252,7 +252,7 @@ Several Claude steps communicate by writing files into the target repo and havin
 
 These files live in the **target repo's working directory** and are not committed. If a run fails partway through, they may be left behind — a leftover `test-plan.md` means "test writing didn't run or didn't finish", not "here's your plan". Delete them (or let the next run overwrite them) before reproducing.
 
-For the full file-passing model, see [Variable Output & Injection](variable-output-and-injection.md#file-based-data-passing-between-steps).
+For the full file-passing model, see [Workflow Variables](workflow-variables.md#file-based-data-passing-between-steps).
 
 ## Validator errors before a run
 
@@ -277,7 +277,7 @@ Fix the underlying config issue and re-run. See [Config Validation](../code-pack
 
 - [Reading the TUI](reading-the-tui.md) — Log-panel layout and chrome rhythm (same content as the log file, live view)
 - [Capturing Step Output](capturing-step-output.md) — How `captureAs` values get into the log and the VarTable; includes the distinction between non-claude (last stdout line) and claude (`result.result`) capture
-- [Variable Output & Injection](variable-output-and-injection.md) — Substitution rules and file-based data passing
+- [Workflow Variables](workflow-variables.md) — Substitution rules and file-based data passing
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` semantics and how to verify it fired
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions during a live run
 - [File Logging](../code-packages/logger.md) — Log file format, timestamp, context prefix, and RunStamp (per-run artifact directory name)
