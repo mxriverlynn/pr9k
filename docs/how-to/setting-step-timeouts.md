@@ -61,7 +61,7 @@ If the step immediately after an `onTimeout: "continue"` step sets `resumePrevio
 
 When a Claude step times out and the `claudestream` pipeline has already received a `session_id` from the model, that session ID is added to an in-memory blacklist (accessible via `Runner.SessionBlacklisted` / `Runner.BlacklistedSessions`). A future issue will wire a session-resume gate that consults this list to prevent resuming a timed-out session.
 
-Session IDs are also written to `.pr9k/iteration.jsonl`. If session IDs are sensitive in your environment, add `.pr9k/` to `.gitignore` in the target repository.
+Session IDs are also written to `.pr9k/iteration.jsonl`. If session IDs are sensitive in your environment, ensure `.pr9k/iteration.jsonl` is listed in `.gitignore` in the target repository (it is part of the standard runtime-state block in [Getting Started](getting-started.md)). Do **not** add `.pr9k/` wholesale — `.pr9k/workflow/` is a tracked source directory for committed per-repo workflow overrides.
 
 ## Advisory prompt budget
 
