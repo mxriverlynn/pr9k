@@ -13,10 +13,10 @@
   },
   "initialize": [
     { "name": "Splash",                "isClaude": false, "command": ["cat", "{{WORKFLOW_DIR}}/ralph-art.txt"] },
+    { "name": "Claude Credentials",    "isClaude": false, "command": ["scripts/get_claude_credentials"] },
     { "name": "Get GitHub user",       "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
   ],
   "iteration": [
-    { "name": "Claude Credentials",    "isClaude": false, "command": ["scripts/get_claude_credentials"] },
     { "name": "Get next issue",        "isClaude": false, "command": ["scripts/get_next_issue", "{{GITHUB_USER}}"], "captureAs": "ISSUE_ID", "breakLoopIfEmpty": true },
     { "name": "Get starting SHA",      "isClaude": false, "command": ["git", "rev-parse", "HEAD"], "captureAs": "STARTING_SHA" },
     { "name": "Get issue body",        "isClaude": false, "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"], "captureAs": "ISSUE_BODY", "captureMode": "fullStdout" },
