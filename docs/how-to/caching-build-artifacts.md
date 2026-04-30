@@ -103,15 +103,17 @@ If you run Docker in rootless mode or with a custom UID mapping, verify that the
 Add the following to the `.gitignore` of every project you run Ralph against:
 
 ```
-# pr9k runtime state (session logs, iteration.jsonl, optional in-repo workflow override)
-.pr9k/
+# pr9k temp files and logs
+.pr9k/logs/
+.pr9k/iteration.jsonl
+.pr9k/artifacts/
 # Ralph build artifact cache
 .ralph-cache/
 ```
 
-This prevents runtime state and the build cache from being accidentally committed. The pr9k repo itself already has both entries.
+This prevents runtime state and the build cache from being accidentally committed. The pr9k repo itself already has these entries.
 
-`.pr9k/` is the primary runtime output directory (logs, `iteration.jsonl`). `.ralph-cache/` is the bind-mounted artifact cache created separately by the Docker sandbox preflight; it lands at the project root alongside `.pr9k/`.
+The `.pr9k/` parent directory holds the per-step JSONL artifacts under `.pr9k/logs/<runstamp>/`, the structured iteration log at `.pr9k/iteration.jsonl`, and an optional in-repo workflow override at `.pr9k/workflow/`. Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` must stay trackable so a per-repo workflow override can be committed and shared between developers (see [Building Custom Workflows](building-custom-workflows.md)). `.ralph-cache/` is the bind-mounted artifact cache created separately by the Docker sandbox preflight; it lands at the project root alongside `.pr9k/`.
 
 ## Related documentation
 
