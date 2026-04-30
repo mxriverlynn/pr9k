@@ -83,7 +83,6 @@ If you are modifying pr9k itself, start here.
 - **Code Package Documentation** ([`docs/code-packages/`](docs/code-packages/)) — per-Go-package API references
 - [Coding Standards](docs/coding-standards/) — Go error handling, testing, concurrency, API design, and Go-specific patterns
 - [Architectural Decision Records](docs/adr/) — historical decisions including the narrow-reading principle and the cobra CLI choice
-- [Plans](docs/plans/) — original specifications and design documents
 
 ## Copyright & License
 

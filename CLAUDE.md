@@ -40,9 +40,7 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 
 ## pr9k (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md` (historical — describes the original TUI design).
-
-The `pr9k workflow` TUI visual layer is specified in [`docs/plans/workflow-builder-tui-design/feature-specification.md`](docs/plans/workflow-builder-tui-design/feature-specification.md) and implemented per [`docs/plans/workflow-builder-tui-design/feature-implementation-plan.md`](docs/plans/workflow-builder-tui-design/feature-implementation-plan.md).
+The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. The `pr9k workflow` TUI visual layer is documented in [`docs/features/workflow-builder.md`](docs/features/workflow-builder.md) (Visual Layout section) and the package contract in [`docs/code-packages/workflowedit.md`](docs/code-packages/workflowedit.md).
 
 ### Build and run
 

@@ -15,11 +15,11 @@ destructive action — `rm -rf`, overwriting credentials, reading `~/.ssh` —
 has the full blast radius of the invoking user across the entire host
 filesystem.
 
-The Docker sandbox plan (`docs/plans/docker-sandbox/design.md`) was designed
-to contain that blast radius to two namespaces: the bind-mounted target
-repository and a scrubbed process environment. Reaching that goal requires
-Docker — there is no equivalent container runtime that fits the existing
-toolchain without new install dependencies.
+The Docker sandbox (now described in [`docs/features/docker-sandbox.md`](../features/docker-sandbox.md))
+was designed to contain that blast radius to two namespaces: the bind-mounted
+target repository and a scrubbed process environment. Reaching that goal
+requires Docker — there is no equivalent container runtime that fits the
+existing toolchain without new install dependencies.
 
 Docker is already in widespread use by the target audience (developers who
 use GitHub, Anthropic APIs, and CLI tooling), and the `docker/sandbox-templates:claude-code`

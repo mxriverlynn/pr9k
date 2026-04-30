@@ -294,6 +294,3 @@ successive runs from sharing an artifact directory.
 (`<projectDir>/.pr9k/logs/<runStamp>/`) via `os.MkdirAll(0o700)` immediately after
 `NewLogger` succeeds. Directory creation failure logs to stderr and aborts
 startup, consistent with the existing logger-failure path.
-
-See `docs/plans/streaming-json-output/design.md` for the original integration
-design doc.

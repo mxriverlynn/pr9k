@@ -25,7 +25,7 @@ Files audited (full read, all content, every cross-reference followed at least o
 - `/Users/mxriverlynn/dev/mxriverlynn/pr9k/docs/how-to/using-the-workflow-builder.md`
 - `/Users/mxriverlynn/dev/mxriverlynn/pr9k/docs/how-to/configuring-external-editor-for-workflow-builder.md`
 
-Out of scope (per the brief): `docs/features/`, `docs/code-packages/`, `docs/coding-standards/`, `docs/adr/`, `docs/plans/`, `docs/architecture.md`, `docs/project-discovery.md`. Those are contributor-facing docs.
+Out of scope (per the brief): `docs/features/`, `docs/code-packages/`, `docs/coding-standards/`, `docs/adr/`, `docs/architecture.md`, `docs/project-discovery.md`. Those are contributor-facing docs.
 
 Branch: `main`.
 

@@ -1,4 +1,4 @@
-> Superseded by the Bubble Tea migration — see [`docs/plans/use-bubble-tea.md`](../plans/use-bubble-tea.md) and [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](../adr/20260411070907-bubble-tea-tui-framework.md).
+> Superseded by the Bubble Tea migration — see [`docs/adr/20260411070907-bubble-tea-tui-framework.md`](../adr/20260411070907-bubble-tea-tui-framework.md).
 
 # Glyph API Findings — Issue #46
 

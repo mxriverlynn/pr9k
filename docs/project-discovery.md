@@ -11,7 +11,6 @@
 ## Documentation
 
 - Docs: `docs/`
-- Plans: `docs/plans/`
 - Coding standards: `docs/coding-standards/` (`error-handling.md`, `testing.md`, `concurrency.md`, `api-design.md`, `go-patterns.md`, `lint-and-tooling.md`, `versioning.md`)
 - Prompts: `prompts/` (markdown prompt files consumed by the orchestrator)
 
