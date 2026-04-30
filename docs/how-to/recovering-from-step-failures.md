@@ -21,12 +21,11 @@ Only non-zero-and-not-user-terminated triggers **Error mode**.
 
 ## What happens when a step fails
 
-As soon as a step fails, four things happen:
+As soon as a step fails, three things happen:
 
 1. The checkbox for the step flips to `[✗]`
-2. The keyboard handler switches to `ModeError` (`KeyHandler.SetMode(ModeError)`)
-3. The shortcut footer changes to `c continue  r retry  q quit`
-4. The orchestration goroutine blocks on `<-h.Actions`, waiting for your decision
+2. The shortcut footer changes to `c continue  r retry  q quit` — the TUI is now in error mode
+3. The orchestrator pauses and waits for your decision
 
 The workflow is paused until you press a key. You can scroll the log to inspect what went wrong — the streaming stdout and stderr from the failed step are still in the log panel — but no subprocess is running.
 
@@ -38,7 +37,6 @@ Accept the failure and move on.
 
 - The step stays marked `[✗]` — the failure is visible in the log and the checkbox grid
 - The next step in the iteration starts immediately
-- The workflow goroutine returns `ActionContinue` from `runStepWithErrorHandling`
 
 Use `c` when:
 
@@ -67,10 +65,9 @@ Use `r` when:
 
 Start the quit confirmation flow.
 
-- Mode switches to `ModeQuitConfirm`
 - Footer changes to `Quit Power-Ralph.9000? (y/n, esc to cancel)`
 - Pressing `y` confirms and begins shutdown (footer → `Quitting...`)
-- Pressing `n` or `Esc` cancels and returns to `ModeError` so you can still pick `c` or `r`
+- Pressing `n` or `Esc` cancels and returns to error mode so you can still pick `c` or `r`
 
 See [Quitting Gracefully](quitting-gracefully.md) for the full quit flow.
 
@@ -82,7 +79,7 @@ Use `q` when:
 
 ## The orchestrator stays responsive during the pause
 
-While you're sitting in error mode, `workflow.Run` is blocked on the `Actions` channel — but the TUI is not frozen. The log panel still streams anything the previous step hadn't flushed yet, scrolling works, the header and footer render on every frame, and SIGINT still triggers the signal handler (which calls `ForceQuit` and shuts down cleanly).
+While you're sitting in error mode, the workflow is paused waiting for your decision — but the TUI is not frozen. The log panel still streams anything the previous step hadn't flushed yet, scrolling works, the header and footer render on every frame, and `Ctrl+C` still triggers a clean shutdown.
 
 If you leave the workflow paused and walk away, nothing bad happens — no timeout, no auto-retry, no auto-continue. Ralph waits.
 
@@ -90,23 +87,23 @@ If you leave the workflow paused and walk away, nothing bad happens — no timeo
 
 | Choice | Next step | Checkbox state | Mode |
 |--------|-----------|----------------|------|
-| `c` | Advance to next step in the iteration | Failed step stays `[✗]` | Back to `ModeNormal` |
-| `r` (success) | This step succeeds, advance | `[✗]` → `[✓]` | Back to `ModeNormal` |
-| `r` (fails again) | Block in error mode again | Stays `[✗]` | Still `ModeError` |
-| `q` → `y` | Shutdown (ForceQuit) | Stays `[✗]` | `ModeQuitting` then process exits |
-| `q` → `n`/`Esc` | Return to error mode pause | Stays `[✗]` | `ModeError` |
+| `c` | Advance to next step in the iteration | Failed step stays `[✗]` | Back to Normal |
+| `r` (success) | This step succeeds, advance | `[✗]` → `[✓]` | Back to Normal |
+| `r` (fails again) | Block in error mode again | Stays `[✗]` | Still Error |
+| `q` → `y` | Shutdown | Stays `[✗]` | Quitting, then process exits |
+| `q` → `n`/`Esc` | Return to error mode pause | Stays `[✗]` | Error |
 
 ## Edge cases
 
 ### The step terminated itself
 
-If you pressed `n` **during** the step to skip it, a confirmation prompt appears (`Skip current step? y/n, esc to cancel`). Pressing `y` confirms the skip: the subprocess gets a SIGTERM (then SIGKILL after 3 seconds). The non-zero exit is treated as a **successful termination** (`WasTerminated() == true`) and the step is marked `[✓]` — no error mode, no pause, just advance. Pressing `n` or `Esc` cancels the skip and returns to normal mode. This is the mechanism behind "skip this step".
+If you pressed `n` **during** the step to skip it, a confirmation prompt appears (`Skip current step? y/n, esc to cancel`). Pressing `y` confirms the skip: the subprocess receives SIGTERM (then SIGKILL after 3 seconds). The non-zero exit is treated as a successful, user-initiated termination and the step is marked `[✓]` — no error mode, no pause, just advance. Pressing `n` or `Esc` cancels the skip and returns to normal mode. This is the mechanism behind "skip this step".
 
-### `buildStep` failed before the subprocess could start
+### A step's prompt or substitution failed before the subprocess could start
 
-If prompt-file reading or variable substitution fails (e.g., a referenced `promptFile` doesn't exist), the error happens in `buildStep` before `Orchestrate` is called. The Run loop logs `Error preparing initialize step: ...` / `Error preparing steps: ...` / `Error preparing finalize step: ...` to the log body and skips that step, moving to the next. You do **not** enter error mode for build failures — they're treated as "skip this step" at the orchestrator level.
+If prompt-file reading or variable substitution fails (e.g., a referenced `promptFile` doesn't exist), pr9k logs `Error preparing initialize step: ...` / `Error preparing steps: ...` / `Error preparing finalize step: ...` to the log body and skips that step, moving to the next. You do **not** enter error mode for build failures — they're treated as "skip this step" at the orchestrator level.
 
-In practice this only happens when the config references a missing prompt file. The validator (which runs before the TUI starts) catches most of these cases, but file deletions between validation and execution can sneak through.
+In practice this only happens when the config references a missing prompt file. The validator that runs before the TUI starts catches most of these cases, but file deletions between validation and execution can sneak through.
 
 ### A later iteration step re-fails after you chose `c`
 

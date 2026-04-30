@@ -8,7 +8,7 @@ pr9k streams everything the workflow does into a single terminal view. This guid
 
 ## The three inner regions
 
-The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded frame. The current run state — iteration number, issue ID, phase step — is embedded directly into the top border as the window title, so the inner content starts with the checkbox grid and there is no separate iteration-line row. The three inner regions stack top to bottom:
+The screen is a rounded frame with the current run state — iteration number, issue ID, phase step — embedded into the top border as the window title. The inner content starts with the checkbox grid and stacks top to bottom:
 
 ```
 ╭── Power-Ralph.9000 — Iteration 2/3 — Issue #42 ─────╮  ← top border + title
@@ -35,11 +35,9 @@ The screen is assembled row-by-row in `Model.View()` inside a hand-built rounded
 
 The top border itself is a two-tone colored title: `Power-Ralph.9000` renders in **green** and the iteration detail that follows the ` — ` separator renders in **white**. The log body text renders in **white** to pop against the light-gray frame chrome. The two horizontal rules inside the frame use `├` and `┤` T-junction glyphs so they visually connect to the `│` side borders instead of leaving a gap.
 
-State updates from the orchestration goroutine are sent as typed messages via `HeaderProxy` (which calls `program.Send`) and applied on the Bubble Tea Update goroutine — so header changes appear on the next `View()` render cycle without any shared-memory races. The checkbox grid sits at the top of the inner content; the iteration detail it belongs to is rendered in the top border's title.
-
 ## Region 1 — the checkbox grid
 
-The topmost region. Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, `SetPhaseSteps` swaps the step names into the same slots and trailing slots clear to empty.
+The topmost region. Step progress for the *current phase*, laid out as rows of 4 checkboxes each. The grid is sized at startup to fit whichever phase has the most steps. When the workflow enters a new phase, the step names swap into the same slots and any trailing slots clear to empty.
 
 The six possible states:
 
@@ -52,11 +50,11 @@ The six possible states:
 | `[-] <name>` | Skipped | Marked skipped because an earlier step with `breakLoopIfEmpty` exited the iteration |
 | `[!] <name>` | Timed-out, continuing | Hit its `timeoutSeconds` cap AND its `onTimeout: "continue"` policy told pr9k to advance without prompting. Distinct from `[✗]` so you can tell an unattended soft-timeout from a hard failure at a glance. |
 
-**Note:** The initialize phase does not update the checkbox grid — it uses a `noopHeader` during `Orchestrate` so initialize step state isn't rendered. Only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
+**Note:** The initialize phase does not update the checkbox grid — only the iteration line changes during init. Checkbox rendering resumes at the start of the iteration phase.
 
 ## The iteration line (embedded in the top border title)
 
-The current phase/step text is rendered as part of the top border's title, not as a separate inner row. The same string that appears after the ` — ` separator in the border is also set as the OS window title via `tea.SetWindowTitle`.
+The current phase/step text is rendered as part of the top border's title, not as a separate inner row. The same string that appears after the ` — ` separator in the border is also set as your terminal's OS window title.
 
 | Phase | Format | Example (border title) |
 |-------|--------|------------------------|
@@ -74,11 +72,11 @@ When pr9k is waiting on a `claude` step and no stream-json event arrives for ≥
 
 ## Region 2 — the log panel
 
-The bulk of the screen. This is a `bubbles/viewport` sub-model that caps at 2000 lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
+The bulk of the screen. The log panel caps at 2000 visible lines and supports `↑`/`k`/`↓`/`j` vim-style scrolling as well as mouse-wheel scrolling. Content is streamed into it from three sources:
 
-1. **Subprocess stdout/stderr** — every line a running step emits, streamed in real time via the `sendLine` callback through a buffered channel
-2. **Structural chrome** — phase banners, iteration separators, per-step banners, capture logs, and the completion summary, all written by `workflow.Run` or `ui.Orchestrate` via `executor.WriteToLog`
-3. **Error lines** — `Error preparing initialize step: ...`, `Error preparing steps: ...`, `Error preparing finalize step: ...` when `buildStep` fails
+1. **Subprocess stdout/stderr** — every line a running step emits, streamed in real time
+2. **Structural chrome** — phase banners, iteration separators, per-step banners, capture logs, and the completion summary
+3. **Error lines** — `Error preparing initialize step: ...` and similar messages when a step's config fails to validate at run time
 
 ### The chrome rhythm
 
@@ -158,11 +156,11 @@ When you resize the terminal, content re-wraps to the new width and the viewport
 
 ### Scrolling
 
-The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work — pr9k enables `tea.WithMouseCellMotion()` at the program level and `Model.Update` forwards incoming `tea.MouseMsg` events to the log sub-model, where bubbles/viewport's built-in `MouseWheelEnabled` handler scrolls the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
+The log panel accepts `↑`/`k` to scroll up and `↓`/`j` to scroll down while you're in Normal or Done mode. Mouse-wheel and trackpad-gesture scrolling also work and scroll the body by three lines per wheel tick. In Error or QuitConfirm mode, keypresses are consumed by the mode handlers instead; mouse-wheel scrolling still works in every mode.
 
 ### Selecting log text to copy
 
-pr9k handles mouse selection natively inside the log viewport. `tea.WithMouseCellMotion()` enables application mouse capture so the TUI receives drag events directly — you do not need a terminal modifier key to select text within the log panel.
+pr9k handles mouse selection natively inside the log viewport. The TUI captures drag events directly — you do not need a terminal modifier key to select text within the log panel.
 
 **In-app mouse selection (recommended):**
 - **Left-click and drag** in the log viewport to select text. As you drag, the selected region is highlighted in reverse-video. Dragging past the top or bottom edge auto-scrolls one line per event.
@@ -181,7 +179,7 @@ The modifier key bypass is a standard feature of every mainstream terminal that 
 
 ## Region 3 — the shortcut footer
 
-A single line assembled in `Model.View()` using Lip Gloss layout: the mode-dependent shortcut bar on the left, a spacer in the middle, and the app version label (`pr9k v<semver>`) pinned to the right. The version label is sourced from `internal/version.Version` so the same string is visible both here and via `pr9k --version`. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
+A single line: the mode-dependent shortcut bar on the left, and the app version label (`pr9k v<semver>`) pinned to the right. The version label always matches what `pr9k --version` prints. See [Versioning](../coding-standards/versioning.md) for the single-source-of-truth rule.
 
 The footer uses a two-tone color scheme: the version label on the right renders in **white**. On the left, for the key-mapping lines (Normal and Error modes), each mapped key token (e.g. `↑/k`, `n`, `q`, `c`, `r`) renders in **white** and its trailing description (e.g. `up`, `next step`, `quit`) renders in **light gray**. For the status-message lines the whole line renders in **white** — with one exception: in the quit-confirm prompt, the embedded `Power-Ralph.9000` substring renders in **green** to match the top-border title's brand color, so the confirmation footer and the title line read as the same app.
 
@@ -197,11 +195,11 @@ The status text sits on the left and the `? Help | <version>` cluster is right-a
 
 ### `? Help` and the help modal
 
-When the status-line footer is active and you press `?`, the TUI enters **ModeHelp**: a centered overlay modal appears showing the keyboard shortcuts for all four modes (Normal, Select, Error, Done). The footer switches to `esc  close` for the duration. Press `<Escape>` to dismiss; press `q` to enter the quit-confirm prompt instead.
+When the status-line footer is active and you press `?`, a centered overlay modal appears showing the keyboard shortcuts for all four modes (Normal, Select, Error, Done). The footer switches to `esc  close` for the duration. Press `<Escape>` to dismiss; press `q` to enter the quit-confirm prompt instead.
 
-The modal is ANSI-aware: it is splice-rendered over the base frame without disturbing the underlying content or color state. On very short terminals (where the modal is taller than the frame), the bottom border and `esc  close` footer row are always pinned to the last visible rows so the dismissal cue is never hidden.
+On very short terminals (where the modal is taller than the frame), the bottom border and `esc  close` footer row are always pinned to the last visible rows so the dismissal cue is never hidden.
 
-Non-wheel mouse events (left-click, right-click, middle-click) inside the modal do not transition to ModeSelect. Wheel events still scroll the underlying viewport.
+Non-wheel mouse events (left-click, right-click, middle-click) inside the modal do not transition to Select mode. Wheel events still scroll the underlying log panel.
 
 ### Footer text by mode
 
@@ -220,11 +218,11 @@ The left-side shortcut bar is the clearest way to tell what state the handler is
 | `esc  close` | Help — the keyboard shortcut modal is open |
 | `Quitting...` | Quitting — you confirmed the quit, shutdown is unwinding |
 
-When the workflow finishes normally, the completion summary is written to the log body and the TUI enters `ModeDone`. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
+When the workflow finishes normally, the completion summary is written to the log body and the TUI enters Done mode. The process does not exit on its own — press `q` then `y` to exit, giving you time to review the final output. In Done mode you can also press `v` to enter Select mode and select text from the log panel.
 
 ### Using Select mode
 
-Enter `ModeSelect` by pressing `v` from Normal or Done mode (keyboard cursor appears at column 0 of the last visible log row), or by left-clicking the log viewport (mouse cursor anchors at the click cell). The footer changes to show the select-mode shortcuts.
+Enter Select mode by pressing `v` from Normal or Done mode (keyboard cursor appears at column 0 of the last visible log row), or by left-clicking the log viewport (mouse cursor anchors at the click cell). The footer changes to show the select-mode shortcuts.
 
 Move the keyboard cursor with vim-style keys:
 
@@ -241,9 +239,9 @@ Move the keyboard cursor with vim-style keys:
 | `PgDn` / `PgUp` | Move down / up one page |
 | `y` / `Enter` | Copy selected text to clipboard and exit Select mode |
 
-The cursor behaves like vim's visual mode: vertical movement remembers the intended column (`virtualCol`) and restores it when returning to a longer line. The viewport auto-scrolls to keep the cursor visible.
+The cursor behaves like vim's visual mode: vertical movement remembers the intended column and restores it when returning to a longer line. The log panel auto-scrolls to keep the cursor visible.
 
-Press `y` or `Enter` to copy the selected text to the clipboard and return to Normal or Done mode. A `[copied N chars]` confirmation line appears in the log on success. In headless or SSH environments where no clipboard daemon is available, an OSC 52 escape sequence is sent to the terminal so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can still deliver the payload.
+Press `y` or `Enter` to copy the selected text to the clipboard and return to Normal or Done mode. A `[copied N chars]` confirmation line appears in the log on success. In headless or SSH environments where no clipboard daemon is available, pr9k falls back to an OSC 52 escape sequence so clipboard-capable terminals (iTerm2, Kitty, Windows Terminal) can still deliver the payload.
 
 Press `Esc` to clear the selection and return to Normal or Done mode without copying. Press `q` to enter the quit confirmation prompt (the selection is cleared automatically).
 
