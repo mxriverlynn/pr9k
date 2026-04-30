@@ -11,19 +11,16 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/claudestream"
 )
 
-// fixturesDir returns the path to docs/plans/streaming-json-output/fixtures/
-// relative to this test file (D coding-standards/testing.md test helper path
-// resolution — use runtime.Caller, not os.Getwd).
+// fixturesDir returns the path to the package-local testdata/ directory
+// (D coding-standards/testing.md test helper path resolution — use
+// runtime.Caller, not os.Getwd).
 func fixturesDir(t *testing.T) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	// thisFile is .../src/internal/claudestream/parser_test.go
-	// Navigate up 3 levels to workspace root then into the fixtures directory.
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	return filepath.Join(root, "docs", "plans", "streaming-json-output", "fixtures")
+	return filepath.Join(filepath.Dir(thisFile), "testdata")
 }
 
 func TestParser_SystemInit(t *testing.T) {
