@@ -1,216 +1,195 @@
 # Building Custom Workflows
 
-This guide explains how to create and modify workflow step sequences in pr9k. Steps are defined in JSON configuration files and can mix Claude CLI invocations with shell commands.
+This guide walks you from the smallest possible custom workflow up through the full step schema. By the end you'll know how to write your own `config.json`, where to put prompt files and scripts, and which optional fields exist for the advanced cases.
 
-## Step Configuration Files
+← [Back to How-To Guides](README.md)
 
-pr9k loads step definitions from `config.json` (resolved relative to the workflow directory). This file contains three groups:
+**Prerequisites**: A working install with at least one successful run of the bundled workflow — see [Getting Started](getting-started.md). If you haven't run pr9k yet, do that first; the schema in this guide will make a lot more sense once you've watched a workflow execute.
 
-- **`initialize`** — Steps run once before the iteration loop begins
-- **`iteration`** — Steps run once per issue
-- **`finalize`** — Steps run once after all iterations complete
+## The smallest possible workflow
 
-Steps execute in the order they appear in each array.
-
-An optional top-level **`statusLine`** object can also be added to configure a status-line command displayed by the TUI (see [Config Validation — statusLine block](../code-packages/validator.md#statusline-block-category-statusline) for the schema). The runner's output appears in the TUI footer during Normal mode; press `?` to open the help modal. See [Status Line](../features/status-line.md) for runtime behavior, stdin payload schema, and writing custom status-line scripts.
-
-## Step Schema
-
-Each step object has the following fields:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Display name shown in the TUI header and log output |
-| `isClaude` | bool | yes | `true` for Claude CLI steps, `false` for shell commands |
-| `model` | string | Claude steps | Claude model to use (`"sonnet"`, `"opus"`) |
-| `promptFile` | string | Claude steps | Filename in `prompts/` directory (e.g., `"feature-work.md"`) |
-| `command` | string[] | Shell steps | Command argv (e.g., `["git", "push"]`) |
-| `captureAs` | string | optional | Store the step's stdout under this variable name for use in later steps |
-| `captureMode` | string | optional | `"lastLine"` (default) or `"fullStdout"` — controls how stdout is bound when `captureAs` is set. Only valid on non-claude steps. See [Capturing Step Output](capturing-step-output.md). |
-| `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when the captured output for this step is empty |
-| `skipIfCaptureEmpty` | string | optional | Skip this step when the named capture variable is empty |
-| `timeoutSeconds` | int | optional | Cap wall-clock time for this step; SIGTERM then SIGKILL if exceeded |
-| `resumePrevious` | bool | optional | (Claude steps only) Attempt to resume the previous claude step's session via `--resume <session_id>`. Five runtime gates (G1–G5) must all pass; any failure falls through to a fresh session without aborting. See [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious). **Default workflow ships with this unset on all steps** — engine support is present but feature-flagged-off. |
-| `env` | string[] | optional | Additional host environment variable names to pass through to the sandbox container (see [Config Validation](../code-packages/validator.md) for allowed names) |
-
-## Claude Steps
-
-A Claude step invokes the `claude` CLI with a prompt file. At runtime, the orchestrator builds the full command:
-
-```
-claude --permission-mode bypassPermissions --model <model> -p <prompt-content>
-```
-
-The prompt content is read from `prompts/<promptFile>` and all `{{VAR_NAME}}` tokens are substituted at runtime. Use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, and other built-in variables to inject iteration context (see [Variable Output & Injection](variable-output-and-injection.md) for the full variable list).
-
-### Example: Claude step
-
-```json
-{"name": "Feature work", "model": "sonnet", "promptFile": "feature-work.md", "isClaude": true}
-```
-
-## Shell Command Steps
-
-A shell command step runs an arbitrary command as a subprocess. The `command` field is an argv array — the first element is the executable, the rest are arguments.
-
-Relative paths containing a `/` separator are resolved against the workflow directory. Bare commands (like `git`) are looked up via `PATH`. Template variables like `{{ISSUE_ID}}` are replaced with actual values at runtime (see [Variable Output & Injection](variable-output-and-injection.md)).
-
-### Example: Shell command steps
-
-```json
-{"name": "Close issue", "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"]}
-```
-
-```json
-{"name": "Git push", "isClaude": false, "command": ["git", "push"]}
-```
-
-## Initialize, Iteration, and Finalization Steps
-
-**Initialize steps** (the `"initialize"` array in `config.json`) run once before the iteration loop begins. Use them for setup tasks that must complete before any issue is processed.
-
-**Iteration steps** (the `"iteration"` array in `config.json`) run once per issue. They have access to all built-in and iteration-scoped variables — use `{{ISSUE_ID}}`, `{{STARTING_SHA}}`, `{{ITER}}`, and others in both prompts and shell commands. See [Variable Output & Injection](variable-output-and-injection.md) for the full variable list.
-
-**Finalization steps** (the `"finalize"` array in `config.json`) run once after all iterations complete, even if the iteration loop exits early (e.g., no more issues found). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are not visible — using them will substitute the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, etc.) remain available.
-
-## The Default Workflow
-
-The default iteration workflow has 11 steps:
-
-1. **Get next issue** (shell) — Finds the lowest-numbered open GitHub issue labeled "ralph" assigned to the user; exits the loop when none remain
-2. **Get starting SHA** (shell) — Records `HEAD` as `{{STARTING_SHA}}` for later diff references
-3. **Get issue body** (shell) — Fetches the issue title and body via `gh` and captures them as `{{ISSUE_BODY}}` (fullStdout)
-4. **Get project card** (shell) — Runs `scripts/project_card` to probe build-config files and captures a short project summary as `{{PROJECT_CARD}}` (fullStdout)
-5. **Feature work** (sonnet) — Implements the GitHub issue
-6. **Get post-feature diff** (shell) — Captures `git diff {{STARTING_SHA}}..HEAD --stat` as `{{PRE_REVIEW_DIFF}}` (fullStdout) for use in the test-writing prompt
-7. **Test planning** (opus) — Creates a test plan
-8. **Test writing** (sonnet) — Writes tests from the plan
-9. **Summarize to issue** (shell) — Posts a single end-of-iteration summary comment to the GitHub issue via `scripts/post_issue_summary`
-10. **Close issue** (shell) — Closes the GitHub issue via `gh`
-11. **Git push** (shell) — Pushes all commits
-
-The default finalization workflow has 7 steps — these run once per pr9k run against the full set of branch changes, not per issue:
-
-1. **Code review** (opus) — Reviews every change on the branch; writes findings (or the `NOTHING-TO-FIX` sentinel) to `code-review.md`
-2. **Check review verdict** (shell) — `scripts/review_verdict` reads `code-review.md` and captures `REVIEW_HAS_FIXES` (empty when the sentinel is present)
-3. **Fix review items** (sonnet) — Implements the review findings; `skipIfCaptureEmpty: REVIEW_HAS_FIXES` skips this step when the reviewer found nothing
-4. **Update docs** (sonnet) — Updates project documentation for the whole branch
-5. **Deferred work** (sonnet) — Creates issues from accumulated `deferred.txt`
-6. **Lessons learned** (sonnet) — Updates coding standards from `progress.txt`
-7. **Final git push** (shell) — Pushes finalization commits
-
-## Creating a Custom Workflow
-
-### 1. Create your prompt files
-
-Add markdown files to the `prompts/` directory. Each file contains the instructions that will be passed to the Claude CLI via `-p`. Prompts can reference local files using the `@filename` syntax (e.g., `@progress.txt`), which tells Claude to include that file's contents as context.
-
-### 2. Define your steps in JSON
-
-Create or modify `config.json`. For example, a minimal workflow:
+Three iteration steps and one finalize step. This runs once per `ralph`-labeled issue (Claude implements, then `git push`), and pushes one more time when the loop ends:
 
 ```json
 {
   "initialize": [],
   "iteration": [
-    {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true},
-    {"name": "Test", "model": "sonnet", "promptFile": "write-tests.md", "isClaude": true},
-    {"name": "Push", "isClaude": false, "command": ["git", "push"]}
+    {
+      "name": "Get next issue",
+      "isClaude": false,
+      "command": ["scripts/get_next_issue"],
+      "captureAs": "ISSUE_ID",
+      "breakLoopIfEmpty": true
+    },
+    {
+      "name": "Implement",
+      "isClaude": true,
+      "model": "sonnet",
+      "promptFile": "implement.md"
+    },
+    {
+      "name": "Push",
+      "isClaude": false,
+      "command": ["git", "push"]
+    }
   ],
-  "finalize": [
-    {"name": "Final push", "isClaude": false, "command": ["git", "push"]}
-  ]
+  "finalize": []
 }
 ```
 
-### 3. Add custom scripts
+The matching `prompts/implement.md` is just a markdown file — Claude reads its content as the prompt. `{{VAR}}` tokens in the file are substituted at runtime with values from the iteration context (see [Workflow Variables](workflow-variables.md)):
 
-Place scripts in the `scripts/` directory. Reference them with a relative path in the `command` array:
-
-```json
-{"name": "Deploy", "isClaude": false, "command": ["scripts/deploy", "{{ISSUE_ID}}"]}
+```markdown
+You are working on GitHub issue #{{ISSUE_ID}}. Read the issue body, implement the change, write the code, and commit it.
 ```
 
-The orchestrator resolves `scripts/deploy` to `{workflowDir}/scripts/deploy` before execution.
+That's it. Drop those two files into `<your-target-repo>/.pr9k/workflow/` (with `prompts/` for the `.md` file and `scripts/get_next_issue` from the bundled workflow), and pr9k picks them up automatically — no rebuild needed. See [Where the workflow lives](#where-the-workflow-lives) below.
 
-### 4. Build and run
+## How a workflow is structured
 
-After modifying configs or prompts, rebuild with `make build` to copy everything into `bin/`. Or run directly if building with `go build`.
+`config.json` has three top-level arrays plus an optional `statusLine` block:
 
-## Per-Repo Workflow Override
+| Array | When it runs | Typical use |
+|-------|-------------|-------------|
+| `initialize` | Once, before the iteration loop | Capture variables shared across all iterations (the GitHub user, the starting commit SHA) |
+| `iteration` | Once per issue (or once per loop pass) | The work itself: pick up an issue, do the work, push |
+| `finalize` | Once, after all iterations end | Cross-iteration cleanup: code review, doc update, deferred-work bookkeeping |
 
-pr9k supports an in-repo workflow override: if `<projectDir>/.pr9k/workflow/` exists and is a directory, pr9k uses it as the workflow directory instead of the shipped bundle inside `bin/.pr9k/workflow/`. This lets individual repos ship their own `config.json`, `prompts/`, and `scripts/` without touching the pr9k install.
+Steps in each array execute top-to-bottom. The optional `statusLine` block configures a custom status-line command displayed in the TUI footer — see [Configuring a Status Line](configuring-a-status-line.md).
 
-### Setup
+The `finalize` array runs even when the iteration loop exits early (no more issues). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are *not* visible in finalize steps; using them substitutes the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `ITER`, `MAX_ITER`) remain available.
 
-1. Create the override directory in your target repo:
+## Mixing Claude steps and shell steps
 
-   ```bash
-   mkdir -p .pr9k/workflow/prompts
-   mkdir -p .pr9k/workflow/scripts
-   ```
+Every step is either a Claude invocation (`isClaude: true`) or a shell command (`isClaude: false`).
 
-2. Add your `config.json` to `.pr9k/workflow/`:
+**Claude steps** invoke the `claude` CLI inside the Docker sandbox with a prompt file:
 
-   ```json
-   {
-     "initialize": [],
-     "iteration": [
-       {"name": "Implement", "model": "sonnet", "promptFile": "implement.md", "isClaude": true},
-       {"name": "Push", "isClaude": false, "command": ["git", "push"]}
-     ],
-     "finalize": []
-   }
-   ```
+```json
+{
+  "name": "Feature work",
+  "isClaude": true,
+  "model": "sonnet",
+  "promptFile": "feature-work.md"
+}
+```
 
-3. Add prompt files to `.pr9k/workflow/prompts/` and scripts to `.pr9k/workflow/scripts/`.
+At runtime pr9k builds the command `claude --permission-mode bypassPermissions --model sonnet -p <prompt-content>`. The prompt content is the file at `prompts/feature-work.md` with all `{{VAR}}` tokens substituted. The `bypassPermissions` flag skips Claude's interactive permission prompts — necessary for unattended runs, and one reason every Claude step is sandboxed.
 
-4. Add `.pr9k/` to your `.gitignore` — or commit the override if you want it version-controlled:
+**Shell steps** run an arbitrary command as a subprocess on the host:
 
-   ```bash
-   echo '.pr9k/' >> .gitignore
-   ```
+```json
+{
+  "name": "Close issue",
+  "isClaude": false,
+  "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"]
+}
+```
 
-### Resolution order
+The first element is the executable; the rest are arguments. `{{VAR}}` tokens in any element are substituted at runtime. Path resolution rules:
 
-When pr9k starts, it checks two candidates in order:
+- A path containing `/` (e.g. `scripts/close_gh_issue`) is resolved relative to the workflow directory
+- A bare command (e.g. `git`) is looked up via `$PATH`
 
-1. `<projectDir>/.pr9k/workflow/` — used if it exists and is a directory (in-repo override)
-2. `<executableDir>/.pr9k/workflow/` — the shipped bundle (fallback)
+Scripts must be executable (`chmod +x`) and inherit the host's `$PATH` and a curated set of environment variables — see [Passing Environment Variables](passing-environment-variables.md) for what's forwarded by default.
 
-If neither exists, pr9k exits with an error listing both paths. Pass `--workflow-dir <path>` to override both candidates.
+## Where the workflow lives
 
-### When to use
+pr9k looks for the workflow bundle in two places, in order:
 
-The in-repo override is useful when:
-- Your project needs workflow steps or prompts tailored to its tech stack
-- You want to version-control your workflow alongside your code
-- You're developing a custom workflow and want quick iteration without rebuilding the pr9k bundle
+1. `<target-repo>/.pr9k/workflow/` — the **per-repo override** (recommended for custom work)
+2. `<binary-dir>/.pr9k/workflow/` — the **shipped bundle** from `make build` (fallback)
 
-## TUI Display Constraints
+For your own custom workflow, use the per-repo override. It lives next to the code it operates on, can be version-controlled (or `.gitignore`-d) per repo, and pr9k picks it up with no flags or rebuilds:
 
-The TUI status header displays steps as a dynamic grid of 4 columns per row, sized at startup to fit the largest phase (initialize, iteration, or finalize). If your iteration phase has 6 steps, the grid has 2 rows; 9 steps gives 3 rows; and so on. Each row's cells are padded to a uniform width so the step list is distributed evenly across the header. If any phase has more steps than the grid was sized to hold (which cannot happen with a correct config — the grid is sized to the maximum across all phases), extra steps will execute but won't appear in the header.
+```bash
+mkdir -p .pr9k/workflow/prompts .pr9k/workflow/scripts
+# Add your config.json, prompts/*.md, and any scripts/* helpers here.
+```
 
-## Error Recovery
+If you want the workflow committed to the repo, leave it tracked. If you want it private, add `.pr9k/workflow/` to `.gitignore`. Note: the runtime-state entries in [Getting Started](getting-started.md) intentionally ignore `.pr9k/logs/`, `.pr9k/iteration.jsonl`, and `.pr9k/artifacts/` rather than the entire `.pr9k/` folder, precisely so `.pr9k/workflow/` stays trackable by default.
 
-When any step fails (non-zero exit code), the TUI enters error mode. The user can:
+To override both candidates explicitly (for example, when testing a feature branch of pr9k), pass `--workflow-dir <path>`. Editing `bin/.pr9k/workflow/` directly works but `make build` will overwrite it; if you're modifying the bundled workflow itself, edit the source files in the pr9k repo's `workflow/` directory and run `make build`.
 
-- **c** — continue to the next step (failed step shows `[✗]`)
-- **r** — retry the failed step
-- **q** → **y** — quit the workflow
+## A bigger example: the bundled workflow
 
-User-initiated skips (pressing **n** during a step) are not treated as failures — the step shows `[✓]` and the workflow advances.
+The bundled "Ralph" workflow has 11 iteration steps and 7 finalize steps. Reading through it is the fastest way to see how the pieces compose.
 
-## Related Documentation
+**Iteration phase (11 steps):**
 
-- [Getting Started](getting-started.md) — Install, first run, and orientation
-- [Variable Output & Injection](variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved into prompts and commands
-- [Capturing Step Output](capturing-step-output.md) — How to use `captureAs` to bind step stdout to a variable
-- [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars into the Docker sandbox via the `env` field
-- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically
-- [Recovering from Step Failures](recovering-from-step-failures.md) — Error mode keyboard controls and decision-making
-- [Debugging a Run](debugging-a-run.md) — Reading logs and reproducing failures
-- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — The architectural decision that workflow content belongs in `config.json`, not Go code; includes documented exceptions
-- [Step Definitions & Prompt Building](../code-packages/steps.md) — Implementation details of step loading and prompt construction
-- [Workflow Orchestration](../features/workflow-orchestration.md) — The Run loop and Orchestrate step sequencer
-- [Subprocess Execution](../features/subprocess-execution.md) — How steps are executed as subprocesses
+1. **Get next issue** (shell, `breakLoopIfEmpty`) — picks the lowest-numbered open `ralph` issue assigned to the user; binds `ISSUE_ID`. When empty, pr9k exits the iteration loop and runs finalize.
+2. **Get starting SHA** (shell) — records `HEAD` as `STARTING_SHA` for diff references later in the iteration
+3. **Get issue body** (shell, `captureMode: fullStdout`) — fetches the issue title and body via `gh` and binds `ISSUE_BODY`
+4. **Get project card** (shell, `captureMode: fullStdout`) — probes build-config files and binds `PROJECT_CARD` (a short tech-stack summary)
+5. **Feature work** (sonnet) — implements the issue
+6. **Get post-feature diff** (shell, `captureMode: fullStdout`) — captures `git diff {{STARTING_SHA}}..HEAD --stat` as `PRE_REVIEW_DIFF` for the test-writing prompt
+7. **Test planning** (opus) — drafts a test plan
+8. **Test writing** (sonnet) — writes the tests
+9. **Summarize to issue** (shell) — posts a single end-of-iteration comment
+10. **Close issue** (shell) — `gh issue close`
+11. **Git push** (shell) — pushes the branch
+
+**Finalize phase (7 steps):**
+
+1. **Code review** (opus) — reviews every change on the branch; writes findings (or the `NOTHING-TO-FIX` sentinel) to `code-review.md`
+2. **Check review verdict** (shell) — reads `code-review.md` and binds `REVIEW_HAS_FIXES` (empty when the sentinel is present)
+3. **Fix review items** (sonnet, `skipIfCaptureEmpty: REVIEW_HAS_FIXES`) — implements review findings; skipped when the reviewer found nothing
+4. **Update docs** (sonnet) — updates project docs for the whole branch
+5. **Deferred work** (sonnet) — files issues from `deferred.txt`
+6. **Lessons learned** (sonnet) — codifies entries from `progress.txt` into coding standards
+7. **Final git push** (shell)
+
+The bundled `config.json`, prompts, and scripts live in `workflow/` in the pr9k repo. Reading them alongside this list is the fastest way to learn the conventions.
+
+## Iteration without GitHub
+
+The bundled workflow is GitHub-driven, but pr9k itself doesn't know what GitHub is — see the [narrow-reading principle ADR](../adr/20260410170952-narrow-reading-principle.md). The orchestrator runs steps in order, captures their output, and substitutes variables; everything specific to GitHub lives in the bundled scripts and prompts.
+
+To drive a non-GitHub workflow, replace **Get next issue** with any shell step that prints the next unit of work to stdout (a queue ID, a filename, a Linear issue ID), and replace **Summarize / Close issue / Git push** with whatever closure step makes sense for your queue. The other steps don't change.
+
+## Field reference
+
+This is the full schema for a step object. The first three rows are the basics; everything below `command`/`promptFile` is optional.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Display name shown in the TUI checkbox grid and log banners |
+| `isClaude` | bool | yes | `true` for Claude CLI steps, `false` for shell commands |
+| `model` | string | Claude steps | `"sonnet"` or `"opus"` (passed verbatim to `claude --model`) |
+| `promptFile` | string | Claude steps | Filename in `prompts/` (e.g. `"feature-work.md"`) |
+| `command` | string[] | Shell steps | Argv: first element is the executable, rest are arguments |
+| `captureAs` | string | optional | Bind this step's stdout to a variable for use in later steps. See [Capturing Step Output](capturing-step-output.md). |
+| `captureMode` | string | optional | `"lastLine"` (default) or `"fullStdout"`. Only valid on non-Claude steps. |
+| `breakLoopIfEmpty` | bool | optional | Exit the iteration loop when this step's captured output is empty. See [Breaking Out of the Loop](breaking-out-of-the-loop.md). |
+| `skipIfCaptureEmpty` | string | optional | Skip this step when the named earlier-step capture is empty. See [Skipping Steps Conditionally](skipping-steps-conditionally.md). |
+| `timeoutSeconds` | int | optional | Cap wall-clock time for this step (SIGTERM, then SIGKILL). See [Setting Step Timeouts](setting-step-timeouts.md). |
+| `onTimeout` | string | optional | `"fail"` (default) or `"continue"`. With `"continue"`, a timeout marks the step `[!]` and advances. |
+| `resumePrevious` | bool | optional | (Claude steps only) Attempt to resume the previous Claude step's session. Off by default in the bundled workflow. See [Resuming Sessions](resuming-sessions.md). |
+| `env` | string[] | optional | Host environment variable names to forward into the sandbox container. See [Passing Environment Variables](passing-environment-variables.md). |
+| `containerEnv` | object | optional | Literal env values to inject into the sandbox container. See [Passing Environment Variables](passing-environment-variables.md). |
+
+For the formal schema and validator rules, see [Config Validation](../code-packages/validator.md). For the runtime semantics of each field, the linked how-tos go deeper.
+
+## Iterating on your workflow
+
+While developing a custom workflow:
+
+1. Start in the per-repo override (`<target-repo>/.pr9k/workflow/`) so changes don't require a rebuild
+2. Run with `-n 1` to test a single iteration end-to-end
+3. Read the persisted log under `<target-repo>/.pr9k/logs/` if anything looks wrong — see [Debugging a Run](debugging-a-run.md)
+4. If a Claude step is taking unusually long, check the iteration log for the per-step `$cost` and duration
+5. Once the per-iteration shape is right, run with `-n 0` (the default) to let it loop until done
+
+## Related documentation
+
+- ← [Back to How-To Guides](README.md)
+- [Getting Started](getting-started.md) — install, the one-time GitHub setup, first run
+- [Workflow Variables](workflow-variables.md) — `{{VAR}}` substitution and file-based handoffs between steps
+- [Capturing Step Output](capturing-step-output.md) — `captureAs` and `captureMode`
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty`
+- [Skipping Steps Conditionally](skipping-steps-conditionally.md) — `skipIfCaptureEmpty`
+- [Setting Step Timeouts](setting-step-timeouts.md) — `timeoutSeconds` and `onTimeout`
+- [Passing Environment Variables](passing-environment-variables.md) — `env` and `containerEnv`
+- [Resuming Sessions](resuming-sessions.md) — `resumePrevious` for tightly-coupled Claude steps
+- [Debugging a Run](debugging-a-run.md) — read logs, reproduce a failure with `-n 1`
+- [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — why workflow content belongs in `config.json`, not Go code

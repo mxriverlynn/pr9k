@@ -640,7 +640,7 @@ The `trackingOffsetIterHeader` adapter is needed because `Orchestrate` always ca
 - [Status Line Package](../code-packages/statusline.md) — Runner API, State, BuildPayload, Sanitize, and concurrency model
 - [Architecture Overview](../architecture.md) — System-level view of the orchestration flow with block diagrams
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create and modify workflow step sequences
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How iteration variables are captured and injected into steps
+- [Workflow Variables](../how-to/workflow-variables.md) — How iteration variables are captured and injected into steps
 - [Step Definitions & Prompt Building](../code-packages/steps.md) — How steps are loaded and prompts are built
 - [Subprocess Execution & Streaming](subprocess-execution.md) — How RunStep executes subprocesses; how LastCapture returns stdout output
 - [CLI & Configuration](cli-configuration.md) — How ProjectDir and Iterations are parsed and passed to RunConfig

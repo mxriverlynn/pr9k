@@ -1,6 +1,10 @@
 # Configuring an External Editor for the Workflow Builder
 
+← [Back to How-To Guides](README.md)
+
 The workflow builder uses your system's external editor to edit multi-line content — prompt files and scripts — that cannot be edited inside the TUI. This guide explains how to configure the editor, what values are accepted and rejected, and how to verify the configuration.
+
+**Prerequisites**: you've launched the workflow builder at least once — see [Using the Workflow Builder](using-the-workflow-builder.md). The short version: set `VISUAL=nano` (or `nvim`, or `code --wait`) in your shell rc, then press `Ctrl+E` on a step's prompt or script in the builder. The rest of this page is the full rule set behind that one-liner.
 
 ## How the Builder Resolves Your Editor
 
@@ -90,5 +94,7 @@ The builder never silently loses the terminal in a released-but-not-reclaimed st
 
 ## Related Documentation
 
+- ← [Back to How-To Guides](README.md)
 - [Using the Workflow Builder](using-the-workflow-builder.md) — launching the builder, editing steps, saving
+- [Building Custom Workflows](building-custom-workflows.md) — what the prompt and script files you'll edit are for
 - [Workflow Builder Feature Reference](../features/workflow-builder.md) — full feature behavior including the external-editor flow and the model field suggestion list

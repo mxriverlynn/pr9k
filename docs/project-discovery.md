@@ -11,7 +11,6 @@
 ## Documentation
 
 - Docs: `docs/`
-- Plans: `docs/plans/`
 - Coding standards: `docs/coding-standards/` (`error-handling.md`, `testing.md`, `concurrency.md`, `api-design.md`, `go-patterns.md`, `lint-and-tooling.md`, `versioning.md`)
 - Prompts: `prompts/` (markdown prompt files consumed by the orchestrator)
 
@@ -78,7 +77,7 @@
 - [sandbox Subcommand](features/sandbox-subcommand.md) — `sandbox create` (Docker image pull + smoke test), `sandbox --interactive` (interactive auth REPL), and `sandbox shell` (interactive bash inside the sandbox)
 - **How-To Guides:**
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
-  - [Variable Output & Injection](how-to/variable-output-and-injection.md) — Variable injection into prompts/commands and file-based data passing between steps
+  - [Workflow Variables](how-to/workflow-variables.md) — Variable injection into prompts/commands and file-based data passing between steps
   - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
 - **Coding Standards** — Conventions governing Go code in pr9k:
   - [API Design](coding-standards/api-design.md), [Concurrency](coding-standards/concurrency.md), [Error Handling](coding-standards/error-handling.md), [Go Patterns](coding-standards/go-patterns.md), [Testing](coding-standards/testing.md), [Lint and Tooling](coding-standards/lint-and-tooling.md), [Versioning](coding-standards/versioning.md)

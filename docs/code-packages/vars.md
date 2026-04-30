@@ -230,6 +230,6 @@ This is a programming error, not a runtime condition — the step validator (iss
 - [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How the orchestrator calls `SetPhase`, `SetIteration`, `SetStep`, and `ResetIteration`
 - [Step Definitions & Prompt Building](steps.md) — `CaptureAs` field on `Step` that feeds `Bind`
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — End-to-end guide to how variables flow through the workflow
+- [Workflow Variables](../how-to/workflow-variables.md) — End-to-end guide to how variables flow through the workflow
 - [API Design](../coding-standards/api-design.md) — Precondition validation patterns (panic vs. error)
 - [Testing](../coding-standards/testing.md) — Race detector requirement and testing conventions

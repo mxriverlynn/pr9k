@@ -1,8 +1,16 @@
 # Caching Build Artifacts Across Iterations
 
+← [Back to How-To Guides](README.md)
+
+**Audience**: custom-workflow authors whose unattended runs hit `permission denied` cache errors during compile/test steps, or who want their Go/Node/Python/Rust caches to survive across iterations.
+
+**Prerequisites**: a working install ([Getting Started](getting-started.md)) and familiarity with the `containerEnv` mechanism — read [Passing Environment Variables](passing-environment-variables.md) first if you haven't.
+
+**Skip this if** you only run Claude steps and never build/test inside the sandbox; the bundled Go-project workflow already includes these settings, so users running pr9k against a Go repo with the bundled `config.json` get this behaviour automatically.
+
 ## The Problem
 
-By default, each Claude step runs inside an ephemeral Docker container with no persistent build cache. On Go projects this produces a cascade of `permission denied` errors: the Go toolchain falls back to `$HOME/.cache/go-build` and `$HOME/go`. Because the container runs with the host user's UID via `-u` and that UID has no `/etc/passwd` entry inside the container, `$HOME` resolves to `/` (or is unset), and the toolchain hits a permissions wall — forcing Claude to discover workarounds inline at the cost of ~88 `permission denied` retries per 8-iteration run (observed on gearjot-v2).
+By default, each Claude step runs inside an ephemeral Docker container with no persistent build cache. On Go projects this produces a cascade of `permission denied` errors: the Go toolchain falls back to `$HOME/.cache/go-build` and `$HOME/go`. Because the container runs with the host user's UID via `-u` and that UID has no `/etc/passwd` entry inside the container, `$HOME` resolves to `/` (or is unset), and the toolchain hits a permissions wall.
 
 The fix: redirect cache directories to a subdirectory of the bind-mounted project directory via `containerEnv`, so the cache persists across iterations and is always writable.
 
@@ -95,12 +103,22 @@ If you run Docker in rootless mode or with a custom UID mapping, verify that the
 Add the following to the `.gitignore` of every project you run Ralph against:
 
 ```
-# pr9k runtime state (session logs, iteration.jsonl, optional in-repo workflow override)
-.pr9k/
+# pr9k temp files and logs
+.pr9k/logs/
+.pr9k/iteration.jsonl
+.pr9k/artifacts/
 # Ralph build artifact cache
 .ralph-cache/
 ```
 
-This prevents runtime state and the build cache from being accidentally committed. The pr9k repo itself already has both entries.
+This prevents runtime state and the build cache from being accidentally committed. The pr9k repo itself already has these entries.
 
-`.pr9k/` is the primary runtime output directory (logs, `iteration.jsonl`). `.ralph-cache/` is the bind-mounted artifact cache created separately by the Docker sandbox preflight; it lands at the project root alongside `.pr9k/`.
+The `.pr9k/` parent directory holds the per-step JSONL artifacts under `.pr9k/logs/<runstamp>/`, the structured iteration log at `.pr9k/iteration.jsonl`, and an optional in-repo workflow override at `.pr9k/workflow/`. Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` must stay trackable so a per-repo workflow override can be committed and shared between developers (see [Building Custom Workflows](building-custom-workflows.md)). `.ralph-cache/` is the bind-mounted artifact cache created separately by the Docker sandbox preflight; it lands at the project root alongside `.pr9k/`.
+
+## Related documentation
+
+- ← [Back to How-To Guides](README.md)
+- [Passing Environment Variables](passing-environment-variables.md) — the `env` and `containerEnv` mechanism this page builds on
+- [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md) — how the bind-mount is wired and the UID precondition
+- [Building Custom Workflows](building-custom-workflows.md) — where to put `containerEnv` in your `config.json`
+- [Debugging a Run](debugging-a-run.md) — diagnosing `permission denied` errors in step logs

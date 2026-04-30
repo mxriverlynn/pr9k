@@ -43,7 +43,7 @@ const (
 	HelpModeShortcuts        = "esc  close"
 )
 
-// Modal body constants for the Help modal (§Help modal in docs/plans/status-line/design.md).
+// Modal body constants for the Help modal.
 // Each constant contains only the two-column grid rows for that mode section;
 // the modal header, section labels, and borders are rendered separately.
 // Width target: ~67 columns of interior space.

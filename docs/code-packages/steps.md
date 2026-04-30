@@ -202,7 +202,7 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 
 - [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams and data flow
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix step types
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How variables are injected into prompts and commands, and how steps pass data via files
+- [Workflow Variables](../how-to/workflow-variables.md) — How variables are injected into prompts and commands, and how steps pass data via files
 - [CLI & Configuration](../features/cli-configuration.md) — How ProjectDir is resolved and passed to step loading
 - [Workflow Orchestration](../features/workflow-orchestration.md) — How loaded steps are resolved and executed
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution

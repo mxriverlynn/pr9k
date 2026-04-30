@@ -16,7 +16,7 @@ Semver rules apply to backwards-compatible vs. backwards-incompatible changes to
 
 1. **The CLI surface** — every flag on `pr9k` (name, short alias, type, default, accepted values) and the exit codes it returns. This includes both `--workflow-dir` and `--project-dir` (introduced in 0.3.0). Renaming `--iterations`, changing `-n`'s default, or flipping an exit code from `0` to `1` for the same scenario are all **MAJOR** changes.
 2. **The `config.json` schema** — every field name, every required-vs-optional rule, every accepted value for `phase`, `type`, `captureAs`, `breakLoopIfEmpty`, and so on. Any existing user's `config.json` that was valid before must still be valid and still produce the same workflow after the upgrade, or it's a **MAJOR** change.
-3. **The `{{VAR}}` substitution language** — the token syntax, the built-in variable names (`{{WORKFLOW_DIR}}`, `{{PROJECT_DIR}}`, `{{MAX_ITER}}`, `{{ITER}}`, `{{STEP_NUM}}`, `{{STEP_COUNT}}`, `{{STEP_NAME}}`), and the persistent-vs-iteration scoping rules documented in `docs/how-to/variable-output-and-injection.md` and `docs/how-to/capturing-step-output.md`.
+3. **The `{{VAR}}` substitution language** — the token syntax, the built-in variable names (`{{WORKFLOW_DIR}}`, `{{PROJECT_DIR}}`, `{{MAX_ITER}}`, `{{ITER}}`, `{{STEP_NUM}}`, `{{STEP_COUNT}}`, `{{STEP_NAME}}`), and the persistent-vs-iteration scoping rules documented in `docs/how-to/workflow-variables.md` and `docs/how-to/capturing-step-output.md`.
 4. **The `--version` output format** — `pr9k version <semver>\n` on stdout. Users may script against this; changing the format is **MAJOR**.
 
 The following are explicitly **NOT** part of the public API and may change in any release without a MAJOR bump:

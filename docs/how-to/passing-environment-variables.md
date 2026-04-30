@@ -1,6 +1,10 @@
 # Passing Environment Variables to the Sandbox
 
+← [Back to How-To Guides](README.md)
+
 Claude steps run inside a Docker container with a scrubbed environment. By default, only five sandbox-plumbing variables are forwarded from the host. If your workflow needs additional host environment variables inside the container — API tokens, proxy settings, feature flags — you declare them in `config.json`.
+
+**Prerequisites**: a working install with the sandbox set up — see [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md) — and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md).
 
 ## The `env` field
 
@@ -124,14 +128,14 @@ Key differences from `env`:
 
 ### The `.ralph-cache` directory
 
-pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add both `.pr9k/` and `.ralph-cache/` to `.gitignore` in your target repo — `.pr9k/` covers session logs and runtime state, while `.ralph-cache/` covers the build artifact cache (see [Caching Build Artifacts](caching-build-artifacts.md#target-project-gitignore)).
+pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo to keep the build artifact cache out of commits, alongside the pr9k runtime-state entries from [Getting Started](getting-started.md). Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is a tracked source directory for committed per-repo workflow overrides. See [Caching Build Artifacts](caching-build-artifacts.md#target-project-gitignore) for the combined block.
 
 ## Related documentation
 
-- [Docker Sandbox](../features/docker-sandbox.md) — Mount layout, env allowlist behavior, and the full `docker run` command
-- [sandbox Package](../code-packages/sandbox.md) — `BuildRunArgs`, `BuiltinEnvAllowlist`, and set-on-host filtering
-- [Config Validation](../code-packages/validator.md) — Category 10 env validation rules
-- [Building Custom Workflows](building-custom-workflows.md) — How to create custom step sequences
-- [Step Definitions & Prompt Building](../code-packages/steps.md) — The `StepFile.Env` and `StepFile.ContainerEnv` fields in the JSON schema
-- [Preflight](../code-packages/preflight.md) — `Run` function that creates `.ralph-cache` before Claude steps start
-- [Setting Up Docker Sandbox](setting-up-docker-sandbox.md) — First-time Docker setup and authentication
+- ← [Back to How-To Guides](README.md)
+- [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md) — first-time Docker setup, mounts, and auth
+- [Caching Build Artifacts](caching-build-artifacts.md) — using `containerEnv` to point Go/Node/Python/Rust caches at `.ralph-cache/`
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema
+- [Docker Sandbox](../features/docker-sandbox.md) — mount layout, env allowlist, full `docker run` command (contributor reference)
+- [Config Validation](../code-packages/validator.md) — env validation rules
+- [Preflight](../code-packages/preflight.md) — startup checks that create `.ralph-cache` before Claude steps run

@@ -1,6 +1,10 @@
 # Copying Log Text
 
+← [Back to How-To Guides](README.md)
+
 pr9k includes built-in text selection so you can copy any visible log output to the clipboard without leaving the TUI. This is particularly useful on SSH sessions where the terminal's native selection mechanism is defeated by application mouse mode.
+
+**Prerequisites**: a run on screen. The keyboard cursor is part of "Select mode," which is documented in [Reading the TUI](reading-the-tui.md#using-select-mode); pressing `?` while pr9k is running shows the live keyboard reference.
 
 ## Common paths
 
@@ -93,6 +97,9 @@ If you need to copy text using the terminal's built-in drag-select (for example,
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — Overview of all TUI regions including the log panel and shortcut footer
-- [Keyboard Input](../features/keyboard-input.md) — Seven-mode state machine; Select mode entry conditions and all keybindings
-- [TUI Display](../features/tui-display.md) — Implementation details: selection data types, reverse-video rendering, clipboard copy flow
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md#using-select-mode) — Select mode keybinding reference; the broader page covers all TUI regions
+- [Quitting Gracefully](quitting-gracefully.md) — `q` while in Select mode clears the selection and enters quit-confirm
+- [Debugging a Run](debugging-a-run.md) — copy specific failures out of the log to paste into a bug report
+- [Keyboard Input](../features/keyboard-input.md) — keyboard state machine and Select-mode entry conditions (contributor reference)
+- [TUI Display](../features/tui-display.md) — implementation details: selection types, reverse-video rendering, clipboard copy flow

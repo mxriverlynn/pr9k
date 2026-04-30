@@ -40,9 +40,7 @@ Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review
 
 ## pr9k (Go/Bubble Tea)
 
-The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. Full plan in `docs/plans/ralph-tui.md` (historical — describes the original TUI design).
-
-The `pr9k workflow` TUI visual layer is specified in [`docs/plans/workflow-builder-tui-design/feature-specification.md`](docs/plans/workflow-builder-tui-design/feature-specification.md) and implemented per [`docs/plans/workflow-builder-tui-design/feature-implementation-plan.md`](docs/plans/workflow-builder-tui-design/feature-implementation-plan.md).
+The Go TUI orchestrator lives in `src/`, using [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for real-time streaming output. The `pr9k workflow` TUI visual layer is documented in [`docs/features/workflow-builder.md`](docs/features/workflow-builder.md) (Visual Layout section) and the package contract in [`docs/code-packages/workflowedit.md`](docs/code-packages/workflowedit.md).
 
 ### Build and run
 
@@ -132,7 +130,7 @@ Problem-focused guides for users running pr9k against their own projects. When a
 - [`docs/how-to/setting-up-docker-sandbox.md`](docs/how-to/setting-up-docker-sandbox.md) — Install Docker, run `pr9k sandbox create`, authenticate the claude profile with `pr9k sandbox --interactive`, and configure `CLAUDE_CONFIG_DIR` for multi-profile setups
 - [`docs/how-to/reading-the-tui.md`](docs/how-to/reading-the-tui.md) — Tour of the four TUI regions (checkbox grid, iteration line, log panel, shortcut footer with version label) and the phase/step/capture chrome rhythm written into the log body
 - [`docs/how-to/building-custom-workflows.md`](docs/how-to/building-custom-workflows.md) — How to create custom step sequences, add prompts, and mix Claude and shell steps
-- [`docs/how-to/variable-output-and-injection.md`](docs/how-to/variable-output-and-injection.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
+- [`docs/how-to/workflow-variables.md`](docs/how-to/workflow-variables.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands, and how steps pass data via files
 - [`docs/how-to/capturing-step-output.md`](docs/how-to/capturing-step-output.md) — How to use `captureAs` (and `captureMode: "fullStdout"` for multi-line output) to bind a step's stdout to a variable for use in later steps, including initialize-vs-iteration scoping
 - [`docs/how-to/passing-environment-variables.md`](docs/how-to/passing-environment-variables.md) — How to forward host environment variables into the Docker sandbox via the `env` field, and how to inject literal values via `containerEnv`, in `config.json`
 - [`docs/how-to/breaking-out-of-the-loop.md`](docs/how-to/breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit the iteration loop dynamically when a capture step returns nothing

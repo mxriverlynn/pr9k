@@ -1,6 +1,10 @@
 # Breaking Out of the Loop
 
+← [Back to How-To Guides](README.md)
+
 pr9k's iteration loop runs until one of two conditions is true: it hits the `--iterations N` cap, or a step with `breakLoopIfEmpty: true` returns an empty capture. This guide explains the `breakLoopIfEmpty` pattern — when to use it, how it interacts with the rest of the workflow, and what it looks like at runtime.
+
+**Prerequisites**: familiarity with capturing step output — see [Capturing Step Output](capturing-step-output.md). `breakLoopIfEmpty` only fires after a step also sets `captureAs`.
 
 ## When you want it
 
@@ -137,8 +141,9 @@ For handling step failures, see [Recovering from Step Failures](recovering-from-
 
 ## Related documentation
 
-- [Capturing Step Output](capturing-step-output.md) — How `captureAs` binds values, which `breakLoopIfEmpty` reads
-- [Building Custom Workflows](building-custom-workflows.md) — Full step schema including `breakLoopIfEmpty`
-- [Recovering from Step Failures](recovering-from-step-failures.md) — The distinction between "nothing to do" and "something broke"
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Implementation: the `lastState == StepDone` guard, remaining-step skipping
-- [Step Definitions & Prompt Building](../code-packages/steps.md) — Step schema reference
+- ← [Back to How-To Guides](README.md)
+- [Capturing Step Output](capturing-step-output.md) — `captureAs` binds the value `breakLoopIfEmpty` reads
+- [Skipping Steps Conditionally](skipping-steps-conditionally.md) — `skipIfCaptureEmpty` for "skip just this one step" instead of "exit the loop"
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema
+- [Recovering from Step Failures](recovering-from-step-failures.md) — the distinction between "nothing to do" and "something broke"
+- [Workflow Orchestration](../features/workflow-orchestration.md) — implementation details (contributor reference)

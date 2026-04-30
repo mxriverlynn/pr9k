@@ -93,7 +93,7 @@ See [Status Line](statusline.md) for the full runtime contract, including the `R
 
 Two additional rules protect sandbox isolation. Both fire regardless of which phase the step is in.
 
-*(Rule A — captureAs on a claude step rejected — was removed in issue #91. Under stream-json output, captureAs on a claude step binds to `result.result` from the Aggregator, not docker stdout. See `docs/code-packages/claudestream.md` (Aggregator section) for the full capture contract, and D6 in `docs/plans/streaming-json-output/design.md` for the original rationale.)*
+*(Rule A — captureAs on a claude step rejected — was removed in issue #91. Under stream-json output, captureAs on a claude step binds to `result.result` from the Aggregator, not docker stdout. See `docs/code-packages/claudestream.md` (Aggregator section) for the full capture contract.)*
 
 **Rule B — prompt files must not reference `{{WORKFLOW_DIR}}` or `{{PROJECT_DIR}}`.**
 These tokens expand to host filesystem paths. Inside the sandbox, those paths do not exist. A prompt that embeds them would pass a broken path to claude, causing silent substitution failures or confusing instructions. The check uses token-aware parsing (via `vars.ExtractReferences`) so escaped sequences like `{{{{WORKFLOW_DIR}}}}` (which render as the literal text `{{WORKFLOW_DIR}}`) are not flagged. The error message names only the token(s) actually found.

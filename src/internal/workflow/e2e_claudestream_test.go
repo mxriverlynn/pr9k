@@ -12,7 +12,7 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/ui"
 )
 
-// e2eFixturesDir returns the path to docs/plans/streaming-json-output/fixtures/
+// e2eFixturesDir returns the path to the shared claudestream testdata/ fixtures
 // relative to this test file's location.
 func e2eFixturesDir(t *testing.T) string {
 	t.Helper()
@@ -21,9 +21,8 @@ func e2eFixturesDir(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	// thisFile is .../src/internal/workflow/e2e_claudestream_test.go
-	// Navigate up 3 levels to workspace root then into the fixtures directory.
-	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
-	return filepath.Join(root, "docs", "plans", "streaming-json-output", "fixtures")
+	// Hop sideways into the claudestream package's testdata directory.
+	return filepath.Join(filepath.Dir(thisFile), "..", "claudestream", "testdata")
 }
 
 // fakeClaude writes a shell script to t.TempDir()/fake-claude.sh that cats the

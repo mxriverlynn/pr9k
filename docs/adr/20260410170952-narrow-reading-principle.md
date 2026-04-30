@@ -11,7 +11,7 @@
 
 pr9k originally had Ralph workflow knowledge hardcoded in Go: banner prints, `get_gh_user` invocation, `get_next_issue` + empty-issue check, `git rev-parse HEAD`, `ISSUENUMBER` / `STARTINGSHA` prepending, an 8-step cap, and an assumption that the Ralph workflow was THE workflow.
 
-The UX corrections plan (`docs/plans/ux-corrections/design.md`) surfaced this during an audit and asked a structural question: where should workflow content live — in Go code or in `config.json`? This ADR records the answer.
+A UX-corrections audit surfaced this and asked a structural question: where should workflow content live — in Go code or in `config.json`? This ADR records the answer.
 
 ## Decision Drivers
 
@@ -79,6 +79,4 @@ pr9k **facilitates** the workflow; it does not **define** it. The specific split
 
 ### Related Docs
 
-- `docs/plans/ux-corrections/design.md` — D3c is the locked-in decision this ADR captures
-- `docs/plans/ux-corrections/design.md` D3b — schema shape; D7 — prompt-file variable injection; D9 — prologue moves to iteration array; D11 — splash becomes initialize step
 - [Cobra CLI Framework ADR](./20260409135303-cobra-cli-framework.md) — the other ADR in this project

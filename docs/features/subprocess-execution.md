@@ -498,7 +498,7 @@ Bare commands like `git` are not resolved — only relative paths containing a `
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view showing how streaming fits into the data flow
-- [Variable Output & Injection](../how-to/variable-output-and-injection.md) — How `ResolveCommand` and `LastCapture` fit into the variable injection system
+- [Workflow Variables](../how-to/workflow-variables.md) — How `ResolveCommand` and `LastCapture` fit into the variable injection system
 - [Building Custom Workflows](../how-to/building-custom-workflows.md) — How shell command steps use `ResolveCommand` for path resolution
 - [Workflow Orchestration](workflow-orchestration.md) — How `RunStep` and `LastCapture` are called by the orchestration loop
 - [Variable State Management](../code-packages/vars.md) — How `CaptureAs` bindings use `LastCapture` to populate the `VarTable`

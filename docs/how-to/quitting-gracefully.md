@@ -1,16 +1,22 @@
 # Quitting Gracefully
 
+← [Back to How-To Guides](README.md)
+
 pr9k always shuts down through the same path — whether you press `q`, hit `Ctrl+C`, or `kill` the process — so the running subprocess gets a chance to clean up before the TUI tears down. This guide explains the three quit entry points, what you see during shutdown, and what the exit code tells you.
+
+**Prerequisites**: a run that's currently on screen, or a CI script that needs to know what exit code to expect. The keyboard map is in [Reading the TUI](reading-the-tui.md), and pressing `?` while pr9k is running shows the live keyboard reference.
+
+> Heads-up before you press anything: pressing `n` does **not** quit. `n` is "skip the current step." The only quit shortcut is `q` followed by `y`, or `Ctrl+C`. Escape only cancels a quit confirmation — it does nothing in Normal mode.
 
 ## The three ways to quit
 
-| Entry point | Where it fires | What it does |
-|-------------|----------------|--------------|
-| `q` in Normal or Error mode, then `y` | `KeyHandler.handleQuitConfirm` | Flips footer to `Quitting...` (white), calls `ForceQuit` |
-| `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Signal handler goroutine in `main.go` | Calls `ForceQuit`, waits up to 2s, then `program.Kill()` |
-| Workflow completes normally | The workflow goroutine in `main.go` | `Run` returns on its own; enters `ModeDone` (`q quit` footer) |
+| Entry point | What it does |
+|-------------|--------------|
+| `q` in Normal or Error mode, then `y` | Footer flips to `Quitting...`, the running subprocess is terminated, the workflow returns from its loop |
+| `Ctrl+C` (SIGINT) or `kill` (SIGTERM) | Same termination path as `q` → `y`, with up to 2 seconds to unwind cleanly before pr9k force-stops the TUI |
+| Workflow completes normally | The workflow returns on its own, the TUI enters Done mode (`q quit` footer) — press `q` then `y` to exit |
 
-The two interactive paths go through `KeyHandler.ForceQuit()` to unify subprocess termination and `ActionQuit` injection — you get the same shutdown semantics whether you press `y` or hit Ctrl+C. The normal-completion path doesn't need `ForceQuit` because there's nothing to cancel.
+The two interactive paths use the same termination logic — you get the same shutdown semantics whether you press `y` or hit Ctrl+C. The normal-completion path doesn't need to terminate anything because the workflow already finished.
 
 ## The `q` path step by step
 
@@ -21,7 +27,6 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
        │
        ▼
 ┌─────────────────────────────────────┐
-│ Mode: QuitConfirm                   │
 │ Footer: Quit Power-Ralph.9000?      │
 │   (y/n, esc to cancel)              │
 └──────┬──────────┬───────────────────┘
@@ -30,7 +35,7 @@ Pressing `q` in Normal or Error mode does **not** immediately quit. It opens a c
        ▼          ▼
 ┌──────────┐  ┌──────────────┐
 │ Quitting │  │ prev mode    │
-│ ForceQuit│  │ (Normal or   │
+│ shutdown │  │ (Normal or   │
 │          │  │  Error)      │
 └──────────┘  └──────────────┘
 ```
@@ -45,67 +50,64 @@ This is non-destructive: if you were paused in error mode deciding whether to re
 
 Pressing `y` does two things in order:
 
-1. **Flips the mode to `ModeQuitting`** — the footer immediately repaints to `Quitting...`. This is visible feedback that pr9k accepted your confirmation and is now shutting down. Without this transition, you'd hit `y` and then sit there wondering whether the keypress registered.
+1. **Footer immediately repaints to `Quitting...`** — visible feedback that pr9k accepted your confirmation and is now shutting down. Without this transition, you'd hit `y` and then sit there wondering whether the keypress registered.
 
-2. **Calls `ForceQuit()`** — which:
-   - Calls the cancel function (`Runner.Terminate`), sending SIGTERM to the currently running subprocess. If the subprocess doesn't exit within 3 seconds, it's sent SIGKILL.
-   - Injects `ActionQuit` into the `Actions` channel via non-blocking send. If the channel is full, the send is dropped (there's already a quit waiting — no need to queue another).
+2. **Termination begins** — the currently running subprocess receives SIGTERM. If the subprocess doesn't exit within 3 seconds, it's sent SIGKILL. A quit signal is also queued for the workflow loop.
 
-The workflow goroutine picks up `ActionQuit` at its next drain point (before each step in `Orchestrate`, or inside the error-mode `<-h.Actions` receive), returns from `Run`, and the TUI tears down.
+The workflow loop picks up the quit signal at its next checkpoint (before each step, or while paused in error mode), returns from its main loop, and the TUI tears down.
 
 ## The signal path (Ctrl+C / SIGTERM)
 
-The OS signal handler in `main.go` listens for SIGINT and SIGTERM on a buffered channel. When a signal arrives, the handler goroutine:
+When pr9k receives SIGINT (Ctrl+C) or SIGTERM, the signal handler:
 
-1. Closes a `signaled` one-shot channel (checked after `program.Run()` returns to select the exit code)
-2. Calls `keyHandler.ForceQuit()` — same call as the `y` path, so the subprocess gets terminated and `ActionQuit` gets injected
-3. Waits up to 2 seconds for the workflow goroutine to unwind on its own
-4. If the workflow goroutine hasn't finished, calls `program.Kill()` to force the Bubble Tea program to stop
-5. After `program.Run()` returns in main, the exit code is selected: `os.Exit(1)` because `signaled` is closed
+1. Records that a signal arrived (so the exit code reflects it)
+2. Triggers the same termination path as `q` → `y` — the subprocess gets SIGTERM, the workflow loop gets a quit signal
+3. Waits up to 2 seconds for the workflow to unwind on its own
+4. If the workflow hasn't finished, force-stops the TUI
 
-Because the signal handler calls `ForceQuit`, **the signal path and the `q`→`y` path produce identical behavior from the workflow's perspective.** The only difference is the exit code: SIGINT/SIGTERM exits 1, a normal `q`→`y` shutdown exits 0.
-
-The signal handler also runs whether or not the TUI is currently in Normal, Error, QuitConfirm, NextConfirm, Done, or Quitting mode — signals bypass the mode dispatcher entirely.
+**The signal path and the `q` → `y` path produce identical behaviour from the workflow's perspective.** The only difference is the exit code: SIGINT/SIGTERM exits 1, a normal `q` → `y` shutdown exits 0. Signals are honoured regardless of which mode the TUI is in.
 
 ## The normal-completion path
 
-When `Run` finishes all iterations and finalize steps, it writes the completion summary to the log body and returns. The workflow goroutine in `main.go` then flushes the log, closes the drain channel, and calls `keyHandler.SetMode(ui.ModeDone)`. The TUI stays alive with a `q quit` footer so you can review the final output. Press `q` then `y` to exit — this sends `tea.QuitMsg`, which causes `program.Run()` to return. After `program.Run()` returns, `main` calls `signal.Stop`, waits for the workflow goroutine to finish cleanup, selects the exit code, and calls `os.Exit(0)`.
+When all iterations and finalize steps finish, pr9k writes the completion summary to the log body and the TUI enters Done mode with a `q quit` footer. The process does **not** auto-exit — press `q` then `y` to exit so you have time to review the final output.
 
 ## Exit codes
 
 | Shutdown path | Exit code |
 |---------------|-----------|
 | Normal completion | `0` |
-| `q` → `y` | `0` (the workflow returned normally from `Run`) |
+| `q` → `y` | `0` |
 | SIGINT / SIGTERM | `1` |
-| `buildStep` error at startup (no valid config) | `1` |
+| Step preparation error at startup (no valid config) | `1` |
 | Validator errors before the TUI starts | `1` |
-| Bubble Tea `program.Run()` returned an unexpected error | `1` |
+| Unexpected TUI error | `1` |
 
-If you're scripting pr9k, only `0` means "ran to completion". Any non-zero means "something interrupted us or broke before we started". The workflow goroutine checks the `signaled` channel before deciding between `os.Exit(0)` and `os.Exit(1)` so a signal that arrives while the workflow is already finishing still produces the correct exit code.
+If you're scripting pr9k, only `0` means "ran to completion". Any non-zero means "something interrupted us or broke before we started". A signal that arrives while the workflow is already finishing still produces exit code 1, so a wrapper script can rely on the distinction.
 
 ## What you see during the `Quitting...` window
 
-Between pressing `y` and the process actually exiting, you're briefly in `ModeQuitting`:
+Between pressing `y` and the process actually exiting:
 
 - Footer shows `Quitting...`
 - Checkbox grid still shows whatever state it was in
 - Log panel still shows the last run output
-- No keypresses are handled (no handler is registered for `ModeQuitting`)
+- Keypresses are not handled
 
-The window is usually a fraction of a second — just long enough for the subprocess to receive its SIGTERM and the orchestration goroutine to drain its pending channel operations. For a long-running subprocess that doesn't honor SIGTERM, the window is up to 3 seconds (the SIGKILL fallback in `Runner.Terminate`).
+The window is usually a fraction of a second — just long enough for the subprocess to receive SIGTERM and the orchestrator to drain its pending work. For a long-running subprocess that doesn't honour SIGTERM, the window is up to 3 seconds before SIGKILL is sent.
 
 ## Not every keypress quits
 
 Some interactions look like they might quit but don't:
 
-- **`n` in Normal mode** — `n` means "skip the current step", not "quit". It enters a `ModeNextConfirm` prompt (`Skip current step? y/n, esc to cancel`). Pressing `y` confirms the skip and sends SIGTERM to the subprocess; pressing `n` or `Esc` cancels. See [Recovering from Step Failures](recovering-from-step-failures.md) for how skips interact with the workflow.
-- **`Esc` in Normal or Error mode** — Escape only cancels a quit confirmation. Outside of `ModeQuitConfirm`, it's ignored.
+- **`n` in Normal mode** — `n` means "skip the current step", not "quit". It enters a `Skip current step? y/n, esc to cancel` prompt. Pressing `y` confirms the skip and sends SIGTERM to the subprocess; pressing `n` or `Esc` cancels. See [Recovering from Step Failures](recovering-from-step-failures.md) for how skips interact with the workflow.
+- **`Esc` in Normal or Error mode** — Escape only cancels a quit confirmation. Outside of the quit-confirm prompt, it's ignored.
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.)
-- [Recovering from Step Failures](recovering-from-step-failures.md) — The `q` entry point from error mode
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `ModeQuitConfirm`, `ModeQuitting`, `ForceQuit`
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md) — what the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.); press `?` while running for the live keyboard map
+- [Recovering from Step Failures](recovering-from-step-failures.md) — the `q` entry point from error mode
+- [Debugging a Run](debugging-a-run.md) — what's left in the persisted log file after you quit
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — keyboard mode state machine (contributor reference)
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT/SIGTERM handler, exit code selection, cleanup ordering
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — `Runner.Terminate` (SIGTERM then SIGKILL after 3s)
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — subprocess SIGTERM-then-SIGKILL termination

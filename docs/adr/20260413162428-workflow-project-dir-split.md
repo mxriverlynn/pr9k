@@ -44,13 +44,13 @@ that — a user can install pr9k anywhere and run it against any
 target repo.
 
 The ambiguity became load-bearing during design review of the Docker
-sandbox plan (`docs/plans/docker-sandbox/design.md`). That plan's
-docker-run template uses `-v <PROJECT_DIR>:/home/agent/workspace` to
-mean the target repo — the thing being bind-mounted — while the rest
+sandbox (now described in [`docs/features/docker-sandbox.md`](../features/docker-sandbox.md)).
+That sandbox's docker-run template uses `-v <PROJECT_DIR>:/home/agent/workspace`
+to mean the target repo — the thing being bind-mounted — while the rest
 of the codebase uses `{{PROJECT_DIR}}` to mean the workflow bundle.
-A careful reader noticed the plan was quietly redefining the token.
+A careful reader noticed the design was quietly redefining the token.
 Continuing to use one name for both concepts would ship that confusion
-into production code (the sandbox plan introduces a new
+into production code (the sandbox introduces a new
 `BuildRunArgs(projectDir, profileDir, ...)` helper whose first
 parameter is the target repo, not the workflow bundle — directly
 contradicting every other site in the codebase that spells `projectDir`).
@@ -178,10 +178,10 @@ either flag. Rationale:
   breaking changes, and the first `1.0.0` release is explicitly
   forbidden from doing the same.
 
-The delivery plan, file-level inventory, versioning rationale, and
-follow-up doc updates are recorded in
-`docs/plans/docker-sandbox/design.md` §4.15, §9 (Rename subsection),
-§11, and §12.
+The implementation, file-level layout, and follow-up doc updates are
+captured in the live docs ([`docs/features/docker-sandbox.md`](../features/docker-sandbox.md),
+[`docs/code-packages/sandbox.md`](../code-packages/sandbox.md), and the
+related how-to guides under `docs/how-to/`).
 
 ## Consequences
 
@@ -218,11 +218,6 @@ follow-up doc updates are recorded in
   the post-split names, and a trailing "Updates" note points at this
   ADR. The cobra decision itself is unchanged — only the flag names
   it mentions.
-- Historical plans (`docs/plans/pr9k.md`,
-  `docs/plans/cobra-cli-option-parsing.md`,
-  `docs/plans/ux-corrections/design.md`) are left untouched; current
-  docs, ADRs, and the delivery plan are the source of truth for
-  post-split vocabulary.
 
 ## Notes
 

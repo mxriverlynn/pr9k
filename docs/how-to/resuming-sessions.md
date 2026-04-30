@@ -1,8 +1,12 @@
 # Resuming Sessions
 
+← [Back to How-To Guides](README.md)
+
 pr9k can pass `--resume <session_id>` to a Claude step so it picks up directly from where the previous step left off — sharing the same conversation context rather than starting fresh. This is the `resumePrevious` pattern.
 
-> **Note:** The engine is fully implemented but the **default workflow ships with this feature off** on all steps. Enabling it requires a field change in `config.json` and validation that it improves results for your workflow.
+> **Advanced topic — opt in.** The engine is fully implemented but the **bundled workflow ships with this feature off** on all steps. Enable it only after the bundled workflow runs end-to-end for you and you have a specific pair of Claude steps where the second one would clearly benefit from the first's context.
+
+**Prerequisites**: a working install ([Getting Started](getting-started.md)) and familiarity with [Building Custom Workflows](building-custom-workflows.md) — `resumePrevious` is a per-step field. Also useful: [Setting Step Timeouts](setting-step-timeouts.md), since a soft-timed-out step blocks resume on the next step (G2 gate).
 
 ## When you want it
 
@@ -102,8 +106,9 @@ If both steps show the same session ID, the resume worked. Different session IDs
 
 ## Related documentation
 
-- [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious) — Implementation details: gate table, per-phase tracking, skip-chain behavior
-- [Setting Step Timeouts](setting-step-timeouts.md) — How `timeoutSeconds` interacts with G5 (timed-out sessions are blacklisted)
-- [Skipping Steps Conditionally](skipping-steps-conditionally.md) — How `skipIfCaptureEmpty` interacts with the resume chain
-- [Building Custom Workflows](building-custom-workflows.md) — Full step schema reference
-- [Debugging a Run](debugging-a-run.md) — Reading the iteration log to trace session IDs
+- ← [Back to How-To Guides](README.md)
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema (`resumePrevious` is a step field)
+- [Setting Step Timeouts](setting-step-timeouts.md) — `timeoutSeconds` interacts with G5 (timed-out sessions are blacklisted)
+- [Skipping Steps Conditionally](skipping-steps-conditionally.md) — `skipIfCaptureEmpty` interacts with the resume chain
+- [Debugging a Run](debugging-a-run.md) — reading the iteration log to trace session IDs and verify a resume worked
+- [Session Resume Gates](../features/workflow-orchestration.md#session-resume-gates-resumeprevious) — gate table and tracking implementation (contributor reference)
