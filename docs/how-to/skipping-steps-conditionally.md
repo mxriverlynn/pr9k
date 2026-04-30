@@ -1,6 +1,10 @@
 # Skipping Steps Conditionally
 
+← [Back to How-To Guides](README.md)
+
 pr9k can skip a step when a preceding step produced an empty capture — without treating the skip as a failure. This is the `skipIfCaptureEmpty` pattern. The default workflow uses it to bypass the "Fix review items" step when the code reviewer reports nothing to fix.
+
+**Prerequisites**: familiarity with [Capturing Step Output](capturing-step-output.md). Skipping a step depends on a value bound by an earlier step's `captureAs`.
 
 ## When you want it
 
@@ -108,8 +112,11 @@ The skip check uses a `captureStates` map that is re-initialised at the start of
 
 ## Related documentation
 
-- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — The sibling `breakLoopIfEmpty` pattern for ending the iteration loop when a step produces empty output
-- [Capturing Step Output](capturing-step-output.md) — How `captureAs` binds values that `skipIfCaptureEmpty` reads
-- [Building Custom Workflows](building-custom-workflows.md) — Full step schema reference
-- [Recovering from Step Failures](recovering-from-step-failures.md) — How error mode interacts with the skip guard
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Implementation: `captureStates` map, per-iteration reset, fail-safe defaults
+- ← [Back to How-To Guides](README.md)
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` for ending the iteration loop entirely
+- [Capturing Step Output](capturing-step-output.md) — `captureAs` binds the values `skipIfCaptureEmpty` reads
+- [Setting Step Timeouts](setting-step-timeouts.md) — `onTimeout` is another opt-in soft-fail mechanism
+- [Resuming Sessions](resuming-sessions.md) — interaction with `resumePrevious` (a skipped step's session is treated as already done)
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema
+- [Recovering from Step Failures](recovering-from-step-failures.md) — how error mode interacts with the skip guard
+- [Workflow Orchestration](../features/workflow-orchestration.md) — implementation details (contributor reference)

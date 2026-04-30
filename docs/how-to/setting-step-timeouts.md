@@ -2,6 +2,10 @@
 
 The `timeoutSeconds` field caps the wall-clock time a single step may run. When the deadline expires, pr9k sends `SIGTERM` to the Docker container (for claude steps) or the host process (for non-claude steps). If the process has not exited within 10 seconds, `SIGKILL` is sent.
 
+← [Back to How-To Guides](README.md)
+
+**Prerequisites**: a working install — see [Getting Started](getting-started.md) — and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md). This page covers the `timeoutSeconds` and `onTimeout` fields.
+
 ## When to use it
 
 Use `timeoutSeconds` on steps where runaway behaviour has been observed in practice. Typical examples:
@@ -21,12 +25,11 @@ Add `timeoutSeconds` to any step in `config.json`:
   "isClaude": true,
   "model": "sonnet",
   "promptFile": "test-writing.md",
-  "timeoutSeconds": 1800,
-  "onTimeout": "continue"
+  "timeoutSeconds": 1800
 }
 ```
 
-`1800` seconds (30 minutes) is the default applied to the bundled "Test writing" step, sized ~2.5× the observed organic p95 (~733s) with margin for occasional long runs.
+`1800` seconds (30 minutes) is the value the bundled "Test writing" step ships with, sized ~2.5× the observed organic p95 (~733s) with margin for occasional long runs. (`onTimeout` controls fail-vs-continue behaviour and is explained below.)
 
 **Validator constraint:** `timeoutSeconds` must be a positive integer when set and must not exceed `86400` (24 hours). Omitting the field (or setting it to `0` via omitempty round-trip) means no timeout.
 
@@ -71,3 +74,11 @@ wall-clock test execution.
 ```
 
 The 8-minute figure is an advisory model budget — the model is asked to self-regulate to that limit. `timeoutSeconds: 1800` (30 minutes) is the separate, enforced wall-clock cap that pr9k applies regardless of model behaviour. These are distinct: the advisory budget may be exceeded by a non-cooperative model, while the `timeoutSeconds` cap is always enforced by the runtime.
+
+## Related documentation
+
+- ← [Back to How-To Guides](README.md)
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema
+- [Recovering from Step Failures](recovering-from-step-failures.md) — what error mode looks like when a default-policy timeout fires
+- [Resuming Sessions](resuming-sessions.md) — important: a soft-timed-out step blocks `resumePrevious` on the next step (G2 gate)
+- [Debugging a Run](debugging-a-run.md) — finding the `timed out after Ns` notes in `.pr9k/iteration.jsonl`

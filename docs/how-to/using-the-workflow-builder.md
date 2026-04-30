@@ -1,10 +1,15 @@
 # Using the Workflow Builder
 
+← [Back to How-To Guides](README.md)
+
 A step-by-step guide to launching the pr9k workflow builder, creating or opening a workflow, editing steps, and saving your changes.
+
+The builder is an interactive TUI for editing `config.json` and its companion files (prompt files, scripts, ralph-art). It validates as you type and writes safely (atomic temp-file + rename). If you'd rather edit `config.json` directly in your editor, that works too — see [Building Custom Workflows](building-custom-workflows.md).
 
 ## Prerequisites
 
-- pr9k installed and on your `PATH` (`pr9k --version` prints the version)
+- A working install of pr9k — see [Getting Started](getting-started.md). You can launch the builder with the absolute path (`/path/to/pr9k/bin/pr9k workflow`) or, if you've put the binary on `$PATH`, just `pr9k workflow`.
+- Familiarity with the workflow concepts — see [Building Custom Workflows](building-custom-workflows.md)
 - A terminal that supports alt-screen and cell-motion mouse (the same capabilities the main `pr9k` command requires)
 - Write permission to the directory where you want to save the workflow
 
@@ -139,6 +144,9 @@ Press `?` at any time to open the help modal, which lists every keyboard shortcu
 
 ## Related Documentation
 
-- [Configuring an External Editor](configuring-external-editor-for-workflow-builder.md) — how to set `$VISUAL`/`$EDITOR` for use with the builder
-- [Workflow Builder Feature Reference](../features/workflow-builder.md) — full feature behavior, TUI layout, and all keyboard shortcuts
-- [Building Custom Workflows](building-custom-workflows.md) — understanding the workflow bundle structure
+- ← [Back to How-To Guides](README.md)
+- [Configuring an External Editor](configuring-external-editor-for-workflow-builder.md) — set `$VISUAL`/`$EDITOR` for the builder's `Ctrl+E` companion-file editor
+- [Building Custom Workflows](building-custom-workflows.md) — workflow bundle structure (prompts, scripts, config.json layout)
+- [Workflow Variables](workflow-variables.md) — the `{{VAR}}` substitution language used inside prompts and commands the builder edits
+- [Debugging a Run](debugging-a-run.md) — verify your saved workflow actually does what you expect on the next run
+- [Workflow Builder Feature Reference](../features/workflow-builder.md) — full feature behavior, TUI layout, all keyboard shortcuts (contributor reference)

@@ -1,6 +1,10 @@
 # Setting Up the Docker Sandbox
 
+← [Back to How-To Guides](README.md)
+
 pr9k runs every Claude step inside an ephemeral Docker container to limit blast radius. Docker is required — there is no fallback to direct invocation. This guide covers installing Docker, pulling the sandbox image, authenticating the Claude profile, and troubleshooting the most common setup problems.
+
+You only do this once per machine. After the first successful smoke test and `/login`, subsequent runs reuse the cached image and credentials.
 
 ## Prerequisites
 
@@ -262,10 +266,13 @@ The current working directory is bind-mounted at `/home/agent/workspace` and you
 
 ## Related Documentation
 
-- [Getting Started](getting-started.md) — First-run walkthrough and TUI orientation
-- [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — Architecture, mount layout, env allowlist, and residual risks
-- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — Implementation details of the `sandbox create`, `sandbox --interactive`, and `sandbox shell` subcommands
-- [Preflight Feature Doc](../code-packages/preflight.md) — Startup checks that enforce sandbox readiness
-- [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — Decision rationale for making Docker a runtime requirement
-- [Passing Environment Variables](passing-environment-variables.md) — How to forward host env vars (API tokens, proxy settings) into the sandbox
+- ← [Back to How-To Guides](README.md)
+- [Getting Started](getting-started.md) — first-run walkthrough and TUI orientation
+- [Reading the TUI](reading-the-tui.md) — what to expect on screen once the sandbox is set up and you launch a real run
+- [Passing Environment Variables](passing-environment-variables.md) — forward host env vars (API tokens, proxy settings) into the sandbox
+- [Caching Build Artifacts](caching-build-artifacts.md) — make Go/Node/Python/Rust caches survive across iterations
+- [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — architecture, mount layout, env allowlist, and residual risks (contributor reference)
+- [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — implementation of `sandbox create`, `sandbox --interactive`, and `sandbox shell`
+- [Preflight Feature Doc](../code-packages/preflight.md) — startup checks that enforce sandbox readiness
+- [ADR: Require Docker Sandbox](../adr/20260413160000-require-docker-sandbox.md) — decision rationale
 - [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions when a step fails inside the sandbox

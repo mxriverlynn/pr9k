@@ -1,6 +1,12 @@
 # Debugging a Run
 
+← [Back to How-To Guides](README.md)
+
 When a workflow does something unexpected — a Claude step generated the wrong code, a capture bound the wrong value, a loop broke early when it shouldn't have — you need to reconstruct what happened. This guide walks through the four places pr9k leaves evidence, and how to use them together.
+
+**Prerequisites**: a working install ([Getting Started](getting-started.md)). Most examples use `jq`; if you want to query the JSONL artifacts you'll want it on your `$PATH`.
+
+For the keyboard map and what the live TUI shows, see [Reading the TUI](reading-the-tui.md). For copying log text out of the TUI to paste into a bug report, see [Copying Log Text](copying-log-text.md).
 
 ## The four sources of evidence
 
@@ -275,12 +281,15 @@ Fix the underlying config issue and re-run. See [Config Validation](../code-pack
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — Log-panel layout and chrome rhythm (same content as the log file, live view)
-- [Capturing Step Output](capturing-step-output.md) — How `captureAs` values get into the log and the VarTable; includes the distinction between non-claude (last stdout line) and claude (`result.result`) capture
-- [Workflow Variables](workflow-variables.md) — Substitution rules and file-based data passing
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md) — log-panel layout and chrome rhythm (same content as the log file, live view)
+- [Copying Log Text](copying-log-text.md) — grab a failing region for a bug report without leaving the TUI
+- [Recovering from Step Failures](recovering-from-step-failures.md) — retry/continue decisions during a live run
+- [Capturing Step Output](capturing-step-output.md) — how `captureAs` values get into the log and the variable table
+- [Workflow Variables](workflow-variables.md) — substitution rules and file-based data passing
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` semantics and how to verify it fired
-- [Recovering from Step Failures](recovering-from-step-failures.md) — Retry/continue decisions during a live run
-- [File Logging](../code-packages/logger.md) — Log file format, timestamp, context prefix, and RunStamp (per-run artifact directory name)
-- [Stream JSON Pipeline](../code-packages/claudestream.md) — The `claudestream` package that produces the JSONL artifacts: event types, parser, renderer, aggregator
-- [Config Validation](../code-packages/validator.md) — Validator error format and rules
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Where build errors get logged
+- [Setting Step Timeouts](setting-step-timeouts.md) — `timed out after Ns` notes in `iteration.jsonl`
+- [Resuming Sessions](resuming-sessions.md) — using session IDs in `iteration.jsonl` to verify a resume worked
+- [File Logging](../code-packages/logger.md) — log file format, timestamp, context prefix (contributor reference)
+- [Stream JSON Pipeline](../code-packages/claudestream.md) — the package that produces the JSONL artifacts
+- [Config Validation](../code-packages/validator.md) — validator error format and rules

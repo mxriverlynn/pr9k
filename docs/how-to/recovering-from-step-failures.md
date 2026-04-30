@@ -1,6 +1,10 @@
 # Recovering from Step Failures
 
+← [Back to How-To Guides](README.md)
+
 Steps fail. A `git push` conflicts, a Claude step hits a rate limit, a test script returns 1 because of a flake. pr9k pauses when this happens and hands control back to you: **continue**, **retry**, or **quit**. This guide walks through the error-mode flow so you can make the right call when a step fails.
+
+**Prerequisites**: you've launched a run and you're staring at a `[✗]` in the checkbox grid. If you haven't yet, see [Getting Started](getting-started.md) first; the keyboard map and screen layout are documented in [Reading the TUI](reading-the-tui.md). While the TUI is up you can also press `?` to open the live keyboard reference modal.
 
 ## What counts as a failure
 
@@ -135,9 +139,11 @@ A rough decision tree:
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — What error mode looks like (footer, `[✗]` checkbox)
-- [Quitting Gracefully](quitting-gracefully.md) — The `q` path in detail
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — The `ModeError` / `ModeQuitConfirm` state machine
-- [Workflow Orchestration](../features/workflow-orchestration.md) — `runStepWithErrorHandling` loop and the retry separator
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md) — what error mode looks like (footer, `[✗]` checkbox); press `?` while running for the live keyboard map
+- [Quitting Gracefully](quitting-gracefully.md) — the `q` path in detail
+- [Setting Step Timeouts](setting-step-timeouts.md) — `timeoutSeconds` and `onTimeout: "continue"` for steps where soft-fails are preferable
+- [Debugging a Run](debugging-a-run.md) — using the log file to investigate after the fact
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — the `ModeError` / `ModeQuitConfirm` state machine (contributor reference)
+- [Workflow Orchestration](../features/workflow-orchestration.md) — error-handling loop and the retry separator
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT during error mode
-- [Debugging a Run](debugging-a-run.md) — Using the log file to investigate a failure after-the-fact

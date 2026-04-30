@@ -1,6 +1,10 @@
 # Reading the TUI
 
+← [Back to How-To Guides](README.md)
+
 pr9k streams everything the workflow does into a single terminal view. This guide walks through what each region means so you can read a run at a glance — even when you've scrolled back through a long log. For the Go-level implementation, see [TUI Status Header & Log Display](../features/tui-display.md).
+
+**Prerequisites**: a working install — see [Getting Started](getting-started.md). The diagrams below assume you've launched at least one run, even if just `pr9k -n 1`.
 
 ## The three inner regions
 
@@ -251,11 +255,14 @@ For a step-by-step walkthrough of the three common copy paths (mouse drag, keybo
 
 ## Related documentation
 
-- [Getting Started](getting-started.md) — Install and first-run walk-through
-- [Copying Log Text](copying-log-text.md) — Step-by-step walkthroughs for mouse and keyboard selection, OSC 52 fallback, and Linux clipboard dependencies
-- [TUI Status Header & Log Display](../features/tui-display.md) — Implementation details: StatusHeader struct, log helpers, terminal width detection
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Eight-mode state machine that drives the footer
-- [Workflow Orchestration](../features/workflow-orchestration.md) — Where the log chrome comes from — what `Run` writes, what `Orchestrate` writes
-- [Recovering from Step Failures](recovering-from-step-failures.md) — Error-mode keyboard controls
-- [Quitting Gracefully](quitting-gracefully.md) — Quit-confirm, Escape cancel, SIGINT
-- [Debugging a Run](debugging-a-run.md) — Reading the persisted log file
+- ← [Back to How-To Guides](README.md)
+- [Getting Started](getting-started.md) — install and first-run walk-through
+- [Recovering from Step Failures](recovering-from-step-failures.md) — what to do when you see `[✗]`
+- [Quitting Gracefully](quitting-gracefully.md) — `q` → `y`, Escape cancel, SIGINT
+- [Copying Log Text](copying-log-text.md) — mouse drag, keyboard Select mode, OSC 52 fallback, and Linux clipboard dependencies
+- [Setting Step Timeouts](setting-step-timeouts.md) — what `[!]` means and how to configure it
+- [Configuring a Status Line](configuring-a-status-line.md) — replacing the shortcut bar with a custom status line
+- [Debugging a Run](debugging-a-run.md) — reading the persisted log file after the run ends
+- [TUI Status Header & Log Display](../features/tui-display.md) — implementation details (contributor reference)
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — keyboard state machine that drives the footer
+- [Workflow Orchestration](../features/workflow-orchestration.md) — where the log chrome comes from

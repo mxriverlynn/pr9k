@@ -1,6 +1,12 @@
 # Quitting Gracefully
 
+← [Back to How-To Guides](README.md)
+
 pr9k always shuts down through the same path — whether you press `q`, hit `Ctrl+C`, or `kill` the process — so the running subprocess gets a chance to clean up before the TUI tears down. This guide explains the three quit entry points, what you see during shutdown, and what the exit code tells you.
+
+**Prerequisites**: a run that's currently on screen, or a CI script that needs to know what exit code to expect. The keyboard map is in [Reading the TUI](reading-the-tui.md), and pressing `?` while pr9k is running shows the live keyboard reference.
+
+> Heads-up before you press anything: pressing `n` does **not** quit. `n` is "skip the current step." The only quit shortcut is `q` followed by `y`, or `Ctrl+C`. Escape only cancels a quit confirmation — it does nothing in Normal mode.
 
 ## The three ways to quit
 
@@ -104,8 +110,10 @@ Some interactions look like they might quit but don't:
 
 ## Related documentation
 
-- [Reading the TUI](reading-the-tui.md) — What the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.)
-- [Recovering from Step Failures](recovering-from-step-failures.md) — The `q` entry point from error mode
-- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `ModeQuitConfirm`, `ModeQuitting`, `ForceQuit`
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md) — what the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.); press `?` while running for the live keyboard map
+- [Recovering from Step Failures](recovering-from-step-failures.md) — the `q` entry point from error mode
+- [Debugging a Run](debugging-a-run.md) — what's left in the persisted log file after you quit
+- [Keyboard Input & Error Recovery](../features/keyboard-input.md) — `ModeQuitConfirm`, `ModeQuitting`, `ForceQuit` (contributor reference)
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT/SIGTERM handler, exit code selection, cleanup ordering
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — `Runner.Terminate` (SIGTERM then SIGKILL after 3s)
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — subprocess SIGTERM-then-SIGKILL termination

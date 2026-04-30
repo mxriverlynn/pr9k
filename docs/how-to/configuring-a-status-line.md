@@ -1,11 +1,15 @@
 # Configuring a Status Line
 
+← [Back to How-To Guides](README.md)
+
 pr9k can display live workflow state in the TUI footer by running a custom script on a schedule. This replaces the default shortcut bar in Normal mode with a single line of text from your script, plus a `? Help` shortcut for the keyboard shortcut modal.
+
+The script runs **on the host** (not inside the sandbox) and is invoked with a JSON payload on stdin describing the current run state.
 
 ## Prerequisites
 
-- pr9k 0.7.5 or later
-- A `config.json` in your workflow directory
+- A working install — see [Getting Started](getting-started.md)
+- A `config.json` in your workflow directory — see [Building Custom Workflows](building-custom-workflows.md)
 - [`jq`](https://jqlang.github.io/jq/) — required by the sample script to parse stdin JSON
 - `git` (optional) — used by the sample script to display the current branch
 
@@ -158,7 +162,10 @@ The script inherits the full host environment, including `ANTHROPIC_API_KEY`, `G
 
 ## Related documentation
 
-- [Status Line Feature](../features/status-line.md) — Full feature reference: config schema, stdin JSON field table, stdout rules, refresh trigger matrix, help modal, concurrency model, and lifecycle
-- [Status Line Package](../code-packages/statusline.md) — Package-level reference: `Runner` API, `State`, `BuildPayload`, `Sanitize`, and shutdown ordering
-- [Reading the TUI](reading-the-tui.md) — Status-line footer display, `? Help` trigger, and help modal walkthrough
-- [Config Validation](../code-packages/validator.md) — Validation rules applied to the `statusLine` block at startup
+- ← [Back to How-To Guides](README.md)
+- [Reading the TUI](reading-the-tui.md#using-select-mode) — status-line footer display, the `?` help-modal trigger
+- [Building Custom Workflows](building-custom-workflows.md) — where the `statusLine` block fits in `config.json`
+- [Debugging a Run](debugging-a-run.md) — diagnosing a status-line script that exits non-zero or hangs
+- [Status Line Feature](../features/status-line.md) — full feature reference (contributor)
+- [Status Line Package](../code-packages/statusline.md) — `Runner` API, `State`, `BuildPayload`
+- [Config Validation](../code-packages/validator.md) — validation rules applied to the `statusLine` block

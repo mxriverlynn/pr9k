@@ -1,8 +1,12 @@
 # Capturing Step Output
 
+← [Back to How-To Guides](README.md)
+
 This guide shows how to use `captureAs` to bind a step's stdout to a variable so later steps can reference it via `{{VAR_NAME}}` substitution. This is the primary way to pass values — like a GitHub username, an issue ID, or a commit SHA — from a step that produces them to the steps that need them.
 
-If you're looking for how `{{VAR}}` tokens get *resolved* against the VarTable, see [Workflow Variables](workflow-variables.md). This guide is about the other direction: getting values *into* the VarTable.
+If you're looking for how `{{VAR}}` tokens get *resolved* later, see [Workflow Variables](workflow-variables.md). This guide is about the other direction: getting values *into* the variable table.
+
+**Prerequisites**: a working install ([Getting Started](getting-started.md)) and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md).
 
 ## The basic shape
 
@@ -192,10 +196,12 @@ When `get_next_issue` prints an empty line (no more issues), `LastCapture()` is 
 
 ## Related documentation
 
-- [Workflow Variables](workflow-variables.md) — How `{{VAR}}` tokens are resolved from the VarTable into prompts and commands
-- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — Using `breakLoopIfEmpty` to exit when the capture is empty
-- [Building Custom Workflows](building-custom-workflows.md) — Full step schema and workflow structure
-- [Debugging a Run](debugging-a-run.md) — Reading capture logs in the log file
-- [Variable State Management](../code-packages/vars.md) — VarTable internals: scopes, phase transitions, binding semantics, and the difference between non-claude and claude captureAs binding
-- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How `LastCapture()` extracts the last non-empty stdout line (non-claude) or `result.result` (claude)
+- ← [Back to How-To Guides](README.md)
+- [Workflow Variables](workflow-variables.md) — how `{{VAR}}` tokens are resolved into prompts and commands
+- [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` to exit when a capture is empty
+- [Skipping Steps Conditionally](skipping-steps-conditionally.md) — `skipIfCaptureEmpty` to bypass a later step based on a capture
+- [Building Custom Workflows](building-custom-workflows.md) — full step schema and workflow structure
+- [Debugging a Run](debugging-a-run.md) — reading `Captured VAR = "..."` lines to trace value flow
+- [Variable State Management](../code-packages/vars.md) — VarTable internals (contributor reference)
+- [Subprocess Execution & Streaming](../features/subprocess-execution.md) — how the capture extracts stdout
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where in the Run loop the bind happens
