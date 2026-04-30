@@ -107,7 +107,7 @@ mkdir -p .pr9k/workflow/prompts .pr9k/workflow/scripts
 # Add your config.json, prompts/*.md, and any scripts/* helpers here.
 ```
 
-If you want the workflow committed to the repo, leave it tracked. If you want it private, add `.pr9k/workflow/` to `.gitignore` (note: you probably already have `.pr9k/` in `.gitignore` for runtime state — see [Getting Started](getting-started.md#step-3--set-up-your-target-repo)).
+If you want the workflow committed to the repo, leave it tracked. If you want it private, add `.pr9k/workflow/` to `.gitignore`. Note: the runtime-state entries in [Getting Started](getting-started.md) intentionally ignore `.pr9k/logs/`, `.pr9k/iteration.jsonl`, and `.pr9k/artifacts/` rather than the entire `.pr9k/` folder, precisely so `.pr9k/workflow/` stays trackable by default.
 
 To override both candidates explicitly (for example, when testing a feature branch of pr9k), pass `--workflow-dir <path>`. Editing `bin/.pr9k/workflow/` directly works but `make build` will overwrite it; if you're modifying the bundled workflow itself, edit the source files in the pr9k repo's `workflow/` directory and run `make build`.
 
