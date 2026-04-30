@@ -77,12 +77,16 @@ In the GitHub repo you want pr9k to work on:
 
 3. **Apply the `ralph` label and assign each issue to yourself.** pr9k's `get_next_issue` script picks the lowest-numbered open issue that is both labeled `ralph` *and* assigned to the current `gh` user, so both conditions must hold.
 
-4. **Add `.pr9k/` to `.gitignore`.** pr9k writes its log and runtime state under `<target-repo>/.pr9k/`. Without this step, every run leaves untracked files in your tree:
+4. **Ignore pr9k's runtime state in `.gitignore`.** pr9k writes its logs, iteration log, and per-step JSONL artifacts under `<target-repo>/.pr9k/`. Without these entries, every run leaves untracked files in your tree:
 
-    ```bash
-    echo '.pr9k/' >> .gitignore
-    git add .gitignore && git commit -m "ignore pr9k runtime directory"
     ```
+    # pr9k temp files and logs
+    .pr9k/logs/
+    .pr9k/iteration.jsonl
+    .pr9k/artifacts/
+    ```
+
+    Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is a tracked source directory when you commit a per-repo workflow override (see [Building Custom Workflows](building-custom-workflows.md)).
 
     If you also enable [build-artifact caching](caching-build-artifacts.md), add `.ralph-cache/` here too.
 
