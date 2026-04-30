@@ -20,10 +20,14 @@ For the keyboard map and what the live TUI shows, see [Reading the TUI](reading-
 
 If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
 
-> **Tip:** Logs land under `<project-dir>/.pr9k/logs/` — that is, inside your **target repo's working directory**. Add `.pr9k/` to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+> **Tip:** Logs land under `<project-dir>/.pr9k/logs/` — that is, inside your **target repo's working directory**. Add the runtime-state entries to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
 > ```
-> echo '.pr9k/' >> .gitignore
+> # pr9k temp files and logs
+> .pr9k/logs/
+> .pr9k/iteration.jsonl
+> .pr9k/artifacts/
 > ```
+> Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is intentionally trackable so a per-repo workflow override can be committed. See [Getting Started](getting-started.md) for the canonical setup.
 
 ## Reading the log file
 
