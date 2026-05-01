@@ -10,7 +10,6 @@ import (
 // addition or removal should be caught by tests and reviewed.
 func TestBuiltinEnvAllowlist_ExactSnapshot(t *testing.T) {
 	want := []string{
-		"ANTHROPIC_API_KEY",
 		"ANTHROPIC_BASE_URL",
 		"HTTPS_PROXY",
 		"HTTP_PROXY",

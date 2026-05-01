@@ -2690,7 +2690,7 @@ func TestRunSandboxedStep_AutoConstructsTerminatorFromCidfilePath(t *testing.T) 
 
 // TP-004: TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser verifies
 // that buildStep produces -e flags for both a sandbox.BuiltinEnvAllowlist entry
-// (ANTHROPIC_API_KEY) and a user-supplied env var (CUSTOM_VAR).
+// (HTTPS_PROXY) and a user-supplied env var (CUSTOM_VAR).
 func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0755); err != nil {
@@ -2700,7 +2700,7 @@ func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("ANTHROPIC_API_KEY", "builtin-key")
+	t.Setenv("HTTPS_PROXY", "http://proxy.test")
 	t.Setenv("CUSTOM_VAR", "custom-val")
 
 	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
@@ -2713,8 +2713,8 @@ func TestBuildStep_ClaudeStep_EnvAllowlistMergesBuiltinAndUser(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !containsSequence(resolved.Command, "-e", "ANTHROPIC_API_KEY") {
-		t.Errorf("expected -e ANTHROPIC_API_KEY (builtin) in command; got %v", resolved.Command)
+	if !containsSequence(resolved.Command, "-e", "HTTPS_PROXY") {
+		t.Errorf("expected -e HTTPS_PROXY (builtin) in command; got %v", resolved.Command)
 	}
 	if !containsSequence(resolved.Command, "-e", "CUSTOM_VAR") {
 		t.Errorf("expected -e CUSTOM_VAR (user env) in command; got %v", resolved.Command)
@@ -3472,7 +3472,7 @@ func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 
 	// Set a custom env var that would appear if user-env were non-nil.
 	t.Setenv("CUSTOM_USER_VAR", "should-not-appear")
-	t.Setenv("ANTHROPIC_API_KEY", "builtin-key")
+	t.Setenv("HTTPS_PROXY", "http://proxy.test")
 
 	step := steps.Step{Name: "s", IsClaude: true, Model: "m", PromptFile: "p.txt"}
 	vt := vars.New(dir, dir, 0)
@@ -3485,8 +3485,8 @@ func TestBuildStep_ClaudeStep_NilUserEnv_OnlyBuiltinsInCommand(t *testing.T) {
 	}
 
 	// The builtin must appear.
-	if !containsSequence(resolved.Command, "-e", "ANTHROPIC_API_KEY") {
-		t.Errorf("expected -e ANTHROPIC_API_KEY (builtin) in command; got %v", resolved.Command)
+	if !containsSequence(resolved.Command, "-e", "HTTPS_PROXY") {
+		t.Errorf("expected -e HTTPS_PROXY (builtin) in command; got %v", resolved.Command)
 	}
 
 	// The user var must NOT appear — nil env means no user additions.

@@ -8,8 +8,9 @@ const (
 
 // BuiltinEnvAllowlist is the sandbox-plumbing env var set pr9k
 // always attempts to pass through (subject to the "set on host" check).
+// Authentication env vars (e.g. ANTHROPIC_API_KEY) are not included; users
+// who want to forward them must list them in the workflow's `env` block.
 var BuiltinEnvAllowlist = []string{
-	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_BASE_URL",
 	"HTTPS_PROXY",
 	"HTTP_PROXY",
