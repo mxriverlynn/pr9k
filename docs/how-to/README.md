@@ -41,16 +41,15 @@ Opt-in features you reach for when you outgrow the basics.
 12. [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` to exit the iteration loop dynamically when there is no more work
 13. [Skipping Steps Conditionally](skipping-steps-conditionally.md) — `skipIfCaptureEmpty` to bypass a step when an earlier step produced no output
 14. [Setting Step Timeouts](setting-step-timeouts.md) — `timeoutSeconds` and `onTimeout` to cap a step's wall-clock time and choose fail-vs-continue
-15. [Passing Environment Variables](passing-environment-variables.md) — `env` to forward host variables into the sandbox; `containerEnv` to inject literals
-16. [Caching Build Artifacts](caching-build-artifacts.md) — point Go/Node/Python/Rust caches at `.ralph-cache/` so they survive across iterations
-17. [Configuring a Status Line](configuring-a-status-line.md) — add a custom status line to the TUI footer
-18. [Resuming Sessions](resuming-sessions.md) — `resumePrevious` for tightly-coupled Claude steps that share context (off by default)
+15. [Passing Environment Variables](passing-environment-variables.md) — `env` to forward host variables (including `ANTHROPIC_API_KEY`) into the sandbox; `containerEnv` to inject literals
+16. [Configuring a Status Line](configuring-a-status-line.md) — add a custom status line to the TUI footer
+17. [Resuming Sessions](resuming-sessions.md) — `resumePrevious` for tightly-coupled Claude steps that share context (off by default)
 
 ## 5. Debugging
 
 Reconstruct what happened after the fact.
 
-19. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
+18. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
 
 ---
 

@@ -1,17 +1,18 @@
 # Preflight Checks
 
-The `internal/preflight` package performs startup validation before the main orchestration loop runs. It resolves and validates the Claude profile directory, checks that Docker is installed and reachable, and verifies the sandbox image is present locally. All checks are collected before returning (collect-all-errors pattern), so the caller receives the full list of failures in one pass.
+The `internal/preflight` package performs startup validation before the main orchestration loop runs. It resolves and validates the Claude profile directory and checks that Docker is installed and reachable, with both checks gated on whether the loaded workflow contains any claude steps. All checks are collected before returning (collect-all-errors pattern), so the caller receives the full list of failures in one pass.
 
-The package is fully injectable via `Prober` for unit testing. It is wired into `startup()` in `cmd/src/main.go`, which collects both D13 validation errors and preflight errors before printing any output.
+The package is fully injectable via `Prober` for unit testing. It is wired into `startup()` in `cmd/pr9k/main.go`, which collects both D13 validation errors and preflight errors before printing any output.
 
 ## Overview
 
-At startup, pr9k must confirm three things before launching any Claude subprocess:
+At startup, pr9k must confirm two things before launching any Claude subprocess:
 1. The Claude profile directory exists and is a directory.
 2. Docker is installed, the daemon is running, and the sandbox image is available locally.
-3. The credentials file in the profile dir is not empty (warning only, non-fatal).
 
-`preflight.Run` orchestrates all three checks and returns a `Result` containing every warning and every error regardless of intermediate failures.
+Both checks are **claude-only prerequisites**: when the loaded workflow contains zero claude steps, neither check runs, and pr9k can be used on a host with no claude profile dir and no docker installed.
+
+`preflight.Run` orchestrates the checks and returns a `Result` containing every error regardless of intermediate failures. pr9k does not check or warn about the credentials file — authentication is the user's responsibility, and a missing or invalid credentials file surfaces at runtime when the in-container claude binary refuses to authenticate.
 
 ## ResolveProfileDir
 
@@ -31,20 +32,6 @@ Stats `path`:
 - Not exist → error: `claude profile directory not found: <path>. Set CLAUDE_CONFIG_DIR or create ~/.claude`
 - Stat succeeds but `fi.IsDir() == false` → error: `claude profile path is not a directory: <path>. Point CLAUDE_CONFIG_DIR at a directory`
 - Directory present → nil
-
-## CheckCredentials
-
-```go
-func CheckCredentials(profileDir string) (warning string, _ error)
-```
-
-When `ANTHROPIC_API_KEY` is set on the host, the credentials file check is skipped entirely — the sandbox authenticates via the `BuiltinEnvAllowlist` passthrough and the file is not required. Returns `("", nil)` immediately.
-
-Otherwise, checks `<profileDir>/.credentials.json`:
-- Missing file → non-empty warning with guidance to run `pr9k sandbox --interactive` or set `ANTHROPIC_API_KEY`, nil error
-- Zero-byte file → non-empty warning containing "will likely fail authentication"
-- Non-empty file → empty warning, nil error
-- Any stat error other than `os.ErrNotExist` → propagated as an error (not a warning)
 
 ## Prober interface
 
@@ -93,35 +80,31 @@ type Result struct {
     Errors   []error
 }
 
-func Run(projectDir, profileDir string, p Prober) Result
+func Run(projectDir, profileDir string, hasClaudeSteps bool, p Prober) Result
 ```
 
 Orchestrates the full preflight sequence. All results are collected before returning regardless of failures:
-1. `os.MkdirAll(projectDir+"/.ralph-cache", 0o755)` — creates the cache directory inside the project dir so Docker bind-mount subpaths exist before any claude step runs. Must be pre-created under the host UID before the container runs, to avoid a chmod fight when the container writes its first cache file via the sandbox's UID mapping. If creation fails (read-only dir, wrong UID/GID), a `"preflight: could not create .ralph-cache in <path>"` error is appended. The operation is idempotent — repeat calls on an existing dir are a no-op.
-2. `os.MkdirAll(projectDir+"/.pr9k", 0o755)` — creates the umbrella directory for `iteration.jsonl` and `.pr9k/logs/`. Pre-created under the host UID for the same reason as `.ralph-cache`. If creation fails, a `"preflight: could not create .pr9k in <path>"` error is appended.
-3. `CheckProfileDir(profileDir)`
-4. `CheckDocker(p)`
-5. `CheckCredentials(profileDir)` — warnings only
 
-The caller (`startup()`) prints all D13 + preflight errors together before exiting.
+1. `os.MkdirAll(projectDir+"/.pr9k", 0o755)` — creates the umbrella directory for `iteration.jsonl` and `.pr9k/logs/` on first run. Pre-created under the host UID before the container runs, to avoid a chmod fight when the container writes via the sandbox's UID mapping. If creation fails, a `"preflight: could not create .pr9k in <path>"` error is appended. The operation is idempotent — repeat calls on an existing dir are a no-op. **Always runs**, regardless of `hasClaudeSteps`.
+2. **If `hasClaudeSteps` is false**, returns immediately with only the `.pr9k` result. The remaining checks are skipped.
+3. `CheckProfileDir(profileDir)` — only when `hasClaudeSteps` is true.
+4. `CheckDocker(p)` — only when `hasClaudeSteps` is true.
+
+The caller (`startup()`) prints all D13 + preflight errors together before exiting. `hasClaudeSteps` is computed by `cmd/pr9k/main.go::hasClaudeSteps` from the loaded `steps.StepFile`.
 
 ## Testing
 
-- `src/internal/preflight/profile_test.go` — `ResolveProfileDir`, `CheckProfileDir`, `CheckCredentials`:
+- `src/internal/preflight/profile_test.go` — `ResolveProfileDir`, `CheckProfileDir`:
   - `TestResolveProfileDir_WithCLAUDE_CONFIG_DIR` — verifies `$CLAUDE_CONFIG_DIR` is returned when set and non-empty
   - `TestResolveProfileDir_FallsBackToHomeClaud` — verifies fallback to `$HOME/.claude` when `$CLAUDE_CONFIG_DIR` is unset
   - `TestResolveProfileDir_TrailingWhitespace_Trimmed` — verifies trailing whitespace in `$CLAUDE_CONFIG_DIR` is trimmed
-  - `TestResolveProfileDir_LeadingAndTrailingWhitespace_Trimmed` (SUGG-003) — verifies both leading and trailing whitespace are trimmed (not just trailing), guarding against `.env` parser artifacts
+  - `TestResolveProfileDir_LeadingAndTrailingWhitespace_Trimmed` — verifies both leading and trailing whitespace are trimmed (not just trailing), guarding against `.env` parser artifacts
   - `TestResolveProfileDir_RelativePath_BecomeAbsolute` — verifies a relative path is made absolute via `filepath.Abs`
   - `TestResolveProfileDir_BothEnvVarsEmpty_FallsBackToCwdClaud` — verifies fallback when both `$CLAUDE_CONFIG_DIR` and `$HOME` are empty
   - `TestCheckProfileDir_NonexistentPath` — verifies "not found" error message when the path does not exist
   - `TestCheckProfileDir_FilePath` — verifies "not a directory" error message when the path points to a file
   - `TestCheckProfileDir_ValidDirectory` — verifies nil error for an existing directory
   - `TestCheckProfileDir_StatPermissionError_WrappedWithContext` — verifies non-ENOENT stat errors are propagated with context
-  - `TestCheckCredentials_NoCredentialsFile` — verifies missing `.credentials.json` returns empty warning and nil error
-  - `TestCheckCredentials_ZeroByteCredentials` — verifies a zero-byte credentials file returns a non-empty warning
-  - `TestCheckCredentials_NonEmptyCredentials` — verifies a non-empty credentials file returns no warning
-  - `TestCheckCredentials_StatPermissionError_PropagatedWrapped` — verifies permission errors are propagated as errors (not warnings)
 - `src/internal/preflight/docker_test.go` — `CheckDocker`:
   - `TestCheckDocker_BinaryMissing` — verifies "docker is not installed" error when binary is absent
   - `TestCheckDocker_DaemonUnreachable` — verifies "docker daemon isn't running" error when binary present but daemon unreachable
@@ -131,20 +114,15 @@ The caller (`startup()`) prints all D13 + preflight errors together before exiti
   - `TestCheckDocker_BinaryMissing_ShortCircuits` — verifies daemon check is skipped when binary is absent
   - `TestCheckDocker_DaemonUnreachable_ShortCircuits` — verifies image check is skipped when daemon is unreachable
 - `src/internal/preflight/run_test.go` — `Run`:
-  - `TestRun_ProfileDirMissing` — verifies missing profile dir produces error in Result
+  - `TestRun_ProfileDirMissing` — verifies missing profile dir produces error in Result (with `hasClaudeSteps=true`)
   - `TestRun_ProfileDirIsFile` — verifies file-path profile dir produces error in Result
   - `TestRun_DockerBinaryMissing` — verifies docker binary missing produces error in Result
   - `TestRun_DockerDaemonUnreachable` — verifies docker daemon unreachable produces error in Result
   - `TestRun_ImageNotPresent` — verifies sandbox image missing produces error in Result
-  - `TestRun_ZeroByteCredentials_WarningNotFatal` — verifies zero-byte credentials produces a warning but no error (non-fatal)
-  - `TestRun_CredentialsPermissionError_CollectedAsError` — verifies credentials stat permission error is collected as an error
-  - `TestRun_AllGreen` — verifies nil errors and no warnings when all checks pass with non-empty credentials
+  - `TestRun_AllGreen` — verifies nil errors and no warnings when all checks pass
   - `TestRun_CollectsAllErrors_ProfileAndDocker` — verifies both profile and docker errors are collected even when profile check fails first
-  - `TestRun_CollectsAllErrors_CacheProfileDocker` — verifies `.ralph-cache`, `.pr9k`, profile, and docker errors are all collected when projectDir is read-only
-  - `TestRun_RalphCache_CreatedOnFirstRun` — verifies `.ralph-cache/` is created inside projectDir on first Run
-  - `TestRun_RalphCache_IdempotentOnRepeatRun` — verifies calling Run twice does not error when `.ralph-cache/` already exists
-  - `TestRun_RalphCache_ReadOnlyProjectDirSurfacesError` — verifies a read-only projectDir produces a `.ralph-cache` preflight error
-  - `TestRun_RalphCache_FileClashSurfacesError` — verifies a file at the `.ralph-cache` path (instead of a dir) surfaces an error
+  - `TestRun_CollectsAllErrors_Pr9kProfileDocker` — verifies `.pr9k`, profile, and docker errors are all collected when projectDir is read-only
+  - `TestRun_NoClaudeSteps_SkipsProfileAndDockerChecks` — verifies that when `hasClaudeSteps=false`, neither `CheckProfileDir` nor `CheckDocker` runs, so a missing profile dir and missing docker produce no errors
   - `TestRun_Pr9kDir_CreatedOnFirstRun` — verifies `.pr9k/` is created inside projectDir on first Run
   - `TestRun_Pr9kDir_IdempotentOnRepeatRun` — verifies calling Run twice does not error when `.pr9k/` already exists
   - `TestRun_Pr9kDir_ReadOnlyProjectDirSurfacesError` — verifies a read-only projectDir produces a `.pr9k` preflight error

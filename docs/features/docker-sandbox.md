@@ -58,7 +58,6 @@ docker run                                              \
   --mount type=bind,source=<PROFILE_DIR>,target=/home/agent/.claude   \
   -w /home/agent/workspace                              \
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude              \
-  [-e ANTHROPIC_API_KEY]                                \
   [-e ANTHROPIC_BASE_URL]                               \
   [-e HTTPS_PROXY]                                      \
   [-e HTTP_PROXY]                                       \
@@ -97,7 +96,7 @@ docker run                                              \
 | File | Purpose |
 |------|---------|
 | `src/internal/sandbox/command.go` | `BuildRunArgs` (constructs the `docker run` argv) |
-| `src/internal/sandbox/image.go` | `BuiltinEnvAllowlist` (the five sandbox-plumbing vars), `ImageTag`, container path constants |
+| `src/internal/sandbox/image.go` | `BuiltinEnvAllowlist` (the four sandbox-plumbing vars), `ImageTag`, container path constants |
 | `src/internal/sandbox/cidfile.go` | `Path()` (cidfile reservation), `Cleanup()` (ENOENT-tolerant removal) |
 | `src/internal/sandbox/terminator.go` | `NewTerminator` — returns a closure that calls `docker kill --signal=TERM|KILL <cid>` |
 | `src/internal/sandbox/command_test.go` | Tests for `BuildRunArgs`, env allowlist merging |
@@ -116,7 +115,6 @@ docker run                                              \
 // container start; if the variable is unset on the host it is silently
 // skipped (os.LookupEnv skip-if-unset behavior).
 var BuiltinEnvAllowlist = []string{
-    "ANTHROPIC_API_KEY",
     "ANTHROPIC_BASE_URL",
     "HTTPS_PROXY",
     "HTTP_PROXY",
@@ -161,7 +159,7 @@ type SandboxOptions struct {
 
 Three sources of env vars are combined for every claude step:
 
-1. **Builtin set** (`sandbox.BuiltinEnvAllowlist`): `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`. Always attempted; silently skipped if unset on host.
+1. **Builtin set** (`sandbox.BuiltinEnvAllowlist`): `ANTHROPIC_BASE_URL`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`. Always attempted; silently skipped if unset on host. Note: `ANTHROPIC_API_KEY` is **not** in the builtin set — users who want to authenticate via API key must add it to the workflow's `env` array.
 2. **User `env` field** (`StepFile.Env`): names listed in the top-level `env` array in `config.json`. Merged at build time via `append(sandbox.BuiltinEnvAllowlist, stepFile.Env...)`. Each name is passed as `-e NAME` (no `=VALUE`) so Docker reads the value from the host at container start; unset names are silently skipped.
 3. **User `containerEnv` field** (`StepFile.ContainerEnv`): a key→value map in the top-level `containerEnv` object of `config.json`. Each entry is injected as `-e KEY=VALUE` with a literal value — the host environment is not consulted. Entries are emitted in **sorted key order** (deterministic argv) **after** the allowlist entries, so Docker's last-wins rule means `containerEnv` beats a same-named host passthrough.
 
@@ -169,9 +167,7 @@ Three sources of env vars are combined for every claude step:
 {
   "env": ["ANTHROPIC_API_KEY"],
   "containerEnv": {
-    "GOPATH":     "/home/agent/workspace/.ralph-cache/go",
-    "GOCACHE":    "/home/agent/workspace/.ralph-cache/gocache",
-    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomodcache"
+    "MY_LITERAL_VAR": "container-only-value"
   }
 }
 ```
