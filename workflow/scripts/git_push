@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+trap 'exit 0' EXIT
+
+result=$(git push)
+
+echo $result
+
+exit 0

@@ -16,6 +16,7 @@
     { "name": "Get GitHub user",       "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
   ],
   "iteration": [
+    { "name": "Delete artifacts",      "isClaude": false, "command": ["rm", "-rdf", ".pr9k/artifacts/*"] },
     { "name": "Claude Credentials",    "isClaude": false, "command": ["scripts/get_claude_credentials"] },
     { "name": "Get next issue",        "isClaude": false, "command": ["scripts/get_next_issue", "{{GITHUB_USER}}"], "captureAs": "ISSUE_ID", "breakLoopIfEmpty": true },
     { "name": "Get starting SHA",      "isClaude": false, "command": ["git", "rev-parse", "HEAD"], "captureAs": "STARTING_SHA" },
@@ -27,8 +28,7 @@
     { "name": "Test writing",          "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md", "timeoutSeconds": 1800, "onTimeout": "continue" },
     { "name": "Summarize to issue",    "isClaude": false, "command": ["scripts/post_issue_summary", "{{ISSUE_ID}}"] },
     { "name": "Close issue",           "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"] },
-    { "name": "Git push",              "isClaude": false, "command": ["git", "push"] },
-    { "name": "Delete artifacts",       "isClaude": false, "command": ["rm", "-rdf", ".pr9k/artifacts/*"] }
+    { "name": "Git push",              "isClaude": false, "command": ["scripts/git_push"] }
   ],
   "finalize": [
     { "name": "Code review",           "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
