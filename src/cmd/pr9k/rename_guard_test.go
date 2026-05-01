@@ -29,7 +29,7 @@ func skipBinary(name string) bool {
 // skipDir reports whether a directory should be skipped entirely.
 func skipDir(name string) bool {
 	switch name {
-	case ".git", ".ralph-cache", "bin", "vendor":
+	case ".git", "bin", "vendor":
 		return true
 	}
 	return skipBinary(name)

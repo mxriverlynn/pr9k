@@ -185,99 +185,6 @@ func TestRun_NoClaudeSteps_SkipsProfileAndDockerChecks(t *testing.T) {
 	}
 }
 
-// TestRun_RalphCache_CreatedOnFirstRun verifies that Run creates .ralph-cache/
-// inside projectDir if it does not already exist.
-func TestRun_RalphCache_CreatedOnFirstRun(t *testing.T) {
-	projectDir := t.TempDir()
-	profileDir := t.TempDir()
-
-	_ = Run(projectDir, profileDir, true, allGreenProber)
-
-	cacheDir := filepath.Join(projectDir, ".ralph-cache")
-	info, err := os.Stat(cacheDir)
-	if err != nil {
-		t.Fatalf(".ralph-cache was not created: %v", err)
-	}
-	if !info.IsDir() {
-		t.Errorf(".ralph-cache is not a directory")
-	}
-}
-
-// TestRun_RalphCache_IdempotentOnRepeatRun verifies that calling Run twice does
-// not return an error if .ralph-cache already exists.
-func TestRun_RalphCache_IdempotentOnRepeatRun(t *testing.T) {
-	projectDir := t.TempDir()
-	profileDir := t.TempDir()
-
-	r1 := Run(projectDir, profileDir, true, allGreenProber)
-	r2 := Run(projectDir, profileDir, true, allGreenProber)
-
-	for _, result := range []Result{r1, r2} {
-		for _, e := range result.Errors {
-			if strings.Contains(e.Error(), ".ralph-cache") {
-				t.Errorf("unexpected .ralph-cache error on repeat run: %v", e)
-			}
-		}
-	}
-}
-
-// TestRun_RalphCache_ReadOnlyProjectDirSurfacesError verifies that a projectDir
-// that cannot be written to surfaces a preflight error for .ralph-cache creation.
-func TestRun_RalphCache_ReadOnlyProjectDirSurfacesError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("requires non-root: root bypasses permission checks")
-	}
-
-	parent := t.TempDir()
-	projectDir := filepath.Join(parent, "readonly-project")
-	if err := os.Mkdir(projectDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(projectDir, 0o755) })
-
-	profileDir := t.TempDir()
-	result := Run(projectDir, profileDir, true, allGreenProber)
-
-	found := false
-	for _, e := range result.Errors {
-		if strings.Contains(e.Error(), ".ralph-cache") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("expected a .ralph-cache error for read-only projectDir; got: %v", result.Errors)
-	}
-}
-
-// TestRun_RalphCache_FileClashSurfacesError (TP-010) verifies that when a regular
-// file already exists at .ralph-cache (e.g. a git-tracked placeholder), Run
-// surfaces an error with the expected prefix and .ralph-cache in the message.
-func TestRun_RalphCache_FileClashSurfacesError(t *testing.T) {
-	projectDir := t.TempDir()
-	profileDir := t.TempDir()
-
-	cachePath := filepath.Join(projectDir, ".ralph-cache")
-	if err := os.WriteFile(cachePath, []byte("placeholder"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	result := Run(projectDir, profileDir, true, allGreenProber)
-
-	var cacheErr error
-	for _, e := range result.Errors {
-		if strings.Contains(e.Error(), ".ralph-cache") {
-			cacheErr = e
-			break
-		}
-	}
-	if cacheErr == nil {
-		t.Fatalf("expected a .ralph-cache error when it exists as a regular file; got: %v", result.Errors)
-	}
-	if !strings.Contains(cacheErr.Error(), "preflight: could not create .ralph-cache in") {
-		t.Errorf("error message has wrong format: %q", cacheErr.Error())
-	}
-}
-
 // TestRun_Pr9kDir_CreatedOnFirstRun verifies that Run creates .pr9k/ inside
 // projectDir if it does not already exist.
 func TestRun_Pr9kDir_CreatedOnFirstRun(t *testing.T) {
@@ -371,10 +278,10 @@ func TestRun_Pr9kDir_ReadOnlyProjectDirSurfacesError(t *testing.T) {
 	}
 }
 
-// TestRun_CollectsAllErrors_CacheProfileDocker (TP-011) documents the collect-all
-// design: a .ralph-cache creation failure does not short-circuit the profile or
-// docker checks — all four errors surface before Run returns.
-func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
+// TestRun_CollectsAllErrors_Pr9kProfileDocker documents the collect-all
+// design: a .pr9k creation failure does not short-circuit the profile or
+// docker checks — all three errors surface before Run returns.
+func TestRun_CollectsAllErrors_Pr9kProfileDocker(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("requires non-root: root bypasses permission checks")
 	}
@@ -388,14 +295,10 @@ func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
 
 	result := Run(projectDir, "/tmp/ralph-nonexistent-profile-xyzzy11", true, missingBinaryProber)
 
-	hasCache := false
 	hasPr9k := false
 	hasProfile := false
 	hasDocker := false
 	for _, e := range result.Errors {
-		if strings.Contains(e.Error(), ".ralph-cache") {
-			hasCache = true
-		}
 		if strings.Contains(e.Error(), ".pr9k") {
 			hasPr9k = true
 		}
@@ -405,9 +308,6 @@ func TestRun_CollectsAllErrors_CacheProfileDocker(t *testing.T) {
 		if strings.Contains(e.Error(), "docker is not installed") {
 			hasDocker = true
 		}
-	}
-	if !hasCache {
-		t.Errorf("expected .ralph-cache error in: %v", result.Errors)
 	}
 	if !hasPr9k {
 		t.Errorf("expected .pr9k error in: %v", result.Errors)

@@ -44,4 +44,3 @@ func CheckProfileDir(path string) error {
 	}
 	return nil
 }
-
