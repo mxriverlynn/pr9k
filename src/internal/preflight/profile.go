@@ -45,32 +45,3 @@ func CheckProfileDir(path string) error {
 	return nil
 }
 
-// CheckCredentials performs a best-effort check that the sandboxed claude
-// will have credentials to authenticate with. A missing or zero-byte
-// .credentials.json returns a warning string; non-ErrNotExist stat errors
-// are returned as errors. When ANTHROPIC_API_KEY is set on the host, the
-// sandbox authenticates via the BuiltinEnvAllowlist passthrough and the
-// credentials file is not required — the file check is skipped entirely.
-func CheckCredentials(profileDir string) (warning string, _ error) {
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		return "", nil
-	}
-	path := filepath.Join(profileDir, ".credentials.json")
-	fi, err := os.Stat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Sprintf(
-				"Warning: %s does not exist. The sandboxed claude has no credentials to authenticate with. Run 'pr9k sandbox --interactive' to authenticate, or set ANTHROPIC_API_KEY in the host environment.",
-				path,
-			), nil
-		}
-		return "", fmt.Errorf("preflight: stat credentials %s: %w", path, err)
-	}
-	if fi.Size() == 0 {
-		return fmt.Sprintf(
-			"Warning: %s is empty. Claude will likely fail authentication. Re-authenticate by running 'pr9k sandbox --interactive' and using '/login' inside the sandbox.",
-			path,
-		), nil
-	}
-	return "", nil
-}

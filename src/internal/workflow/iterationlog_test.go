@@ -168,12 +168,8 @@ func TestAppendIterationRecord_MissingCacheDir(t *testing.T) {
 func TestAppendIterationRecord_AfterPreflightRun_Succeeds(t *testing.T) {
 	projectDir := t.TempDir()
 	profileDir := t.TempDir()
-	profileFile := filepath.Join(profileDir, ".credentials.json")
-	if err := os.WriteFile(profileFile, []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	result := preflight.Run(projectDir, profileDir, allGreenProberForWorkflow{})
+	result := preflight.Run(projectDir, profileDir, true, allGreenProberForWorkflow{})
 	for _, e := range result.Errors {
 		t.Fatalf("preflight unexpected error: %v", e)
 	}

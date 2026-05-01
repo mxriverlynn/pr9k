@@ -16,6 +16,11 @@ type Result struct {
 // Run performs all preflight checks against projectDir and profileDir using
 // p as the docker prober. All errors and warnings are collected before returning.
 //
+// hasClaudeSteps gates the claude-only prerequisites: CheckProfileDir and
+// CheckDocker are only run when the workflow contains at least one claude
+// step, so a workflow with zero claude steps runs cleanly on a host that has
+// neither a claude profile dir nor docker installed.
+//
 // Sequence:
 //  1. os.MkdirAll(projectDir+"/.ralph-cache") — creates the cache dir on the host
 //     so Docker bind-mount subpaths exist before the container starts. Must be
@@ -25,13 +30,9 @@ type Result struct {
 //  2. os.MkdirAll(projectDir+"/.pr9k") — creates the umbrella dir for
 //     iteration.jsonl and .pr9k/logs/ on first run. Pre-created under the host
 //     UID for the same reason as .ralph-cache.
-//  3. CheckProfileDir(profileDir)
-//  4. CheckDocker(p)
-//  5. CheckCredentials(profileDir) — warnings only, not fatal; only run
-//     when CheckProfileDir succeeds, so that a missing profile directory
-//     produces a single clear error rather than both an error and a
-//     redundant "credentials file missing" warning.
-func Run(projectDir, profileDir string, p Prober) Result {
+//  3. CheckProfileDir(profileDir) — only when hasClaudeSteps is true.
+//  4. CheckDocker(p) — only when hasClaudeSteps is true.
+func Run(projectDir, profileDir string, hasClaudeSteps bool, p Prober) Result {
 	var result Result
 
 	// Create .ralph-cache inside the project dir so the Docker bind-mount
@@ -49,20 +50,15 @@ func Run(projectDir, profileDir string, p Prober) Result {
 		result.Errors = append(result.Errors, fmt.Errorf("preflight: could not create .pr9k in %s: %w", projectDir, err))
 	}
 
-	profileErr := CheckProfileDir(profileDir)
-	if profileErr != nil {
-		result.Errors = append(result.Errors, profileErr)
+	if !hasClaudeSteps {
+		return result
+	}
+
+	if err := CheckProfileDir(profileDir); err != nil {
+		result.Errors = append(result.Errors, err)
 	}
 
 	result.Errors = append(result.Errors, CheckDocker(p)...)
-
-	if profileErr == nil {
-		if w, err := CheckCredentials(profileDir); err != nil {
-			result.Errors = append(result.Errors, err)
-		} else if w != "" {
-			result.Warnings = append(result.Warnings, w)
-		}
-	}
 
 	return result
 }

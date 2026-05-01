@@ -33,6 +33,20 @@ func stepNames(ss []steps.Step) []string {
 	return names
 }
 
+// hasClaudeSteps reports whether any step across all phases is a claude step.
+// Used by startup to decide whether to run the claude-only preflight checks
+// (profile dir, docker).
+func hasClaudeSteps(sf steps.StepFile) bool {
+	for _, group := range [][]steps.Step{sf.Initialize, sf.Iteration, sf.Finalize} {
+		for _, s := range group {
+			if s.IsClaude {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // services bundles the logger, runner, and step file returned by startup.
 type services struct {
 	log      *logger.Logger
@@ -53,7 +67,7 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 	}
 
 	validationErrs := validator.Validate(cfg.WorkflowDir)
-	preflightResult := preflight.Run(projectDir, profileDir, prober)
+	preflightResult := preflight.Run(projectDir, profileDir, hasClaudeSteps(stepFile), prober)
 
 	fatalCount := validator.FatalErrorCount(validationErrs)
 	// fatal path: print all validation findings (fatal + non-fatal) so no finding is swallowed.
