@@ -32,6 +32,6 @@
     { "name": "Update docs",           "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
     { "name": "Deferred work",         "isClaude": true,  "model": "sonnet", "promptFile": "deferred-work.md" },
     { "name": "Lessons learned",       "isClaude": true,  "model": "sonnet", "promptFile": "lessons-learned.md" },
-    { "name": "Final git push",        "isClaude": false, "command": ["git", "push"] }
+    { "name": "Final git push",        "isClaude": false, "command": ["scripts/git_push"] }
   ]
 }
