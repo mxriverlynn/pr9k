@@ -53,9 +53,6 @@ logs/
 .pr9k/iteration.jsonl
 .pr9k/artifacts/
 
-# Build artifact cache (populated by containerEnv Go cache vars via the sandbox bind mount)
-.ralph-cache/
-
 # Local Go module cache
 .gopath/
 .gopath-rw/

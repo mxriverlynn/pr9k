@@ -154,30 +154,28 @@ docker run --rm \
 
 If this prints a version number without an authentication error, the profile is ready.
 
-### Warning: credentials file is empty or missing
+### Two ways to authenticate claude steps
 
-pr9k's startup preflight inspects `<profileDir>/.credentials.json` and emits a warning if it's not usable. The warning text differs based on cause:
+pr9k does not check or warn about your credentials file at startup. Authentication is your call, and a missing or invalid credentials file surfaces at runtime when the in-container claude binary refuses to authenticate. You can authenticate via either of:
 
-**Empty file:**
+1. **OAuth via `.credentials.json`** (recommended) — run `pr9k sandbox --interactive` and `/login` as above. The bundled workflow ships with a `Claude Credentials` step that refreshes the token from your macOS keychain on each iteration.
+2. **API key via `ANTHROPIC_API_KEY`** — set the variable on the host **and** add `ANTHROPIC_API_KEY` to your workflow's `env` array. pr9k does not auto-forward this variable; opting in via `env` is required:
 
-```
-Warning: /home/you/.claude/.credentials.json is empty. Claude will likely fail authentication.
-Re-authenticate with 'claude login' inside the sandbox.
-```
+   ```json
+   {
+     "env": ["ANTHROPIC_API_KEY"],
+     "iteration": [ ... ]
+   }
+   ```
 
-An empty credentials file is typically caused by a SIGKILL mid-OAuth-refresh — the file was truncated before the new token could be written. Re-run `pr9k sandbox --interactive` to refresh it.
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-...
+   /path/to/bin/pr9k
+   ```
 
-**Missing file:**
+If neither is set up, claude steps will fail with an authentication error when they run, and the step error message will be visible in the TUI and the log file.
 
-```
-Warning: /home/you/.claude/.credentials.json does not exist. The sandboxed claude has no credentials
-to authenticate with. Run 'pr9k sandbox --interactive' to authenticate, or set ANTHROPIC_API_KEY in the
-host environment.
-```
-
-A missing credentials file usually means the profile directory is new and you haven't authenticated yet, or `CLAUDE_CONFIG_DIR` points at a different profile directory than the one that was authenticated. Run `pr9k sandbox --interactive` to populate it.
-
-**Alternative:** setting `ANTHROPIC_API_KEY` in the host shell satisfies the sandbox without a credentials file — `BuiltinEnvAllowlist` passes that variable into every claude container, so API-key auth works with no on-disk credentials. When `ANTHROPIC_API_KEY` is set, both warnings above are suppressed.
+If `.credentials.json` exists but is zero bytes (typically caused by SIGKILL mid-OAuth-refresh), re-run `pr9k sandbox --interactive` to refresh it.
 
 ## Step 4 — Configure `CLAUDE_CONFIG_DIR` (optional, for multiple profiles)
 
@@ -270,7 +268,6 @@ The current working directory is bind-mounted at `/home/agent/workspace` and you
 - [Getting Started](getting-started.md) — first-run walkthrough and TUI orientation
 - [Reading the TUI](reading-the-tui.md) — what to expect on screen once the sandbox is set up and you launch a real run
 - [Passing Environment Variables](passing-environment-variables.md) — forward host env vars (API tokens, proxy settings) into the sandbox
-- [Caching Build Artifacts](caching-build-artifacts.md) — make Go/Node/Python/Rust caches survive across iterations
 - [Docker Sandbox Feature Doc](../features/docker-sandbox.md) — architecture, mount layout, env allowlist, and residual risks (contributor reference)
 - [sandbox Subcommand Feature Doc](../features/sandbox-subcommand.md) — implementation of `sandbox create`, `sandbox --interactive`, and `sandbox shell`
 - [Preflight Feature Doc](../code-packages/preflight.md) — startup checks that enforce sandbox readiness

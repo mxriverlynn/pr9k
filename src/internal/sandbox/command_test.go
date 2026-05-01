@@ -75,9 +75,9 @@ func TestBuildRunArgs_AllBuiltinEnvVarsSet(t *testing.T) {
 		BuiltinEnvAllowlist, nil, "", testModel, "prompt")
 
 	count := countFlag(args, "-e")
-	// Expect CLAUDE_CONFIG_DIR + 5 builtins.
-	if count != 6 {
-		t.Errorf("expected 6 -e flags (CLAUDE_CONFIG_DIR + 5 builtins), got %d", count)
+	// Expect CLAUDE_CONFIG_DIR + 4 builtins.
+	if count != 5 {
+		t.Errorf("expected 5 -e flags (CLAUDE_CONFIG_DIR + 4 builtins), got %d", count)
 	}
 }
 
@@ -114,23 +114,23 @@ func TestBuildRunArgs_EmptyAllowlist(t *testing.T) {
 }
 
 func TestBuildRunArgs_DeduplicatesUserVsBuiltin(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "sk-test")
+	t.Setenv("HTTPS_PROXY", "http://proxy.test")
 
-	// envAllowlist includes ANTHROPIC_API_KEY twice: once from builtins, once from user.
-	allowlist := append(BuiltinEnvAllowlist, "ANTHROPIC_API_KEY")
+	// envAllowlist includes HTTPS_PROXY twice: once from builtins, once from user.
+	allowlist := append(BuiltinEnvAllowlist, "HTTPS_PROXY")
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
 		allowlist, nil, "", testModel, "prompt")
 
-	// Count occurrences of ANTHROPIC_API_KEY in args.
+	// Count occurrences of HTTPS_PROXY in args.
 	n := 0
 	for _, a := range args {
-		if a == "ANTHROPIC_API_KEY" {
+		if a == "HTTPS_PROXY" {
 			n++
 		}
 	}
 	if n != 1 {
-		t.Errorf("expected ANTHROPIC_API_KEY to appear exactly once, got %d", n)
+		t.Errorf("expected HTTPS_PROXY to appear exactly once, got %d", n)
 	}
 }
 

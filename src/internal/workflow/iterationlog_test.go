@@ -145,19 +145,12 @@ func TestAppendIterationRecord_PathUsesFilepathJoin(t *testing.T) {
 
 // TestAppendIterationRecord_MissingCacheDir verifies a clear error when
 // .pr9k does not exist (precondition violated — preflight must run first).
-// Creates .ralph-cache ONLY to prove the production code looks at .pr9k, not
-// .ralph-cache.
 func TestAppendIterationRecord_MissingCacheDir(t *testing.T) {
 	dir := t.TempDir()
-	// Create the WRONG dir — .ralph-cache — to assert the production code
-	// is looking at .pr9k, not .ralph-cache.
-	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 
 	err := AppendIterationRecord(dir, makeRecord("step", "done", 1))
 	if err == nil {
-		t.Fatal("expected error when .pr9k/ is missing; .ralph-cache alone should not satisfy the precondition")
+		t.Fatal("expected error when .pr9k/ is missing")
 	}
 }
 
@@ -168,12 +161,8 @@ func TestAppendIterationRecord_MissingCacheDir(t *testing.T) {
 func TestAppendIterationRecord_AfterPreflightRun_Succeeds(t *testing.T) {
 	projectDir := t.TempDir()
 	profileDir := t.TempDir()
-	profileFile := filepath.Join(profileDir, ".credentials.json")
-	if err := os.WriteFile(profileFile, []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
-	result := preflight.Run(projectDir, profileDir, allGreenProberForWorkflow{})
+	result := preflight.Run(projectDir, profileDir, true, allGreenProberForWorkflow{})
 	for _, e := range result.Errors {
 		t.Fatalf("preflight unexpected error: %v", e)
 	}
@@ -198,14 +187,9 @@ func (allGreenProberForWorkflow) SandboxImagePresent() (bool, error) { return tr
 
 // TestAppendIterationRecord_DoesNotWriteLegacyRalphCache verifies that after
 // an append, no iteration.jsonl is written into the legacy .ralph-cache
-// directory. Guards against a double-write regression or a silent revert
-// that targets the old path.
+// directory. Guards against a silent revert that targets the old path.
 func TestAppendIterationRecord_DoesNotWriteLegacyRalphCache(t *testing.T) {
 	dir := t.TempDir()
-	// Create BOTH dirs, as preflight.Run would.
-	if err := os.Mkdir(filepath.Join(dir, ".ralph-cache"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Mkdir(filepath.Join(dir, ".pr9k"), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -129,13 +129,6 @@ func TestGitignore_PreservesLogsEntry(t *testing.T) {
 	assertContains(t, content, "\nlogs/\n", ".gitignore logs/ entry")
 }
 
-// TestGitignore_PreservesRalphCacheEntry asserts .gitignore preserves the .ralph-cache/ entry.
-func TestGitignore_PreservesRalphCacheEntry(t *testing.T) {
-	root := docTestRepoRoot(t)
-	content := readFile(t, root, ".gitignore")
-	assertContains(t, content, "\n.ralph-cache/\n", ".gitignore .ralph-cache/ entry")
-}
-
 // TestGitignore_Pr9kDirIsActuallyIgnoredByGit asserts git actually ignores
 // runtime-output paths under .pr9k/ but tracks .pr9k/workflow/ (behavioral pin via
 // git check-ignore).
@@ -186,14 +179,14 @@ func TestGitignore_WorkflowIsTracked_BundleIsIgnored(t *testing.T) {
 	}
 }
 
-// TestGitignore_LegacyDirsAreActuallyIgnoredByGit asserts git actually ignores logs/
-// and .ralph-cache/ (behavioral pin via git check-ignore).
+// TestGitignore_LegacyDirsAreActuallyIgnoredByGit asserts git actually ignores
+// the legacy logs/ path (behavioral pin via git check-ignore).
 func TestGitignore_LegacyDirsAreActuallyIgnoredByGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on $PATH")
 	}
 	root := docTestRepoRoot(t)
-	for _, path := range []string{"logs/anything", ".ralph-cache/anything"} {
+	for _, path := range []string{"logs/anything"} {
 		cmd := exec.Command("git", "check-ignore", "-q", path)
 		cmd.Dir = root
 		if err := cmd.Run(); err != nil {

@@ -88,8 +88,6 @@ In the GitHub repo you want pr9k to work on:
 
     Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is a tracked source directory when you commit a per-repo workflow override (see [Building Custom Workflows](building-custom-workflows.md)).
 
-    If you also enable [build-artifact caching](caching-build-artifacts.md), add `.ralph-cache/` here too.
-
 ## Step 4 — First run
 
 From the **target repo's working directory** (not pr9k's — pr9k runs subprocesses with the current working directory):

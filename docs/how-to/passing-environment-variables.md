@@ -2,7 +2,7 @@
 
 ← [Back to How-To Guides](README.md)
 
-Claude steps run inside a Docker container with a scrubbed environment. By default, only five sandbox-plumbing variables are forwarded from the host. If your workflow needs additional host environment variables inside the container — API tokens, proxy settings, feature flags — you declare them in `config.json`.
+Claude steps run inside a Docker container with a scrubbed environment. By default, only four sandbox-plumbing variables are forwarded from the host. If your workflow needs additional host environment variables inside the container — API tokens, proxy settings, feature flags — you declare them in `config.json`.
 
 **Prerequisites**: a working install with the sandbox set up — see [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md) — and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md).
 
@@ -25,17 +25,18 @@ The `env` array applies to **all** `isClaude: true` steps. Shell command steps r
 
 ## What gets forwarded automatically
 
-Five variables are always attempted, regardless of the `env` field:
+Four variables are always attempted, regardless of the `env` field:
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Direct API authentication (bypasses OAuth) |
 | `ANTHROPIC_BASE_URL` | Custom API endpoint |
 | `HTTPS_PROXY` | HTTPS proxy for outbound requests |
 | `HTTP_PROXY` | HTTP proxy for outbound requests |
 | `NO_PROXY` | Proxy exclusion list |
 
 These are defined in `sandbox.BuiltinEnvAllowlist`. You do not need to repeat them in `env`.
+
+`ANTHROPIC_API_KEY` is **not** in the builtin allowlist. If you want to authenticate claude steps via the API key env var instead of the OAuth credentials file, list `ANTHROPIC_API_KEY` in your `env` array — see ["Authenticating claude steps"](#authenticating-claude-steps) below.
 
 Additionally, `CLAUDE_CONFIG_DIR=/home/agent/.claude` is always set inside the container with an explicit value (the mount point), not a passthrough.
 
@@ -61,6 +62,29 @@ The D13 config validator (Category 10) checks every entry in `env` at startup. A
 | Denied for safety | `"PATH"`, `"USER"`, `"SSH_AUTH_SOCK"`, `"LD_PRELOAD"` |
 
 Valid names match the regex `^[A-Za-z_][A-Za-z0-9_]*$`.
+
+## Authenticating claude steps
+
+Claude steps inside the sandbox need credentials to talk to Anthropic. There are two supported paths and you can use either:
+
+1. **OAuth via `.credentials.json`** — the default. Run `pr9k sandbox --interactive` once, log in with `/login`, and pr9k writes `.credentials.json` into the bind-mounted profile dir. The bundled workflow ships with a `Claude Credentials` step that refreshes the token from your macOS keychain on each iteration. See [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md#authenticate-the-bundled-claude-profile).
+2. **API key via `ANTHROPIC_API_KEY`** — opt-in. Set the variable on the host and add it to your workflow's `env` array:
+
+   ```json
+   {
+     "env": ["ANTHROPIC_API_KEY"],
+     "iteration": [ ... ]
+   }
+   ```
+
+   ```bash
+   export ANTHROPIC_API_KEY=sk-ant-...
+   /path/to/bin/pr9k
+   ```
+
+   pr9k does **not** auto-forward `ANTHROPIC_API_KEY`. Listing it in `env` is required.
+
+If you have neither a valid `.credentials.json` nor `ANTHROPIC_API_KEY` set, pr9k will still start; the in-container claude binary will fail with an authentication error when the first claude step runs, and the step will fail with a clear message.
 
 ## Example: forwarding a GitHub token
 
@@ -95,15 +119,14 @@ If a claude step fails because it can't find an expected variable:
 
 ## The `containerEnv` field
 
-`env` forwards values from the host at container start. Use `containerEnv` when the value does not exist on the host or when you want to pin a specific literal value regardless of the host environment — for example, redirecting build caches into the bind-mounted workspace so they persist across runs:
+`env` forwards values from the host at container start. Use `containerEnv` when the value does not exist on the host or when you want to pin a specific literal value regardless of the host environment:
 
 ```json
 {
   "env": ["GH_TOKEN"],
   "containerEnv": {
-    "GOCACHE": "/home/agent/workspace/.ralph-cache/go",
-    "GOMODCACHE": "/home/agent/workspace/.ralph-cache/gomod",
-    "GOPATH": "/home/agent/workspace/.ralph-cache/gopath"
+    "FEATURE_FLAG_X": "true",
+    "DATABASE_URL": "postgres://container-only-host/db"
   },
   "initialize": [ ... ],
   "iteration": [ ... ],
@@ -117,7 +140,7 @@ Key differences from `env`:
 |--|-------|----------------|
 | Value source | Host environment at container start | Literal value in `config.json` |
 | Stored in repo | Name only (safe) | Name **and value** (committed to repo) |
-| When to use | Secrets, per-machine config | Build paths, feature flags, fixed constants |
+| When to use | Secrets, per-machine config | Feature flags, fixed constants, container-only paths |
 | Precedence | Applied first | Applied after `env` — Docker last-wins, so containerEnv beats host passthrough for the same key |
 
 ### Constraints
@@ -126,16 +149,11 @@ Key differences from `env`:
 - Keys must not contain `=`; values must not contain newlines or NUL — both are fatal errors.
 - `containerEnv` values are committed to `config.json`. **Do not store secrets here.** The validator emits a warning when a key ends with `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD`, `_PASSPHRASE`, `_CREDENTIAL`, or `_APIKEY`.
 
-### The `.ralph-cache` directory
-
-pr9k creates `<projectDir>/.ralph-cache/` at startup via `preflight.Run` so that Docker bind-mount subpaths (e.g., `GOCACHE=/home/agent/workspace/.ralph-cache/go`) are present before any Claude step runs. Add `.ralph-cache/` to `.gitignore` in your target repo to keep the build artifact cache out of commits, alongside the pr9k runtime-state entries from [Getting Started](getting-started.md). Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is a tracked source directory for committed per-repo workflow overrides. See [Caching Build Artifacts](caching-build-artifacts.md#target-project-gitignore) for the combined block.
-
 ## Related documentation
 
 - ← [Back to How-To Guides](README.md)
 - [Setting Up the Docker Sandbox](setting-up-docker-sandbox.md) — first-time Docker setup, mounts, and auth
-- [Caching Build Artifacts](caching-build-artifacts.md) — using `containerEnv` to point Go/Node/Python/Rust caches at `.ralph-cache/`
 - [Building Custom Workflows](building-custom-workflows.md) — full step schema
 - [Docker Sandbox](../features/docker-sandbox.md) — mount layout, env allowlist, full `docker run` command (contributor reference)
 - [Config Validation](../code-packages/validator.md) — env validation rules
-- [Preflight](../code-packages/preflight.md) — startup checks that create `.ralph-cache` before Claude steps run
+- [Preflight](../code-packages/preflight.md) — startup checks for the profile dir and Docker

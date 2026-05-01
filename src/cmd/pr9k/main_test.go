@@ -65,6 +65,30 @@ func writeMinimalStepFile(t *testing.T, dir string) {
 	}
 }
 
+// writeMinimalClaudeStepFile creates a minimal valid config.json with one
+// claude step. Used by tests that need preflight to run the claude-only
+// prerequisites (CheckProfileDir, CheckDocker), which are gated on
+// hasClaudeSteps.
+func writeMinimalClaudeStepFile(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "p.md"), []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	content := `{
+		"initialize": [],
+		"iteration": [
+			{ "name": "claude-step", "isClaude": true, "model": "sonnet", "promptFile": "p.md" }
+		],
+		"finalize": []
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // writeInvalidStepFile creates a config.json whose JSON is valid but
 // fails D13 validation — a claude step missing the required promptFile field.
 // Used to exercise the validator.Validate failure path in startup.
@@ -90,7 +114,7 @@ func TestStartupPreflight_RunsBeforeOrchestrator(t *testing.T) {
 	workflowDir := t.TempDir()
 	projectDir := t.TempDir()
 	profileDir := t.TempDir() // real dir so profile check passes
-	writeMinimalStepFile(t, workflowDir)
+	writeMinimalClaudeStepFile(t, workflowDir)
 
 	prober := &fakeProber{
 		binaryAvailable: true,
@@ -161,21 +185,14 @@ func TestStartupPreflight_SkippedForSandboxInteractive(t *testing.T) {
 	}
 }
 
-// TestStartup_HappyPath verifies the startup() happy path: valid step file,
-// passing prober, and a zero-byte .credentials.json that triggers a warning.
-// It asserts all returned services are wired correctly and that the warning
-// text appears in the output buffer.
+// TestStartup_HappyPath verifies the startup() happy path: valid step file
+// and passing prober. Asserts services are wired correctly and the per-run
+// artifact directory is created under projectDir.
 func TestStartup_HappyPath(t *testing.T) {
 	workflowDir := t.TempDir()
 	projectDir := t.TempDir()
 	profileDir := t.TempDir()
 	writeMinimalStepFile(t, workflowDir)
-
-	// Write a zero-byte .credentials.json to trigger the credentials warning.
-	credPath := filepath.Join(profileDir, ".credentials.json")
-	if err := os.WriteFile(credPath, []byte{}, 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	prober := &fakeProber{
 		binaryAvailable: true,
@@ -202,15 +219,6 @@ func TestStartup_HappyPath(t *testing.T) {
 	}
 	if len(svc.stepFile.Iteration) == 0 {
 		t.Error("svc.stepFile.Iteration is empty; expected at least one step")
-	}
-
-	// Warning text for zero-byte credentials must appear in output.
-	got := buf.String()
-	if !strings.Contains(got, "Warning:") {
-		t.Errorf("expected credentials warning in output, got: %q", got)
-	}
-	if !strings.Contains(got, "is empty") {
-		t.Errorf("expected 'is empty' in credentials warning, got: %q", got)
 	}
 
 	// .pr9k/logs/ directory must be created under projectDir (not workflowDir).
@@ -379,7 +387,7 @@ func TestStartupPreflight_CollectsAllErrors(t *testing.T) {
 func TestStartup_PreflightOnlyErrors(t *testing.T) {
 	workflowDir := t.TempDir()
 	projectDir := t.TempDir()
-	writeMinimalStepFile(t, workflowDir) // valid config — no D13 errors
+	writeMinimalClaudeStepFile(t, workflowDir) // valid config with claude step — preflight checks run
 
 	// Docker binary unavailable → preflight error; profile dir exists → no profile error.
 	prober := &fakeProber{binaryAvailable: false}
@@ -578,7 +586,7 @@ func TestStartupPreflight_MissingImageErrorReferencesPr9k(t *testing.T) {
 	workflowDir := t.TempDir()
 	projectDir := t.TempDir()
 	profileDir := t.TempDir()
-	writeMinimalStepFile(t, workflowDir)
+	writeMinimalClaudeStepFile(t, workflowDir)
 
 	prober := &fakeProber{
 		binaryAvailable: true,
