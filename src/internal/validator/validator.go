@@ -121,6 +121,7 @@ type vFile struct {
 // vDefaults is the strict struct used when validating the optional defaults block.
 type vDefaults struct {
 	Effort string `json:"effort,omitempty"`
+	Model  string `json:"model,omitempty"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -234,7 +235,10 @@ func docToVFile(doc workflowmodel.WorkflowDoc) vFile {
 		}
 	}
 	if doc.Defaults != nil {
-		vf.Defaults = &vDefaults{Effort: doc.Defaults.Effort}
+		vf.Defaults = &vDefaults{
+			Effort: doc.Defaults.Effort,
+			Model:  doc.Defaults.Model,
+		}
 	}
 	return vf
 }
@@ -423,7 +427,7 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 	}
 
 	// Validate initialize; collect captureAs names for the persistent scope.
-	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs, companions)
+	initCaptures := validatePhase(workflowDir, vars.Initialize, "initialize", *vf.Initialize, initScope, &errs, companions, vf.Defaults)
 
 	// Persistent scope = initialize seeds + all captureAs from initialize.
 	persistentScope := copyScope(initScope)
@@ -435,16 +439,21 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 	iterScope := copyScope(persistentScope)
 	iterScope["ITER"] = true
 
-	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs, companions)
+	validatePhase(workflowDir, vars.Iteration, "iteration", *vf.Iteration, iterScope, &errs, companions, vf.Defaults)
 
 	// Finalize scope = persistent only (no ITER, no iteration captures).
-	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs, companions)
+	validatePhase(workflowDir, vars.Finalize, "finalize", *vf.Finalize, persistentScope, &errs, companions, vf.Defaults)
 
 	return errs
 }
 
 // validatePhase validates all steps in one phase and returns the captureAs names
 // introduced by that phase (for persistent scope building).
+//
+// defaults, when non-nil, supplies fallbacks for fields that may otherwise be
+// blank on a per-step basis (currently: defaults.Model). Schema rules use the
+// effective value (step value if set, else defaults value) rather than the raw
+// step value where applicable.
 func validatePhase(
 	workflowDir string,
 	phase vars.Phase,
@@ -453,6 +462,7 @@ func validatePhase(
 	initialScope map[string]bool,
 	errs *[]Error,
 	companions map[string][]byte,
+	defaults *vDefaults,
 ) []string {
 	seenNames := make(map[string]bool)
 	seenCaptureAs := make(map[string]bool)
@@ -495,13 +505,19 @@ func validatePhase(
 		isClaude := step.IsClaude != nil && *step.IsClaude
 
 		// Schema 2 — exactly one of {command, promptFile} must match isClaude.
+		// Effective model is step.Model if set, else defaults.Model when present.
+		// A claude step with no effective model is a fatal error.
+		effectiveModel := step.Model
+		if effectiveModel == "" && defaults != nil {
+			effectiveModel = defaults.Model
+		}
 		if step.IsClaude != nil {
 			if isClaude {
 				if step.PromptFile == "" {
 					*errs = append(*errs, at("schema", "claude step must have a non-empty promptFile"))
 				}
-				if step.Model == "" {
-					*errs = append(*errs, at("schema", "claude step must have a non-empty model"))
+				if effectiveModel == "" {
+					*errs = append(*errs, at("schema", "claude step must have a non-empty model (set step.model, or set defaults.model as a workflow-wide fallback)"))
 				}
 				if len(step.Command) > 0 {
 					*errs = append(*errs, at("schema", "claude step must not have command"))
@@ -648,8 +664,13 @@ func validatePhase(
 					Problem:  "resumePrevious on the first step of a phase has no previous step to resume from; the runtime will always start a fresh session",
 				})
 			} else if i > 0 {
-				prevModel := steps[i-1].Model
-				if prevModel == "" {
+				prev := steps[i-1]
+				prevEffectiveModel := prev.Model
+				if prevEffectiveModel == "" && defaults != nil {
+					prevEffectiveModel = defaults.Model
+				}
+				prevIsClaude := prev.IsClaude != nil && *prev.IsClaude
+				if !prevIsClaude {
 					*errs = append(*errs, Error{
 						Severity: SeverityWarning,
 						Category: "schema",
@@ -657,13 +678,13 @@ func validatePhase(
 						StepName: stepName,
 						Problem:  "resumePrevious: previous step is non-claude and has no session ID; the runtime will always fall through G1 and start a fresh session",
 					})
-				} else if step.Model != "" && prevModel != step.Model {
+				} else if effectiveModel != "" && prevEffectiveModel != "" && prevEffectiveModel != effectiveModel {
 					*errs = append(*errs, Error{
 						Severity: SeverityWarning,
 						Category: "schema",
 						Phase:    phaseName,
 						StepName: stepName,
-						Problem:  fmt.Sprintf("resumePrevious: previous step uses model %q but this step uses model %q; cross-model resume is supported but outside the validated same-model rollout", prevModel, step.Model),
+						Problem:  fmt.Sprintf("resumePrevious: previous step uses model %q but this step uses model %q; cross-model resume is supported but outside the validated same-model rollout", prevEffectiveModel, effectiveModel),
 					})
 				}
 			}

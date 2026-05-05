@@ -61,9 +61,11 @@ type Step struct {
 	Effort             string
 }
 
-// DefaultsBlock holds the optional top-level "defaults" block.
+// DefaultsBlock holds the optional top-level "defaults" block. Each field is
+// applied to claude steps that do not set the corresponding step-level value.
 type DefaultsBlock struct {
 	Effort string
+	Model  string
 }
 
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.

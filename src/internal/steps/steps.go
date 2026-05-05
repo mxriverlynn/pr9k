@@ -94,6 +94,11 @@ type Defaults struct {
 	// ValidEffortValues. Empty means no default; the CLI's own default applies
 	// unless a step sets its own Effort.
 	Effort string `json:"effort,omitempty"`
+	// Model is the default Claude model name applied to claude steps that do not
+	// set their own Model. The value is passed through verbatim to "claude
+	// --model". Empty means no default; in that case every claude step must set
+	// its own Model.
+	Model string `json:"model,omitempty"`
 }
 
 // StepFile holds the three groups of steps loaded from config.json.
@@ -116,6 +121,20 @@ func (sf StepFile) EffectiveEffort(s Step) string {
 	}
 	if sf.Defaults != nil {
 		return sf.Defaults.Effort
+	}
+	return ""
+}
+
+// EffectiveModel returns the model to use for s, applying the StepFile's
+// defaults when the step does not set its own Model. Returns "" when neither
+// is set; the validator rejects that combination for claude steps before
+// runtime ever sees an unset effective model.
+func (sf StepFile) EffectiveModel(s Step) string {
+	if s.Model != "" {
+		return s.Model
+	}
+	if sf.Defaults != nil {
+		return sf.Defaults.Model
 	}
 	return ""
 }
@@ -152,14 +171,21 @@ func LoadSteps(workflowDir string) (StepFile, error) {
 		return StepFile{}, fmt.Errorf("steps: defaults.effort %q is not valid (use one of %v)", sf.Defaults.Effort, ValidEffortValues)
 	}
 
-	// Apply top-level defaults: claude steps that do not set their own Effort
-	// inherit the defaults block's value. Non-claude steps are left alone — the
-	// effort flag is meaningless for them and the validator will reject any
-	// explicit effort on them.
-	if sf.Defaults != nil && sf.Defaults.Effort != "" {
-		applyDefaultEffort(sf.Initialize, sf.Defaults.Effort)
-		applyDefaultEffort(sf.Iteration, sf.Defaults.Effort)
-		applyDefaultEffort(sf.Finalize, sf.Defaults.Effort)
+	// Apply top-level defaults: claude steps that do not set their own value
+	// inherit from the defaults block. Non-claude steps are left alone — the
+	// fields are meaningless for them and the validator will reject any
+	// explicit value on them.
+	if sf.Defaults != nil {
+		if sf.Defaults.Effort != "" {
+			applyDefaultEffort(sf.Initialize, sf.Defaults.Effort)
+			applyDefaultEffort(sf.Iteration, sf.Defaults.Effort)
+			applyDefaultEffort(sf.Finalize, sf.Defaults.Effort)
+		}
+		if sf.Defaults.Model != "" {
+			applyDefaultModel(sf.Initialize, sf.Defaults.Model)
+			applyDefaultModel(sf.Iteration, sf.Defaults.Model)
+			applyDefaultModel(sf.Finalize, sf.Defaults.Model)
+		}
 	}
 
 	return sf, nil
@@ -170,6 +196,15 @@ func applyDefaultEffort(group []Step, defaultEffort string) {
 	for i := range group {
 		if group[i].IsClaude && group[i].Effort == "" {
 			group[i].Effort = defaultEffort
+		}
+	}
+}
+
+// applyDefaultModel fills in Model on claude steps that did not set it.
+func applyDefaultModel(group []Step, defaultModel string) {
+	for i := range group {
+		if group[i].IsClaude && group[i].Model == "" {
+			group[i].Model = defaultModel
 		}
 	}
 }

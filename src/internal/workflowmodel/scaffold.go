@@ -65,6 +65,7 @@ type rawStatusLine struct {
 // rawDefaults is the JSON shape of the top-level "defaults" block.
 type rawDefaults struct {
 	Effort string `json:"effort,omitempty"`
+	Model  string `json:"model,omitempty"`
 }
 
 // rawConfig is the JSON shape of config.json.
@@ -111,7 +112,10 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 		doc.StatusLine = sl
 	}
 	if rc.Defaults != nil {
-		doc.Defaults = &DefaultsBlock{Effort: rc.Defaults.Effort}
+		doc.Defaults = &DefaultsBlock{
+			Effort: rc.Defaults.Effort,
+			Model:  rc.Defaults.Model,
+		}
 	}
 	return doc, nil
 }

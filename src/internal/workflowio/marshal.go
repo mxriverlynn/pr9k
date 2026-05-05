@@ -31,6 +31,7 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 	}
 	type outDefaults struct {
 		Effort string `json:"effort,omitempty"`
+		Model  string `json:"model,omitempty"`
 	}
 	type outConfig struct {
 		Initialize   []outStep         `json:"initialize"`
@@ -101,7 +102,10 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 		}
 	}
 	if doc.Defaults != nil {
-		cfg.Defaults = &outDefaults{Effort: doc.Defaults.Effort}
+		cfg.Defaults = &outDefaults{
+			Effort: doc.Defaults.Effort,
+			Model:  doc.Defaults.Model,
+		}
 	}
 
 	return json.MarshalIndent(cfg, "", "  ")
