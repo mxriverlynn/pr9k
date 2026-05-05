@@ -5,6 +5,10 @@
     "command": "scripts/statusline",
     "refreshIntervalSeconds": 5
   },
+  "defaults": {
+    "effort": "medium",
+    "model": "sonnet"
+  },
   "initialize": [
     { "name": "Splash",                "isClaude": false, "command": ["cat", "{{WORKFLOW_DIR}}/ralph-art.txt"] },
     { "name": "Get GitHub user",       "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
@@ -16,10 +20,10 @@
     { "name": "Get starting SHA",      "isClaude": false, "command": ["git", "rev-parse", "HEAD"], "captureAs": "STARTING_SHA" },
     { "name": "Get issue body",        "isClaude": false, "command": ["gh", "issue", "view", "{{ISSUE_ID}}", "--json", "title,body", "-t", "{{{{.title}}}}\n\n{{{{.body}}}}"], "captureAs": "ISSUE_BODY", "captureMode": "fullStdout" },
     { "name": "Get project card",      "isClaude": false, "command": ["scripts/project_card"], "captureAs": "PROJECT_CARD", "captureMode": "fullStdout" },
-    { "name": "Feature work",          "isClaude": true,  "model": "sonnet", "promptFile": "feature-work.md" },
+    { "name": "Feature work",          "isClaude": true,  "promptFile": "feature-work.md" },
     { "name": "Get post-feature diff", "isClaude": false, "command": ["git", "diff", "{{STARTING_SHA}}..HEAD", "--stat"], "captureAs": "PRE_REVIEW_DIFF", "captureMode": "fullStdout" },
-    { "name": "Test planning",         "isClaude": true,  "model": "sonnet",   "promptFile": "test-planning.md" },
-    { "name": "Test writing",          "isClaude": true,  "model": "sonnet", "promptFile": "test-writing.md", "timeoutSeconds": 1800, "onTimeout": "continue" },
+    { "name": "Test planning",         "isClaude": true,  "promptFile": "test-planning.md" },
+    { "name": "Test writing",          "isClaude": true,  "promptFile": "test-writing.md", "timeoutSeconds": 1800, "onTimeout": "continue" },
     { "name": "Summarize to issue",    "isClaude": false, "command": ["scripts/post_issue_summary", "{{ISSUE_ID}}"] },
     { "name": "Close issue",           "isClaude": false, "command": ["scripts/close_gh_issue", "{{ISSUE_ID}}"] },
     { "name": "Git push",              "isClaude": false, "command": ["scripts/git_push"] }
@@ -27,11 +31,11 @@
   "finalize": [
     { "name": "Code review",           "isClaude": true,  "model": "opus",   "promptFile": "code-review-changes.md" },
     { "name": "Check review verdict",  "isClaude": false, "command": ["scripts/review_verdict"], "captureAs": "REVIEW_HAS_FIXES", "captureMode": "lastLine" },
-    { "name": "Fix review items",      "isClaude": true,  "model": "sonnet", "promptFile": "code-review-fixes.md", "skipIfCaptureEmpty": "REVIEW_HAS_FIXES" },
-    { "name": "Final CI check",        "isClaude": true,  "model": "sonnet", "promptFile": "final-ci-check.md" },
-    { "name": "Update docs",           "isClaude": true,  "model": "sonnet", "promptFile": "update-docs.md" },
-    { "name": "Deferred work",         "isClaude": true,  "model": "sonnet", "promptFile": "deferred-work.md" },
-    { "name": "Lessons learned",       "isClaude": true,  "model": "sonnet", "promptFile": "lessons-learned.md" },
+    { "name": "Fix review items",      "isClaude": true,  "promptFile": "code-review-fixes.md", "skipIfCaptureEmpty": "REVIEW_HAS_FIXES" },
+    { "name": "Final CI check",        "isClaude": true,  "promptFile": "final-ci-check.md" },
+    { "name": "Update docs",           "isClaude": true,  "promptFile": "update-docs.md" },
+    { "name": "Deferred work",         "isClaude": true,  "promptFile": "deferred-work.md" },
+    { "name": "Lessons learned",       "isClaude": true,  "promptFile": "lessons-learned.md" },
     { "name": "Final git push",        "isClaude": false, "command": ["scripts/git_push"] }
   ]
 }
