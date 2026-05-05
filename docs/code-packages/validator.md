@@ -27,6 +27,7 @@ Each step is checked for:
 - `skipIfCaptureEmpty`, when set, must be a non-empty string naming a `captureAs` value bound by a strictly earlier step in the same phase, and is valid in the iteration and finalize phases. Initialize-phase captures are excluded because each phase maintains its own `captureStates` map at runtime; cross-phase references would silently never fire.
 - `timeoutSeconds`, when set, must be a positive integer (> 0) and must not exceed `86400` (24 hours). Zero is the sentinel for "no timeout" and is represented by omitting the field (`omitempty`). The 86400 cap prevents integer overflow when the value is converted to `time.Duration` — values above ~9.2e9 seconds would wrap and fire immediately.
 - `resumePrevious`, when `true`, must be on a claude step (`isClaude: true`); setting it on a non-claude step is a **fatal error**. Three advisory **warnings** (non-fatal) are also emitted: (1) if this is the first step in its phase (no previous step to resume from — the runtime gate G1 will always block), (2) if the previous step is non-claude (non-claude steps produce no session ID — G1 will always block at runtime), and (3) if the previous step uses a different model (cross-model resume is technically supported but outside the validated same-model rollout).
+- `effort`, when set, must be one of `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Any other value is a fatal error. `effort` is only valid on claude steps (`isClaude: true`); a non-empty value on a non-claude step is a fatal error. The same value set is enforced on the top-level `defaults.effort` block (see below).
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).
 
@@ -76,6 +77,14 @@ The optional top-level `containerEnv` object injects literal `KEY=VALUE` pairs i
 | Env collision | info | Key also appears in the `env` allowlist — Docker last-wins means containerEnv wins; the info notice makes the precedence explicit |
 
 containerEnv validation runs in the same pass as env validation, before the scope walk.
+
+### defaults block (Category "defaults")
+
+The optional top-level `defaults` object holds workflow-wide values that individual claude steps inherit when they do not set their own. Validation runs before the phase walk; errors use `Category="defaults"`, `Phase="config"`, no `StepName`.
+
+- `effort`, when present, must be one of `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Any other non-empty value is a fatal error. Omitting the field (or leaving the entire `defaults` block out) is valid and means no workflow-wide default applies.
+
+Unknown subfields are rejected (strict decode). Absent `defaults` is valid and produces no errors. Default propagation happens at runtime in `steps.LoadSteps` — the validator only checks the value set, not how it is applied.
 
 ### statusLine block (Category "statusline")
 

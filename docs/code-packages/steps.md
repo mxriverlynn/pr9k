@@ -68,8 +68,17 @@ type Step struct {
     BreakLoopIfEmpty    bool     `json:"breakLoopIfEmpty,omitempty"`    // exit iteration loop when captured output is empty
     SkipIfCaptureEmpty  string   `json:"skipIfCaptureEmpty,omitempty"`  // skip this step when named capture is empty; iteration phase only
     TimeoutSeconds      int      `json:"timeoutSeconds,omitempty"`      // wall-clock cap in seconds; 0 = no timeout
+    OnTimeout           string   `json:"onTimeout,omitempty"`           // "" or "fail" (default), or "continue" (soft-fail)
     ResumePrevious      bool     `json:"resumePrevious,omitempty"`      // claude steps only: attempt --resume <session_id> if G1–G5 gates pass
+    Effort              string   `json:"effort,omitempty"`              // claude steps only: forwarded to claude CLI as --effort <value>
 }
+
+// ValidEffortValues is the accepted set for Step.Effort and Defaults.Effort.
+// Empty is also accepted (means: do not pass --effort).
+var ValidEffortValues = []string{"low", "medium", "high", "xhigh", "max"}
+
+// IsValidEffort reports whether v is a valid Step.Effort value (including "").
+func IsValidEffort(v string) bool { ... }
 
 // StatusLineConfig holds the optional status-line configuration from config.json.
 // Consumed by the statusline package to construct a Runner.
@@ -79,15 +88,26 @@ type StatusLineConfig struct {
     RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
+// Defaults holds the optional top-level "defaults" block. Each field is
+// applied to claude steps that do not set the corresponding step-level value.
+type Defaults struct {
+    Effort string `json:"effort,omitempty"` // applied to Step.Effort when unset
+}
+
 // StepFile holds the three groups of steps loaded from config.json.
 type StepFile struct {
     Env          []string          `json:"env,omitempty"`
     ContainerEnv map[string]string `json:"containerEnv,omitempty"`
+    Defaults     *Defaults         `json:"defaults,omitempty"`
     Initialize   []Step            `json:"initialize"`
     Iteration    []Step            `json:"iteration"`
     Finalize     []Step            `json:"finalize"`
     StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
 }
+
+// EffectiveEffort returns the effort to use for s, applying Defaults.Effort
+// when the step does not set its own. Returns "" when neither is set.
+func (sf StepFile) EffectiveEffort(s Step) string { ... }
 ```
 
 ## Implementation Details
@@ -103,6 +123,12 @@ func LoadSteps(workflowDir string) (StepFile, error) {
     // ... unmarshal JSON into StepFile
 }
 ```
+
+After unmarshalling, `LoadSteps` applies two load-time guards and one defaults-merge step:
+
+1. **`timeoutSeconds < 0`** is rejected with a step-named error.
+2. **`effort`** must satisfy `IsValidEffort` for every step and (if present) for the top-level `defaults.effort` block. Invalid values are rejected with a value-bearing error.
+3. **`defaults.effort` propagation** — when `defaults.effort` is set, every Claude step that does not set its own `effort` inherits the default. Non-claude steps are skipped. Per-step values always win over `defaults.effort`. After `LoadSteps` returns, every `Step.Effort` field already represents the effective value, so downstream code (`buildStep`, `sandbox.BuildRunArgs`) does not need to consult `Defaults` again.
 
 ### Initialize Steps
 
@@ -187,6 +213,8 @@ All `{{VAR_NAME}}` tokens in the prompt file are replaced with values from `vt` 
 | Prompt file unreadable | `"steps: could not read prompt {path}: ..."` | Returned to caller |
 | Substitution error | `"steps: substitution failed in prompt {path}: ..."` | Returned to caller |
 | Negative `timeoutSeconds` | `"steps: step {name}: timeoutSeconds must not be negative"` | Returned to caller |
+| Invalid step `effort` | `"steps: step {name}: effort {value} is not valid (use one of [low medium high xhigh max])"` | Returned to caller |
+| Invalid `defaults.effort` | `"steps: defaults.effort {value} is not valid (use one of [low medium high xhigh max])"` | Returned to caller |
 
 All errors are package-prefixed with `"steps:"` and include the file path.
 
@@ -208,5 +236,6 @@ Tests use `runtime.Caller(0)` to resolve test fixture paths relative to the test
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How ResolveCommand prepares shell commands for execution
 - [pr9k Plan](../plans/pr9k.md) — Original specification including step definition design
 - [Passing Environment Variables](../how-to/passing-environment-variables.md) — How to forward host env vars via `env` and inject literal values via `containerEnv` in `config.json`
+- [Setting Claude Effort](../how-to/setting-claude-effort.md) — User-facing guide to the `effort` field and the top-level `defaults.effort` block
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for package-prefixed errors and file path inclusion
 - [API Design](../coding-standards/api-design.md) — Coding standards for precondition validation (e.g., empty PromptFile check)

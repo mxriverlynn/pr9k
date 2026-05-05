@@ -67,6 +67,7 @@ docker run                                              \
   docker/sandbox-templates:claude-code                  \
   claude --permission-mode bypassPermissions            \
          --model <MODEL>                                \
+         [--effort <EFFORT>]                            \
          [--resume <SESSION_ID>]                        \
          -p <PROMPT>                                    \
          --output-format stream-json                    \
@@ -74,6 +75,8 @@ docker run                                              \
 ```
 
 `--resume <SESSION_ID>` is injected only when the step has `resumePrevious: true` **and** all five resume gates (G1–G5) pass. See [Session Resume Gates](workflow-orchestration.md#session-resume-gates-resumeprevious) for gate details. The default workflow ships with `resumePrevious` unset on all steps.
+
+`--effort <EFFORT>` is injected only when the step's effective effort is non-empty. The effective effort is the per-step `effort` field if set, otherwise the top-level `defaults.effort` block, otherwise empty. `steps.LoadSteps` resolves this at workflow load time so `BuildRunArgs` only sees the final value. Valid values: `low`, `medium`, `high`, `xhigh`, `max`. See [Setting Claude Effort](../how-to/setting-claude-effort.md).
 
 ### Flag rationale
 
@@ -86,6 +89,7 @@ docker run                                              \
 - `--mount type=bind,source=<PROFILE_DIR>,target=/home/agent/.claude` — bind-mount the Claude profile (read-write so OAuth token refresh works).
 - `-w /home/agent/workspace` — explicit working directory; matches the bind-mount so relative paths inside the container correspond to real host paths.
 - `-e CLAUDE_CONFIG_DIR=/home/agent/.claude` — set inside the container regardless of whether the host had `CLAUDE_CONFIG_DIR`; points to the mount point.
+- `--effort <value>` — appended only when the step's effective effort is non-empty. Forwards the configured reasoning-effort level to the Claude CLI. The runtime never injects a value pr9k synthesised; the field comes from the user's `config.json` (per-step `effort` or workflow-wide `defaults.effort`).
 - `--output-format stream-json` — instructs claude to emit newline-delimited JSON (NDJSON) on stdout. Required for the `claudestream` pipeline to parse typed events.
 - `--verbose` — includes all event types in the NDJSON stream (assistant turns, tool calls, result). Without this flag, many event types are suppressed and the pipeline cannot render step progress or extract the result.
 - No `-t` (TTY) — deliberately omitted; a TTY corrupts line-buffered stdout that the capture layer depends on.
