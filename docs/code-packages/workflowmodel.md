@@ -8,7 +8,7 @@ The `internal/workflowmodel` package defines the mutable in-memory representatio
 
 ## Overview
 
-- Defines `WorkflowDoc`, `Step`, `StepKind`, `EnvEntry`, and `StatusLineBlock` types
+- Defines `WorkflowDoc`, `Step`, `StepKind`, `EnvEntry`, `StatusLineBlock`, and `DefaultsBlock` types
 - `IsDirty(disk, mem WorkflowDoc) bool` — returns true if the in-memory document differs from the on-disk snapshot (used to skip no-op saves)
 - `Empty() WorkflowDoc` — returns a scaffold with a single placeholder shell step (D-40)
 - `CopyFromDefault(bundlePath string) (WorkflowDoc, error)` — reads `config.json` from `bundlePath` and returns a flat in-memory copy with all phases merged into a single `Steps` slice
@@ -57,6 +57,13 @@ type StatusLineBlock struct {
     RefreshIntervalSeconds int
 }
 
+// DefaultsBlock holds the optional top-level "defaults" block. Each field is
+// applied to claude steps that do not set the corresponding step-level value.
+type DefaultsBlock struct {
+    Effort string
+    Model  string
+}
+
 // Step is one workflow step. IsClaudeSet distinguishes three states:
 //   - new/untyped: Kind == "", IsClaudeSet == false
 //   - shell step:  Kind == StepKindShell, IsClaudeSet == false
@@ -77,12 +84,14 @@ type Step struct {
     TimeoutSeconds     int
     OnTimeout          string
     ResumePrevious     bool
+    Effort             string // claude steps only; forwarded to claude CLI as --effort
 }
 
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.
 type WorkflowDoc struct {
     DefaultModel string
     StatusLine   *StatusLineBlock
+    Defaults     *DefaultsBlock
     Steps        []Step
 }
 ```

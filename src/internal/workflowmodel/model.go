@@ -58,12 +58,21 @@ type Step struct {
 	TimeoutSeconds     int
 	OnTimeout          string
 	ResumePrevious     bool
+	Effort             string
+}
+
+// DefaultsBlock holds the optional top-level "defaults" block. Each field is
+// applied to claude steps that do not set the corresponding step-level value.
+type DefaultsBlock struct {
+	Effort string
+	Model  string
 }
 
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.
 type WorkflowDoc struct {
 	DefaultModel string
 	StatusLine   *StatusLineBlock
+	Defaults     *DefaultsBlock
 	Env          []string          // passthrough env var names (top-level env array)
 	ContainerEnv map[string]string // literal key-value env vars (top-level containerEnv)
 	Steps        []Step

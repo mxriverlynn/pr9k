@@ -22,17 +22,23 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 		TimeoutSeconds     int      `json:"timeoutSeconds,omitempty"`
 		OnTimeout          string   `json:"onTimeout,omitempty"`
 		ResumePrevious     bool     `json:"resumePrevious,omitempty"`
+		Effort             string   `json:"effort,omitempty"`
 	}
 	type outStatusLine struct {
 		Type                   string `json:"type,omitempty"`
 		Command                string `json:"command"`
 		RefreshIntervalSeconds int    `json:"refreshIntervalSeconds,omitempty"`
 	}
+	type outDefaults struct {
+		Effort string `json:"effort,omitempty"`
+		Model  string `json:"model,omitempty"`
+	}
 	type outConfig struct {
 		Initialize   []outStep         `json:"initialize"`
 		Iteration    []outStep         `json:"iteration"`
 		Finalize     []outStep         `json:"finalize"`
 		StatusLine   *outStatusLine    `json:"statusLine,omitempty"`
+		Defaults     *outDefaults      `json:"defaults,omitempty"`
 		Env          []string          `json:"env,omitempty"`
 		ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 	}
@@ -50,6 +56,7 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 			TimeoutSeconds:     s.TimeoutSeconds,
 			OnTimeout:          s.OnTimeout,
 			ResumePrevious:     s.ResumePrevious,
+			Effort:             s.Effort,
 		}
 		if len(s.Command) > 0 {
 			cmd := make([]string, len(s.Command))
@@ -92,6 +99,12 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 			Type:                   doc.StatusLine.Type,
 			Command:                doc.StatusLine.Command,
 			RefreshIntervalSeconds: doc.StatusLine.RefreshIntervalSeconds,
+		}
+	}
+	if doc.Defaults != nil {
+		cfg.Defaults = &outDefaults{
+			Effort: doc.Defaults.Effort,
+			Model:  doc.Defaults.Model,
 		}
 	}
 

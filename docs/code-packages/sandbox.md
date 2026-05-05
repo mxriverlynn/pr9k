@@ -57,7 +57,7 @@ func BuildRunArgs(
     envAllowlist []string,
     containerEnv map[string]string,
     resumeSessionID string, // non-empty → appends --resume <id> before -p
-    model, prompt string,
+    model, effort, prompt string, // non-empty effort → appends --effort <value> after --model
 ) []string
 ```
 
@@ -73,6 +73,7 @@ Constructs the complete `docker run ...` argv. The returned slice begins with `"
 - **Env passthrough** — each name in `envAllowlist` is deduplicated (first-seen order), then emitted as `-e NAME` only if `os.LookupEnv(name)` returns `ok=true`. Unset host vars are silently skipped. Names are passed as bare `-e NAME` (not `-e NAME=value`) so the secret never appears in the docker CLI invocation.
 - **containerEnv injection** — after the passthrough entries, each key in `containerEnv` is emitted as `-e KEY=VALUE` in sorted key order. This injects literal values into the container that are not present on the host. Docker's last-wins rule means containerEnv beats any same-named host passthrough. `CLAUDE_CONFIG_DIR` is silently skipped even if present as a defense-in-depth guard (the validator already rejects it, but this prevents any future call path that bypasses validation from overwriting the sandbox mount point).
 - **`--permission-mode bypassPermissions`** — required for the unattended loop.
+- **`--effort <value>`** — appended only when `effort` is non-empty. Valid values are enforced upstream by `steps.IsValidEffort` and the validator; this function does no further checking. Empty `effort` omits the flag entirely (the CLI's default applies). Callers compute the effective value (per-step `Step.Effort` overriding `Defaults.Effort`) at load time in `steps.LoadSteps`, so `buildStep` simply forwards `s.Effort`.
 - **`--output-format stream-json`** — instructs claude to emit NDJSON on stdout so the `claudestream` pipeline can parse typed events.
 - **`--verbose`** — includes all event types in the stream (assistant turns, tool calls, result); without this flag many event types are suppressed.
 

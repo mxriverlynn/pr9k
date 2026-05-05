@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/src/internal/vars"
@@ -57,6 +58,24 @@ type Step struct {
 	// The default workflow ships with this field unset on all steps — engine
 	// support is present but feature-flagged-off pending Phase C A/B validation.
 	ResumePrevious bool `json:"resumePrevious,omitempty"`
+	// Effort, when set on a claude step, is forwarded to the claude CLI as
+	// "--effort <value>". Valid values: "low", "medium", "high", "xhigh", "max".
+	// Empty means the flag is not passed at all (the CLI's own default applies).
+	// Only valid on claude steps.
+	Effort string `json:"effort,omitempty"`
+}
+
+// ValidEffortValues lists the accepted values for Step.Effort. Exported so
+// the validator can share the same source of truth.
+var ValidEffortValues = []string{"low", "medium", "high", "xhigh", "max"}
+
+// IsValidEffort reports whether v is a valid Step.Effort value. Empty is valid
+// (means: do not pass --effort to the CLI).
+func IsValidEffort(v string) bool {
+	if v == "" {
+		return true
+	}
+	return slices.Contains(ValidEffortValues, v)
 }
 
 // StatusLineConfig holds the optional status-line configuration from config.json.
@@ -67,14 +86,57 @@ type StatusLineConfig struct {
 	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
+// Defaults holds the optional top-level "defaults" block. Each field is applied
+// to claude steps that do not set the corresponding step-level value.
+type Defaults struct {
+	// Effort is the default value forwarded to the claude CLI as "--effort <v>"
+	// for claude steps that do not set their own Effort. Valid values match
+	// ValidEffortValues. Empty means no default; the CLI's own default applies
+	// unless a step sets its own Effort.
+	Effort string `json:"effort,omitempty"`
+	// Model is the default Claude model name applied to claude steps that do not
+	// set their own Model. The value is passed through verbatim to "claude
+	// --model". Empty means no default; in that case every claude step must set
+	// its own Model.
+	Model string `json:"model,omitempty"`
+}
+
 // StepFile holds the three groups of steps loaded from config.json.
 type StepFile struct {
 	Env          []string          `json:"env,omitempty"`
 	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
+	Defaults     *Defaults         `json:"defaults,omitempty"`
 	Initialize   []Step            `json:"initialize"`
 	Iteration    []Step            `json:"iteration"`
 	Finalize     []Step            `json:"finalize"`
 	StatusLine   *StatusLineConfig `json:"statusLine,omitempty"`
+}
+
+// EffectiveEffort returns the effort to use for s, applying the StepFile's
+// defaults when the step does not set its own Effort. Returns "" when neither
+// is set (i.e., do not pass --effort to the CLI).
+func (sf StepFile) EffectiveEffort(s Step) string {
+	if s.Effort != "" {
+		return s.Effort
+	}
+	if sf.Defaults != nil {
+		return sf.Defaults.Effort
+	}
+	return ""
+}
+
+// EffectiveModel returns the model to use for s, applying the StepFile's
+// defaults when the step does not set its own Model. Returns "" when neither
+// is set; the validator rejects that combination for claude steps before
+// runtime ever sees an unset effective model.
+func (sf StepFile) EffectiveModel(s Step) string {
+	if s.Model != "" {
+		return s.Model
+	}
+	if sf.Defaults != nil {
+		return sf.Defaults.Model
+	}
+	return ""
 }
 
 // LoadSteps loads the step definitions from config.json,
@@ -100,10 +162,51 @@ func LoadSteps(workflowDir string) (StepFile, error) {
 			if s.TimeoutSeconds < 0 {
 				return StepFile{}, fmt.Errorf("steps: step %q: timeoutSeconds must not be negative", s.Name)
 			}
+			if !IsValidEffort(s.Effort) {
+				return StepFile{}, fmt.Errorf("steps: step %q: effort %q is not valid (use one of %v)", s.Name, s.Effort, ValidEffortValues)
+			}
+		}
+	}
+	if sf.Defaults != nil && !IsValidEffort(sf.Defaults.Effort) {
+		return StepFile{}, fmt.Errorf("steps: defaults.effort %q is not valid (use one of %v)", sf.Defaults.Effort, ValidEffortValues)
+	}
+
+	// Apply top-level defaults: claude steps that do not set their own value
+	// inherit from the defaults block. Non-claude steps are left alone — the
+	// fields are meaningless for them and the validator will reject any
+	// explicit value on them.
+	if sf.Defaults != nil {
+		if sf.Defaults.Effort != "" {
+			applyDefaultEffort(sf.Initialize, sf.Defaults.Effort)
+			applyDefaultEffort(sf.Iteration, sf.Defaults.Effort)
+			applyDefaultEffort(sf.Finalize, sf.Defaults.Effort)
+		}
+		if sf.Defaults.Model != "" {
+			applyDefaultModel(sf.Initialize, sf.Defaults.Model)
+			applyDefaultModel(sf.Iteration, sf.Defaults.Model)
+			applyDefaultModel(sf.Finalize, sf.Defaults.Model)
 		}
 	}
 
 	return sf, nil
+}
+
+// applyDefaultEffort fills in Effort on claude steps that did not set it.
+func applyDefaultEffort(group []Step, defaultEffort string) {
+	for i := range group {
+		if group[i].IsClaude && group[i].Effort == "" {
+			group[i].Effort = defaultEffort
+		}
+	}
+}
+
+// applyDefaultModel fills in Model on claude steps that did not set it.
+func applyDefaultModel(group []Step, defaultModel string) {
+	for i := range group {
+		if group[i].IsClaude && group[i].Model == "" {
+			group[i].Model = defaultModel
+		}
+	}
 }
 
 // BuildPrompt reads the prompt file for the given step, substitutes {{VAR}}
