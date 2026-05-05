@@ -130,7 +130,7 @@ The profile directory is created automatically if it doesn't exist (mode `0700`)
 If something about `sandbox --interactive` isn't working and you want to isolate the problem, you can launch the same container by hand:
 
 ```bash
-docker run -it --rm --init \
+docker run -it --rm \
   -u $(id -u):$(id -g) \
   -v ~/.claude:/home/agent/.claude \
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude \

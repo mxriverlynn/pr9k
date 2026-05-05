@@ -162,7 +162,7 @@ type dockerInteractiveFunc func(args []string, stdin io.Reader, stdout, stderr i
 ## `BuildInteractiveArgs` shape
 
 ```
-docker run -it --rm --init
+docker run -it --rm
   -u <uid>:<gid>
   --mount type=bind,source=<profileDir>,target=/home/agent/.claude
   -e CLAUDE_CONFIG_DIR=/home/agent/.claude
@@ -183,7 +183,7 @@ Differences from `BuildRunArgs`:
 ## `BuildShellArgs` shape
 
 ```
-docker run -it --rm --init
+docker run -it --rm
   -u <uid>:<gid>
   --mount type=bind,source=<projectDir>,target=/home/agent/workspace
   --mount type=bind,source=<profileDir>,target=/home/agent/.claude

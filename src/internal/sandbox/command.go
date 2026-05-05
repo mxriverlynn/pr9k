@@ -37,7 +37,11 @@ func BuildRunArgs(
 		"docker", "run",
 		"--rm",
 		"-i",
-		"--init",
+		// No --init: the image's ENTRYPOINT is already `tini --`, so docker's
+		// own tini would run as PID 1 and the image's tini would end up at PID 7
+		// and emit a "not running as PID 1" WARN on every step. Removing --init
+		// lets the image's tini run as PID 1 with equivalent signal-forwarding
+		// and zombie-reaping semantics.
 		"--cidfile", cidfile,
 		"-u", fmt.Sprintf("%d:%d", uid, gid),
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", projectDir, ContainerRepoPath),
@@ -108,7 +112,7 @@ func BuildInteractiveArgs(profileDir string, uid, gid int) []string {
 		"docker", "run",
 		"-it",
 		"--rm",
-		"--init",
+		// No --init: image's ENTRYPOINT is `tini --`. See BuildRunArgs comment.
 		"-u", fmt.Sprintf("%d:%d", uid, gid),
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),
 		"-e", "CLAUDE_CONFIG_DIR=" + ContainerProfilePath,
@@ -136,7 +140,7 @@ func BuildShellArgs(projectDir, profileDir string, uid, gid int) []string {
 		"docker", "run",
 		"-it",
 		"--rm",
-		"--init",
+		// No --init: image's ENTRYPOINT is `tini --`. See BuildRunArgs comment.
 		"-u", fmt.Sprintf("%d:%d", uid, gid),
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", projectDir, ContainerRepoPath),
 		"--mount", fmt.Sprintf("type=bind,source=%s,target=%s", profileDir, ContainerProfilePath),

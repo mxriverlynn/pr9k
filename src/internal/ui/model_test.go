@@ -2339,7 +2339,7 @@ func TestView_FrameNeverExceedsHeight(t *testing.T) {
 		{"too-small-zero", 0, 0, 1},
 		{"too-small-1x1", 1, 1, 1},
 		{"too-small-height-just-below-min", 80, 6, 1}, // gridRows=1, minH=8
-		{"exact-min-height", 80, 8, 1},                 // gridRows=1, minH=8
+		{"exact-min-height", 80, 8, 1},                // gridRows=1, minH=8
 	}
 
 	for _, tc := range cases {

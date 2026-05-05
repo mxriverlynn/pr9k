@@ -216,7 +216,6 @@ func TestSandboxShell_ArgsIncludeBindMountsAndBash(t *testing.T) {
 	wants := []string{
 		"-it",
 		"--rm",
-		"--init",
 		"-u 501:20",
 		"type=bind,source=" + projectDir + ",target=/home/agent/workspace",
 		"type=bind,source=" + profileDir + ",target=/home/agent/.claude",
