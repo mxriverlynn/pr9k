@@ -48,7 +48,6 @@ func TestBuildRunArgs_GoldenArgv(t *testing.T) {
 
 	assertContainsFlag(t, args, "--rm")
 	assertContainsFlag(t, args, "-i")
-	assertContainsFlag(t, args, "--init")
 	assertContainsConsecutive(t, args, "--cidfile", testCidfile)
 	assertContainsConsecutive(t, args, "-u", "501:20")
 	assertContainsConsecutive(t, args, "--mount", fmt.Sprintf("type=bind,source=%s,target=%s", testProjectDir, ContainerRepoPath))
@@ -182,7 +181,7 @@ func TestBuildRunArgs_FlagOrder(t *testing.T) {
 		nil, nil, "", testModel, "", "prompt")
 
 	// Verify the fixed-position flags appear in the expected order.
-	expectedPrefixOrder := []string{"docker", "run", "--rm", "-i", "--init", "--cidfile"}
+	expectedPrefixOrder := []string{"docker", "run", "--rm", "-i", "--cidfile"}
 	for i, expected := range expectedPrefixOrder {
 		if i >= len(args) {
 			t.Fatalf("args too short; missing %q at position %d", expected, i)
@@ -476,7 +475,7 @@ func TestBuildRunArgs_ContainerEnv_ValueWithEqualsPassesThrough(t *testing.T) {
 func TestBuildInteractiveArgs_Shape(t *testing.T) {
 	args := BuildInteractiveArgs(testProfileDir, testUID, testGID)
 
-	wantFlags := []string{"-it", "--rm", "--init"}
+	wantFlags := []string{"-it", "--rm"}
 	for _, flag := range wantFlags {
 		if indexOf(args, flag) < 0 {
 			t.Errorf("argv missing %q; got %v", flag, args)
@@ -634,7 +633,7 @@ func TestBuildRunArgs_ResumeSessionID_Empty(t *testing.T) {
 func TestBuildShellArgs_Shape(t *testing.T) {
 	args := BuildShellArgs(testProjectDir, testProfileDir, testUID, testGID)
 
-	wantFlags := []string{"-it", "--rm", "--init"}
+	wantFlags := []string{"-it", "--rm"}
 	for _, flag := range wantFlags {
 		if indexOf(args, flag) < 0 {
 			t.Errorf("argv missing %q; got %v", flag, args)
@@ -700,5 +699,33 @@ func TestBuildShellArgs_ForwardsTERMWhenSet(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("argv missing consecutive `-e TERM` pair; got %v", args)
+	}
+}
+
+// --- Regression: --init must NOT appear in any argv builder.
+//
+// The image's ENTRYPOINT is already `tini --`, so passing --init to docker run
+// stacks two tinis and produces a "Tini is not running as PID 1" WARN at the
+// start of every step. See docs/plans/sandbox-tini-warning.md.
+
+func TestBuildRunArgs_NoDoubleInit(t *testing.T) {
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
+		nil, nil, "", testModel, "", "prompt")
+	if indexOf(args, "--init") >= 0 {
+		t.Errorf("BuildRunArgs must NOT include --init (image ENTRYPOINT is tini); argv: %v", args)
+	}
+}
+
+func TestBuildInteractiveArgs_NoDoubleInit(t *testing.T) {
+	args := BuildInteractiveArgs(testProfileDir, testUID, testGID)
+	if indexOf(args, "--init") >= 0 {
+		t.Errorf("BuildInteractiveArgs must NOT include --init (image ENTRYPOINT is tini); argv: %v", args)
+	}
+}
+
+func TestBuildShellArgs_NoDoubleInit(t *testing.T) {
+	args := BuildShellArgs(testProjectDir, testProfileDir, testUID, testGID)
+	if indexOf(args, "--init") >= 0 {
+		t.Errorf("BuildShellArgs must NOT include --init (image ENTRYPOINT is tini); argv: %v", args)
 	}
 }

@@ -51,7 +51,6 @@ pr9k constructs the following command for every claude step. Values in `<ANGLE_B
 docker run                                              \
   --rm                                                  \
   -i                                                    \
-  --init                                                \
   --cidfile <TMP>/ralph-<UNIQUE>.cid                    \
   -u <UID>:<GID>                                        \
   --mount type=bind,source=<PROJECT_DIR>,target=/home/agent/workspace  \
@@ -84,7 +83,7 @@ docker run                                              \
 
 - `--rm` — container is ephemeral; deleted on exit.
 - `-i` — attach stdin. Only safe because `RunSandboxedStep` provides explicit empty stdin (`bytes.NewReader(nil)`) to prevent Bubble Tea's raw-mode keyboard reader from being inherited by docker.
-- `--init` — install tini as PID 1 so SIGTERM is forwarded to claude and zombie processes are reaped.
+- No `--init` flag is passed. The image's ENTRYPOINT is already `tini --`, which runs as PID 1 inside the container and handles SIGTERM forwarding and zombie reaping. Passing `--init` would inject a second tini at PID 1, pushing the image's tini to PID 7 and producing a `Tini is not running as PID 1` WARN at the start of every step.
 - `--cidfile <tmp>/ralph-<unique>.cid` — capture the container ID so `Terminate()` can call `docker kill <cid>` rather than signaling the host docker CLI process (which would orphan the container). The cidfile path is unique per step under `os.TempDir()`.
 - `-u <UID>:<GID>` — run as the invoking host user. Files written to the bind-mounted repo are owned by the host user, so subsequent shell steps (`git`, `gh`) work without permission errors.
 - `--mount type=bind,source=<PROJECT_DIR>,target=/home/agent/workspace` — bind-mount the target repo. `<PROJECT_DIR>` is the `--project-dir` value (default: `os.Getwd()` + `filepath.EvalSymlinks`). The `--mount` syntax is used instead of `-v` to avoid argument injection via colons in path names. The workflow bundle (`<WORKFLOW_DIR>`) is NOT mounted.

@@ -65,7 +65,7 @@ Constructs the complete `docker run ...` argv. The returned slice begins with `"
 
 - **`--rm`** — container is destroyed when it exits; no residue on the host.
 - **`-i`** — stdin stays attached (claude reads from it).
-- **`--init`** — PID 1 is a minimal init; zombie reaping is handled correctly.
+- **No `--init` flag** — the image's ENTRYPOINT (`tini --`) already runs as PID 1 and handles signal forwarding plus zombie reaping. Adding `--init` would inject Docker's own tini at PID 1, push the image's tini to PID 7, and produce a `Tini is not running as PID 1` WARN at the start of every step.
 - **`--cidfile <path>`** — docker writes the 64-char container ID to `<path>` as soon as the container starts. The terminator reads this file to address `docker kill` at the right container.
 - **`-u <uid>:<gid>`** — container runs as the host user; files written to the bind mount are owned by the invoking user.
 - **`--mount type=bind,...`** — bind mounts use key=value syntax (`--mount type=bind,source=...,target=...`) rather than the shorthand `-v dir:target`; this avoids argument injection via colons in path names.
@@ -145,7 +145,7 @@ Constructs the `docker run -it ...` argv for an interactive `bash` shell used by
 
 - The host project directory is bind-mounted at `ContainerRepoPath` (read-write) and is the working directory, so the user lands in the project tree.
 - Entrypoint is `bash` instead of `claude` (the `claude` binary is still on `PATH` inside the shell).
-- Otherwise the shape matches `BuildInteractiveArgs`: `-it`, `--rm`, `--init`, profile mount, `CLAUDE_CONFIG_DIR`, optional `-e TERM` passthrough.
+- Otherwise the shape matches `BuildInteractiveArgs`: `-it`, `--rm`, profile mount, `CLAUDE_CONFIG_DIR`, optional `-e TERM` passthrough.
 
 ## Package
 

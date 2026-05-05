@@ -12,9 +12,14 @@ Implement github issue #{{ISSUE_ID}} in the current branch (do not switch branch
 
 If there are no image attachments on github issue #{{ISSUE_ID}}, skip to the TDD self-healing loop.
 
-Download all images attached to the github issue
-- Save images to .pr9k/artifacts/ui-designs/
-- Use appropriate images as visual reference for UI development
+Download all images attached to the github issue, save them to `.pr9k/artifacts/ui-designs/`, then prepare a processed set the vision API will accept:
+
+- Skip animated GIFs and non-raster formats (`.svg`, `.heic`, `.bmp`, etc.).
+- For each remaining image, write a processed copy under `.pr9k/artifacts/ui-designs/processed/`:
+  - If the file is already PNG or JPEG and is at most 1568 px on its longest edge and at most ~1 MB on disk, copy it as-is.
+  - Otherwise, re-encode/downscale to JPEG or PNG, capped at 1568 px on the longest edge and roughly 1 MB on disk. `sips` (macOS) or `ffmpeg` is available in the sandbox.
+- Reference only the processed copies as visual references for UI development.
+- If reading any single processed image still fails (e.g. the vision API returns "Could not process image"), log the filename and skip that image — do not retry the same image, and do not abort the step.
 
 ## TDD self-healing loop
 

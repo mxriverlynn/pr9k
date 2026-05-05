@@ -307,7 +307,6 @@ func TestSandboxInteractive_ArgsIncludeBindMountAndInteractive(t *testing.T) {
 	// Must contain: -it, profile bind-mount, CLAUDE_CONFIG_DIR env, uid mapping.
 	wants := []string{
 		"-it",
-		"--init",
 		"--rm",
 		"-u 501:20",
 		"type=bind,source=" + profileDir + ",target=/home/agent/.claude",

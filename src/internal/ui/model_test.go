@@ -1670,9 +1670,11 @@ func TestView_StatusLine_NarrowTerminal_TruncatesStatusText(t *testing.T) {
 	actions := make(chan StepAction, 10)
 	kh := NewKeyHandler(func() {}, actions)
 	m := NewModel(header, kh, "v1.0").WithStatusRunner(sr)
-	m.width = 32 // innerWidth = 30
+	// Use the minimum renderable width (uichrome.MinTerminalWidth=60). Below
+	// that, the View() guard returns a placeholder rather than the chrome.
+	m.width = 60 // innerWidth = 58
 	m.height = 24
-	m.log.SetSize(28, 10)
+	m.log.SetSize(56, 10)
 
 	out := m.View()
 	plain := stripANSI(out)
@@ -2268,6 +2270,165 @@ type mockStatusReader struct {
 func (r *mockStatusReader) Enabled() bool      { return r.enabled }
 func (r *mockStatusReader) HasOutput() bool    { return r.hasOutput }
 func (r *mockStatusReader) LastOutput() string { return r.output }
+
+// --- Resize / overflow guard tests (run-tui-resize-overflow) ---
+
+// newTestModelWithSteps builds a Model whose header is sized to stepCount
+// (so gridRows = ceil(stepCount/HeaderCols)).
+func newTestModelWithSteps(t *testing.T, stepCount int) Model {
+	t.Helper()
+	header := NewStatusHeader(stepCount)
+	names := make([]string, stepCount)
+	for i := range names {
+		names[i] = "s"
+	}
+	header.SetPhaseSteps(names)
+	actions := make(chan StepAction, 10)
+	kh := NewKeyHandler(func() {}, actions)
+	return NewModel(header, kh, "pr9k v0.0.0-test")
+}
+
+// batchContains walks the cmd tree returned from tea.Batch and reports whether
+// any leaf cmd has the same identity as want. tea.ClearScreen is a sentinel
+// function value, so identity comparison via reflect.ValueOf().Pointer() works.
+func batchContains(cmd tea.Cmd, want tea.Cmd) bool {
+	if cmd == nil {
+		return false
+	}
+	// Execute the batch to expose its children. tea.Batch returns a cmd that
+	// when invoked returns a tea.BatchMsg containing the child cmds.
+	msg := cmd()
+	switch m := msg.(type) {
+	case tea.BatchMsg:
+		for _, c := range m {
+			if cmdIdentityEqual(c, want) {
+				return true
+			}
+			if batchContains(c, want) {
+				return true
+			}
+		}
+	default:
+		return cmdIdentityEqual(cmd, want)
+	}
+	return false
+}
+
+func cmdIdentityEqual(a, b tea.Cmd) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	// Compare by invoking and matching message type+value: tea.ClearScreen
+	// returns clearScreenMsg{} (an unexported package type), so the value
+	// equality path catches it.
+	ma, mb := a(), b()
+	return ma == mb
+}
+
+func TestView_FrameNeverExceedsHeight(t *testing.T) {
+	cases := []struct {
+		name      string
+		width     int
+		height    int
+		stepCount int
+	}{
+		{"normal-80x24-1step", 80, 24, 1},
+		{"normal-172x39-13step", 172, 39, 13},
+		{"narrow-60x20-4step", 60, 20, 4},
+		{"too-small-40x10-13step", 40, 10, 13},
+		{"too-small-zero", 0, 0, 1},
+		{"too-small-1x1", 1, 1, 1},
+		{"too-small-height-just-below-min", 80, 6, 1}, // gridRows=1, minH=8
+		{"exact-min-height", 80, 8, 1},                // gridRows=1, minH=8
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestModelWithSteps(t, tc.stepCount)
+			next, _ := m.Update(tea.WindowSizeMsg{Width: tc.width, Height: tc.height})
+			m = next.(Model)
+
+			out := m.View()
+			lineCount := strings.Count(out, "\n") + 1
+			if tc.height > 0 && lineCount > tc.height {
+				t.Errorf("View() output has %d lines, exceeds height=%d:\n%s",
+					lineCount, tc.height, out)
+			}
+		})
+	}
+}
+
+func TestView_TooSmall_RendersPlaceholder(t *testing.T) {
+	m := newTestModelWithSteps(t, 13) // gridRows=4, minH=9
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 5})
+	m = next.(Model)
+
+	out := m.View()
+	if !strings.HasPrefix(out, "Terminal too small") {
+		t.Errorf("expected placeholder string, got: %q", out)
+	}
+	for _, glyph := range []string{"╭", "╮", "╰", "╯", "├", "┤"} {
+		if strings.Contains(out, glyph) {
+			t.Errorf("placeholder contains border glyph %q; got: %q", glyph, out)
+		}
+	}
+}
+
+func TestView_AfterResizeSmallThenLarge_RendersFullFrame(t *testing.T) {
+	m := newTestModelWithSteps(t, 4)
+
+	// First, a too-small size.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 20, Height: 5})
+	m = next.(Model)
+	if !strings.HasPrefix(m.View(), "Terminal too small") {
+		t.Fatalf("expected placeholder after small resize")
+	}
+
+	// Then resize back up.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = next.(Model)
+
+	out := m.View()
+	if strings.HasPrefix(out, "Terminal too small") {
+		t.Errorf("expected full frame after resize-up, still got placeholder")
+	}
+	if !strings.Contains(out, "╭") {
+		t.Errorf("expected full frame to contain top-left border glyph; got:\n%s", out)
+	}
+}
+
+func TestWindowSizeMsg_ReturnsClearScreenCmd(t *testing.T) {
+	m := newTestModelWithSteps(t, 4)
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	if cmd == nil {
+		t.Fatal("WindowSizeMsg returned nil cmd; expected batch including tea.ClearScreen")
+	}
+	if !batchContains(cmd, tea.ClearScreen) {
+		t.Errorf("WindowSizeMsg batch does not contain tea.ClearScreen")
+	}
+}
+
+func TestMouseMsg_TooSmall_Ignored(t *testing.T) {
+	m := newTestModelWithSteps(t, 13)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 5})
+	m = next.(Model)
+
+	// Send a left-press mouse event in placeholder mode. Should not panic
+	// and should not trigger ModeSelect.
+	prevMode := m.keys.handler.Mode()
+	next, _ = m.Update(tea.MouseMsg{
+		X:      5,
+		Y:      3,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = next.(Model)
+	if m.keys.handler.Mode() != prevMode {
+		t.Errorf("mouse press in placeholder mode changed key mode from %v to %v",
+			prevMode, m.keys.handler.Mode())
+	}
+}
 
 // stripANSI removes ANSI escape sequences from s for plain-text comparisons.
 func stripANSI(s string) string {

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -8,6 +9,25 @@ import (
 
 	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 )
+
+// minHeight returns the minimum terminal height required to render the full
+// run-mode chrome plus at least one viewport row. Computed from the configured
+// step count (gridRows is fixed for the lifetime of the process — see header.go
+// NewStatusHeader). Used by View() to gate the placeholder render and by the
+// mouse handler to short-circuit coordinate translation when the placeholder
+// is showing.
+func (m Model) minHeight() int {
+	gridRows := len(m.header.header.Rows)
+	chromeRows := 1 + gridRows + 1 + 1 + 1 + 1 // top + grid + 2 hrules + footer + bottom
+	return chromeRows + 1
+}
+
+// tooSmall reports whether the terminal is below the chrome's minimum size.
+// View() returns a placeholder string in that case rather than emit an
+// over-tall frame the alt-screen would clip from the top.
+func (m Model) tooSmall() bool {
+	return m.width < uichrome.MinTerminalWidth || m.height < m.minHeight()
+}
 
 // headerModel wraps StatusHeader and applies header messages from the
 // orchestration goroutine (sent via headerProxy → program.Send).
@@ -217,6 +237,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update returns. The fresh LastOutput() is read in View().
 
 	case tea.MouseMsg:
+		// While the placeholder is showing, mouse coordinate translation does
+		// not match the rendered output, so ignore mouse events entirely.
+		if m.tooSmall() {
+			break
+		}
 		// On any mouse event while in ModeSelect, clear the "just released"
 		// committed-shortcut flag so that SelectShortcuts is restored before
 		// the new event is processed (a subsequent press or wheel after a drag
@@ -351,7 +376,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.log.SetSize(vpWidth, vpHeight)
 		var lcmd tea.Cmd
 		m.log, lcmd = m.log.Update(msg)
-		cmds = append(cmds, lcmd)
+		// tea.ClearScreen forces a full alt-screen erase before the next render.
+		// Bubble Tea's standard_renderer.repaint() on WindowSizeMsg only invalidates
+		// its in-memory line cache — it does NOT erase the alt-screen. Without this,
+		// any previous over-tall render that scrolled the alt-screen leaves stale
+		// rows above the new render's cursor home, producing visibly shuffled rows
+		// after a zoom event.
+		cmds = append(cmds, lcmd, tea.ClearScreen)
 
 	case HeartbeatTickMsg:
 		// Delegate to StatusHeader (D23). The ticker is owned by main.go —
@@ -382,6 +413,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // rules between grid/log and log/footer can use ├─┤ T-junction glyphs
 // that visually connect to the │ side borders.
 func (m Model) View() string {
+	// Min-size guard: if the terminal is smaller than the chrome's intrinsic
+	// minimum, render a single-line placeholder rather than an over-tall frame
+	// that the alt-screen would clip from the top. Mirrors the workflow-builder
+	// guard at internal/workflowedit/render_frame.go:30.
+	if m.tooSmall() {
+		return fmt.Sprintf("Terminal too small — resize to at least %d×%d",
+			uichrome.MinTerminalWidth, m.minHeight())
+	}
+
 	title := m.titleString()
 	innerWidth := m.width - 2
 	if innerWidth < 0 {
