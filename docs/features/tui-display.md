@@ -152,6 +152,14 @@ func NewStatusHeader(maxStepsAcrossPhases int) *StatusHeader {
 }
 ```
 
+### Resize Handling and Min-Size Guard
+
+On `tea.WindowSizeMsg`, the model recomputes the viewport size from the new terminal dimensions and the (constant) grid row count, and returns `tea.ClearScreen` in its cmd batch. The clear is required because Bubble Tea's `standard_renderer` only invalidates its in-memory line cache on resize — it does not erase the alt-screen — so any prior over-tall render that scrolled the alt-screen leaves stale rows above the new render's cursor home, producing visibly shuffled grid rows.
+
+`View()` short-circuits with a single-line "Terminal too small — resize to at least 60×N" placeholder when `m.width < uichrome.MinTerminalWidth (60)` or `m.height < chromeRows + 1`, where `chromeRows = 1 (top border) + gridRows + 4 (two HRules + footer + bottom border)`. The minimum is computed from `gridRows` (not from `uichrome.MinTerminalHeight`) because workflows with many steps need a taller minimum than the workflow-builder TUI's static `16`. Mouse handling is short-circuited under the same precondition so coordinate translation does not run against the placeholder.
+
+This mirrors the workflow-builder TUI's D48 guard at `internal/workflowedit/render_frame.go:30`, but parameterized on grid height. Tests in `model_test.go`: `TestView_FrameNeverExceedsHeight`, `TestView_TooSmall_RendersPlaceholder`, `TestView_AfterResizeSmallThenLarge_RendersFullFrame`, `TestWindowSizeMsg_ReturnsClearScreenCmd`, `TestMouseMsg_TooSmall_Ignored`.
+
 ### Phase Switching
 
 `SetPhaseSteps` replaces the current step name list and re-renders all checkbox slots. Call this at the start of each phase to swap the header to the new phase's step set. Trailing slots beyond the current phase's step count are cleared. Panics if `len(names)` exceeds the grid capacity — this is a programming error, not a user-reachable path:
