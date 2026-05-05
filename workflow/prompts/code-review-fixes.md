@@ -2,7 +2,7 @@
 You will likely need TodoWrite for tracking multi-step progress on this task. Preload once via ToolSearch query "select:TodoWrite".
 
 If the .pr9k/artifacts/code-review.md file is empty, non-existant, or otherwise says nothing needs to be done, skip all to step 3.
-1. Implement all identified items in .pr9k/artifacts/code-review.md
+1. Implement all CRIT, WARN and SUGG items identified items in ".pr9k/artifacts/code-review.md". Do not implement YAGNI category items.
 2. Run all CI checks, including tests, type checks, linting and formatting tools. Fix any issues.
 3. Delete .pr9k/artifacts/code-review.md
 4. Commit all changes in a single commit.
