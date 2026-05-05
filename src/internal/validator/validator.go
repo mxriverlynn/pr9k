@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mxriverlynn/pr9k/src/internal/vars"
@@ -90,6 +91,7 @@ type vStep struct {
 	TimeoutSeconds     *int     `json:"timeoutSeconds,omitempty"`
 	OnTimeout          *string  `json:"onTimeout,omitempty"`
 	ResumePrevious     *bool    `json:"resumePrevious,omitempty"`
+	Effort             *string  `json:"effort,omitempty"`
 }
 
 // vStatusLine is the strict struct used when validating the optional statusLine block.
@@ -109,10 +111,16 @@ type vStatusLine struct {
 type vFile struct {
 	Env          *[]string          `json:"env"`
 	ContainerEnv *map[string]string `json:"containerEnv,omitempty"`
+	Defaults     *vDefaults         `json:"defaults,omitempty"`
 	Initialize   *[]vStep           `json:"initialize"`
 	Iteration    *[]vStep           `json:"iteration"`
 	Finalize     *[]vStep           `json:"finalize"`
 	StatusLine   *vStatusLine       `json:"statusLine,omitempty"`
+}
+
+// vDefaults is the strict struct used when validating the optional defaults block.
+type vDefaults struct {
+	Effort string `json:"effort,omitempty"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -135,6 +143,19 @@ var envDenylist = map[string]string{
 	"LD_LIBRARY_PATH":       "denylisted: would break container isolation",
 	"DYLD_INSERT_LIBRARIES": "denylisted: would break container isolation",
 	"DYLD_LIBRARY_PATH":     "denylisted: would break container isolation",
+}
+
+// validEffortValues is the accepted set for the "effort" field on claude steps
+// and the top-level "defaults.effort" block. Empty is also valid (means: do not
+// pass --effort to the CLI).
+var validEffortValues = []string{"low", "medium", "high", "xhigh", "max"}
+
+// isValidEffortValue reports whether v is a valid effort value (including "").
+func isValidEffortValue(v string) bool {
+	if v == "" {
+		return true
+	}
+	return slices.Contains(validEffortValues, v)
 }
 
 // reservedBuiltins is the set of built-in variable names that captureAs bindings
@@ -212,6 +233,9 @@ func docToVFile(doc workflowmodel.WorkflowDoc) vFile {
 			RefreshIntervalSeconds: &ri,
 		}
 	}
+	if doc.Defaults != nil {
+		vf.Defaults = &vDefaults{Effort: doc.Defaults.Effort}
+	}
 	return vf
 }
 
@@ -258,6 +282,10 @@ func stepToVStep(s workflowmodel.Step) vStep {
 	if s.ResumePrevious {
 		rp := true
 		vs.ResumePrevious = &rp
+	}
+	if s.Effort != "" {
+		ef := s.Effort
+		vs.Effort = &ef
 	}
 	return vs
 }
@@ -349,6 +377,13 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 					Problem:  fmt.Sprintf("containerEnv key %q also appears in env allowlist; the literal containerEnv value wins (Docker last-wins)", key),
 				})
 			}
+		}
+	}
+
+	// defaults validation.
+	if vf.Defaults != nil {
+		if !isValidEffortValue(vf.Defaults.Effort) {
+			errs = append(errs, cfgErr("defaults", "config", "", fmt.Sprintf("effort %q is not valid; use one of %v or omit the field", vf.Defaults.Effort, validEffortValues)))
 		}
 	}
 
@@ -631,6 +666,18 @@ func validatePhase(
 						Problem:  fmt.Sprintf("resumePrevious: previous step uses model %q but this step uses model %q; cross-model resume is supported but outside the validated same-model rollout", prevModel, step.Model),
 					})
 				}
+			}
+		}
+
+		// Schema 2f — effort: only valid on claude steps; value must be one of
+		// validEffortValues. Empty/unset means the --effort flag is omitted.
+		if step.Effort != nil {
+			ev := *step.Effort
+			if !isValidEffortValue(ev) {
+				*errs = append(*errs, at("schema", fmt.Sprintf("effort %q is not valid; use one of %v or omit the field", ev, validEffortValues)))
+			}
+			if step.IsClaude != nil && !*step.IsClaude && ev != "" {
+				*errs = append(*errs, at("schema", "effort is only valid on claude steps"))
 			}
 		}
 

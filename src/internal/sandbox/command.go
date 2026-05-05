@@ -22,6 +22,8 @@ func HostUIDGID() (int, int) {
 // containerEnv entries are injected as literal -e KEY=VALUE pairs in sorted
 // key order (deterministic argv). They are emitted AFTER the envAllowlist
 // entries so Docker's last-wins rule means containerEnv wins on collision.
+// effort, when non-empty, is appended to the claude argv as "--effort <value>".
+// An empty effort omits the flag entirely (the CLI's default applies).
 func BuildRunArgs(
 	projectDir, profileDir string,
 	uid, gid int,
@@ -29,7 +31,7 @@ func BuildRunArgs(
 	envAllowlist []string,
 	containerEnv map[string]string,
 	resumeSessionID string, // non-empty → appends --resume <id> before -p
-	model, prompt string,
+	model, effort, prompt string,
 ) []string {
 	args := []string{
 		"docker", "run",
@@ -80,6 +82,9 @@ func BuildRunArgs(
 		"--permission-mode", "bypassPermissions",
 		"--model", model,
 	)
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
 	if resumeSessionID != "" {
 		args = append(args, "--resume", resumeSessionID)
 	}

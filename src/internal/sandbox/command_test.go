@@ -34,7 +34,7 @@ func TestBuildRunArgs_GoldenArgv(t *testing.T) {
 
 	prompt := "hello world"
 	allowlist := []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN"}
-	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile, allowlist, nil, "", testModel, prompt)
+	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile, allowlist, nil, "", testModel, "", prompt)
 
 	// Build expected argv. ANTHROPIC_API_KEY is set (via t.Setenv above),
 	// but t.Setenv("GITHUB_TOKEN", "") still sets the var, so LookupEnv returns ok=true.
@@ -72,7 +72,7 @@ func TestBuildRunArgs_AllBuiltinEnvVarsSet(t *testing.T) {
 	}
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		BuiltinEnvAllowlist, nil, "", testModel, "prompt")
+		BuiltinEnvAllowlist, nil, "", testModel, "", "prompt")
 
 	count := countFlag(args, "-e")
 	// Expect CLAUDE_CONFIG_DIR + 4 builtins.
@@ -94,7 +94,7 @@ func TestBuildRunArgs_AllBuiltinEnvVarsUnset(t *testing.T) {
 	}
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		unsetAllowlist, nil, "", testModel, "prompt")
+		unsetAllowlist, nil, "", testModel, "", "prompt")
 
 	count := countFlag(args, "-e")
 	// Only CLAUDE_CONFIG_DIR should be present.
@@ -105,7 +105,7 @@ func TestBuildRunArgs_AllBuiltinEnvVarsUnset(t *testing.T) {
 
 func TestBuildRunArgs_EmptyAllowlist(t *testing.T) {
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 
 	count := countFlag(args, "-e")
 	if count != 1 {
@@ -120,7 +120,7 @@ func TestBuildRunArgs_DeduplicatesUserVsBuiltin(t *testing.T) {
 	allowlist := append(BuiltinEnvAllowlist, "HTTPS_PROXY")
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		allowlist, nil, "", testModel, "prompt")
+		allowlist, nil, "", testModel, "", "prompt")
 
 	// Count occurrences of HTTPS_PROXY in args.
 	n := 0
@@ -139,7 +139,7 @@ func TestBuildRunArgs_DeduplicatesDuplicateUserEntries(t *testing.T) {
 
 	allowlist := []string{"MY_TOKEN", "MY_TOKEN", "MY_TOKEN"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		allowlist, nil, "", testModel, "prompt")
+		allowlist, nil, "", testModel, "", "prompt")
 
 	n := 0
 	for _, a := range args {
@@ -155,14 +155,14 @@ func TestBuildRunArgs_DeduplicatesDuplicateUserEntries(t *testing.T) {
 func TestBuildRunArgs_PromptWithMetacharacters(t *testing.T) {
 	prompt := "hello & world | \"quotes\" \n newline $VAR `backtick`"
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, prompt)
+		nil, nil, "", testModel, "", prompt)
 
 	assertContainsConsecutive(t, args, "-p", prompt)
 }
 
 func TestBuildRunArgs_WorkdirPresent(t *testing.T) {
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 
 	assertContainsConsecutive(t, args, "-w", ContainerRepoPath)
 }
@@ -172,14 +172,14 @@ func TestBuildRunArgs_ClaudeConfigDirAlwaysSet(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/some/host/path")
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 
 	assertContainsConsecutive(t, args, "-e", "CLAUDE_CONFIG_DIR="+ContainerProfilePath)
 }
 
 func TestBuildRunArgs_FlagOrder(t *testing.T) {
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 
 	// Verify the fixed-position flags appear in the expected order.
 	expectedPrefixOrder := []string{"docker", "run", "--rm", "-i", "--init", "--cidfile"}
@@ -216,7 +216,7 @@ func TestBuildRunArgs_EnvVarsEmittedAsBareNames(t *testing.T) {
 	t.Setenv("MY_VAR", "secret")
 
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		[]string{"MY_VAR"}, nil, "", testModel, "prompt")
+		[]string{"MY_VAR"}, nil, "", testModel, "", "prompt")
 
 	// Find the -e flag that corresponds to MY_VAR.
 	for i := 0; i < len(args)-1; i++ {
@@ -244,7 +244,7 @@ func TestBuildRunArgs_MixedSetUnsetEnvVarsInterleaved(t *testing.T) {
 
 	allowlist := []string{"RALPH_TEST_SET_A", "RALPH_TEST_UNSET_XYZ", "RALPH_TEST_SET_B"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		allowlist, nil, "", testModel, "prompt")
+		allowlist, nil, "", testModel, "", "prompt")
 
 	// CLAUDE_CONFIG_DIR + 2 set vars = 3 -e flags total.
 	count := countFlag(args, "-e")
@@ -283,7 +283,7 @@ func TestBuildRunArgs_DoesNotMutateAllowlist(t *testing.T) {
 	original := slices.Clone(allowlist)
 
 	_ = BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		allowlist, nil, "", testModel, "prompt")
+		allowlist, nil, "", testModel, "", "prompt")
 
 	if !slices.Equal(allowlist, original) {
 		t.Errorf("BuildRunArgs mutated envAllowlist: before=%v after=%v", original, allowlist)
@@ -299,7 +299,7 @@ func TestBuildRunArgs_DeduplicatesPreservesFirstSeenOrder(t *testing.T) {
 
 	allowlist := []string{"A", "B", "A", "B"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		allowlist, nil, "", testModel, "prompt")
+		allowlist, nil, "", testModel, "", "prompt")
 
 	idxA := indexOf(args, "A")
 	idxB := indexOf(args, "B")
@@ -389,7 +389,7 @@ func TestBuildRunArgs_ContainerEnv_SortedKeyOrder(t *testing.T) {
 		"BETA":  "b",
 	}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, containerEnv, "", testModel, "prompt")
+		nil, containerEnv, "", testModel, "", "prompt")
 
 	// Collect all -e KEY=VALUE pairs for containerEnv keys.
 	var pairs []string
@@ -416,9 +416,9 @@ func TestBuildRunArgs_ContainerEnv_SortedKeyOrder(t *testing.T) {
 // containerEnv map adds no extra -e flags.
 func TestBuildRunArgs_ContainerEnv_NilOrEmptyIsNoop(t *testing.T) {
 	argsNil := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 	argsEmpty := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, map[string]string{}, "", testModel, "prompt")
+		nil, map[string]string{}, "", testModel, "", "prompt")
 
 	if countFlag(argsNil, "-e") != 1 {
 		t.Errorf("nil containerEnv: expected 1 -e flag (CLAUDE_CONFIG_DIR only), got %d", countFlag(argsNil, "-e"))
@@ -436,7 +436,7 @@ func TestBuildRunArgs_ContainerEnv_AppearsAfterAllowlist(t *testing.T) {
 
 	containerEnv := map[string]string{"MY_VAR": "container-value"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		[]string{"MY_VAR"}, containerEnv, "", testModel, "prompt")
+		[]string{"MY_VAR"}, containerEnv, "", testModel, "", "prompt")
 
 	// Find the index of the bare "-e MY_VAR" (from allowlist) and the
 	// "-e MY_VAR=container-value" (from containerEnv).
@@ -468,7 +468,7 @@ func TestBuildRunArgs_ContainerEnv_AppearsAfterAllowlist(t *testing.T) {
 func TestBuildRunArgs_ContainerEnv_ValueWithEqualsPassesThrough(t *testing.T) {
 	containerEnv := map[string]string{"FOO": "bar=baz"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, containerEnv, "", testModel, "prompt")
+		nil, containerEnv, "", testModel, "", "prompt")
 
 	assertContainsConsecutive(t, args, "-e", "FOO=bar=baz")
 }
@@ -550,7 +550,7 @@ func TestBuildInteractiveArgs_ForwardsTERMWhenSet(t *testing.T) {
 func TestBuildRunArgs_ContainerEnv_NilAllowlistOrdering(t *testing.T) {
 	containerEnv := map[string]string{"FOO": "x"}
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, containerEnv, "", testModel, "prompt")
+		nil, containerEnv, "", testModel, "", "prompt")
 
 	claudeConfigIdx := -1
 	fooIdx := -1
@@ -581,7 +581,7 @@ func TestBuildRunArgs_DoesNotMutateContainerEnv(t *testing.T) {
 	original := maps.Clone(containerEnv)
 
 	_ = BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, containerEnv, "", testModel, "prompt")
+		nil, containerEnv, "", testModel, "", "prompt")
 
 	if !reflect.DeepEqual(containerEnv, original) {
 		t.Errorf("BuildRunArgs mutated containerEnv: before=%v after=%v", original, containerEnv)
@@ -594,7 +594,7 @@ func TestBuildRunArgs_DoesNotMutateContainerEnv(t *testing.T) {
 func TestBuildRunArgs_ResumeSessionID_NonEmpty(t *testing.T) {
 	const sid = "abc123-session"
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, sid, testModel, "prompt")
+		nil, nil, sid, testModel, "", "prompt")
 
 	// --resume <sid> must appear before -p.
 	resumeIdx := -1
@@ -622,7 +622,7 @@ func TestBuildRunArgs_ResumeSessionID_NonEmpty(t *testing.T) {
 // leaves the argv unchanged — no --resume flag is added.
 func TestBuildRunArgs_ResumeSessionID_Empty(t *testing.T) {
 	args := BuildRunArgs(testProjectDir, testProfileDir, testUID, testGID, testCidfile,
-		nil, nil, "", testModel, "prompt")
+		nil, nil, "", testModel, "", "prompt")
 
 	for _, a := range args {
 		if a == "--resume" {

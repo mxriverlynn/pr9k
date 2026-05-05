@@ -52,6 +52,7 @@ type rawStep struct {
 	TimeoutSeconds     int      `json:"timeoutSeconds,omitempty"`
 	OnTimeout          string   `json:"onTimeout,omitempty"`
 	ResumePrevious     bool     `json:"resumePrevious,omitempty"`
+	Effort             string   `json:"effort,omitempty"`
 }
 
 // rawStatusLine is the JSON shape of the statusLine block in config.json.
@@ -61,12 +62,18 @@ type rawStatusLine struct {
 	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
+// rawDefaults is the JSON shape of the top-level "defaults" block.
+type rawDefaults struct {
+	Effort string `json:"effort,omitempty"`
+}
+
 // rawConfig is the JSON shape of config.json.
 type rawConfig struct {
 	Initialize   []rawStep         `json:"initialize"`
 	Iteration    []rawStep         `json:"iteration"`
 	Finalize     []rawStep         `json:"finalize"`
 	StatusLine   *rawStatusLine    `json:"statusLine,omitempty"`
+	Defaults     *rawDefaults      `json:"defaults,omitempty"`
 	Env          []string          `json:"env,omitempty"`
 	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 }
@@ -103,6 +110,9 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 		}
 		doc.StatusLine = sl
 	}
+	if rc.Defaults != nil {
+		doc.Defaults = &DefaultsBlock{Effort: rc.Defaults.Effort}
+	}
 	return doc, nil
 }
 
@@ -119,6 +129,7 @@ func convertStep(rs rawStep, phase StepPhase) Step {
 		TimeoutSeconds:     rs.TimeoutSeconds,
 		OnTimeout:          rs.OnTimeout,
 		ResumePrevious:     rs.ResumePrevious,
+		Effort:             rs.Effort,
 	}
 	if len(rs.Command) > 0 {
 		cmd := make([]string, len(rs.Command))

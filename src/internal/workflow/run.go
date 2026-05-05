@@ -771,7 +771,7 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
 		projectDir := executor.ProjectDir()
 		envAllowlist := append([]string{}, sandbox.BuiltinEnvAllowlist...)
 		envAllowlist = append(envAllowlist, env...)
-		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, prompt)
+		argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, s.Effort, prompt)
 		return ui.ResolvedStep{
 			Name:           s.Name,
 			Command:        argv,
