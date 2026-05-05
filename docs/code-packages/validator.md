@@ -19,14 +19,14 @@ Each step is checked for:
 
 - `name` must be non-empty.
 - `isClaude` is required (`*bool` pointer type, so a missing key is distinguished from `false`).
-- Claude steps (`isClaude: true`) must have a non-empty `promptFile` and `model`, and must not have a `command`.
+- Claude steps (`isClaude: true`) must have a non-empty `promptFile` and a non-empty **effective model**, and must not have a `command`. The effective model is `step.model` when set, otherwise `defaults.model`. A claude step with neither set is a fatal error.
 - Non-Claude steps (`isClaude: false`) must have a non-empty `command` array, and must not have a `promptFile`.
 - `captureAs`, when set, must be non-empty and must not shadow any built-in variable name (`WORKFLOW_DIR`, `PROJECT_DIR`, `MAX_ITER`, `ITER`, `STEP_NUM`, `STEP_COUNT`, `STEP_NAME`).
 - `captureMode`, when set, must be one of `""`, `"lastLine"`, or `"fullStdout"`. Any other value is a fatal error. Setting `captureMode` on a claude step (`isClaude: true`) is also a fatal error — claude steps always capture via the stream-json Aggregator result.
 - `breakLoopIfEmpty` requires `captureAs` to be set and is only valid in the iteration phase.
 - `skipIfCaptureEmpty`, when set, must be a non-empty string naming a `captureAs` value bound by a strictly earlier step in the same phase, and is valid in the iteration and finalize phases. Initialize-phase captures are excluded because each phase maintains its own `captureStates` map at runtime; cross-phase references would silently never fire.
 - `timeoutSeconds`, when set, must be a positive integer (> 0) and must not exceed `86400` (24 hours). Zero is the sentinel for "no timeout" and is represented by omitting the field (`omitempty`). The 86400 cap prevents integer overflow when the value is converted to `time.Duration` — values above ~9.2e9 seconds would wrap and fire immediately.
-- `resumePrevious`, when `true`, must be on a claude step (`isClaude: true`); setting it on a non-claude step is a **fatal error**. Three advisory **warnings** (non-fatal) are also emitted: (1) if this is the first step in its phase (no previous step to resume from — the runtime gate G1 will always block), (2) if the previous step is non-claude (non-claude steps produce no session ID — G1 will always block at runtime), and (3) if the previous step uses a different model (cross-model resume is technically supported but outside the validated same-model rollout).
+- `resumePrevious`, when `true`, must be on a claude step (`isClaude: true`); setting it on a non-claude step is a **fatal error**. Three advisory **warnings** (non-fatal) are also emitted: (1) if this is the first step in its phase (no previous step to resume from — the runtime gate G1 will always block), (2) if the previous step is non-claude (non-claude steps produce no session ID — G1 will always block at runtime), and (3) if the previous step uses a different effective model than this step (cross-model resume is technically supported but outside the validated same-model rollout). The cross-model warning consults the *effective* model on both sides — i.e. `step.model` falls back to `defaults.model` when the step does not set its own.
 - `effort`, when set, must be one of `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Any other value is a fatal error. `effort` is only valid on claude steps (`isClaude: true`); a non-empty value on a non-claude step is a fatal error. The same value set is enforced on the top-level `defaults.effort` block (see below).
 - No duplicate step names within a phase (rule 6.1).
 - No duplicate `captureAs` values within a phase (rule 6.2).
@@ -80,11 +80,12 @@ containerEnv validation runs in the same pass as env validation, before the scop
 
 ### defaults block (Category "defaults")
 
-The optional top-level `defaults` object holds workflow-wide values that individual claude steps inherit when they do not set their own. Validation runs before the phase walk; errors use `Category="defaults"`, `Phase="config"`, no `StepName`.
+The optional top-level `defaults` object holds workflow-wide values that individual claude steps inherit when they do not set their own. Validation runs before the phase walk; errors use `Category="defaults"`, `Phase="config"`, no `StepName`. The block currently supports two keys:
 
-- `effort`, when present, must be one of `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Any other non-empty value is a fatal error. Omitting the field (or leaving the entire `defaults` block out) is valid and means no workflow-wide default applies.
+- `effort`, when present, must be one of `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. Any other non-empty value is a fatal error. Omitting the field is valid and means no workflow-wide default applies.
+- `model`, when present, is accepted as any non-empty string and passed through verbatim to `claude --model`. The validator does not enforce a value set for model. Setting `defaults.model` lets claude steps omit their own `model` field and still pass the "claude step must have a non-empty effective model" rule.
 
-Unknown subfields are rejected (strict decode). Absent `defaults` is valid and produces no errors. Default propagation happens at runtime in `steps.LoadSteps` — the validator only checks the value set, not how it is applied.
+Unknown subfields are rejected (strict decode). Absent `defaults` is valid and produces no errors. Default propagation (filling in `Step.Effort` / `Step.Model` from the defaults block when a step omits the field) happens at runtime in `steps.LoadSteps` — the validator only checks the values declared in JSON, plus the **effective**-value rules where applicable (e.g. the claude-step model requirement).
 
 ### statusLine block (Category "statusline")
 

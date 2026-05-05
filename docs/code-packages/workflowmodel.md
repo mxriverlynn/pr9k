@@ -61,6 +61,7 @@ type StatusLineBlock struct {
 // applied to claude steps that do not set the corresponding step-level value.
 type DefaultsBlock struct {
     Effort string
+    Model  string
 }
 
 // Step is one workflow step. IsClaudeSet distinguishes three states:

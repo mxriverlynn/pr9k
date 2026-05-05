@@ -4,7 +4,7 @@ The `effort` field on a Claude step is forwarded to the `claude` CLI as `--effor
 
 ← [Back to How-To Guides](README.md)
 
-**Prerequisites**: a working install — see [Getting Started](getting-started.md) — and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md). This page covers the per-step `effort` field and the top-level `defaults.effort` setting.
+**Prerequisites**: a working install — see [Getting Started](getting-started.md) — and familiarity with the step schema in [Building Custom Workflows](building-custom-workflows.md). This page covers the per-step `effort` field and the `defaults.effort` setting; for the full `defaults` block (including `model`), see [Configuring Workflow Defaults](configuring-defaults.md).
 
 ## When to use it
 
@@ -120,6 +120,7 @@ The interactive workflow builder (`pr9k workflow`) round-trips the `effort` and 
 ## Related documentation
 
 - ← [Back to How-To Guides](README.md)
+- [Configuring Workflow Defaults](configuring-defaults.md) — the full top-level `defaults` block (both `effort` and `model`) and the override hierarchy
 - [Building Custom Workflows](building-custom-workflows.md) — full step schema, including the `effort` row and the top-level `defaults` block
 - [Config Validation](../code-packages/validator.md) — the validator rules that enforce valid effort values and claude-only constraints
 - [Docker Sandbox](../features/docker-sandbox.md) — where `--effort` lands inside the runtime `docker run` command

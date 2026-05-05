@@ -78,6 +78,8 @@ docker run                                              \
 
 `--effort <EFFORT>` is injected only when the step's effective effort is non-empty. The effective effort is the per-step `effort` field if set, otherwise the top-level `defaults.effort` block, otherwise empty. `steps.LoadSteps` resolves this at workflow load time so `BuildRunArgs` only sees the final value. Valid values: `low`, `medium`, `high`, `xhigh`, `max`. See [Setting Claude Effort](../how-to/setting-claude-effort.md).
 
+`--model <MODEL>` follows the same hierarchy: per-step `model` wins, then `defaults.model`. `steps.LoadSteps` fills in `Step.Model` from `defaults.Model` when the step omits its own value, so `BuildRunArgs` always receives the effective model. The validator rejects any claude step that ends up with an empty effective model. See [Configuring Workflow Defaults](../how-to/configuring-defaults.md).
+
 ### Flag rationale
 
 - `--rm` — container is ephemeral; deleted on exit.

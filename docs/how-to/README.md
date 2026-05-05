@@ -45,12 +45,13 @@ Opt-in features you reach for when you outgrow the basics.
 16. [Configuring a Status Line](configuring-a-status-line.md) — add a custom status line to the TUI footer
 17. [Resuming Sessions](resuming-sessions.md) — `resumePrevious` for tightly-coupled Claude steps that share context (off by default)
 18. [Setting Claude Effort](setting-claude-effort.md) — `effort` per step and `defaults.effort` workflow-wide, forwarded to the Claude CLI as `--effort`
+19. [Configuring Workflow Defaults](configuring-defaults.md) — the top-level `defaults` block, override hierarchy, and the supported keys (`effort`, `model`)
 
 ## 5. Debugging
 
 Reconstruct what happened after the fact.
 
-19. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
+20. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
 
 ---
 

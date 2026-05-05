@@ -55,7 +55,7 @@ That's it. Drop those two files into `<your-target-repo>/.pr9k/workflow/` (with 
 | `iteration` | Once per issue (or once per loop pass) | The work itself: pick up an issue, do the work, push |
 | `finalize` | Once, after all iterations end | Cross-iteration cleanup: code review, doc update, deferred-work bookkeeping |
 
-Steps in each array execute top-to-bottom. The optional `statusLine` block configures a custom status-line command displayed in the TUI footer — see [Configuring a Status Line](configuring-a-status-line.md). The optional `defaults` block sets workflow-wide values that any step can override — currently it accepts a single key, `effort`, applied to Claude steps that do not set their own. See [Setting Claude Effort](setting-claude-effort.md).
+Steps in each array execute top-to-bottom. The optional `statusLine` block configures a custom status-line command displayed in the TUI footer — see [Configuring a Status Line](configuring-a-status-line.md). The optional `defaults` block sets workflow-wide values (currently `effort` and `model`) that any Claude step can override per-step. See [Configuring Workflow Defaults](configuring-defaults.md).
 
 The `finalize` array runs even when the iteration loop exits early (no more issues). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are *not* visible in finalize steps; using them substitutes the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `ITER`, `MAX_ITER`) remain available.
 
@@ -155,7 +155,7 @@ This is the full schema for a step object. The first three rows are the basics; 
 |-------|------|----------|-------------|
 | `name` | string | yes | Display name shown in the TUI checkbox grid and log banners |
 | `isClaude` | bool | yes | `true` for Claude CLI steps, `false` for shell commands |
-| `model` | string | Claude steps | `"sonnet"` or `"opus"` (passed verbatim to `claude --model`) |
+| `model` | string | Claude steps (or `defaults.model`) | `"sonnet"` or `"opus"` (passed verbatim to `claude --model`). Inherits from the top-level `defaults.model` when unset. See [Configuring Workflow Defaults](configuring-defaults.md). |
 | `promptFile` | string | Claude steps | Filename in `prompts/` (e.g. `"feature-work.md"`) |
 | `command` | string[] | Shell steps | Argv: first element is the executable, rest are arguments |
 | `captureAs` | string | optional | Bind this step's stdout to a variable for use in later steps. See [Capturing Step Output](capturing-step-output.md). |
@@ -165,7 +165,7 @@ This is the full schema for a step object. The first three rows are the basics; 
 | `timeoutSeconds` | int | optional | Cap wall-clock time for this step (SIGTERM, then SIGKILL). See [Setting Step Timeouts](setting-step-timeouts.md). |
 | `onTimeout` | string | optional | `"fail"` (default) or `"continue"`. With `"continue"`, a timeout marks the step `[!]` and advances. |
 | `resumePrevious` | bool | optional | (Claude steps only) Attempt to resume the previous Claude step's session. Off by default in the bundled workflow. See [Resuming Sessions](resuming-sessions.md). |
-| `effort` | string | optional | (Claude steps only) Forward a reasoning-effort level (`"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`) to the Claude CLI as `--effort`. Inherits from the top-level `defaults.effort` when unset. See [Setting Claude Effort](setting-claude-effort.md). |
+| `effort` | string | optional | (Claude steps only) Forward a reasoning-effort level (`"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`) to the Claude CLI as `--effort`. Inherits from the top-level `defaults.effort` when unset. See [Setting Claude Effort](setting-claude-effort.md) and [Configuring Workflow Defaults](configuring-defaults.md). |
 | `env` | string[] | optional | Host environment variable names to forward into the sandbox container. See [Passing Environment Variables](passing-environment-variables.md). |
 | `containerEnv` | object | optional | Literal env values to inject into the sandbox container. See [Passing Environment Variables](passing-environment-variables.md). |
 
@@ -193,5 +193,6 @@ While developing a custom workflow:
 - [Passing Environment Variables](passing-environment-variables.md) — `env` and `containerEnv`
 - [Resuming Sessions](resuming-sessions.md) — `resumePrevious` for tightly-coupled Claude steps
 - [Setting Claude Effort](setting-claude-effort.md) — per-step `effort` and the top-level `defaults.effort` block
+- [Configuring Workflow Defaults](configuring-defaults.md) — the full top-level `defaults` block (`effort` and `model`) and the override hierarchy
 - [Debugging a Run](debugging-a-run.md) — read logs, reproduce a failure with `-n 1`
 - [Narrow-Reading Principle ADR](../adr/20260410170952-narrow-reading-principle.md) — why workflow content belongs in `config.json`, not Go code
