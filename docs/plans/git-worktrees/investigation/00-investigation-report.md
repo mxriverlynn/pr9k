@@ -212,12 +212,95 @@ These are the decisions the feature spec must resolve, not the investigation:
 
 ## Validation Results
 
-(Validation in the next step.)
+Adversarial validation tested 12 hypotheses against the codebase. Full report in [`04-validation.md`](04-validation.md).
+
+### Counter-Evidence Investigated
+
+#### V3 (CRITICAL — changes the plan): `DisallowUnknownFields()` makes top-level config additions a four-file change
+- **Hypothesis:** Adding `useWorktrees` is a backwards-compatible minor bump.
+- **Investigation:** `src/internal/validator/validator.go:205` calls `dec.DisallowUnknownFields()` before decoding. The same applies to `StepFile` (`internal/steps`), `rawConfig` (`workflowmodel/scaffold.go`), and `WorkflowDoc` (`workflowmodel/model.go`).
+- **Result:** Refuted. **Forward-breaking** — older pr9k binaries reject configs containing `useWorktrees`.
+- **Impact:** The feature spec must call out the four-file schema add as a single atomic change. The user-visible API change is "this requires the matching pr9k version" and warrants a coding-standards note. (Backwards is fine — new pr9k reading a config without `useWorktrees` defaults the field; only forward compatibility breaks.)
+
+#### V9 (IMPORTANT): The default workflow does NOT create per-issue branches
+- **Hypothesis:** Per-iteration worktrees might be a useful future expansion (parallelization).
+- **Investigation:** The feature-work prompt explicitly says "do not switch branches." No step in the default `config.json` runs `git checkout -b`.
+- **Result:** Refuted assumption.
+- **Impact:** Closes open question Q8 (per-iteration worktrees). Reframes Q3 (branch naming): the worktree's branch is the branch the entire run lives on, not a per-issue branch. Per-run worktrees are the **only** correct model for the current default workflow, not just "the simpler MVP."
+
+#### V4 (IMPORTANT): WorkflowDir resolution must happen before worktree redirect
+- **Hypothesis:** WorkflowDir resolution is independent of the worktree.
+- **Investigation:** `args.go:112` freezes WorkflowDir before `cli.Execute` returns. If we redirect `cfg.ProjectDir` to the worktree before `resolveWorkflowDir` runs, the in-repo override search lands in the worktree.
+- **Result:** Partially Refuted. The original claim is correct **only if sequencing is preserved**.
+- **Impact:** The feature spec must state this as a hard sequencing constraint: WorkflowDir resolution → config load → worktree create → projectDir redirect → preflight → runner.
+
+#### V12 (IMPORTANT): `git worktree prune` alone is insufficient for crash recovery
+- **Hypothesis:** Prune handles all stale worktree cases.
+- **Investigation:** `git help worktree` — prune only removes entries whose directory was manually deleted. SIGKILL with the directory still on disk leaves the worktree intact and unprunable.
+- **Result:** Partially Refuted.
+- **Impact:** Startup probe must use `git worktree list --porcelain`, identify pr9k-owned entries via a naming convention (e.g., basename starts with `pr9k-`), and call `git worktree remove --force` on each. Or use timestamped names and accept that abandoned worktrees accumulate until the user runs cleanup.
+
+#### V10 (IMPORTANT): Submodules need explicit initialization in the new worktree
+- **Hypothesis:** Worktrees inherit submodule state.
+- **Investigation:** Git docs and the section in `01-worktree-mechanics.md` confirm submodule content is not auto-fetched in new worktrees.
+- **Result:** Confirmed concern.
+- **Impact:** `worktree.Create` should detect a `.gitmodules` file and run `git submodule update --init --recursive` (or document the limitation and let users disable). Not a blocker for repos without submodules — pr9k itself has none.
+
+#### V7 (INFORMATIONAL): Ephemeral logs are not acceptable as the default
+- **Hypothesis:** Logs vanishing with the worktree might be acceptable.
+- **Investigation:** The user's stated profile is "monitor a parallel run, check logs afterward." Auto-removing the worktree on success destroys those logs.
+- **Result:** Confirmed — must not default to "remove worktree without saving logs."
+- **Impact:** Resolves Q1. Two acceptable defaults: (a) keep worktree on disk by default, user opts in to remove, or (b) split a `logDir` so logs land in the primary checkout. Either is fine; the feature spec should pick one.
+
+#### V11 (INFORMATIONAL): Statusline payload exposes the worktree path, not the primary
+- **Hypothesis:** Statusline behavior is a free win.
+- **Investigation:** `src/internal/statusline/payload.go:46` — payload includes `projectDir`. Set to the worktree path post-redirect.
+- **Result:** Confirmed minor concern.
+- **Impact:** The feature spec should consider adding a `primaryDir` field to the statusline payload (additive, doesn't break existing scripts) so user-authored scripts can show the original repo path if they want.
+
+#### V1, V2, V5, V6 (INFORMATIONAL — confirms original analysis)
+- V1: Subprocess env inheritance is safe — all env vars are path-independent.
+- V2: No script changes needed — confirmed by direct script audit.
+- V5: A single per-run worktree accumulating all iteration commits is correct and matches in-place behavior.
+- V6: New `internal/worktree` package tests must avoid `os.Chdir` (or follow `args_test.go`'s pattern of no `t.Parallel()` when chdir is used).
+
+#### V8 (REFUTED — no concern)
+- `gh` auth is per-host, not per-repo-path. Worktrees work transparently.
+
+### Adjustments Made to the Plan Sketch
+
+Triggered by V3:
+- The "Add `UseWorktrees bool`" line in the planned-fix sketch must be expanded to explicitly enumerate the four schema files: `validator/validator.go` (`vFile`), `internal/steps/steps.go` (`StepFile`), `internal/workflowmodel/scaffold.go` (`rawConfig`), and `internal/workflowmodel/model.go` (`WorkflowDoc`).
+
+Triggered by V4:
+- The `main.go` change must explicitly preserve the sequencing: WorkflowDir resolution → config load → worktree create → projectDir redirect → preflight → runner construction. Document this as an invariant.
+
+Triggered by V9:
+- Open question Q8 (per-iteration worktrees) is closed: not feasible under the current default workflow. The feature spec should not even propose it.
+- Open question Q3 (branch naming) is reframed: the worktree branch is the run's branch, not a per-issue branch. The default workflow's lack of branch-switching means whatever branch the worktree starts on is where every commit lands.
+
+Triggered by V12:
+- The cleanup/recovery section of the spec must specify the startup probe algorithm (porcelain list + naming-convention filter + remove-force), not just say "prune stale."
+
+Triggered by V10:
+- The spec must address submodule initialization — either auto-init or document the limitation.
+
+Triggered by V7:
+- The default cleanup policy is "keep worktree on disk after run" (not auto-remove), OR a `logDir` split is added. The spec must pick one.
+
+### Confidence Assessment
+
+- **Confidence:** Medium-high. The seam architecture is well understood and most claims hold. V3, V4, V9, and V12 are real constraints that the spec must encode but none of them invalidate the feasibility of the feature.
+- **Remaining Risks:**
+  - **Schema-evolution risk**: any future top-level config addition has the same four-file requirement. Worth documenting in `docs/coding-standards/`.
+  - **Submodule-using projects**: if a user enables `useWorktrees` against a submodule-heavy repo, performance and correctness depend on init speed. Not a blocker for pr9k itself.
+  - **Branch-naming collisions**: if the user has manually created a branch matching our naming convention, the worktree creation will fail. Mitigation: use a run-stamp (millisecond precision) in the name, plus a fallback retry.
+  - **Locked worktree from a prior tool**: if the user has used `git worktree lock` on a stale pr9k worktree (unusual but possible), the prune step won't clean it. Document.
 
 ## Final Summary
 
-- **What we found**: pr9k has a single architectural seam (`Runner.projectDir`) that makes worktree integration mostly mechanical (E7–E9), git worktrees themselves are well-suited to the use case (E1–E6), and `gh`/scripts work transparently inside them (E3, E13).
-- **What needs deliberate design**: log durability (E10), cleanup lifecycle (E15), and the pre-existing silent push failure (E14).
-- **What the feature spec must resolve**: where the worktree lives, where logs live, branch naming, cleanup policy, and crash-recovery behavior. Each is a small decision; together they define the feature surface.
-- **What is NOT a problem**: WorkflowDir resolution timing (E11), Docker bind-mount mechanics (E8), subprocess CWD propagation (E9), statusline behavior (E16), or any individual workflow script's behavior (E13).
-- **Remaining risks**: Filled in after adversarial validation.
+- **What we found**: pr9k has a single architectural seam (`Runner.projectDir`) that makes worktree integration mostly mechanical (E7–E9); git worktrees fit the use case (E1–E6); `gh`/scripts work transparently (E3, E13).
+- **What needs deliberate design**: log durability (E10, V7), cleanup lifecycle (E15, V12), the silent `git_push` failure (E14), schema evolution rules (V3), submodule handling (V10), sequencing of WorkflowDir vs. worktree creation (V4).
+- **What the feature spec must resolve**: schema-add discipline (four files atomically), worktree location, log-durability strategy, branch naming for the per-run worktree, cleanup policy with explicit startup-probe algorithm, submodule policy, statusline payload `primaryDir` addition, and a note in coding standards about the unknown-fields decoder.
+- **What is NOT a problem**: subprocess env inheritance (V1), individual workflow script behavior (V2, V13), per-run worktree accumulating commits (V5), `gh` auth (V8), Docker bind-mount mechanics (E8), config-load timing relative to WorkflowDir (E11, V4 — provided sequencing is preserved).
+- **Remaining risks**: see Confidence Assessment.
