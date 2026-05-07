@@ -28,3 +28,39 @@ This file captures load-bearing implementation mechanics whose behavior the [fea
 - **Supports decisions:** [D7](decision-log.md#d7-first-push-sets-upstream)
 - **Driven by findings:** F-02
 - **Referenced in spec:** Edge Cases (first push), Coordinations (Git remote — first push), Open Items (OI-1).
+
+## T4: Active-run state file schema and lifecycle
+
+- **Title:** The active-run state file at `<primary>/.pr9k/active-run.json` is the deterministic resume marker; its schema, lifecycle ordering, and PID-identity check are load-bearing for the spec's resume guarantee and concurrent-run guard.
+- **Context:** [Primary Flow](../feature-specification.md#primary-flow) step 3 (read), step 7 (write), step 12 (remove). [Alternate Flows](../feature-specification.md#alternate-flows-and-states) "A prior run was killed mid-iteration" and "user runs `pr9k --fresh`". [Edge Cases](../feature-specification.md#edge-cases-and-failure-modes) state-file rows. [Coordinations](../feature-specification.md#coordinations) "Active-run state file" row.
+- **Technical detail:** The state file is a single JSON object, atomic-written via `atomicwrite.Write` (the same pattern `workflowio.Save` uses for `config.json`). The file is the deterministic marker for "is there an active or recoverable pr9k run on this primary?" — its presence means yes, its absence means no.
+
+  **Field set:**
+  ```
+  {
+    "schemaVersion":  1,
+    "pr9kVersion":    "<semver>",
+    "worktreeStamp":  "ralph-YYYY-MM-DD-HHMMSS.mmm",
+    "worktreePath":   "<absolute path>",
+    "branchName":     "pr9k-<worktreeStamp>",
+    "primaryPath":    "<absolute path>",
+    "pid":            <int>,
+    "binaryPath":     "<absolute path to pr9k binary>",
+    "startedAt":      "<RFC3339>"
+  }
+  ```
+
+  **Lifecycle ordering (load-bearing for [T1](feature-technical-notes.md#t1-sequencing-constraint)):**
+  - Read happens at startup, before subsystem construction, after CLI parse and config load. ENOENT is the dominant case (no active run); it must not be an error.
+  - Write happens *inside* startup, **after** `preflight.Run` creates `<primary>/.pr9k/`. `atomicwrite.Write` requires the parent directory to exist.
+  - Remove happens at the end of `Run` only on `Completed` or `LoopBroken` `ExitReason`. On `UserQuit`, the file is kept (so the next invocation auto-resumes). On hard kill, no removal code runs at all — the file naturally persists.
+
+  **Process-identity check (load-bearing for [D10](decision-log.md#d10-concurrent-runs-soft-lock-via-active-run-state-file)):** the recorded PID is checked with `syscall.Kill(pid, 0)`. If the PID is alive, the file at `binaryPath` is read and compared (e.g., via `os.Readlink("/proc/<pid>/exe")` on Linux, or a `lsof`/`ps` fallback portable check). If the running process's binary matches the recorded `binaryPath`, treat as "another pr9k may be running" and refuse to start. If the PID is alive but the binary path doesn't match, treat as PID reuse by an unrelated process and resume normally. If the PID is dead, resume normally.
+
+  **Corruption handling:** `atomicwrite` prevents partial writes, but manual edits could produce invalid JSON. On parse error, pr9k renames the file to `active-run.json.corrupt-<timestamp>` (preserving evidence) and proceeds as fresh.
+
+  **Schema-version handling:** if `schemaVersion` exceeds what the running pr9k knows (downgrade scenario), pr9k attempts a best-effort resume — reading whatever fields it recognizes — and falls back to the corruption-handler path if structural fields (`worktreePath`, `branchName`) are missing. Refusing to resume on version mismatch is rejected because the user might have intentionally downgraded pr9k to fix a regression; refusing would force them to abandon work.
+
+- **Supports decisions:** [D5](decision-log.md#d5-stale-worktree-handling-at-startup), [D10](decision-log.md#d10-concurrent-runs-soft-lock-via-active-run-state-file), [D14](decision-log.md#d14-pr9k-worktree-prune-subcommand), [D15](decision-log.md#d15-cross-run-resume-via-active-run-state-file), [D16](decision-log.md#d16-runresult-exitreason), [D19](decision-log.md#d19-fresh-cli-flag)
+- **Driven by findings:** V1, V2, V3, V5, V6 (resume validation); user redirect on the resume requirement.
+- **Referenced in spec:** Background (cross-run resume description), Outcome, Primary Flow (steps 3, 7, 12), Alternate Flows (resume, user-quit, hard-kill, prune, --fresh), Edge Cases (state-file rows), Coordinations (active-run state file row).

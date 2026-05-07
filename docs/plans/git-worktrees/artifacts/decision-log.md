@@ -74,8 +74,8 @@ This file records every decision settled while specifying the `useWorktrees` fea
 
 ### D5: Stale worktree handling at startup
 
-- **Question:** When a new run starts and finds existing pr9k-owned worktrees from prior crashed runs, what does pr9k do?
-- **Decision:** pr9k discovers existing worktrees, filters for entries whose directory name matches the `<primary-basename>-pr9k-*` pattern (path-prefix filter only — branch state is not used for filtering), and warns the user. The warning behavior scales with count: ≤ 5 stale entries are listed inline in the TUI; above that, a single summary line is shown in the TUI and the individual paths are written only to the log file. pr9k does not auto-remove. The new run proceeds and creates its own worktree.
+- **Question:** When a new run starts and finds existing pr9k-owned worktrees from prior crashed runs, what does pr9k do? How is the *active* worktree (referenced by the active-run state file) excluded from stale-detection?
+- **Decision:** pr9k discovers existing worktrees, filters for entries whose directory name matches the `<primary-basename>-pr9k-*` pattern (path-prefix filter only — branch state is not used for filtering), **excludes the worktree referenced by `<primary>/.pr9k/active-run.json` (if present)**, and warns about the rest. The warning behavior scales with count: ≤ 5 stale entries are listed inline in the TUI; above that, a single summary line is shown in the TUI and the individual paths are written only to the log file. pr9k does not auto-remove. The new run proceeds (either by resuming into the active worktree or by creating a fresh one).
 - **Rationale:** Auto-removal is destructive. A stale worktree may contain commits the user hasn't yet pushed (e.g., the prior crash happened before the final push) or files the user wants to recover. Warning is non-destructive, gives the user information, and matches the unix philosophy of "don't take destructive action without consent." `git worktree prune` alone is not enough because it only removes entries whose directory was deleted out-of-band — the typical crash leaves the directory intact, so prune is a no-op (validation finding V12). Path-prefix-only filtering closes the blind spot team finding F-03 surfaced: if the user manually deletes the `pr9k/<stamp>` branch but leaves the worktree directory, a branch-prefix filter would silently miss it. Aggregation above 5 entries (F-05) prevents alert fatigue at scale.
 - **Evidence:** Validation finding V12; team findings F-03, F-05; `../investigation/01-worktree-mechanics.md` section 4 (cleanup paths and what `prune` covers).
 - **Rejected alternatives:**
@@ -84,9 +84,9 @@ This file records every decision settled while specifying the `useWorktrees` fea
   - Print one warning line per stale entry regardless of count — rejected because at scale (50+ entries from accumulated runs) it pushes the rest of the TUI off-screen and trains users to ignore startup warnings (F-05).
   - Require an explicit `--prune-worktrees` flag — rejected as unnecessary scope; the user can run `git worktree remove --force <path>` directly.
   - A new `pr9k worktree prune` subcommand — deferred to YAGNI.
-- **Linked technical notes:** [T2](feature-technical-notes.md#t2-branch-uniqueness)
-- **Driven by findings:** F-03, F-05, F-08
-- **Dependent decisions:** —
+- **Linked technical notes:** [T2](feature-technical-notes.md#t2-branch-uniqueness), [T4](feature-technical-notes.md#t4-active-run-state-file-schema)
+- **Driven by findings:** F-03, F-05, F-08, V6 (resume validation)
+- **Dependent decisions:** D15 (the active-run state file is the source of truth for which worktree is active and therefore excluded).
 - **Referenced in spec:** Alternate Flows (stale worktree detected), Edge Cases (deleted branch, surviving directory), User Interactions (Feedback).
 
 ### D6: Submodule policy
@@ -104,10 +104,13 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases (repository contains submodules), Deferred (YAGNI).
 
-### D7: First-push sets upstream and surfaces failures
+### D7: First-push sets upstream, surfaces failures, and step reorder
 
 - **Question:** The push step in the default workflow runs `git push` (no upstream flag) and currently traps all exit codes to zero. A brand-new branch in a fresh worktree has no tracking ref, so `git push` fails — but the trap hides the failure. What does the spec commit to?
-- **Decision:** The push step in the default workflow uses upstream-setting semantics on first push so a brand-new run-branch is published to the remote and acquires a tracking ref. The push step also surfaces non-zero exit codes; on failure, pr9k enters its existing error-recovery mode (the c/r/q prompt) with the verbatim git stderr written to the iteration log and the run's log file.
+- **Decision:** Three coordinated changes:
+  1. The push step uses upstream-setting semantics on first push so a brand-new run-branch is published to the remote and acquires a tracking ref.
+  2. The push step surfaces non-zero exit codes; on failure, pr9k enters its existing error-recovery mode (the c/r/q prompt) with the verbatim git stderr written to the iteration log and the run's log file.
+  3. **The `Close issue` step in the default workflow is reordered to run *after* `Git push` (D18).** This eliminates the silent-skip window where a kill between close and push would leave the issue closed with unpushed commits, and the resumed run would skip the issue entirely.
 - **Rationale:** Without upstream-setting, the first push of `pr9k/<run-stamp>` fails. Without surfacing the failure, pr9k closes the issue, prints "done," and the user is told everything succeeded — but no code is on the remote (validation finding V14 / E14; team finding F-02). This is a pre-existing bug that becomes a much louder problem in the worktree path because every `useWorktrees` run starts on a new branch with no upstream, and once the first push fails every subsequent push in the same run fails for the same reason. Routing failures into the existing error-recovery mode (rather than aborting silently or aborting hard) gives the user the standard c/r/q affordance and matches how every other failure in the workflow behaves.
 - **Evidence:** `../investigation/03-behavioral-boundaries.md` (silent push failure); validation finding V14; team finding F-02; team finding F-07 (branch-protection rejection is a real reason a push can fail).
 - **Rejected alternatives:**
@@ -116,9 +119,9 @@ This file records every decision settled while specifying the `useWorktrees` fea
   - Abort the entire run on push failure (no recovery) — rejected because retry is often correct (transient network errors).
   - Skip the failed iteration and continue to the next — rejected because it implies the run is making progress when it isn't (F-02).
 - **Linked technical notes:** [T3](feature-technical-notes.md#t3-first-push-upstream)
-- **Driven by findings:** F-02, F-07
-- **Dependent decisions:** —
-- **Referenced in spec:** Edge Cases (first push, remote rejection), Coordinations (Git remote), User Interactions (Error states), Open Items (OI-1).
+- **Driven by findings:** F-02, F-07, V1 (resume validation — gating on D7)
+- **Dependent decisions:** D15 (cross-run resume relies on push-before-close to avoid silent-skip windows), D18 (the step-order reorder).
+- **Referenced in spec:** Edge Cases (first push, remote rejection), Coordinations (Git remote), User Interactions (Error states), Alternate Flows (push step fails), Open Items (OI-1).
 
 ### D8: Config shape — `worktrees` block
 
@@ -159,19 +162,20 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases (subcommand interaction), Coordinations.
 
-### D10: Concurrent runs
+### D10: Concurrent runs (soft lock via active-run state file)
 
 - **Question:** What happens if two pr9k instances run against the same primary checkout at the same time?
-- **Decision:** No serialization is provided. Concurrent runs are listed as a precondition violation: only one pr9k instance should run against a primary checkout at a time. If the user runs two anyway, the failure surface is well-defined: both instances may select the same issue from `gh issue list` (because issue selection is not atomic), and if their run-stamps collide the second `git worktree add` fails with the standard branch-already-exists error.
-- **Rationale:** No user has reported an accidental concurrent run. A lock file (`.pr9k/pr9k.lock`) is the obvious mechanism but adds startup/shutdown complexity for a failure mode that hasn't yet occurred. The simpler version is to declare the precondition and let the failure modes surface clearly.
-- **Evidence:** Team finding F-04.
+- **Decision:** The active-run state file at `<primary>/.pr9k/active-run.json` (D15) doubles as a soft lock. On startup, if the state file exists and its recorded PID is alive AND the recorded binary path matches the running pr9k binary, the new invocation exits non-zero with "another pr9k appears to be running for this primary checkout (PID N). Use `pr9k --fresh` to override." If PID is alive but binary doesn't match, treat as PID-reuse-by-unrelated-process and resume normally. If PID is dead, resume normally.
+- **Rationale:** The state file already needs to exist for cross-run resume (D15). Reusing it as a soft lock costs nothing extra. PID alone is unreliable due to OS PID reuse (validation V2); the binary-path check addresses the false-positive case where PID got recycled by an unrelated process. A formal lock file (e.g., `.pr9k/pr9k.lock` with `flock`) is rejected for the same YAGNI reason as before — no user has reported a concurrent-run incident, and the soft check covers the accidental-double-invoke case cleanly.
+- **Evidence:** Team finding F-04; validation finding V2 (PID-reuse false positives).
 - **Rejected alternatives:**
-  - Lock file at startup (`.pr9k/pr9k.lock`) — rejected on YAGNI grounds; deferred with a reopening trigger.
+  - Dedicated `flock`-based lock file — rejected on YAGNI grounds; soft lock via state file suffices.
+  - PID-only liveness check — rejected because PID reuse on macOS is real (V2). Binary-path match closes the false-positive window.
   - Force-skip already-implemented issues — rejected because it requires understanding what "already implemented" means across two concurrent runs, which is itself a coordination problem.
-- **Linked technical notes:** —
-- **Driven by findings:** F-04
-- **Dependent decisions:** —
-- **Referenced in spec:** Preconditions, Edge Cases (branch already exists), Out of Scope, Deferred.
+- **Linked technical notes:** [T4](feature-technical-notes.md#t4-active-run-state-file-schema)
+- **Driven by findings:** F-04, V2 (resume validation)
+- **Dependent decisions:** D15 (the state file mechanism this builds on).
+- **Referenced in spec:** Preconditions, Edge Cases (concurrent-run rows), Out of Scope, Deferred.
 
 ### D11: Worktree startup feedback and TUI surfacing
 
@@ -206,19 +210,20 @@ This file records every decision settled while specifying the `useWorktrees` fea
 
 ### D13: autoCleanup behavior
 
-- **Question:** Should pr9k offer an opt-in `autoCleanup` mode that removes the worktree and its branch on graceful completion, and what are its semantics around logs, crash paths, and validation?
-- **Decision:** Yes. `worktrees.autoCleanup: true` causes pr9k to remove the worktree (`git worktree remove --force`) and delete the run's branch (`git branch -D pr9k/<run-stamp>`) at the end of the graceful-shutdown path — both on successful completion and on user-requested quit (`q`/`y`, SIGINT, SIGTERM). The closing log record is written *before* removal so the structured log captures what happened, but anything that lived only inside the worktree (the log file itself, iteration log, per-step transcripts) is removed with it. Crash paths (SIGKILL, panic, power loss) skip cleanup because they skip shutdown entirely. Default is `false`. The validator rejects a config that sets `autoCleanup: true` without `enabled: true`.
-- **Rationale:** The user asked for cleanup to be easy and not a manual process. Auto-cleanup on graceful completion eliminates the manual `git worktree remove` step for users whose workflow tolerates ephemeral logs. Forcing the user to opt in (default `false`) preserves the safe default — logs and partial work are kept by default, since a user new to the feature shouldn't have their first crash leave them wondering where their logs went. Skipping cleanup on hard crash paths is the only correct choice because there's no opportunity to run shutdown code; stale-worktree detection (D5) catches those cases. Validating `autoCleanup` requires `enabled` because the option is meaningless otherwise and a silent-no-op would be confusing.
-- **Evidence:** User redirect in conversation ("we need options like this and the auto-cleanup, to make cleanup easy and not a manual process"); validation finding V7 (logs cannot be ephemeral by default — opt-in preserves the default).
+- **Question:** Should pr9k offer an opt-in `autoCleanup` mode that removes the worktree, its branch, and the active-run state file on graceful completion, and what are its semantics around logs, crash paths, user-quit, and validation?
+- **Decision:** Yes. `worktrees.autoCleanup: true` causes pr9k to remove the worktree (`git worktree remove --force`), delete the run's branch (`git branch -D pr9k-<worktree-stamp>`), AND remove the active-run state file at the end of the graceful-shutdown path — but only on **`Completed` or `LoopBroken`** exit reasons (D16). On **`UserQuit`** (the user pressed `q`/`y` or sent SIGINT/SIGTERM), autoCleanup is **suppressed** and the state file is **kept** so the next pr9k invocation auto-resumes. The closing log record is written *before* removal so the structured log captures what happened, but anything that lived only inside the worktree (the log file itself, per-invocation iteration log, per-step transcripts) is removed with it. Crash paths (SIGKILL, panic, power loss) skip cleanup entirely because they skip shutdown. Default is `false`. The validator rejects a config that sets `autoCleanup: true` without `enabled: true`.
+- **Rationale:** The user asked for cleanup to be easy. Auto-cleanup on natural completion eliminates the manual `git worktree remove` step for users whose workflow tolerates ephemeral logs. Suppressing cleanup on `UserQuit` is what makes resume work — if the user quits expecting to come back to their work, autoCleanup must not erase it. Crash paths can't run shutdown code at all, which is the case `pr9k worktree prune` and the resume mechanism handle. Validating `autoCleanup` requires `enabled` because the option is meaningless otherwise.
+- **Evidence:** User redirect in conversation; validation finding V7 (logs cannot be ephemeral by default); validation finding V3 (need ExitReason to suppress cleanup on UserQuit); the user's hard requirement for auto-resume after kill.
 - **Rejected alternatives:**
-  - `autoCleanup` defaults to `true` — rejected because the safe default is to keep work; users who want cleanup opt in. Avoids surprising new users with vanished logs.
-  - Two separate fields (`removeOnSuccess`, `removeOnQuit`) — rejected on YAGNI grounds; one knob covers all graceful-shutdown paths and matches the user's stated request.
-  - Always preserve logs by copying them out of the worktree before removal — rejected on simpler-version grounds; users who need logs preserved leave `autoCleanup: false`. The `logDir` split remains in Deferred for the case where a user wants both behaviors.
-  - Cleanup on hard crash via post-run startup probe — rejected because it would require pr9k to remember which worktrees were "owned by the most recent crashed run" vs prior runs the user wants to keep. The simpler `pr9k worktree prune` (D14) covers this case.
+  - `autoCleanup` defaults to `true` — rejected because the safe default is to keep work.
+  - autoCleanup fires on every graceful exit including `UserQuit` — rejected because that erases the in-flight work that resume depends on.
+  - Two separate fields (`removeOnSuccess`, `removeOnQuit`) — rejected on YAGNI grounds; the ExitReason model gives the right behavior automatically.
+  - Always preserve logs by copying them out of the worktree before removal — rejected on simpler-version grounds; the `logDir` split remains in Deferred.
+  - Cleanup on hard crash via post-run startup probe — rejected because the resume mechanism handles this case more cleanly (prior worktree+state become recoverable, not garbage).
 - **Linked technical notes:** —
-- **Driven by findings:** User redirect (post-review)
-- **Dependent decisions:** D14 (prune subcommand handles the crash-path case where autoCleanup couldn't run).
-- **Referenced in spec:** Outcome, Trigger, Primary Flow (step 11), Alternate Flows (graceful quit), Edge Cases (autoCleanup-without-enabled, autoCleanup with crash).
+- **Driven by findings:** User redirect (post-review), V3 (resume validation), V7 (worktree investigation).
+- **Dependent decisions:** D14 (prune subcommand handles the crash-path case), D15 (cross-run resume relies on `UserQuit` keeping the state file), D16 (ExitReason is the control input).
+- **Referenced in spec:** Outcome, Trigger, Primary Flow (step 12), Alternate Flows (graceful quit), Edge Cases (autoCleanup-related rows).
 
 ### D14: `pr9k worktree prune` subcommand
 
@@ -236,17 +241,88 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Dependent decisions:** —
 - **Referenced in spec:** Outcome, Trigger, Alternate Flows (`pr9k worktree prune` invocation), Edge Cases (prune-related rows), Coordinations.
 
-### D15: No cross-run resume
+### D15: Cross-run resume via active-run state file
 
-- **Question:** When pr9k is invoked on a primary checkout where a prior run was killed mid-iteration, does the new run continue the prior run's work?
-- **Decision:** No. Each pr9k invocation is fully independent. A new run picks up the next open ralph issue (which may be the same issue the prior run was working on) and implements it from scratch in a fresh worktree on a fresh branch. Prior partial work remains on its own branch in its own (now stale) worktree; the user reconciles divergent branches manually. `resumePrevious` (the existing intra-run Claude-session resume mechanism) does not bridge across pr9k invocations.
-- **Rationale:** Cross-run resume is a much larger feature than the worktree toggle — it would require persistent run state, a "what was in progress?" record, and reconciliation logic for the case where the prior worktree's branch has diverged from the user's primary HEAD between runs. None of that is justified by current evidence: no user has asked for it, the failure mode (divergent branches) is recoverable manually, and the silent-skip risk (issue closed but push failed) is already mitigated by D7's push-failure error-recovery routing. The simpler answer is to declare the boundary explicitly so users understand what restart means and how to reconcile.
-- **Evidence:** User question in conversation ("what are the implications of stopping a run and restarting on the same set of tickets?"); existing `resumePrevious` documentation in `docs/code-packages/workflow.md` (intra-run only); D7 (push-failure error-recovery as the safety net for the silent-skip case).
+- **Question:** When pr9k is invoked on a primary checkout where a prior run was killed (mid-iteration, mid-step, anywhere), does the new run continue the prior run's work — automatically, deterministically, with no user intervention?
+- **Decision:** Yes. pr9k writes an active-run state file at `<primary>/.pr9k/active-run.json` at the start of every run with `worktrees.enabled: true`. The file contains the worktree path, branch name, worktree-stamp, PID, binary path, started-at timestamp, schema version, and pr9k version (T4). On every pr9k startup, the file is read; if it exists and points to a valid worktree on the same primary, AND the recorded process is no longer running (PID dead, or PID alive but binary doesn't match — the PID-reuse case), pr9k auto-resumes by entering the existing worktree on its existing branch. No new worktree is created, no new worktree-stamp is generated; only a fresh invocation-stamp is generated for log/artifact paths. The state file is removed at the end of a `Completed` or `LoopBroken` run (D16). On `UserQuit` it is kept (so the next invocation auto-resumes). On hard kills it is kept by virtue of nothing running. The `--fresh` CLI flag (D19) lets the user explicitly discard the in-flight state.
+
+  Resume is **iteration-loop-level**, not step-level: the resumed run's iteration loop calls `get_next_issue` as it normally would. Because the script returns the lowest-numbered open ralph issue and a prior run that died mid-iteration left its issue open (D7+D18 ensure push-before-close so closed-but-unpushed cannot happen), the in-flight issue is naturally re-delivered. The iteration runs again from feature-work onward on a branch that already carries any prior commits.
+
+- **Rationale:** The user stated this as a hard requirement: "pr9k MUST pick up the existing work and worktree, to continue. There must not be any manual 'find a previous worktree' step." The original D15 ("no cross-run resume") was YAGNI-deferred on the assumption that no user had asked for it; the user has now explicitly asked.
+
+  The architecture supports cross-run resume cheaply because `get_next_issue` is naturally idempotent (E1, E14 in `../investigation/05-resume-options.md`). No iteration-loop changes are needed; the state file is just a deterministic "is there an active run?" marker. `atomicwrite.Write` and the existing crash-temp PID-liveness pattern in `workflowio` (E8, E9) are the building blocks. Six options were evaluated in `../investigation/05-resume-options.md`; this is "refined Option A" (stamped worktree + state file) — the only option that satisfies all six hard requirements while preserving `autoCleanup: false` as a first-class user choice.
+
+- **Evidence:** User redirect in conversation ("this is a massive problem, and must be solved before we can implement any of this"); `../investigation/05-resume-options.md` (full options analysis); validation findings V1, V3, V4 (gating constraints addressed by D7+D18, D16, and D17 respectively); E1, E14 (`get_next_issue` idempotency); E8 (atomicwrite); E9 (crash-temp pattern).
+
 - **Rejected alternatives:**
-  - Persist run state to `.pr9k/active-run.json` and resume on next invocation — rejected because it adds significant complexity for a use case nobody has asked for, and the recovery semantics are non-trivial (what if the user's HEAD moved? what if they manually edited the prior branch?).
-  - Auto-detect and resume the prior worktree's branch — rejected because it removes the user's agency to reconcile manually, and the prior worktree may be in any state (mid-step, mid-iteration, post-iteration-pre-push).
-  - Refuse to start a new run if a stale pr9k worktree exists — rejected because it forces the user to clean up before they can do anything else, conflicting with the warn-only policy of D5.
+  - **Option B (fixed worktree path, no state file)** — rejected because it cannot distinguish "completed and kept for inspection" from "killed mid-run" without a state file, forcing the user to abandon `autoCleanup: false`.
+  - **Option C (separate clone instead of worktree)** — rejected because it offers no behavioral advantage over A and adds full-clone time/disk cost on every fresh start.
+  - **Option D (per-step bookmarks)** — rejected because it requires invasive iteration-loop changes for behavior that `get_next_issue` already provides for free.
+  - **Option E (in-place workflow)** — rejected because it fails the original "primary stays usable for parallel development" goal.
+  - **Option F (fixed worktree + state file)** — strictly inferior to A; loses the ability to keep multiple historical worktrees on disk for users with `autoCleanup: false`.
+  - **No cross-run resume (the original D15)** — rejected by user redirect.
+  - **Refuse to resume on schema-version mismatch** — rejected because the user might intentionally downgrade pr9k to fix a regression; refusing would force them to abandon work. Best-effort resume with a warning is correct.
+  - **A dedicated lock file separate from the state file** — rejected on YAGNI grounds; the state file's PID + binary-path check covers the soft-lock role (D10).
+
+- **Linked technical notes:** [T4](feature-technical-notes.md#t4-active-run-state-file-schema)
+- **Driven by findings:** User redirect (post-review), V1/V2/V3/V4/V5/V6 (resume validation).
+- **Dependent decisions:** D5 (active worktree excluded from stale detection), D7+D18 (push-before-close eliminates the silent-skip window resume must not hit), D10 (state file doubles as soft lock), D13 (autoCleanup is gated on ExitReason, which D16 introduces), D16 (ExitReason controls when the state file is removed), D17 (per-invocation iteration logs avoid consumer breakage), D19 (--fresh as the explicit-abandon affordance), D14 (prune excludes the active worktree).
+- **Referenced in spec:** Header, Background, Outcome, Invariants, Trigger, Preconditions, Primary Flow (step 3, 7, 12), Alternate Flows ("A prior run was killed..."), Edge Cases (state-file rows), Coordinations.
+
+### D16: `RunResult.ExitReason`
+
+- **Question:** Today `main.go:298` discards `RunResult` (`_ = workflow.Run(...)`). The state-file-removal hook needs to know whether a run completed naturally, the user quit, or `breakLoopIfEmpty` triggered an exit. How is this signal carried out of `Run`?
+- **Decision:** `RunResult` gains an `ExitReason` field with at least three values: `Completed` (all configured iterations and finalize ran), `LoopBroken` (`breakLoopIfEmpty` was triggered), and `UserQuit` (the user pressed `q`/`y` or pr9k received SIGINT/SIGTERM during the run). `main.go` propagates the value to its post-Run cleanup logic. The state-file-removal hook fires on `Completed` and `LoopBroken`; it is suppressed on `UserQuit`. autoCleanup of the worktree+branch follows the same gate. SIGKILL/panic skip the post-Run cleanup entirely (no opportunity to run any code).
+- **Rationale:** Without distinguishing exit reasons, the state-file-removal logic cannot be correctly placed (validation V3). Two values aren't enough — `Completed` and `LoopBroken` both mean "run is done," but distinguishing them is useful for log/audit purposes. `UserQuit` is the case that must NOT trigger removal because resume depends on the state file being kept across user-initiated quits.
+- **Evidence:** Validation finding V3; `src/cmd/pr9k/main.go:298` (`_ = workflow.Run(...)` today); D15 dependency.
+- **Rejected alternatives:**
+  - Boolean `Completed bool` — insufficient; `breakLoopIfEmpty` and natural completion are both "done" but a boolean conflates them with `UserQuit`.
+  - Detect quit reason at the call site by inspecting the TUI state — rejected because it duplicates state and is fragile.
 - **Linked technical notes:** —
-- **Driven by findings:** User question (post-review)
-- **Dependent decisions:** D7 (push-failure error-recovery is the safety net that prevents silent-skip from becoming silent-data-loss).
-- **Referenced in spec:** Background (cross-run independence), Alternate Flows ("A prior run was killed mid-iteration..."), Out of Scope, Edge Cases.
+- **Driven by findings:** V3 (resume validation).
+- **Dependent decisions:** D13 (autoCleanup is gated on this), D15 (state-file removal is gated on this).
+- **Referenced in spec:** Primary Flow (step 12), Alternate Flows (graceful quit), Edge Cases (autoCleanup rows).
+
+### D17: Per-invocation iteration log files
+
+- **Question:** Today `iteration.jsonl` is a single file inside `.pr9k/`. Cross-run resume causes multiple pr9k invocations to share a worktree. If `iteration.jsonl` accumulates records across invocations, does anything break?
+- **Decision:** Yes — `post_issue_summary` and `lessons-learned` both read all of `iteration.jsonl` and would mix records from different invocations. Switch to **per-invocation files** named `iteration-<invocation-stamp>.jsonl`. Each pr9k invocation writes to its own file inside `<worktree>/.pr9k/`. `post_issue_summary` and `lessons-learned` read the current invocation's file (the most recent one, by stamp). Past invocations' files persist alongside the worktree until autoCleanup or `pr9k worktree prune` removes the worktree.
+- **Rationale:** Validation finding V4 surfaced that the existing consumers cannot tolerate mixed records. Per-invocation files are strictly simpler than introducing session-boundary records and updating consumers. They preserve forensic value (you can read a prior invocation's file directly to see what it did) and require no consumer changes beyond "use the current invocation's file" — which is naturally derived from `RunStamp()` (the invocation-stamp) at the time the script runs.
+- **Evidence:** Validation finding V4; `workflow/scripts/post_issue_summary:16`, `workflow/prompts/lessons-learned.md:5,8` (existing consumers that read the whole file).
+- **Rejected alternatives:**
+  - Single shared file with session-boundary records — rejected because it requires updating both consumers AND the iteration-log schema.
+  - Truncate `iteration.jsonl` at the start of every run — rejected because it loses prior-invocation history (defeats forensic value).
+  - Keep the old file but write a parallel per-invocation file — rejected as redundant.
+- **Linked technical notes:** —
+- **Driven by findings:** V4 (resume validation).
+- **Dependent decisions:** D15 (cross-run resume is the reason the change is needed).
+- **Referenced in spec:** Outcome, Primary Flow (step 6), Edge Cases (per-invocation accumulation row).
+
+### D18: Push-before-close step ordering
+
+- **Question:** The default workflow today runs `Close issue` *before* `Git push`. A kill in that window closes the issue with no code on the remote. The next run skips the closed issue entirely (silent skip). Should the order be reversed?
+- **Decision:** Yes. The default workflow's iteration sequence is reordered so `Git push` runs **before** `Close issue`. A push failure (which is now surfaced via D7's error-recovery routing) blocks the close from running. Combined with D15's resume mechanism, this ensures any prior run's in-flight issue is still open when a new pr9k starts, so `get_next_issue` re-delivers it correctly.
+- **Rationale:** The close-then-push window is the silent-skip risk that V1 surfaced. The reorder eliminates the window for the default workflow at near-zero cost (just swapping two step entries in `workflow/config.json`). Custom workflows that follow the same pattern should adopt the reorder; the spec documents the requirement.
+- **Evidence:** Validation finding V1; `workflow/config.json:28-29` (current ordering).
+- **Rejected alternatives:**
+  - Add a "did push succeed?" gate before `Close issue` — rejected because it duplicates D7's error-recovery routing and adds custom logic for one step.
+  - Leave the order, document the silent-skip risk — rejected because the user's hard requirement for resume includes "no manual reconciliation," and silent skip violates that.
+- **Linked technical notes:** —
+- **Driven by findings:** V1 (resume validation).
+- **Dependent decisions:** D7 (the push-surfacing change is the safety net), D15 (resume relies on this for correctness).
+- **Referenced in spec:** Primary Flow (step 10), Edge Cases (first push), Coordinations (Git remote).
+
+### D19: `--fresh` CLI flag
+
+- **Question:** How does the user explicitly abandon an in-flight run when they don't want resume?
+- **Decision:** A new `--fresh` boolean flag on the workflow runner. When passed, pr9k at startup removes the active-run state file (if any), removes the worktree it pointed to (if `worktrees.enabled` is true), and deletes the prior run's branch. Then pr9k proceeds as a normal fresh start. The flag is a no-op if no state file exists.
+- **Rationale:** Resume is automatic by default — that's the user's stated requirement. But there must be an opt-out for the case where the user wants to discard partial work (e.g., the prior run was on a now-dead branch, or the user is intentionally restarting). A CLI flag is the right surface: it's a per-invocation override, doesn't pollute config, and has a clear name. The combined "remove state file + worktree + branch" semantics ensure no orphaned artifacts after `--fresh`.
+- **Evidence:** Validation finding V9; user redirect on the resume requirement.
+- **Rejected alternatives:**
+  - `--no-resume` — rejected as semantically less clear; "fresh" implies positive action (start fresh) where "no-resume" is a double-negative.
+  - A separate `pr9k abandon` subcommand — rejected because it's a one-shot operation tied to starting a run; a flag is the right shape.
+  - `--fresh` removes only the state file, leaving the worktree — rejected because it would orphan the worktree (becoming stale on next D5 detection); cleaner to remove all three together.
+- **Linked technical notes:** —
+- **Driven by findings:** V9 (resume validation), user redirect.
+- **Dependent decisions:** —
+- **Referenced in spec:** Trigger, Alternate Flows (`pr9k --fresh`), User Interactions (Affordances).

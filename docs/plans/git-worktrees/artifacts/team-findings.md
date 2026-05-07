@@ -237,3 +237,14 @@ These items were not raised by review specialists; they were redirects from the 
 - **Affected decisions:** D15 (new)
 - **Affected tech-notes:** —
 - **Changed in spec:** Background, Alternate Flows (new "A prior run was killed mid-iteration..." flow), Edge Cases (cross-run row), Out of Scope (cross-run resume entry)
+
+### F-USER-04: Cross-run resume is a hard requirement (reverses original D15)
+
+- **Agent:** user
+- **Finding:** The original D15 declared "no cross-run resume" on YAGNI grounds. The user redirected: "this is a massive problem, and must be solved before we can implement any of this." Specifically: "I stop pr9k in the middle of a work item, to fix an issue with pr9k. Once the issues are fixed, I start pr9k again. At this point, pr9k MUST pick up the existing work and worktree, to continue."
+- **Resolution:** Launched a second investigation pass producing six options (A–F) with file-level integration analysis (`../investigation/05-resume-options.md` plus sub-reports `05a`, `05b`, `05c` and validation `05d`). Recommended and adopted refined Option A: stamped worktree per active run + active-run state file at `<primary>/.pr9k/active-run.json`. State-file presence is the deterministic resume marker. Reversed D15 entirely; added D16 (`RunResult.ExitReason`), D17 (per-invocation iteration logs), D18 (push-before-close step reorder), D19 (`--fresh` CLI flag). Added T4 (state-file schema). Updated D5 to exclude the active worktree from stale-detection. Updated D10 to reuse the state file as a soft concurrent-run lock. Updated D7 to depend on D18 for the silent-skip safety. Updated D13 to gate cleanup on `ExitReason`. Updated `feature-specification.md` end-to-end.
+- **Resolved by:** user input + evidence (six investigation files, two adversarial-validation passes)
+- **Affected decisions:** D5, D7, D10, D13, D15 (reversed), D16 (new), D17 (new), D18 (new), D19 (new)
+- **Affected tech-notes:** T4 (new)
+- **Changed in spec:** Header, Background (cross-run-independence paragraph replaced with auto-resume description; two-stamp model defined), Outcome (auto-resume bullet, observability bullet, --fresh + prune bullet), Invariants (new auto-resume invariant), Trigger (resume trigger, --fresh trigger, prune trigger), Preconditions (concurrent-run via state file), Primary Flow (entirely restructured for fresh-vs-resume paths), Alternate Flows (added "A prior run was killed mid-iteration", "The user runs `pr9k --fresh`"; modified "graceful quit" to keep state file; modified "stale detection" to exclude active), Edge Cases (state-file rows, autoCleanup-with-ExitReason rows, schema-version row, corruption row), User Interactions (RESUMED FROM, --fresh feedback), Coordinations (active-run state file row), Out of Scope (no per-step bookmarks; no Windows; no separate lock file), Deferred (Windows; schema migration tooling; per-step bookmarks)
+
