@@ -354,6 +354,90 @@ Numbering starts at F1 for this companion file; it is independent of the F-NN / 
 - **Changed in plan:** Primary Flow (step 12).
 - **Changed in tech-notes:** —
 
+### F30: `invocation_stamp` field on `IterationRecord` — injection-layer commitment unspecified, and spec body asserts presence unconditionally while T5 §4 acknowledges older records may lack it
+
+- **Agent:** adversarial-validator + edge-case-explorer (R3; explorer F-R3-3 collapsed into this entry)
+- **Category:** unstated assumption + internal contradiction
+- **Finding:** The D17 revert introduced an `invocation_stamp` field on every `IterationRecord` written by this feature. The spec body (Background ¶3, Outcome bullet, Primary Flow step 6, Coordinations row) all assert each record carries the field unconditionally. T5 §4 says older records "may not have the field; consumers tolerate its absence." The unconditional spec-body language contradicts T5's conditional one. Separately, T5 §4 does not name the layer responsible for setting the field: a record-construction helper, the per-step append call, or every individual write site. Without a single named layer the implementation could miss call sites and produce records without the field on the very builds the field was supposed to mark. Tolerance is also asserted for "consumers" generically; the actual guarantee is scoped to the two named default-workflow consumers (`post_issue_summary` reads named fields with `jq`, treating missing as empty; `lessons-learned` reads the file as an unstructured corpus for a Claude prompt). User-written consumers that filter by `invocation_stamp` are not covered.
+- **Evidence considered:** spec lines 12, 24, 70, 228; T5 §4 (`feature-technical-notes.md:83`); `src/internal/workflow/iterationlog.go:15-27` (today's `IterationRecord` struct); `workflow/scripts/post_issue_summary:16` (jq filter against named fields); `workflow/prompts/lessons-learned.md:1,5,8`.
+- **Resolution:** Conditioned the spec-body language to "each `IterationRecord` written by this feature carries an `invocation_stamp` field" (Background ¶3, Outcome bullet, Primary Flow step 6, Coordinations row) — matching T5 §4. Extended T5 §4 to (a) commit to a single record-construction layer as the injection point ("today's `newIterationRecord`-equivalent in `internal/workflow`") so no future call path can forget the field, and (b) narrow the tolerance guarantee to the two named default-workflow consumers, with an explicit note that user-written consumers that filter by the field must accept that older records may lack it.
+- **Resolved by:** evidence
+- **Raised in round:** R3
+- **Changed in plan:** Background (¶3), Outcome (observability bullet), Primary Flow (step 6), Coordinations (per-worktree iteration log row).
+- **Changed in tech-notes:** T5 §4.
+
+### F31: T4 lifecycle ordering claims `preflight.Run` creates `<primary>/.pr9k/`, but T1's redirect makes `preflight.Run` operate against the worktree path, not the primary
+
+- **Agent:** adversarial-validator (R3)
+- **Category:** internal contradiction
+- **Finding:** T4's lifecycle-ordering subsection states the state-file write happens "after `preflight.Run` creates `<primary>/.pr9k/`." T1's required ordering is `worktree create → project-directory redirect → runtime-directory creation → runner construction`, with `preflight.Run` as the runtime-directory-creation step. After the redirect, `preflight.Run` receives the **worktree** path, so it creates `<worktree>/.pr9k/`, not `<primary>/.pr9k/`. The state-file write at Primary Flow step 7 targets `<primary>/.pr9k/active-run.json`, so its parent directory must exist independently. On a first-ever pr9k run on a repository that has never had any pr9k state, `<primary>/.pr9k/` may not exist when step 7 fires. **This finding is out of scope for the D17 revert** but was surfaced by the focused-delta team while reading T4 alongside T5; flagged here for visibility and a future review pass.
+- **Evidence considered:** T4 lifecycle-ordering subsection (`feature-technical-notes.md:55`); T1 ordering chain (`feature-technical-notes.md:9`); `src/internal/preflight/run.go:36-38` (`os.MkdirAll(filepath.Join(projectDir, ".pr9k"), 0o755)`); `src/internal/atomicwrite/write.go` (rename returns ENOENT when target directory does not exist).
+- **Resolution:** **Deferred to a future review** — flagged to the user but not edited in R3 because it pre-dates the D17 revert and reviewing/fixing T4 is outside the focused-delta scope the user requested.
+- **Resolved by:** deferred
+- **Raised in round:** R3
+- **Changed in plan:** —
+- **Changed in tech-notes:** —
+
+### F32: Coordinations row leaks POSIX file-open flags and internal lifecycle terminology into behavioral prose
+
+- **Agent:** adversarial-validator (R3)
+- **Category:** mechanics leaking into spec
+- **Finding:** The Coordinations row for the per-worktree iteration log used `O_WRONLY|O_CREATE|O_APPEND` (a POSIX flag combination) and "at logger initialization" (an internal lifecycle phase) inside its Ordering / Consistency Requirement column. Both are mechanic-level. The R1 mechanics-leaking-into-spec sweep covered Primary Flow and Alternate Flows but not the Coordinations table; the D17 revert preserved the row's original wording.
+- **Evidence considered:** spec line 228 (Coordinations row); contrast with the active-run state file row at line 227 ("Atomic-written at run start") which uses behavioral language; review-iteration-history.md:44 (R1 sweep scope).
+- **Resolution:** Replaced `O_WRONLY|O_CREATE|O_APPEND` with "opened in append mode (records are never overwritten)" and replaced "at logger initialization" with "at startup, before the first record is written." Added a `[T5]` cross-reference to the row so the mechanic detail remains discoverable.
+- **Resolved by:** evidence
+- **Raised in round:** R3
+- **Changed in plan:** Coordinations (per-worktree iteration log row).
+- **Changed in tech-notes:** —
+
+### F33: Primary Flow step 8's "first record written to the iteration log captures the same as a structured event" implies a record schema that does not exist
+
+- **Agent:** adversarial-validator (R3)
+- **Category:** unstated assumption / internal contradiction
+- **Finding:** Primary Flow step 8 says the first record written to the iteration log captures the worktree path, primary path, branch name, worktree-stamp, and invocation-stamp "as a structured event." Today's `IterationRecord` has no such fields, and T5 §4 only adds `invocation_stamp`. Either step 8 implies a second record type unspecified anywhere, or the metadata only goes to the run's log file and the iteration-log mention is wrong. The default consumers' jq filter (`post_issue_summary` line 16 against `.step_name`, `.status`, `.notes`) would emit a malformed bullet for a non-IterationRecord line, so writing a different shape to `iteration.jsonl` would corrupt the GitHub comment for the resumed iteration. **This finding is out of scope for the D17 revert** — the step 8 sentence has been in the spec since R1 — but was surfaced by the focused-delta team because step 8 sits alongside the iteration-log scope the revert touched. Flagged for visibility and a future review pass.
+- **Evidence considered:** spec line 72 (Primary Flow step 8); `src/internal/workflow/iterationlog.go:15-27` (current `IterationRecord` schema); T5 §4; `workflow/scripts/post_issue_summary:16` (jq filter).
+- **Resolution:** **Deferred to a future review** — flagged to the user but not edited in R3 because the offending sentence pre-dates the revert and the cleanest fix (delete the iteration-log mention from step 8, since the metadata also goes to the run's log file) is outside the focused-delta scope.
+- **Resolved by:** deferred
+- **Raised in round:** R3
+- **Changed in plan:** —
+- **Changed in tech-notes:** —
+
+### F34: Iteration-log growth bound is asserted unconditionally but applies only when `lessons-learned` runs to completion
+
+- **Agent:** adversarial-validator + edge-case-explorer (R3; explorer F-R3-2 collapsed into this entry)
+- **Category:** load-bearing gap / unstated assumption
+- **Finding:** The Edge Cases row for "Iteration log spans multiple invocations" and T5 §6 both stated the file's growth is "bounded by `lessons-learned`'s truncation." The bound applies only when finalization runs to completion, which requires (a) the default workflow, (b) the iteration loop exiting naturally (`Completed` or `LoopBroken`), and (c) the `lessons-learned` step succeeding. A user who repeatedly kills the run before finalization, or a custom workflow that omits `lessons-learned`, will see the file grow across resumed invocations until the worktree is removed. The unconditional language implies a guarantee the spec cannot deliver. The real impact is not absolute size (records are typically a few hundred bytes) but the cross-invocation contamination of `post_issue_summary` comments (covered by F35).
+- **Evidence considered:** spec line 191 (Edge Cases row); T5 §§3, 6; `workflow/prompts/lessons-learned.md:8` (truncation instruction); spec line 162 (`LoopBroken` does trigger finalization).
+- **Resolution:** Conditioned both the Edge Cases row and T5 §6 to "bounded *when finalization runs to completion*" with explicit treatment of the kill-before-finalization and custom-workflow-omits-lessons-learned cases. Cross-referenced T5 §6 to the F35 row so a reader sees the user-visible consequence (post_issue_summary comment contamination) alongside the size discussion.
+- **Resolved by:** evidence
+- **Raised in round:** R3
+- **Changed in plan:** Edge Cases (iteration-log-spans-invocations row).
+- **Changed in tech-notes:** T5 §6.
+
+### F35: "Matches today's in-place behavior" framing in Primary Flow step 6 and Edge Cases rows 191/192 papers over a load-bearing scope difference, with concrete user-visible impact on `post_issue_summary`
+
+- **Agent:** adversarial-validator + edge-case-explorer (R3; explorer F-R3-1 collapsed into this entry)
+- **Category:** internal contradiction / load-bearing gap
+- **Finding:** Primary Flow step 6 said "exactly as today's in-place model already does," and the Edge Cases row at line 192 ("Resumed `post_issue_summary` includes records from prior invocations") characterized the new behavior as "the same pre-existing quirk the script already documents (`progress.txt accumulates across iterations… issue N's comment may include iterations 1..N`)." Both framings are wrong about scope. Today's in-place file accumulates only within one run (every in-place re-invocation is a fresh run, and `lessons-learned` truncates the file at the end). The worktree's file accumulates across **every invocation that resumes into the worktree**, which under the auto-resume contract may include invocations that worked on entirely different issues days or weeks earlier. The user-visible consequence is concrete: `post_issue_summary` (`workflow/scripts/post_issue_summary:16`) reads the entire file with `jq -r '...'` and applies no `issue_id` filter — confirmed by reading the script — so the GitHub comment for issue 42 may contain "feature-work [done]" lines from issues 17–21 worked in a prior, interrupted invocation. This is a worse outcome than the pre-existing within-run quirk, and calling it "the same quirk" actively misleads an implementer or reviewer.
+- **Evidence considered:** spec line 70 (Primary Flow step 6); spec line 191 (Edge Cases row, "matches today's in-place behavior"); spec line 192 (Edge Cases row, "the same pre-existing quirk"); `workflow/scripts/post_issue_summary:4-6,13-16` (script's own quirk comment + lack of `issue_id` filter); D17 rationale (cited the script comment as evidence the new behavior was "not a problem"); T5 §3.
+- **Resolution:** Rewrote Primary Flow step 6 to drop "exactly as today's in-place model already does" and explicitly call out the **scope expansion** (today: across iterations within one run; new: across every invocation that resumes into the worktree). Rewrote the Edge Cases row at line 191 to label this a "scope expansion of today's in-place model." Rewrote the row at line 192 to spell out the cross-invocation, cross-issue contamination of `post_issue_summary` comments, name the bound (next successful `lessons-learned` truncation), and flag a per-iteration `issue_id` filter as a follow-up candidate. Updated D17's rationale to capture the trade-off explicitly: cross-invocation forensic value gained (`lessons-learned`) outweighs comment-contamination cost, with the follow-up filter as the durable resolution path.
+- **Resolved by:** evidence
+- **Raised in round:** R3
+- **Changed in plan:** Primary Flow (step 6), Edge Cases (rows 191 and 192), D17 rationale.
+- **Changed in tech-notes:** T5 §6 (cross-reference to the row).
+
+### F36: TOCTOU race row documents two concurrent state-file writes and two worktree creations but says nothing about iteration-log integrity
+
+- **Agent:** edge-case-explorer (R3; F-R3-4)
+- **Category:** load-bearing gap
+- **Finding:** The TOCTOU race row at spec line 173 explicitly describes both racing invocations proceeding past the absent-file check, both creating worktrees, and both writing state files. A reader evaluating integrity risks for that scenario has no spec-level statement about the iteration-log file's safety. In practice the two invocations write to **different** `iteration.jsonl` files (each lives inside its own worktree), so concurrent-append corruption is a non-issue — but the spec did not say so. The gap left a reader uncertain whether the documented failure mode included log corruption.
+- **Evidence considered:** spec line 173 (TOCTOU row); T5 §§2, 3; `src/internal/workflow/iterationlog.go:44-49,62-63` (single-write append, sub-PIPE_BUF size envelope).
+- **Resolution:** Added one sentence to the TOCTOU row: "The two invocations also write to **different** `iteration.jsonl` files — each lives inside its own worktree — so the iteration logs do not interfere with each other regardless of how the state-file race resolves." This closes the integrity gap without committing to a guarantee about same-file concurrent appends (which the concurrent-run guard already prevents).
+- **Resolved by:** evidence
+- **Raised in round:** R3
+- **Changed in plan:** Edge Cases (TOCTOU row).
+- **Changed in tech-notes:** —
+
 ## Minor edits
 
 - m1: JD-R1-5 — worktree-creation-failure error surface (TUI vs stderr) under-specified — junior-developer — Alternate Flows (worktree creation fails)
