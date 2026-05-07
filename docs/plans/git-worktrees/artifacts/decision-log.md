@@ -19,7 +19,7 @@ This file records every decision settled while specifying the `useWorktrees` fea
   - `<primary>/.pr9k/worktrees/<run-stamp>/` — rejected because `.pr9k/` itself is not currently in `.gitignore` (only specific subdirectories are), so a worktree directory there would appear as untracked in `git status` until an additional ignore entry was added; that is more invasive than placing the worktree outside the repo entirely.
   - User home `~/.pr9k/worktrees/<repo-hash>/<stamp>/` — rejected because it physically separates the worktree from the repo and surprises users who inspect worktrees with `git worktree list`.
   - Configurable location — rejected on YAGNI grounds; deferred until a user reports a real conflict.
-- **Linked technical notes:** —
+- **Linked technical notes:** [T1](feature-technical-notes.md#t1-sequencing-constraint)
 - **Driven by findings:** F-08
 - **Dependent decisions:** D5 (stale worktree detection looks for entries whose directory name matches the `<primary-basename>-pr9k-*` pattern).
 - **Referenced in spec:** Outcome, Preconditions, Primary Flow (step 3), Out of Scope.
@@ -83,8 +83,8 @@ This file records every decision settled while specifying the `useWorktrees` fea
   - Print one warning line per stale entry regardless of count — rejected because at scale (50+ entries from accumulated runs) it pushes the rest of the TUI off-screen and trains users to ignore startup warnings (F-05).
   - Require an explicit `--prune-worktrees` flag — rejected as unnecessary scope; the user can run `git worktree remove --force <path>` directly.
   - A new `pr9k worktree prune` subcommand — deferred to YAGNI.
-- **Linked technical notes:** —
-- **Driven by findings:** F-03, F-05
+- **Linked technical notes:** [T2](feature-technical-notes.md#t2-branch-uniqueness)
+- **Driven by findings:** F-03, F-05, F-08
 - **Dependent decisions:** —
 - **Referenced in spec:** Alternate Flows (stale worktree detected), Edge Cases (deleted branch, surviving directory), User Interactions (Feedback).
 
@@ -128,7 +128,7 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Rejected alternatives:**
   - A struct (e.g., `worktree: { enabled: true, location: ..., keep: true }`) — rejected on YAGNI grounds; defer the struct shape until a second config knob is needed.
   - A CLI flag `--worktrees` — rejected as duplicate surface area; defer until a real use case (e.g., one-off runs that override the config) appears.
-- **Linked technical notes:** —
+- **Linked technical notes:** [T1](feature-technical-notes.md#t1-sequencing-constraint)
 - **Driven by findings:** —
 - **Dependent decisions:** —
 - **Referenced in spec:** Outcome, Trigger, Edge Cases (default behavior unchanged).

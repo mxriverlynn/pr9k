@@ -9,7 +9,7 @@ This file captures load-bearing implementation mechanics whose behavior the [fea
 - **Technical detail:** pr9k resolves the workflow bundle directory (which contains `config.json`, `prompts/`, and `scripts/`) from the primary checkout before the worktree exists. If the resolution were deferred until after the worktree was created, pr9k could pick up an in-repo workflow override from inside the worktree — and the worktree's contents start as a copy of the primary's HEAD, which the workflow itself is about to mutate mid-run. Anchoring the workflow bundle to the primary checkout prevents the workflow from rewriting itself out from under the runner. The required ordering is: CLI flag parse → workflow-bundle resolution → `config.json` load → worktree create → project-directory redirect → runtime-directory creation → runner construction. The pr9k process never calls a process-global change-of-directory; the redirect is a single-field substitution in the runtime config consumed by every downstream subsystem.
 - **Supports decisions:** [D1](decision-log.md#d1-worktree-location), [D8](decision-log.md#d8-default-and-config-shape)
 - **Driven by findings:** —
-- **Referenced in spec:** Primary Flow (step 2), Coordinations (Git local).
+- **Referenced in spec:** Primary Flow (step 2), Primary Flow (step 4), Coordinations (Git local).
 
 ## T2: Branch uniqueness — git refuses to check out a branch in two worktrees
 
@@ -26,5 +26,5 @@ This file captures load-bearing implementation mechanics whose behavior the [fea
 - **Context:** [Edge Cases](../feature-specification.md#edge-cases-and-failure-modes) ("The first `git push` of the run's branch happens"), [Coordinations](../feature-specification.md#coordinations) ("Git (remote) — first push of the run's branch").
 - **Technical detail:** A branch created locally has no upstream. Bare `git push` from such a branch fails because git doesn't know which remote ref to push to. The push step in the default workflow either (a) sets the upstream on first push so that a tracking ref is established and the push succeeds in one step, or (b) refuses to silently swallow non-zero exit codes when the push fails. The current `git_push` script does neither — it runs bare `git push` and traps all exits to zero, so the failure mode is invisible. This T# captures the constraint; the spec commits to "first push establishes a tracking ref AND surfaces non-zero exits" without prescribing a specific mechanism. The implementation plan picks the exact form (a flag added to the script, a pre-push tracking-ref check inside the script, or a wrapper in the runner). Once the upstream is set, the run's subsequent pushes (after later iterations) reuse the established tracking ref unchanged.
 - **Supports decisions:** [D7](decision-log.md#d7-first-push-sets-upstream)
-- **Driven by findings:** —
+- **Driven by findings:** F-02
 - **Referenced in spec:** Edge Cases (first push), Coordinations (Git remote — first push), Open Items (OI-1).
