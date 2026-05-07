@@ -40,7 +40,7 @@ This file captures load-bearing implementation mechanics whose behavior the [fea
   {
     "schemaVersion":  1,
     "pr9kVersion":    "<semver>",
-    "worktreeStamp":  "ralph-YYYY-MM-DD-HHMMSS.mmm",
+    "worktreeStamp":  "pr9k-YYYY-MM-DD-HHMMSS.mmm",
     "worktreePath":   "<absolute path>",
     "branchName":     "pr9k-<worktreeStamp>",
     "primaryPath":    "<absolute path>",
