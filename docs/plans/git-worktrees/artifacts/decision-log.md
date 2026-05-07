@@ -50,17 +50,18 @@ This file records every decision settled while specifying the `useWorktrees` fea
   - TUI-only surfacing of the worktree path — rejected because users away from the terminal cannot recover the path. Replaced by structured log + iteration-log records.
 - **Linked technical notes:** —
 - **Driven by findings:** F-09
-- **Dependent decisions:** D4 (cleanup policy must keep the worktree because logs are inside it), D11 (startup feedback uses the same structured records).
+- **Dependent decisions:** D4 (default cleanup keeps the worktree because logs are inside it), D13 (autoCleanup opt-in trades log durability for cleanup ergonomics), D11 (startup feedback uses the same structured records).
 - **Referenced in spec:** Outcome, Edge Cases (logs and artifacts on completion).
 
-### D4: Cleanup policy
+### D4: Cleanup policy (default behavior when `autoCleanup` is false)
 
-- **Question:** What happens to the worktree on graceful run completion? On user-requested quit? On crash?
+- **Question:** When `worktrees.autoCleanup` is `false` (the default), what happens to the worktree on graceful run completion? On user-requested quit? On crash?
 - **Decision:**
   - On graceful completion: pr9k leaves the worktree on disk and writes a closing record (worktree path + branch + removal command) to the run's log file and iteration log. The TUI's final summary line surfaces the same information plus the count of all `pr9k/*` worktrees on disk.
   - On user-requested quit (`q`/`y`, SIGINT, SIGTERM): same as graceful completion.
   - On crash (SIGKILL, panic, power loss): the worktree is left on disk. The next run detects and warns about it ([D5](#d5-stale-worktree-handling)).
-- **Rationale:** The simpler-version answer to the cleanup question. Keeping the worktree preserves logs and partial work for review. The user has full control via standard `git worktree` commands. No new flag, no new state to manage, no risk of pr9k accidentally deleting work.
+  - When `worktrees.autoCleanup: true` is set, the graceful-completion and graceful-quit paths instead remove the worktree and delete the branch — see [D13](#d13-autocleanup-behavior). Crash paths still leave the worktree on disk regardless of the autoCleanup setting.
+- **Rationale:** The default keeps the worktree because that preserves logs and partial work for review. The opt-in `autoCleanup` (D13) covers users who want the cleanup automated; both are first-class behaviors. The user has full control via the config or via the `pr9k worktree prune` subcommand (D14). No new state to manage, no risk of pr9k accidentally deleting work without consent.
 - **Evidence:** Validation finding V7 (logs cannot be ephemeral); investigation open questions Q3 and Q4; team finding F-01 (need growth visibility in final summary).
 - **Rejected alternatives:**
   - Auto-remove on success, keep on failure — rejected on YAGNI grounds; no user has asked for it. Deferred with the reopening trigger documented in the spec.
@@ -119,19 +120,31 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Dependent decisions:** —
 - **Referenced in spec:** Edge Cases (first push, remote rejection), Coordinations (Git remote), User Interactions (Error states), Open Items (OI-1).
 
-### D8: Default and config shape
+### D8: Config shape — `worktrees` block
 
-- **Question:** How is `useWorktrees` exposed in `config.json`? Is there a CLI override?
-- **Decision:** A single boolean field `useWorktrees` at the top level of `config.json`. Default is `false` (the current in-place behavior). No CLI flag override.
-- **Rationale:** The user explicitly asked for a config-file toggle ("set a `useWorktrees` option at the top level of my workflow config.json"). A CLI flag duplicates the surface area and creates a precedence question (CLI vs. config). No user has asked for a CLI override. Default-false preserves the current behavior for everyone who hasn't opted in.
-- **Evidence:** User's stated request in conversation; ADR `20260410170952-narrow-reading-principle.md` (workflow content lives in config.json, not Go code).
+- **Question:** How is the worktree feature exposed in `config.json`? Is it a single field or a structured block? Is there a CLI override?
+- **Decision:** A top-level `worktrees` block in `config.json` containing the boolean fields `enabled` (default `false`) and `autoCleanup` (default `false`). No CLI flag override. The block shape is:
+
+  ```json
+  {
+    "worktrees": {
+      "enabled": true,
+      "autoCleanup": false
+    }
+  }
+  ```
+
+  Both fields are optional; an absent block is equivalent to `{ enabled: false, autoCleanup: false }`.
+- **Rationale:** The original draft used a single boolean (`useWorktrees: true`) on YAGNI grounds, but the user redirected toward a block during review because cleanup ergonomics need a second knob (`autoCleanup`) and a block makes future additions (e.g., `location`, `branchPrefix`, `keepLogs`) compatible without re-shaping the config. Default-off preserves the current in-place behavior for users who don't opt in. A CLI flag is rejected for the same reasons as the original draft — it duplicates surface area and creates a precedence question, and no user has asked for one.
+- **Evidence:** User redirect in conversation; ADR `20260410170952-narrow-reading-principle.md` (workflow content lives in config.json, not Go code).
 - **Rejected alternatives:**
-  - A struct (e.g., `worktree: { enabled: true, location: ..., keep: true }`) — rejected on YAGNI grounds; defer the struct shape until a second config knob is needed.
-  - A CLI flag `--worktrees` — rejected as duplicate surface area; defer until a real use case (e.g., one-off runs that override the config) appears.
+  - Single top-level boolean `useWorktrees: true` — rejected after the user redirected toward a block to accommodate `autoCleanup` and future fields without breaking the schema.
+  - A flat pair of top-level fields (`useWorktrees: true`, `worktreeAutoCleanup: false`) — rejected because the two fields are conceptually one feature; a block makes that relationship clear and validation simpler.
+  - A CLI flag `--worktrees` or `--worktree-auto-cleanup` — rejected as duplicate surface area.
 - **Linked technical notes:** [T1](feature-technical-notes.md#t1-sequencing-constraint)
-- **Driven by findings:** —
-- **Dependent decisions:** —
-- **Referenced in spec:** Outcome, Trigger, Edge Cases (default behavior unchanged).
+- **Driven by findings:** User redirect (post-review)
+- **Dependent decisions:** D13 (autoCleanup behavior nests inside this block).
+- **Referenced in spec:** Outcome, Trigger, Edge Cases (default behavior unchanged, autoCleanup-without-enabled validation), Primary Flow (step 2).
 
 ### D9: Subcommand scope
 
@@ -181,7 +194,7 @@ This file records every decision settled while specifying the `useWorktrees` fea
 ### D12: Statusline payload shape
 
 - **Question:** Should the statusline JSON payload gain a `primaryDir` field so user-authored statusline scripts can show both paths?
-- **Decision:** Not in the first iteration. The existing `projectDir` field is repurposed to carry the worktree path while `useWorktrees` is true.
+- **Decision:** Not in the first iteration. The existing `projectDir` field is repurposed to carry the worktree path while `worktrees.enabled` is true.
 - **Rationale:** No user has asked for both paths. Adding a field is additive and backwards-compatible (existing scripts don't read it), but adding it preemptively is YAGNI. The single-path design is simpler and matches the existing semantics ("the directory where the workflow operates").
 - **Evidence:** Validation finding V11; statusline payload documented in [`docs/code-packages/statusline.md`](../../../code-packages/statusline.md).
 - **Rejected alternatives:**
@@ -190,3 +203,50 @@ This file records every decision settled while specifying the `useWorktrees` fea
 - **Driven by findings:** —
 - **Dependent decisions:** —
 - **Referenced in spec:** Out of Scope, Deferred (YAGNI).
+
+### D13: autoCleanup behavior
+
+- **Question:** Should pr9k offer an opt-in `autoCleanup` mode that removes the worktree and its branch on graceful completion, and what are its semantics around logs, crash paths, and validation?
+- **Decision:** Yes. `worktrees.autoCleanup: true` causes pr9k to remove the worktree (`git worktree remove --force`) and delete the run's branch (`git branch -D pr9k/<run-stamp>`) at the end of the graceful-shutdown path — both on successful completion and on user-requested quit (`q`/`y`, SIGINT, SIGTERM). The closing log record is written *before* removal so the structured log captures what happened, but anything that lived only inside the worktree (the log file itself, iteration log, per-step transcripts) is removed with it. Crash paths (SIGKILL, panic, power loss) skip cleanup because they skip shutdown entirely. Default is `false`. The validator rejects a config that sets `autoCleanup: true` without `enabled: true`.
+- **Rationale:** The user asked for cleanup to be easy and not a manual process. Auto-cleanup on graceful completion eliminates the manual `git worktree remove` step for users whose workflow tolerates ephemeral logs. Forcing the user to opt in (default `false`) preserves the safe default — logs and partial work are kept by default, since a user new to the feature shouldn't have their first crash leave them wondering where their logs went. Skipping cleanup on hard crash paths is the only correct choice because there's no opportunity to run shutdown code; stale-worktree detection (D5) catches those cases. Validating `autoCleanup` requires `enabled` because the option is meaningless otherwise and a silent-no-op would be confusing.
+- **Evidence:** User redirect in conversation ("we need options like this and the auto-cleanup, to make cleanup easy and not a manual process"); validation finding V7 (logs cannot be ephemeral by default — opt-in preserves the default).
+- **Rejected alternatives:**
+  - `autoCleanup` defaults to `true` — rejected because the safe default is to keep work; users who want cleanup opt in. Avoids surprising new users with vanished logs.
+  - Two separate fields (`removeOnSuccess`, `removeOnQuit`) — rejected on YAGNI grounds; one knob covers all graceful-shutdown paths and matches the user's stated request.
+  - Always preserve logs by copying them out of the worktree before removal — rejected on simpler-version grounds; users who need logs preserved leave `autoCleanup: false`. The `logDir` split remains in Deferred for the case where a user wants both behaviors.
+  - Cleanup on hard crash via post-run startup probe — rejected because it would require pr9k to remember which worktrees were "owned by the most recent crashed run" vs prior runs the user wants to keep. The simpler `pr9k worktree prune` (D14) covers this case.
+- **Linked technical notes:** —
+- **Driven by findings:** User redirect (post-review)
+- **Dependent decisions:** D14 (prune subcommand handles the crash-path case where autoCleanup couldn't run).
+- **Referenced in spec:** Outcome, Trigger, Primary Flow (step 11), Alternate Flows (graceful quit), Edge Cases (autoCleanup-without-enabled, autoCleanup with crash).
+
+### D14: `pr9k worktree prune` subcommand
+
+- **Question:** Should pr9k ship a subcommand that removes all pr9k-owned worktrees and branches in one step, regardless of whether `worktrees.enabled` was set in the active config?
+- **Decision:** Yes. A new `pr9k worktree prune` subcommand is added. It discovers pr9k-owned worktrees using the same path-prefix filter D5 uses (directory name matches `<primary-basename>-pr9k-*`), removes each with `git worktree remove --force` (because pr9k worktrees routinely contain uncommitted intermediate workflow files), and deletes each `pr9k/<stamp>` branch with `git branch -D`. A `--dry-run` flag lists what would be removed without changing anything. Per-worktree errors are surfaced verbatim and the subcommand continues with the rest; the exit code is non-zero if any removal failed. The subcommand is independent of the workflow config — it works whether or not `worktrees.enabled` is set, and even works on a primary checkout that never used the worktree feature (it simply finds no entries and exits zero).
+- **Rationale:** The user explicitly asked for this subcommand to make cleanup not a manual process. Even with `autoCleanup: true`, hard crashes leave worktrees on disk (D13). Without a subcommand, the user must inspect `git worktree list`, identify pr9k-owned entries, run `git worktree remove --force` for each, and `git branch -D` for each branch — a multi-step manual chore. A single `pr9k worktree prune` collapses that into one command. `--dry-run` is the safe default-discovery mode for users who want to see what would be affected before committing. The path-prefix filter ensures pr9k never touches user-created worktrees or branches that aren't pr9k's.
+- **Evidence:** User redirect in conversation ("include the `pr9k worktree prune` subcommand in the plan"); D5 already establishes the path-prefix-based filter.
+- **Rejected alternatives:**
+  - Interactive prompt before each removal — rejected because the user's stated goal is "easy, not manual"; interactive prompts re-introduce manual labor. `--dry-run` covers the "I want to see first" case.
+  - Add `pr9k worktree list` as a separate subcommand — rejected on YAGNI grounds; `git worktree list` already exists and `pr9k worktree prune --dry-run` covers the pr9k-filtered listing case.
+  - Make prune accept a path argument to remove a specific worktree — rejected on YAGNI grounds; `git worktree remove` already does this. `pr9k worktree prune` is the bulk operation.
+  - Run prune automatically at startup — rejected because it conflicts with D5's "warn, don't auto-remove" stance; the user owns the cleanup decision.
+- **Linked technical notes:** —
+- **Driven by findings:** User redirect (post-review)
+- **Dependent decisions:** —
+- **Referenced in spec:** Outcome, Trigger, Alternate Flows (`pr9k worktree prune` invocation), Edge Cases (prune-related rows), Coordinations.
+
+### D15: No cross-run resume
+
+- **Question:** When pr9k is invoked on a primary checkout where a prior run was killed mid-iteration, does the new run continue the prior run's work?
+- **Decision:** No. Each pr9k invocation is fully independent. A new run picks up the next open ralph issue (which may be the same issue the prior run was working on) and implements it from scratch in a fresh worktree on a fresh branch. Prior partial work remains on its own branch in its own (now stale) worktree; the user reconciles divergent branches manually. `resumePrevious` (the existing intra-run Claude-session resume mechanism) does not bridge across pr9k invocations.
+- **Rationale:** Cross-run resume is a much larger feature than the worktree toggle — it would require persistent run state, a "what was in progress?" record, and reconciliation logic for the case where the prior worktree's branch has diverged from the user's primary HEAD between runs. None of that is justified by current evidence: no user has asked for it, the failure mode (divergent branches) is recoverable manually, and the silent-skip risk (issue closed but push failed) is already mitigated by D7's push-failure error-recovery routing. The simpler answer is to declare the boundary explicitly so users understand what restart means and how to reconcile.
+- **Evidence:** User question in conversation ("what are the implications of stopping a run and restarting on the same set of tickets?"); existing `resumePrevious` documentation in `docs/code-packages/workflow.md` (intra-run only); D7 (push-failure error-recovery as the safety net for the silent-skip case).
+- **Rejected alternatives:**
+  - Persist run state to `.pr9k/active-run.json` and resume on next invocation — rejected because it adds significant complexity for a use case nobody has asked for, and the recovery semantics are non-trivial (what if the user's HEAD moved? what if they manually edited the prior branch?).
+  - Auto-detect and resume the prior worktree's branch — rejected because it removes the user's agency to reconcile manually, and the prior worktree may be in any state (mid-step, mid-iteration, post-iteration-pre-push).
+  - Refuse to start a new run if a stale pr9k worktree exists — rejected because it forces the user to clean up before they can do anything else, conflicting with the warn-only policy of D5.
+- **Linked technical notes:** —
+- **Driven by findings:** User question (post-review)
+- **Dependent decisions:** D7 (push-failure error-recovery is the safety net that prevents silent-skip from becoming silent-data-loss).
+- **Referenced in spec:** Background (cross-run independence), Alternate Flows ("A prior run was killed mid-iteration..."), Out of Scope, Edge Cases.

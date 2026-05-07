@@ -203,3 +203,37 @@ This file records every finding raised by the review team for the `useWorktrees`
 - JD-011: D11 cited a Go source file with a line number — junior-developer — D12 (Evidence updated to reference the package doc)
 - JD-012: Coordinations table row for "User's primary checkout" was a constraint, not a coordination — junior-developer — Outcome (moved to a new "Invariants" subsection)
 - F-10: Mid-run worktree deletion failure mode "not designed to recover" was vague — devops-engineer — Edge Cases (clarified that failure routes through the standard error path or terminates the TUI without recovery)
+
+## User-driven redirects (post-review)
+
+These items were not raised by review specialists; they were redirects from the user after the spec was first presented. Recorded here for traceability with the same F# convention.
+
+### F-USER-01: Restructure config from single boolean to a `worktrees` block with `enabled` + `autoCleanup`
+
+- **Agent:** user
+- **Finding:** The original `useWorktrees: true` shape didn't accommodate the cleanup ergonomics the user actually wanted. The simpler-version reasoning that rejected a struct in the original D8 was overruled by the user's stated need to make cleanup easy.
+- **Resolution:** Reshaped D8 to a top-level `worktrees` block containing `enabled` and `autoCleanup`. Added D13 covering `autoCleanup` semantics (graceful-only, crash-safe, validator rejects autoCleanup-without-enabled).
+- **Resolved by:** user input
+- **Affected decisions:** D8 (reshape), D13 (new), D4 (now references D13 for the autoCleanup case)
+- **Affected tech-notes:** —
+- **Changed in spec:** Header, Outcome, Trigger, Primary Flow (steps 1, 2, 3, 11, 12), Alternate Flows (graceful quit), Edge Cases (autoCleanup-related rows), User Interactions, Out of Scope, Deferred (consolidated `logDir` entry)
+
+### F-USER-02: Promote `pr9k worktree prune` subcommand from Deferred to in-scope
+
+- **Agent:** user
+- **Finding:** Deferring the prune subcommand left cleanup as a manual chore (`git worktree list` → identify pr9k entries → `git worktree remove` per path → `git branch -D` per branch). The user explicitly wants cleanup to be a single command.
+- **Resolution:** Added D14 covering the subcommand's behavior: path-prefix-filtered discovery, force-remove worktrees, delete `pr9k/*` branches, `--dry-run` flag, per-worktree error tolerance with non-zero exit on any failure. Added a new alternate flow ("The user runs `pr9k worktree prune`") and Edge Cases rows. Removed the corresponding Deferred entry.
+- **Resolved by:** user input
+- **Affected decisions:** D14 (new); removed from Deferred
+- **Affected tech-notes:** —
+- **Changed in spec:** Outcome, Trigger, Alternate Flows (new "user runs `pr9k worktree prune`" flow), Edge Cases (prune-related rows), User Interactions, Coordinations (new row), Deferred (removed prune entry), Out of Scope (removed bulk-cleanup entry)
+
+### F-USER-03: Define `<run-stamp>` source and document cross-run-restart implications
+
+- **Agent:** user
+- **Finding:** The user asked how `<run-stamp>` is created and what happens when pr9k is killed mid-run and restarted on the same set of tickets. The spec answered the first only obliquely (via a `docs/code-packages/logger.md` cross-reference) and did not address the second at all.
+- **Resolution:** Expanded the Background section to define `<run-stamp>` precisely (millisecond-precision wall clock from `time.Now()`, format `ralph-YYYY-MM-DD-HHMMSS.mmm`, generated once per pr9k invocation). Added a paragraph explicitly stating that runs do not coordinate. Added a dedicated alternate flow ("A prior run was killed mid-iteration and the user restarts pr9k") covering: stale-detection behavior, fresh worktree on fresh branch, the from-scratch implementation of the same issue, divergent-branch reconciliation steps, and the silent-skip risk that D7's push-failure error-recovery routing prevents. Added D15 ("No cross-run resume") capturing the boundary explicitly. Added the matching Out of Scope entry.
+- **Resolved by:** user input + evidence (logger source, workflow.md docs)
+- **Affected decisions:** D15 (new)
+- **Affected tech-notes:** —
+- **Changed in spec:** Background, Alternate Flows (new "A prior run was killed mid-iteration..." flow), Edge Cases (cross-run row), Out of Scope (cross-run resume entry)
