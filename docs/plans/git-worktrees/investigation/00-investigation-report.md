@@ -304,3 +304,27 @@ Triggered by V7:
 - **What the feature spec must resolve**: schema-add discipline (four files atomically), worktree location, log-durability strategy, branch naming for the per-run worktree, cleanup policy with explicit startup-probe algorithm, submodule policy, statusline payload `primaryDir` addition, and a note in coding standards about the unknown-fields decoder.
 - **What is NOT a problem**: subprocess env inheritance (V1), individual workflow script behavior (V2, V13), per-run worktree accumulating commits (V5), `gh` auth (V8), Docker bind-mount mechanics (E8), config-load timing relative to WorkflowDir (E11, V4 — provided sequencing is preserved).
 - **Remaining risks**: see Confidence Assessment.
+
+---
+
+## Cross-run Resume Requirement (added 2026-05-07 after user redirect)
+
+The original spec declared "no cross-run resume" via D15 on YAGNI grounds. The user has now stated this is a hard requirement that blocks the entire feature: pr9k MUST automatically pick up where it left off when an interrupted run is restarted, without any manual "find the previous worktree" step. D15 is reversed.
+
+A second investigation pass examined six options (Options A–F in [`05-resume-options.md`](05-resume-options.md)) with three sub-reports ([`05a`](05a-iteration-loop-state.md), [`05b`](05b-state-mechanisms.md), [`05c`](05c-resume-behavior.md)) and adversarial validation ([`05d`](05d-resume-validation.md)).
+
+### Key new findings
+
+- **`get_next_issue` is naturally idempotent** (E1, E14). The script queries `is:open` issues, so an unfinished iteration's issue is re-delivered on the next invocation. Iteration-level resume is "free" — no per-step bookmarks needed.
+- **Existing patterns make a state file cheap.** `atomicwrite.Write` (E8) and the crash-temp PID liveness check in `workflowio` (E9) are direct precedents. `.pr9k/` is preflight-created (E10), so the state file path `.pr9k/active-run.json` has a guaranteed parent.
+- **Two critical gaps surfaced by validation**:
+  - V3: `RunResult` is discarded today and doesn't distinguish "user quit" from "completed." A new `ExitReason` field is required to know when to remove the state file vs leave it for resume.
+  - V4: `post_issue_summary` and `lessons-learned` already read all of `iteration.jsonl`. Multi-invocation accumulation breaks them. Switch to per-invocation files (`iteration-<invocationStamp>.jsonl`) instead of session-boundary markers.
+- **D7 (push-failure error-recovery) becomes a hard prerequisite** (V1). The close-then-push step ordering creates a silent-skip window if a kill lands between them. Re-ordering so push runs before close eliminates the window for the default workflow.
+- **D5 (stale-worktree warning) needs an active-run exclusion** (V6). Without it, every resumed run warns about its own worktree.
+
+### Recommendation: refined Option A
+
+A stamped worktree per active run + a small active-run state file at `<primary>/.pr9k/active-run.json`. State-file existence is the deterministic resume marker. Both `autoCleanup: true` (clean on success, resume on kill) and `autoCleanup: false` (keep on success for inspection, resume on kill) are preserved as first-class options.
+
+Full design, comparison matrix, integration plan, and validation results are in [`05-resume-options.md`](05-resume-options.md).

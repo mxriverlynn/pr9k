@@ -252,14 +252,94 @@ Implementation-level — the spec's "Planned Fix" section. (Not implemented; pla
 | `feature-specification.md` | Update D15, Background, "A prior run was killed mid-iteration" alternate flow. | This investigation |
 | `decision-log.md` | New decision D16 documenting the resume mechanism; update D13 to mention state-file removal; reverse D15. | This investigation |
 
-## Validation
+## Validation Results
 
-(To be filled in by adversarial-validator pass.)
+Adversarial validation tested 12 hypotheses. Full report in [`05d-resume-validation.md`](05d-resume-validation.md).
+
+### Critical findings (change the plan)
+
+#### V3: `RunResult` is discarded; the state-file-removal hook has no exit-reason signal
+- **Hypothesis:** Removing the state file on graceful completion is a small new responsibility for `main.go`.
+- **Investigation:** `src/cmd/pr9k/main.go:298` is `_ = workflow.Run(...)`. `RunResult` only carries `IterationsRun`. ActionQuit (user-requested quit) and normal completion both return structurally identical results. There is no way today to tell "user quit (resume next time)" from "loop completed (clean up)" from `breakLoopIfEmpty` (also clean up).
+- **Result:** Refuted as written. The plan needs a concrete shape for the exit-reason signal.
+- **Impact:** Add a behavioral commitment that `RunResult` (or its propagation through `main.go`) must distinguish at minimum: `Completed` (all iterations and finalize ran), `UserQuit` (`q`/`y` or SIGINT/SIGTERM acknowledged), and `LoopBroken` (`breakLoopIfEmpty` triggered). Removal-on-graceful-completion runs only on `Completed` or `LoopBroken`; `UserQuit` keeps the state file so the next invocation resumes. SIGKILL/panic skip the removal entirely. This is a small but real refactor surface in `main.go` and the `workflow` package.
+
+#### V4: `post_issue_summary` and `lessons-learned` read ALL of `iteration.jsonl` and break under multi-invocation accumulation
+- **Hypothesis:** `iteration.jsonl` accumulating across runs is benign — append-only, schema_version supports multiple invocations.
+- **Investigation:** `workflow/scripts/post_issue_summary:16` reads the entire `iteration.jsonl` and posts every step's record into the GitHub issue comment. `workflow/prompts/lessons-learned.md:5,8` reads the entire file and the prompt then truncates. On a resumed run, both consumers see records from the original killed invocation AND the resumed invocation, and the issue comment is polluted with prior-run noise; the lessons-learned step truncates everything, losing the original run's history.
+- **Result:** Refuted. Multi-invocation `iteration.jsonl` is not benign with the existing consumers.
+- **Impact:** Two options on the table:
+  1. **Per-invocation `iteration.jsonl`** — each pr9k invocation writes to a separate file (e.g., `.pr9k/iteration-<invocationStamp>.jsonl`). The consumers read the *current* invocation's file. Past invocations' files persist for forensic review. Cheaper change; no consumer breakage.
+  2. **Session-boundary records + filtered consumers** — single file with boundary markers; consumers updated to filter by current invocation. Larger change touching scripts and prompts.
+  Recommend (1) — strictly simpler. Update D11/D14 to clean up old per-invocation files alongside the worktree on `autoCleanup`.
+
+### Important findings (add constraints)
+
+#### V1: `get_next_issue` idempotency has a window of silent data loss in the close-then-push step ordering
+- **Hypothesis:** The script's `is:open` filter makes resume free.
+- **Investigation:** `workflow/config.json:28-29` shows `Close issue` runs before `Git push`. Kill between those steps closes the issue but leaves commits unpushed. The resumed run's `get_next_issue` skips the closed issue. The work survives only on the local branch in the worktree.
+- **Result:** Confirmed concern. The investigation already noted this (E14 referenced D7 as the safety net), but D7 (push-failure routing into c/r/q) is currently unimplemented — the `workflow/scripts/git_push` script still has `trap 'exit 0' EXIT`.
+- **Impact:** D7 is now a **hard prerequisite** for cross-run resume to be correct, not a nice-to-have shipped alongside. Either D7 lands first or this whole feature ships with a known silent-skip risk. Recommend: re-order the close↔push steps in the default workflow (push BEFORE close) — this eliminates the window entirely and is independently useful.
+
+#### V2: PID-reuse false positives turn a "soft fail" into a hard block
+- **Hypothesis:** `syscall.Kill(pid, 0)` is a deterministic enough liveness check.
+- **Investigation:** PID reuse is acknowledged in `crashtemp.go:35` as an accepted limitation. On macOS, PIDs cycle through small ranges quickly. If an unrelated process inherits the prior pr9k PID, `Kill(pid, 0)` returns nil and the new pr9k refuses to start with "another pr9k may be running."
+- **Result:** Confirmed concern.
+- **Impact:** Augment the liveness check with a process-identity check: store the binary path (`/proc/<pid>/exe` on Linux, `lsof -p <pid>` or `ps -o command= -p <pid>` portable fallback) in the state file at write time, and on read compare both PID-alive AND binary-matches. If PID alive but binary doesn't match → treat as dead and resume. If both match → soft fail. As a final fallback, document that the user can `--fresh` to override. Acceptable.
+
+#### V5: The state-file write seam is INSIDE `startup`, not before it
+- **Hypothesis:** State-file write goes between `cli.Execute` and `startup`.
+- **Investigation:** `preflight.Run` creates `.pr9k/` and is INSIDE `startup`. `atomicwrite.Write` requires the parent dir to exist. The READ can precede `startup` (ENOENT = no active run). The WRITE must follow `preflight.Run`.
+- **Result:** Refuted as written; integration table was correct but the rationale was misleading.
+- **Impact:** Tighten the prose: read happens early (between `cli.Execute` and `startup`); write happens inside `startup` after `preflight.Run` and after the worktree is resolved.
+
+#### V6: D5's stale-worktree filter would warn about the active worktree on every resumed run
+- **Hypothesis:** D5 carries over unchanged.
+- **Investigation:** D5 uses a path-prefix filter only. It does not consult `active-run.json`. On a resumed run, D5 emits a "stale worktree detected" warning for the very worktree pr9k is about to re-enter.
+- **Result:** Confirmed concern.
+- **Impact:** D5 must be updated to exclude the worktree referenced in `active-run.json` (if present). Easy to fix; needs to be specified.
+
+### Informational / refuted
+
+- **V7, V8:** `IterationRecord.SessionID` is Claude's session ID, not the RunStamp. Per-invocation correlation needs an explicit `invocationStamp` field if we go with V4 option (2). With V4 option (1) — per-invocation files — no schema change.
+- **V9:** `--fresh` semantics need to specify worktree handling. Recommendation: `--fresh` deletes both the state file AND the worktree+branch if `worktrees.enabled` is true. Otherwise the orphaned worktree triggers D5's warning forever.
+- **V10:** `syscall.Kill` has no Windows build tag in the existing codebase. pr9k's preflight (`docker/sandbox`) is also POSIX-assuming. Cross-platform is not currently a concern.
+- **V11:** Schema-version downgrade — recommendation amended: log a warning, attempt to resume anyway, fail gracefully if structural fields are missing. Refusal-with-`--fresh`-only forces the user to lose work, which is wrong.
+- **V12:** Kill between loop-end and state-file removal is benign: the next run's `get_next_issue` returns no open issues, finalize re-runs (idempotent), state-file removal happens then.
+
+### Adjustments to the recommendation
+
+Triggered by V3:
+- The spec must commit to a `RunResult.ExitReason` (or equivalent) distinguishing `Completed`, `UserQuit`, `LoopBroken`, with state-file removal gated on `Completed` or `LoopBroken`.
+
+Triggered by V4:
+- Switch from "single shared `iteration.jsonl` with session-boundary records" to "per-invocation `iteration-<invocationStamp>.jsonl` files." Past invocations' files persist alongside the worktree until autoCleanup or `pr9k worktree prune`. `post_issue_summary` and `lessons-learned` read the current invocation's file only; no consumer changes needed.
+
+Triggered by V1:
+- Re-order the default workflow's `Close issue` and `Git push` steps so push happens before close. This eliminates the close-then-push silent-skip window entirely. D7's error-recovery routing is still required for cases where push fails after a successful close (now impossible if we re-order) or for any standalone push failure.
+
+Triggered by V2:
+- State file records `pid`, `binaryPath`, `worktreeStamp`, `worktreePath`, `branchName`, `startedAt`, `pr9kVersion`, `schemaVersion`. Liveness check requires PID alive AND binary path matches. Document the failure modes.
+
+Triggered by V5:
+- Document the read/write seam separation in the integration table.
+
+Triggered by V6:
+- D5's filter is updated to skip the worktree named in `active-run.json` when the file exists.
+
+### Confidence Assessment
+
+- **Confidence:** Medium-high. The mechanism is sound for the 90% case; the four important findings are all addressable with small, well-bounded changes. The two critical findings (V3, V4) require concrete new design but no architectural rework.
+- **Remaining risks:**
+  - **D7 must ship first or alongside.** Without push-failure error-recovery routing, the close-before-push reordering covers the main window but other push-failure modes (e.g., a remote rejection of an already-pushed earlier iteration's branch) could still produce silent skips. Treat D7 as gating.
+  - **Per-invocation `iteration.jsonl` files** accumulate inside the worktree. With `autoCleanup: false`, they stay until the user prunes. Document this so users running long pr9k campaigns don't accumulate hundreds of files.
+  - **Process-identity check** is approximate. A binary-path comparison handles PID reuse for any non-pr9k process; it does not distinguish two different pr9k processes on the same primary checkout (which is precisely the concurrent-run case D10 forbids). Acceptable.
+  - **Schema-version compatibility** between pr9k versions is a new concern. The state-file format is now part of pr9k's public contract.
 
 ## Final Summary
 
 - **Root cause**: D15 of the existing spec declared cross-run resume out of scope on YAGNI grounds. The user has now provided explicit need; D15 is reversed.
-- **Fix**: Add a small state file (`<primary>/.pr9k/active-run.json`) written at run start and removed at graceful end. State-file presence is the deterministic resume marker. Combine with the existing stamped-worktree mechanism (D1, D2). No iteration-loop changes needed because `get_next_issue` is naturally idempotent (E1, E14).
-- **Why correct**: The simplest mechanism that satisfies all six hard requirements without forcing the user to abandon worktree inspection (`autoCleanup: false`). Builds on existing patterns (atomicwrite, crash-temp PID liveness check). Single insertion point in `main.go`. The behavioral analyst's preference for Option B was based on assuming `autoCleanup: true` is mandated; with `autoCleanup: false` preserved as a first-class option, A is necessary.
-- **Validation outcome**: To be filled in.
-- **Remaining risks**: To be filled in.
+- **Fix**: Add a small state file (`<primary>/.pr9k/active-run.json`) written at run start and removed at graceful end (where "graceful end" means `Completed` or `LoopBroken`, not `UserQuit`). State-file presence is the deterministic resume marker. Combine with the existing stamped-worktree mechanism (D1, D2). Iteration logs become per-invocation files (`iteration-<invocationStamp>.jsonl`) so existing consumers don't break (V4). Re-order the default workflow's `Close issue` and `Git push` steps so push happens first, eliminating the silent-skip window (V1). PID liveness check augmented with binary-path match (V2). D5 filter excludes the active worktree (V6).
+- **Why correct**: The simplest mechanism that satisfies all six hard requirements without forcing the user to abandon worktree inspection (`autoCleanup: false`). Builds on existing patterns (atomicwrite, crash-temp PID liveness check). Single insertion point in `main.go` (read) plus one inside `startup` (write). All counter-evidence the validator surfaced is addressable with small, well-bounded changes.
+- **Validation outcome**: Two critical findings (V3, V4) added required behavioral commitments; four important findings (V1, V2, V5, V6) added constraints. None invalidated the architecture.
+- **Remaining risks**: D7 must ship first or alongside; per-invocation files accumulate until prune; binary-path identity check is approximate; state-file format becomes a public contract surface.
