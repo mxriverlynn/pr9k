@@ -16,16 +16,20 @@ For the keyboard map and what the live TUI shows, see [Reading the TUI](reading-
 | **TUI log panel** | In-process | Same content as the log file, live, scrollable, but lost when pr9k exits |
 | **JSONL artifacts** | `<project-dir>/.pr9k/logs/<runstamp>/<phase>-<NN>-<slug>.jsonl` | Verbatim NDJSON stream from every claude step — raw turn-by-turn events, token usage, cost, the `result.result` text, and whether `is_error` was set |
 | **Iteration log** | `<project-dir>/.pr9k/iteration.jsonl` | One structured record per step: name, status, duration, token counts, and prep-error notes |
-| **Handoff files** | `<target-repo>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
+| **Handoff files** | `<project-dir>/progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md` | What Claude steps wrote for the next step; what git thinks the state is |
+| **Active-run claim** | `<primary-checkout>/.pr9k/active-run.json` | Worktree path, branch, stamp, PID, and binary for the currently-claimed run. Only present when worktrees are enabled. See [Using Worktrees](using-worktrees.md) |
 
-If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the directory where you ran it.
+When the bundled workflow (or any workflow with `worktrees.enabled: true`) is in use, `<project-dir>` in the table above is the **active worktree** path (`<parent-of-primary>/pr9k-YYYY-MM-DD-HHMMSS.mmm`), not the primary checkout. The `[worktrees] worktree: …` banner near the top of the log tells you which directory that is. The only exception is `active-run.json`, which is always written to the **primary** checkout. See [Worktrees runtime behavior](../features/worktrees.md#project-directory-substitution) for the full substitution rules.
 
-> **Tip:** Logs land under `<project-dir>/.pr9k/logs/` — that is, inside your **target repo's working directory**. Add the runtime-state entries to the target repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes:
+If pr9k is still running, start with the log panel — scroll back with `↑`/`k`/`↓`/`j` in Normal or Done mode. If pr9k has exited, open the log file from the worktree directory (or the primary checkout if worktrees are off).
+
+> **Tip:** Logs land under `<project-dir>/.pr9k/logs/`. Add the runtime-state entries to your repo's `.gitignore` before your first run to prevent log files from appearing as untracked changes — they will exist in both the primary checkout (for runs without worktrees) and any active worktree:
 > ```
 > # pr9k temp files and logs
 > .pr9k/logs/
 > .pr9k/iteration.jsonl
 > .pr9k/artifacts/
+> .pr9k/active-run.json
 > ```
 > Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is intentionally trackable so a per-repo workflow override can be committed. See [Getting Started](getting-started.md) for the canonical setup.
 
@@ -260,7 +264,7 @@ Several Claude steps communicate by writing files into the target repo and havin
 | `progress.txt` | All Claude steps (append) | Update docs, Lessons learned | Cleared by Lessons learned |
 | `deferred.txt` | All Claude steps (append) | Deferred work | Cleared by Deferred work |
 
-These files live in the **target repo's working directory** and are not committed. If a run fails partway through, they may be left behind — a leftover `test-plan.md` means "test writing didn't run or didn't finish", not "here's your plan". Delete them (or let the next run overwrite them) before reproducing.
+These files live in the **active project directory** (the worktree when worktrees are enabled, otherwise the primary checkout) and are not committed. If a run fails partway through, they may be left behind — a leftover `test-plan.md` means "test writing didn't run or didn't finish", not "here's your plan". Delete them (or let the next run overwrite them) before reproducing. If `autoCleanup` removed the worktree on a clean exit, these files were removed with it; only an interrupted run can leave them behind.
 
 For the full file-passing model, see [Workflow Variables](workflow-variables.md#file-based-data-passing-between-steps).
 
@@ -294,6 +298,8 @@ Fix the underlying config issue and re-run. See [Config Validation](../code-pack
 - [Breaking Out of the Loop](breaking-out-of-the-loop.md) — `breakLoopIfEmpty` semantics and how to verify it fired
 - [Setting Step Timeouts](setting-step-timeouts.md) — `timed out after Ns` notes in `iteration.jsonl`
 - [Resuming Sessions](resuming-sessions.md) — using session IDs in `iteration.jsonl` to verify a resume worked
+- [Using Worktrees](using-worktrees.md) — why `<project-dir>` paths in this guide point at the worktree, and how to identify the active worktree from the log banner
+- [Managing Worktrees](managing-worktrees.md) — `pr9k worktree prune` for stale worktrees left behind by an interrupted run
 - [File Logging](../code-packages/logger.md) — log file format, timestamp, context prefix (contributor reference)
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — the package that produces the JSONL artifacts
 - [Config Validation](../code-packages/validator.md) — validator error format and rules

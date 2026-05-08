@@ -4,7 +4,16 @@
 
 `pr9k worktree prune` removes stale `pr9k-*` linked worktrees from the primary
 checkout, freeing disk space and git refs left behind by interrupted or completed
-runs.
+runs. The bundled "Ralph" workflow ships with `worktrees.autoCleanup: true`, so
+a normal end-to-end run cleans up its own worktree on exit; prune exists for
+the cases that auto-cleanup cannot reach (SIGKILL, OOM, power loss, `q` → `y`
+quits, or workflows that opt out of `autoCleanup`).
+
+## Related
+
+- [Worktrees runtime behavior](worktrees.md) — state file, resume decision tree, and `autoCleanup` ordering
+- [Using Worktrees](../how-to/using-worktrees.md) — enabling the feature and lifecycle from a user's perspective
+- [Managing Worktrees](../how-to/managing-worktrees.md) — `prune` invocation patterns and `--fresh` recovery
 
 ## Subcommand shape
 

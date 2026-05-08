@@ -71,6 +71,15 @@ When pr9k receives SIGINT (Ctrl+C) or SIGTERM, the signal handler:
 
 When all iterations and finalize steps finish, pr9k writes the completion summary to the log body and the TUI enters Done mode with a `q quit` footer. The process does **not** auto-exit — press `q` then `y` to exit so you have time to review the final output.
 
+## Quitting and worktrees
+
+When the active workflow has `worktrees.enabled: true` (the bundled workflow does), the quit semantics matter for cleanup:
+
+- **`q` → `y`, SIGINT, SIGTERM** → `ExitReasonUserQuit`. The worktree, branch, and `active-run.json` claim file are **all preserved**, even when `autoCleanup: true`. The next `pr9k` invocation auto-resumes this worktree.
+- **Workflow runs to completion** → `ExitReasonCompleted` (or `ExitReasonLoopBroken` when `breakLoopIfEmpty` fires). With `autoCleanup: true`, the worktree, branch, and state file are removed; with `autoCleanup: false`, only the state file is removed.
+
+So pressing `q` mid-run is also "save my place". To discard the saved place, see [Managing Worktrees — `--fresh` flag](managing-worktrees.md#--fresh-flag).
+
 ## Exit codes
 
 | Shutdown path | Exit code |
@@ -108,6 +117,8 @@ Some interactions look like they might quit but don't:
 - [Reading the TUI](reading-the-tui.md) — what the footer looks like in each mode (`Quit Power-Ralph.9000?`, `Quitting...`, etc.); press `?` while running for the live keyboard map
 - [Recovering from Step Failures](recovering-from-step-failures.md) — the `q` entry point from error mode
 - [Debugging a Run](debugging-a-run.md) — what's left in the persisted log file after you quit
+- [Using Worktrees](using-worktrees.md) — the worktree lifecycle and how `UserQuit` preserves state for resume
+- [Managing Worktrees](managing-worktrees.md) — `--fresh` to discard the saved worktree from a prior `q` → `y` exit
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — keyboard mode state machine (contributor reference)
 - [Signal Handling & Shutdown](../features/signal-handling.md) — SIGINT/SIGTERM handler, exit code selection, cleanup ordering
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — subprocess SIGTERM-then-SIGKILL termination
