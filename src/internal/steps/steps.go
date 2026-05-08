@@ -86,6 +86,13 @@ type StatusLineConfig struct {
 	RefreshIntervalSeconds *int   `json:"refreshIntervalSeconds,omitempty"`
 }
 
+// WorktreesConfig holds the optional top-level "worktrees" block from config.json.
+// Both fields default to false (feature disabled) when absent.
+type WorktreesConfig struct {
+	Enabled     bool `json:"enabled"`
+	AutoCleanup bool `json:"autoCleanup"`
+}
+
 // Defaults holds the optional top-level "defaults" block. Each field is applied
 // to claude steps that do not set the corresponding step-level value.
 type Defaults struct {
@@ -106,6 +113,7 @@ type StepFile struct {
 	Env          []string          `json:"env,omitempty"`
 	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 	Defaults     *Defaults         `json:"defaults,omitempty"`
+	Worktrees    *WorktreesConfig  `json:"worktrees,omitempty"`
 	Initialize   []Step            `json:"initialize"`
 	Iteration    []Step            `json:"iteration"`
 	Finalize     []Step            `json:"finalize"`

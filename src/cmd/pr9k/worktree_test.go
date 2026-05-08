@@ -66,9 +66,9 @@ func TestWorktreePrune_SkipsActiveStateWorktree(t *testing.T) {
 
 	var stdout bytes.Buffer
 	deps := &worktreePruneDeps{
-		stdout:            &stdout,
-		stderr:            &stdout,
-		projectDir:        primary,
+		stdout:             &stdout,
+		stderr:             &stdout,
+		projectDir:         primary,
 		activeWorktreePath: wtActive,
 	}
 	if err := runWorktreePrune(deps, false); err != nil {
@@ -102,9 +102,9 @@ func TestWorktreePrune_SkipsCWDWorktree(t *testing.T) {
 
 	var stdout bytes.Buffer
 	deps := &worktreePruneDeps{
-		stdout:         &stdout,
-		stderr:         &stdout,
-		projectDir:     primary,
+		stdout:          &stdout,
+		stderr:          &stdout,
+		projectDir:      primary,
 		cwdWorktreePath: wtCWD,
 	}
 	if err := runWorktreePrune(deps, false); err != nil {

@@ -126,6 +126,7 @@ func buildVersionLabel() string {
 }
 
 func main() {
+	// Step 1: parse CLI flags.
 	cfg, err := cli.Execute(newSandboxCmd(), newWorkflowCmd(), newWorktreeCmd())
 	if err != nil {
 		if !errors.Is(err, errSilentExit) {
@@ -137,14 +138,109 @@ func main() {
 		return
 	}
 
+	// Early step-file load to read the worktrees block before startup().
+	// startup() loads the same file again for validation and step execution;
+	// the duplicate read is intentional and acceptable (file is small).
+	worktreesCfg, err := loadStepsForWorktrees(cfg.WorkflowDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	worktreesEnabled := worktreesCfg != nil && worktreesCfg.Enabled
+
+	// Step 2: read active-run.json from the primary project dir, regardless
+	// of worktrees.enabled. This must happen before validateActiveRun so we
+	// have the prior state available for the resume decision.
+	primaryPath := cfg.ProjectDir
+	activeRunStatePath := filepath.Join(primaryPath, ".pr9k", "active-run.json")
+	priorState, _ := readActiveRun(activeRunStatePath)
+
+	// Handle --fresh: discard stale state and force a clean start.
+	if cfg.Fresh && priorState != nil {
+		if err := os.Remove(activeRunStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "warning: --fresh: could not remove state file: %v\n", err)
+		}
+		priorState = nil
+	}
+
+	// Step 3: determine the action using the resume-validation function.
+	decision := validateActiveRun(activeRunStatePath, primaryPath)
+	action := decideWorktreeAction(priorState, decision, worktreesEnabled, cfg.Fresh)
+
+	if action == worktreeActionConcurrent {
+		fmt.Fprintf(os.Stderr, "error: another pr9k process is already running for this project\n")
+		os.Exit(1)
+	}
+
+	// Warn when a state file exists but worktrees feature is disabled.
+	if !worktreesEnabled && priorState != nil {
+		fmt.Fprintf(os.Stderr, "warning: active-run.json found but worktrees.enabled is false; proceeding in-place\n")
+	}
+
+	// Step 4: resolve worktree path and stamp.
+	var worktreePath, worktreeStamp, branch string
+	isResume := action == worktreeActionResume
+
+	if worktreesEnabled {
+		if isResume {
+			// Re-use the existing worktree from the prior run.
+			worktreePath = priorState.WorktreePath
+			worktreeStamp = priorState.WorktreeStamp
+			branch = priorState.Branch
+		} else {
+			// Fresh start: mint a new stamp and create a linked worktree.
+			worktreeStamp = logger.FormatStamp(time.Now())
+			branch = worktreeStamp
+			worktreePath = filepath.Join(filepath.Dir(primaryPath), worktreeStamp)
+			if err := gitWorktreeAdd(primaryPath, worktreePath, branch); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	} else {
+		worktreePath = primaryPath
+	}
+
+	// Step 5: startup with worktree path as projectDir so all downstream
+	// subsystems (sandbox bind-mount, logger, validator) operate against
+	// the worktree transparently (T2 from spec).
 	profileDir := preflight.ResolveProfileDir()
-	svc, ok := startup(cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, os.Stderr)
+	svc, ok := startup(cfg, worktreePath, profileDir, preflight.RealProber{}, os.Stderr)
 	if !ok {
 		os.Exit(1)
 	}
 	log := svc.log
 	stepFile := svc.stepFile
 	runner := svc.runner
+
+	// Step 6: write the state file after preflight so a preflight failure
+	// does not leave a state file pointing at an unusable worktree (D-1).
+	var activeState *ActiveRunState
+	if worktreesEnabled {
+		binary, _ := os.Executable()
+		activeState = &ActiveRunState{
+			SchemaVersion: activeRunSchemaVersion,
+			WorktreeStamp: worktreeStamp,
+			WorktreePath:  worktreePath,
+			PrimaryPath:   primaryPath,
+			Branch:        branch,
+			PID:           os.Getpid(),
+			Binary:        binary,
+		}
+		if err := writeActiveRun(activeRunStatePath, *activeState); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	// Step 7: log header lines recording the worktree context.
+	if worktreesEnabled {
+		if isResume {
+			_ = log.Log("worktrees", "RESUMED FROM "+priorState.WorktreePath)
+		}
+		_ = log.Log("worktrees", "worktree: "+worktreePath)
+		_ = log.Log("worktrees", "branch: "+branch)
+	}
 
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := ui.NewKeyHandler(runner.Terminate, actions)
@@ -295,10 +391,18 @@ func main() {
 	// Workflow goroutine: run the full workflow, then tear down cleanly.
 	go func() {
 		defer close(workflowDone)
-		_ = workflow.Run(runner, proxy, keyHandler, runCfg)
+		// Step 9: capture exit reason for post-run cleanup.
+		result := workflow.Run(runner, proxy, keyHandler, runCfg)
 		_ = log.Close()
 		close(lineCh)
 		keyHandler.SetMode(ui.ModeDone)
+
+		// Post-run: remove state file and optionally clean up worktree/branch.
+		// Only relevant when worktrees are enabled.
+		if worktreesEnabled && activeState != nil {
+			autoCleanup := worktreesCfg != nil && worktreesCfg.AutoCleanup
+			postRunCleanup(primaryPath, activeRunStatePath, activeState, result.ExitReason, autoCleanup, os.Stderr)
+		}
 	}()
 
 	// Shut down the status-line runner before waiting for the workflow goroutine.
