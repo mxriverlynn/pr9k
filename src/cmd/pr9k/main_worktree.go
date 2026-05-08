@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/mxriverlynn/pr9k/src/internal/steps"
 	"github.com/mxriverlynn/pr9k/src/internal/workflow"
@@ -73,6 +75,18 @@ func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState, ex
 	case workflow.ExitReasonUserQuit:
 		// leave state file and worktree in place for auto-resume
 	}
+}
+
+// applyFreshFlag removes the state file and clears prior state when --fresh is
+// set. If fresh is false or prior is nil, prior is returned unchanged.
+func applyFreshFlag(stateFilePath string, fresh bool, prior *ActiveRunState, stderr io.Writer) *ActiveRunState {
+	if !fresh || prior == nil {
+		return prior
+	}
+	if err := os.Remove(stateFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "warning: --fresh: could not remove state file: %v\n", err)
+	}
+	return nil
 }
 
 // loadStepsForWorktrees loads the step file from workflowDir and returns the

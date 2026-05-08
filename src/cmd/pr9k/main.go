@@ -156,12 +156,7 @@ func main() {
 	priorState, _ := readActiveRun(activeRunStatePath)
 
 	// Handle --fresh: discard stale state and force a clean start.
-	if cfg.Fresh && priorState != nil {
-		if err := os.Remove(activeRunStatePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, "warning: --fresh: could not remove state file: %v\n", err)
-		}
-		priorState = nil
-	}
+	priorState = applyFreshFlag(activeRunStatePath, cfg.Fresh, priorState, os.Stderr)
 
 	// Step 3: determine the action using the resume-validation function.
 	decision := validateActiveRun(activeRunStatePath, primaryPath)

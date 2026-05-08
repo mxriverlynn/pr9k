@@ -331,6 +331,96 @@ func TestStepFile_NoWorktreesBlock_ReturnsNil(t *testing.T) {
 	}
 }
 
+// TP-001: applyFreshFlag with fresh=true and prior state on disk removes the
+// state file and returns nil.
+func TestApplyFreshFlag_Fresh_PriorPresent_RemovesFileReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+	state := &ActiveRunState{
+		SchemaVersion: activeRunSchemaVersion,
+		WorktreeStamp: "pr9k-2026-05-08-170000.000",
+	}
+	if err := writeActiveRun(stateFilePath, *state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got := applyFreshFlag(stateFilePath, true, state, &buf)
+
+	if got != nil {
+		t.Errorf("expected nil return, got %+v", got)
+	}
+	if _, err := os.Stat(stateFilePath); !os.IsNotExist(err) {
+		t.Errorf("state file still exists after applyFreshFlag: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("unexpected stderr output: %q", buf.String())
+	}
+}
+
+// TP-001b: applyFreshFlag with fresh=true and state file already absent returns
+// nil without printing any warning.
+func TestApplyFreshFlag_Fresh_FileAbsent_NoWarning(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+	state := &ActiveRunState{WorktreeStamp: "pr9k-2026-05-08-180000.000"}
+
+	var buf bytes.Buffer
+	got := applyFreshFlag(stateFilePath, true, state, &buf)
+
+	if got != nil {
+		t.Errorf("expected nil return, got %+v", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("unexpected warning when file was already absent: %q", buf.String())
+	}
+}
+
+// TP-001c: applyFreshFlag with fresh=false leaves prior state and file untouched.
+func TestApplyFreshFlag_NotFresh_PriorUnchanged(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+	state := &ActiveRunState{
+		SchemaVersion: activeRunSchemaVersion,
+		WorktreeStamp: "pr9k-2026-05-08-190000.000",
+	}
+	if err := writeActiveRun(stateFilePath, *state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got := applyFreshFlag(stateFilePath, false, state, &buf)
+
+	if got != state {
+		t.Errorf("expected prior state pointer unchanged, got %+v", got)
+	}
+	if _, err := os.Stat(stateFilePath); err != nil {
+		t.Errorf("state file was removed unexpectedly: %v", err)
+	}
+}
+
+// TP-002: loadStepsForWorktrees returns a non-nil error when the workflowDir
+// contains no config.json (LoadSteps fails).
+func TestLoadStepsForWorktrees_NoConfigJSON_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir() // empty — no config.json
+
+	sf, err := loadStepsForWorktrees(dir)
+	if err == nil {
+		t.Fatal("expected non-nil error when config.json is absent, got nil")
+	}
+	if sf != nil {
+		t.Errorf("expected nil *StepFile on error, got %+v", sf)
+	}
+}
+
 // TP-211-016: postRunCleanup with autoCleanup prints stderr warnings for git
 // failures rather than silently ignoring them.
 func TestPostRunCleanup_GitFailure_PrintsWarning(t *testing.T) {
