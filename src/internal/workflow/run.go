@@ -307,6 +307,8 @@ type RunResult struct {
 	// It includes the iteration that triggered a breakLoopIfEmpty exit.
 	// Zero if the iteration loop never started.
 	IterationsRun int
+	// ExitReason describes how the run terminated.
+	ExitReason ExitReason
 }
 
 // Run is the main orchestration goroutine. It drives three config-defined phases
@@ -457,7 +459,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevInitStats = disp.capturedStats
 		prevInitState = st.lastState
 		if action == ui.ActionQuit {
-			return RunResult{}
+			return RunResult{ExitReason: ExitReasonUserQuit}
 		}
 		if s.CaptureAs != "" {
 			captured := executor.LastCapture()
@@ -471,6 +473,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	// BreakLoopIfEmpty produces empty stdout capture on successful completion.
 	writePhaseBanner("Iterations")
 	iterationsRun := 0
+	loopBroken := false
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		iterationsRun = i
 		vt.ResetIteration()
@@ -586,7 +589,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			prevIterStats = disp.capturedStats
 			prevIterState = th.lastState
 			if action == ui.ActionQuit {
-				return RunResult{IterationsRun: iterationsRun}
+				return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
 			}
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
@@ -608,6 +611,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				for remaining := j + 1; remaining < len(cfg.Steps); remaining++ {
 					header.SetStepState(remaining, ui.StepSkipped)
 				}
+				loopBroken = true
 				breakOuter = true
 				break
 			}
@@ -719,7 +723,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevFinalStats = disp.capturedStats
 		prevFinalState = th.lastState
 		if action == ui.ActionQuit {
-			return RunResult{IterationsRun: iterationsRun}
+			return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
 		}
 		captured := executor.LastCapture()
 		if s.CaptureAs != "" {
@@ -746,7 +750,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	emitBlank()
 	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
-	return RunResult{IterationsRun: iterationsRun}
+	exitReason := ExitReasonCompleted
+	if loopBroken {
+		exitReason = ExitReasonLoopBroken
+	}
+	return RunResult{IterationsRun: iterationsRun, ExitReason: exitReason}
 }
 
 // buildStep resolves a single step into a runnable ResolvedStep using vt for
