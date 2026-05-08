@@ -71,18 +71,23 @@ func buildStatusLineConfig(slc *steps.StatusLineConfig) *statusline.Config {
 // buildRunConfig constructs the workflow.RunConfig from the resolved inputs.
 // statusRunner must be the same runner passed to Start so that push/trigger
 // calls reach the active worker goroutine.
-func buildRunConfig(cfg *cli.Config, stepFile steps.StepFile, statusRunner workflow.StatusRunner, logWidth int, runStamp string) workflow.RunConfig {
+func buildRunConfig(cfg *cli.Config, stepFile steps.StepFile, statusRunner workflow.StatusRunner, logWidth int, runStamp string, worktreeBasename string, resumed bool, worktreePath, worktreeBranch string, worktreeCountFn func() int) workflow.RunConfig {
 	return workflow.RunConfig{
-		WorkflowDir:     cfg.WorkflowDir,
-		Iterations:      cfg.Iterations,
-		Env:             stepFile.Env,
-		ContainerEnv:    stepFile.ContainerEnv,
-		InitializeSteps: stepFile.Initialize,
-		Steps:           stepFile.Iteration,
-		FinalizeSteps:   stepFile.Finalize,
-		LogWidth:        logWidth,
-		RunStamp:        runStamp,
-		Runner:          statusRunner,
+		WorkflowDir:      cfg.WorkflowDir,
+		Iterations:       cfg.Iterations,
+		Env:              stepFile.Env,
+		ContainerEnv:     stepFile.ContainerEnv,
+		InitializeSteps:  stepFile.Initialize,
+		Steps:            stepFile.Iteration,
+		FinalizeSteps:    stepFile.Finalize,
+		LogWidth:         logWidth,
+		RunStamp:         runStamp,
+		Runner:           statusRunner,
+		WorktreeBasename: worktreeBasename,
+		Resumed:          resumed,
+		WorktreePath:     worktreePath,
+		WorktreeBranch:   worktreeBranch,
+		WorktreeCountFn:  worktreeCountFn,
 	}
 }
 

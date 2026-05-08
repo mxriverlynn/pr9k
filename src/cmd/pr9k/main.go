@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -327,7 +328,34 @@ func main() {
 		logWidth = ui.DefaultTerminalWidth
 	}
 
-	runCfg := buildRunConfig(cfg, stepFile, statusRunner, logWidth, log.RunStamp())
+	var worktreeCountFn func() int
+	if worktreesEnabled {
+		capturedPrimaryPath := primaryPath
+		capturedBranchRe := pr9kBranchRe
+		worktreeCountFn = func() int {
+			entries, err := gitWorktreeList(capturedPrimaryPath)
+			if err != nil {
+				return 0
+			}
+			count := 0
+			for _, e := range entries {
+				branchName := strings.TrimPrefix(e.Branch, "refs/heads/")
+				if capturedBranchRe.MatchString(branchName) {
+					count++
+				}
+			}
+			return count
+		}
+	}
+
+	var worktreeBasename, runWorktreePath, runBranch string
+	if worktreesEnabled {
+		worktreeBasename = filepath.Base(worktreePath)
+		runWorktreePath = worktreePath
+		runBranch = branch
+	}
+
+	runCfg := buildRunConfig(cfg, stepFile, statusRunner, logWidth, log.RunStamp(), worktreeBasename, isResume, runWorktreePath, runBranch, worktreeCountFn)
 
 	// Buffered channel between forwardPipe and the drain goroutine. Lines are
 	// written non-blockingly; drops are acceptable since the file logger still

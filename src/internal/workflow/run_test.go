@@ -155,8 +155,10 @@ type renderPhaseCall struct {
 }
 
 type renderIterCall struct {
-	iter, maxIter int
-	issueID       string
+	iter, maxIter    int
+	issueID          string
+	worktreeBasename string
+	resumed          bool
 }
 
 type stepStateCall struct {
@@ -167,8 +169,8 @@ type stepStateCall struct {
 func (h *fakeRunHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
 	h.renderInitializeCalls = append(h.renderInitializeCalls, renderPhaseCall{stepNum, stepCount, stepName})
 }
-func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
-	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID})
+func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID, worktreeBasename string, resumed bool) {
+	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID, worktreeBasename, resumed})
 }
 func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.renderFinalizeCalls = append(h.renderFinalizeCalls, renderPhaseCall{stepNum, stepCount, stepName})

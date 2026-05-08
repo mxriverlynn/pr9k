@@ -48,7 +48,7 @@ func (m headerModel) apply(msg tea.Msg) headerModel {
 	case headerStepStateMsg:
 		m.header.SetStepState(msg.idx, msg.state)
 	case headerIterationLineMsg:
-		m.header.RenderIterationLine(msg.iter, msg.max, msg.issue)
+		m.header.RenderIterationLine(msg.iter, msg.max, msg.issue, msg.worktreeBasename, msg.resumed)
 	case headerInitializeLineMsg:
 		m.header.RenderInitializeLine(msg.stepNum, msg.stepCount, msg.stepName)
 	case headerFinalizeLineMsg:

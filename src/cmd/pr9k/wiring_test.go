@@ -308,7 +308,7 @@ func TestBuildRunConfig_RunnerFieldIdentity(t *testing.T) {
 	stepFile := steps.StepFile{}
 	statusRunner := statusline.NewNoOp()
 
-	got := buildRunConfig(cfg, stepFile, statusRunner, 80, "stamp-123")
+	got := buildRunConfig(cfg, stepFile, statusRunner, 80, "stamp-123", "", false, "", "", nil)
 
 	if got.Runner != statusRunner {
 		t.Error("RunConfig.Runner is not identity-equal to the statusRunner passed to buildRunConfig")
@@ -328,7 +328,7 @@ func TestBuildRunConfig_FieldMapping(t *testing.T) {
 	}
 	runner := statusline.NewNoOp()
 
-	got := buildRunConfig(cfg, stepFile, runner, 120, "run-stamp")
+	got := buildRunConfig(cfg, stepFile, runner, 120, "run-stamp", "", false, "", "", nil)
 
 	if got.WorkflowDir != "/workflow" {
 		t.Errorf("WorkflowDir = %q, want %q", got.WorkflowDir, "/workflow")
@@ -371,7 +371,7 @@ func TestBuildRunConfig_ContainerEnvFieldMapping(t *testing.T) {
 	}
 	runner := statusline.NewNoOp()
 
-	got := buildRunConfig(cfg, stepFile, runner, 80, "stamp")
+	got := buildRunConfig(cfg, stepFile, runner, 80, "stamp", "", false, "", "", nil)
 
 	if len(got.ContainerEnv) != 2 {
 		t.Fatalf("ContainerEnv length = %d, want 2; got %v", len(got.ContainerEnv), got.ContainerEnv)
