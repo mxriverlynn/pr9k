@@ -112,6 +112,7 @@ type vFile struct {
 	Env          *[]string          `json:"env"`
 	ContainerEnv *map[string]string `json:"containerEnv,omitempty"`
 	Defaults     *vDefaults         `json:"defaults,omitempty"`
+	Worktrees    *vWorktrees        `json:"worktrees,omitempty"`
 	Initialize   *[]vStep           `json:"initialize"`
 	Iteration    *[]vStep           `json:"iteration"`
 	Finalize     *[]vStep           `json:"finalize"`
@@ -122,6 +123,12 @@ type vFile struct {
 type vDefaults struct {
 	Effort string `json:"effort,omitempty"`
 	Model  string `json:"model,omitempty"`
+}
+
+// vWorktrees is the strict struct used when validating the optional worktrees block.
+type vWorktrees struct {
+	Enabled     bool `json:"enabled"`
+	AutoCleanup bool `json:"autoCleanup"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -238,6 +245,12 @@ func docToVFile(doc workflowmodel.WorkflowDoc) vFile {
 		vf.Defaults = &vDefaults{
 			Effort: doc.Defaults.Effort,
 			Model:  doc.Defaults.Model,
+		}
+	}
+	if doc.Worktrees != nil {
+		vf.Worktrees = &vWorktrees{
+			Enabled:     doc.Worktrees.Enabled,
+			AutoCleanup: doc.Worktrees.AutoCleanup,
 		}
 	}
 	return vf
@@ -388,6 +401,13 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 	if vf.Defaults != nil {
 		if !isValidEffortValue(vf.Defaults.Effort) {
 			errs = append(errs, cfgErr("defaults", "config", "", fmt.Sprintf("effort %q is not valid; use one of %v or omit the field", vf.Defaults.Effort, validEffortValues)))
+		}
+	}
+
+	// worktrees validation.
+	if vf.Worktrees != nil {
+		if vf.Worktrees.AutoCleanup && !vf.Worktrees.Enabled {
+			errs = append(errs, cfgErr("worktrees", "config", "", "autoCleanup requires enabled to be true"))
 		}
 	}
 
