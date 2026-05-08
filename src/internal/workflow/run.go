@@ -389,6 +389,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		return filepath.Join(executor.ProjectDir(), ".pr9k", "logs", cfg.RunStamp, filename)
 	}
 
+	// newIterationRecord is a local closure that shadows the package-level
+	// buildIterationRecord, baking cfg.RunStamp in as the invocation stamp (D-9).
+	// All eleven call sites inside Run pass the same four arguments they always
+	// have; the stamp flows automatically without per-site edits.
+	newIterationRecord := func(issueID string, iterNum int, s steps.Step, status string) IterationRecord {
+		return buildIterationRecord(cfg.RunStamp, issueID, iterNum, s, status)
+	}
+
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)

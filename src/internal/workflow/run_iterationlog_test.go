@@ -860,6 +860,90 @@ func TestRun_SkipIfCaptureEmpty_InterIterationIsolation(t *testing.T) {
 	}
 }
 
+// TP-208-001: InvocationStamp is set from cfg.RunStamp on every record across
+// all three phases (initialize, iteration, finalize). Verifies D-9.
+func TestRun_IterationLog_InvocationStampAllPhases(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	const wantStamp = "ralph-2026-05-08-120000.000"
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		RunStamp:        wantStamp,
+		InitializeSteps: nonClaudeSteps("init"),
+		Steps:           nonClaudeSteps("iter-step"),
+		FinalizeSteps:   nonClaudeSteps("finalize"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 3 {
+		t.Fatalf("want 3 records (1 init + 1 iter + 1 finalize), got %d", len(recs))
+	}
+	for i, r := range recs {
+		if r.InvocationStamp != wantStamp {
+			t.Errorf("record %d InvocationStamp: want %q, got %q", i, wantStamp, r.InvocationStamp)
+		}
+	}
+}
+
+// TP-208-002: When cfg.RunStamp is empty, InvocationStamp is empty and the
+// field is omitted from the marshalled JSON (omitempty contract).
+func TestRun_IterationLog_InvocationStampOmitEmpty(t *testing.T) {
+	projectDir := makeCacheDir(t)
+	executor := &fakeExecutor{projectDir: projectDir}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		RunStamp:    "", // empty → omitted from JSON
+		Steps:       nonClaudeSteps("iter-step"),
+	}
+
+	Run(executor, header, kh, cfg)
+
+	recs := readIterationLog(t, projectDir)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	if recs[0].InvocationStamp != "" {
+		t.Errorf("InvocationStamp: want empty, got %q", recs[0].InvocationStamp)
+	}
+	data, err := json.Marshal(recs[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"invocation_stamp"`) {
+		t.Errorf("expected omitempty to elide empty invocation_stamp; got %s", data)
+	}
+}
+
+// TP-208-003: Round-trip: a JSON record without the invocation_stamp field
+// (written by a pre-feature build) still parses cleanly via json.Unmarshal.
+// InvocationStamp must be the zero value ("") after unmarshalling.
+func TestIterationRecord_RoundTrip_OldShapeNoInvocationStamp(t *testing.T) {
+	oldJSON := `{"schema_version":1,"issue_id":"42","iteration_num":1,"step_name":"feature-work","status":"done","duration_s":1.5}`
+	var rec IterationRecord
+	if err := json.Unmarshal([]byte(oldJSON), &rec); err != nil {
+		t.Fatalf("Unmarshal old-shape record: %v", err)
+	}
+	if rec.InvocationStamp != "" {
+		t.Errorf("InvocationStamp: want empty from old-shape record, got %q", rec.InvocationStamp)
+	}
+	if rec.StepName != "feature-work" {
+		t.Errorf("StepName: want %q, got %q", "feature-work", rec.StepName)
+	}
+	if rec.Status != "done" {
+		t.Errorf("Status: want %q, got %q", "done", rec.Status)
+	}
+}
+
 // TP-016: SchemaVersion == 1 in records from all three phases (initialize,
 // iteration, finalize). Bumping the literal requires updating this test.
 func TestRun_IterationLog_SchemaVersionAllPhases(t *testing.T) {
