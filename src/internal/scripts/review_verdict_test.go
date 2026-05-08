@@ -38,10 +38,14 @@ func runVerdict(t *testing.T, workDir string) (stdout, stderr string, exitCode i
 	return
 }
 
-// writeReview writes content to code-review.md in workDir.
+// writeReview writes content to .pr9k/artifacts/code-review.md in workDir.
 func writeReview(t *testing.T, workDir, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(workDir, "code-review.md"), []byte(content), 0o644); err != nil {
+	dir := filepath.Join(workDir, ".pr9k", "artifacts")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir .pr9k/artifacts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "code-review.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write code-review.md: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -176,6 +177,42 @@ func TestGitignore_WorkflowIsTracked_BundleIsIgnored(t *testing.T) {
 
 	if strings.Contains(content, "\nworkflow/\n") || strings.Contains(content, "\nworkflow\n") {
 		t.Error(".gitignore: workflow/ must NOT be ignored — it is a tracked source directory")
+	}
+}
+
+// TestConfigJSON_GitPushBeforeCloseIssue verifies that "Git push" appears before
+// "Close issue" in the iteration step array (D18: push-before-close ordering).
+func TestConfigJSON_GitPushBeforeCloseIssue(t *testing.T) {
+	root := docTestRepoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "workflow", "config.json"))
+	if err != nil {
+		t.Fatalf("read config.json: %v", err)
+	}
+	var cfg struct {
+		Iteration []struct {
+			Name string `json:"name"`
+		} `json:"iteration"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parse config.json: %v", err)
+	}
+	pushIdx, closeIdx := -1, -1
+	for i, s := range cfg.Iteration {
+		if s.Name == "Git push" {
+			pushIdx = i
+		}
+		if s.Name == "Close issue" {
+			closeIdx = i
+		}
+	}
+	if pushIdx == -1 {
+		t.Fatal("config.json iteration: \"Git push\" step not found")
+	}
+	if closeIdx == -1 {
+		t.Fatal("config.json iteration: \"Close issue\" step not found")
+	}
+	if pushIdx > closeIdx {
+		t.Errorf("config.json iteration: \"Git push\" (index %d) must come before \"Close issue\" (index %d)", pushIdx, closeIdx)
 	}
 }
 
