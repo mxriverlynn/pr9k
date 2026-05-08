@@ -152,6 +152,34 @@ When a step times out and the user chooses to retry, `stepDispatcher.RunStep` de
 
 `Run` (in `run.go`) drives three phases — initialize, iteration, finalize — calling `buildStep` for each step to produce a `ui.ResolvedStep`, then wrapping it in a `stepDispatcher` and handing it to `ui.Orchestrate`. Captured values are bound to the VarTable after each `captureAs` step via `executor.LastCapture()`.
 
+### RunResult
+
+`Run` returns a `RunResult` summarizing the outcome:
+
+```go
+type RunResult struct {
+    // IterationsRun is the index of the last iteration that began (1-based).
+    // Includes the iteration that triggered a breakLoopIfEmpty exit.
+    // Zero when the iteration loop never started.
+    IterationsRun int
+    // ExitReason describes how the run terminated.
+    ExitReason ExitReason
+}
+```
+
+`ExitReason` is a string type with three constants:
+
+| Value | Meaning |
+|-------|---------|
+| `"completed"` | All configured phases ran to completion |
+| `"loop_broken"` | The iteration loop exited early via `breakLoopIfEmpty`; finalization still ran |
+| `"user_quit"` | The user confirmed quit (`q`+`y`) during any phase |
+
+The worktrees post-run cleanup (`postRunCleanup` in `main_worktree.go`) reads
+`ExitReason` to decide whether to remove the linked worktree and branch: both
+`completed` and `loop_broken` trigger autoCleanup when enabled; `user_quit`
+preserves the worktree for auto-resume on the next invocation.
+
 After every step (including prep failures), `Run` appends one `IterationRecord` to `.pr9k/iteration.jsonl`. See [Iteration log](#iteration-log) below.
 
 ## Iteration log
@@ -160,17 +188,18 @@ After every step (including prep failures), `Run` appends one `IterationRecord` 
 
 ```go
 type IterationRecord struct {
-    SchemaVersion int     `json:"schema_version"` // always 1; bump on incompatible changes
-    IssueID       string  `json:"issue_id"`
-    IterationNum  int     `json:"iteration_num"`  // 0 for initialize/finalize phases
-    StepName      string  `json:"step_name"`
-    Model         string  `json:"model,omitempty"`
-    Status        string  `json:"status"`         // "done" | "skipped" | "failed" | "unknown"
-    DurationS     float64 `json:"duration_s"`
-    InputTokens   int     `json:"input_tokens,omitempty"`
-    OutputTokens  int     `json:"output_tokens,omitempty"`
-    SessionID     string  `json:"session_id,omitempty"`
-    Notes         string  `json:"notes,omitempty"` // prep error message when Status=="failed"
+    SchemaVersion   int     `json:"schema_version"`           // always 1; bump on incompatible changes
+    IssueID         string  `json:"issue_id"`
+    IterationNum    int     `json:"iteration_num"`            // 0 for initialize/finalize phases
+    StepName        string  `json:"step_name"`
+    Model           string  `json:"model,omitempty"`
+    Status          string  `json:"status"`                   // "done" | "skipped" | "failed" | "unknown"
+    DurationS       float64 `json:"duration_s"`
+    InputTokens     int     `json:"input_tokens,omitempty"`
+    OutputTokens    int     `json:"output_tokens,omitempty"`
+    SessionID       string  `json:"session_id,omitempty"`
+    InvocationStamp string  `json:"invocation_stamp,omitempty"`
+    Notes           string  `json:"notes,omitempty"`          // prep error message when Status=="failed"
 }
 ```
 
@@ -181,6 +210,8 @@ type IterationRecord struct {
 | `"failed"` | Step exited non-zero, or `buildStep` returned a prep error |
 | `"skipped"` | Step was skipped (`StepSkipped`) |
 | `"unknown"` | `SetStepState` was never called — step never started |
+
+**`invocation_stamp` field:** the per-run identifier from `logger.RunStamp()` (format `pr9k-YYYY-MM-DD-HHMMSS.mmm`). Set once per `Run` call and carried on every record emitted during that invocation. When the worktrees feature is enabled and a run is resumed, records from the original run and the resumed run carry different stamps, making the two segments distinguishable in `iteration.jsonl` even though they accumulate in the same file (R3). Absent (`omitempty`) when the stamp is empty.
 
 **Notes field:** populated in two cases: (1) `buildStep` prep error — value is the error string; (2) step timeout — value is `"timed out after Ns"`. Normal successful steps leave `notes` absent (`omitempty`).
 
