@@ -68,17 +68,17 @@ func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState, ex
 		if autoCleanup {
 			if state.WorktreePath != "" {
 				if err := gitWorktreeRemove(primaryPath, state.WorktreePath); err != nil {
-					fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
+					_, _ = fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
 				}
 			}
 			if state.Branch != "" {
 				if err := gitBranchDelete(primaryPath, state.Branch); err != nil {
-					fmt.Fprintf(stderr, "warning: branch cleanup: %v\n", err)
+					_, _ = fmt.Fprintf(stderr, "warning: branch cleanup: %v\n", err)
 				}
 			}
 		}
 		if err := removeActiveRun(stateFilePath, state); err != nil {
-			fmt.Fprintf(stderr, "warning: state file removal: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: state file removal: %v\n", err)
 		}
 	case workflow.ExitReasonUserQuit:
 		// leave state file and worktree in place for auto-resume
@@ -118,17 +118,17 @@ func applyFreshFlag(stateFilePath, currentPrimaryPath string, fresh bool, prior 
 	if canon(prior.PrimaryPath) == canon(currentPrimaryPath) {
 		// Same primary checkout — safe to destroy git objects.
 		if err := gitWorktreeRemove(prior.PrimaryPath, prior.WorktreePath); err != nil {
-			fmt.Fprintf(stderr, "warning: --fresh: worktree cleanup: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: --fresh: worktree cleanup: %v\n", err)
 		}
 		if err := gitBranchDelete(prior.PrimaryPath, prior.Branch); err != nil {
-			fmt.Fprintf(stderr, "warning: --fresh: branch cleanup: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "warning: --fresh: branch cleanup: %v\n", err)
 		}
 	}
 
 	if err := os.Remove(stateFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(stderr, "warning: --fresh: could not remove state file: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "warning: --fresh: could not remove state file: %v\n", err)
 	}
-	fmt.Fprintln(stderr, "Discarded prior run")
+	_, _ = fmt.Fprintln(stderr, "Discarded prior run")
 	return nil, nil
 }
 
