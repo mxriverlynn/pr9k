@@ -80,6 +80,15 @@ When `enabled: true`, pr9k writes a state file after preflight succeeds:
 The state file is written **after** preflight passes (D-1), so a preflight
 failure does not leave an orphaned state file pointing at an unusable worktree.
 
+After writing, pr9k performs a **post-write readback** (`verifyActiveRunClaim`):
+it reads the file back and confirms the on-disk `pid` and `worktreeStamp` match
+what was just written. A mismatch means a concurrent process won the
+read → validate → write race and claimed the run; pr9k exits with an error
+rather than starting two processes against the same worktree.
+
+If startup fails between worktree creation and claim write, a `removeUnclaimed`
+cleanup removes the just-created worktree and branch so no orphan is left behind.
+
 ## Resume decision tree
 
 At startup, pr9k reads `active-run.json` and evaluates the following rules in
@@ -165,8 +174,14 @@ prefix (e.g., `pr9k-2026-05-08-120000.000 / iteration 1 of 5`) and appends
 
 ## --fresh flag
 
-`--fresh` forces a FreshStart regardless of existing state. See
-[Managing Worktrees — --fresh flag](../how-to/managing-worktrees.md#--fresh-flag)
+`--fresh` forces a FreshStart regardless of existing state. When the prior
+process is dead, `--fresh` removes the stale worktree and branch **only if**
+`prior.PrimaryPath` canonicalizes to the same path as the current
+`--project-dir`. This guards against accidental git-object destruction after
+a primary checkout has been renamed or its symlink retarget. The state file
+itself is always removed regardless.
+
+See [Managing Worktrees — --fresh flag](../how-to/managing-worktrees.md#--fresh-flag)
 for usage and recovery scenarios.
 
 ## Out of scope

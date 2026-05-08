@@ -86,11 +86,15 @@ pr9k --fresh
 ```
 
 When the recorded process is no longer alive, `--fresh`:
-1. Removes the stale worktree (`git worktree remove --force`)
-2. Deletes the stale branch (`git branch -D`)
-3. Removes `active-run.json`
-4. Prints `Discarded prior run` to stderr
-5. Starts a clean fresh run
+1. Removes the stale worktree (`git worktree remove --force`) — **only if** the
+   path recorded in `active-run.json` as `primaryPath` resolves to the same
+   directory as the current `--project-dir` (symlink-canonicalized). This guards
+   against destroying git objects when the primary checkout has been renamed or
+   its symlink target has changed.
+2. Deletes the stale branch (`git branch -D`) — same path-check guard as step 1.
+3. Removes `active-run.json` unconditionally.
+4. Prints `Discarded prior run` to stderr.
+5. Starts a clean fresh run.
 
 Warnings are printed for any git cleanup failure; the fresh start proceeds
 regardless.
