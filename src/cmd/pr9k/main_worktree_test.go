@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -331,52 +332,72 @@ func TestStepFile_NoWorktreesBlock_ReturnsNil(t *testing.T) {
 	}
 }
 
-// TP-001: applyFreshFlag with fresh=true and prior state on disk removes the
-// state file and returns nil.
-func TestApplyFreshFlag_Fresh_PriorPresent_RemovesFileReturnsNil(t *testing.T) {
+// TP-001: applyFreshFlag with fresh=true, dead PID, prior state on disk removes
+// the worktree, branch, and state file; returns nil, nil; prints "Discarded prior run".
+func TestApplyFreshFlag_Fresh_DeadPID_RemovesAll(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+	primary := t.TempDir()
+	initGitRepo(t, primary)
+
+	stamp := "pr9k-2026-05-08-170000.000"
+	wtPath := filepath.Join(t.TempDir(), stamp)
+	if err := gitWorktreeAdd(primary, wtPath, stamp); err != nil {
+		t.Fatalf("gitWorktreeAdd: %v", err)
+	}
+
+	stateFilePath := filepath.Join(primary, ".pr9k", "active-run.json")
 	state := &ActiveRunState{
 		SchemaVersion: activeRunSchemaVersion,
-		WorktreeStamp: "pr9k-2026-05-08-170000.000",
+		WorktreeStamp: stamp,
+		WorktreePath:  wtPath,
+		PrimaryPath:   primary,
+		Branch:        stamp,
+		PID:           1,
+		Binary:        "/nonexistent/path/pr9k", // binary mismatch → dead
 	}
 	if err := writeActiveRun(stateFilePath, *state); err != nil {
 		t.Fatalf("writeActiveRun: %v", err)
 	}
 
 	var buf bytes.Buffer
-	got := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
 
+	if err != nil {
+		t.Fatalf("expected nil error for dead PID, got %v", err)
+	}
 	if got != nil {
 		t.Errorf("expected nil return, got %+v", got)
 	}
-	if _, err := os.Stat(stateFilePath); !os.IsNotExist(err) {
-		t.Errorf("state file still exists after applyFreshFlag: %v", err)
+	if _, statErr := os.Stat(stateFilePath); !os.IsNotExist(statErr) {
+		t.Errorf("state file still exists after applyFreshFlag: %v", statErr)
 	}
-	if buf.Len() != 0 {
-		t.Errorf("unexpected stderr output: %q", buf.String())
+	if _, statErr := os.Stat(wtPath); !os.IsNotExist(statErr) {
+		t.Errorf("worktree still exists after applyFreshFlag: %v", statErr)
+	}
+	if !strings.Contains(buf.String(), "Discarded prior run") {
+		t.Errorf("expected 'Discarded prior run' in stderr, got %q", buf.String())
 	}
 }
 
-// TP-001b: applyFreshFlag with fresh=true and state file already absent returns
-// nil without printing any warning.
-func TestApplyFreshFlag_Fresh_FileAbsent_NoWarning(t *testing.T) {
+// TP-001b: applyFreshFlag with fresh=true and no prior state (nil) is a no-op.
+func TestApplyFreshFlag_Fresh_NilPrior_Noop(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
 	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
-	state := &ActiveRunState{WorktreeStamp: "pr9k-2026-05-08-180000.000"}
 
 	var buf bytes.Buffer
-	got := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, true, nil, &buf)
 
+	if err != nil {
+		t.Fatalf("expected nil error when prior is nil, got %v", err)
+	}
 	if got != nil {
 		t.Errorf("expected nil return, got %+v", got)
 	}
 	if buf.Len() != 0 {
-		t.Errorf("unexpected warning when file was already absent: %q", buf.String())
+		t.Errorf("unexpected output for no-op case: %q", buf.String())
 	}
 }
 
@@ -395,13 +416,168 @@ func TestApplyFreshFlag_NotFresh_PriorUnchanged(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got := applyFreshFlag(stateFilePath, false, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, false, state, &buf)
 
+	if err != nil {
+		t.Fatalf("expected nil error when fresh=false, got %v", err)
+	}
 	if got != state {
 		t.Errorf("expected prior state pointer unchanged, got %+v", got)
 	}
-	if _, err := os.Stat(stateFilePath); err != nil {
-		t.Errorf("state file was removed unexpectedly: %v", err)
+	if _, statErr := os.Stat(stateFilePath); statErr != nil {
+		t.Errorf("state file was removed unexpectedly: %v", statErr)
+	}
+}
+
+// TP-212-001: applyFreshFlag with --fresh and a live recorded process refuses
+// with the spec-committed concurrent-run message containing the PID.
+func TestApplyFreshFlag_Fresh_LiveProcess_RefusesWithPID(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	state := &ActiveRunState{
+		SchemaVersion: activeRunSchemaVersion,
+		WorktreeStamp: "pr9k-2026-05-08-210000.000",
+		WorktreePath:  filepath.Join(dir, "wt"),
+		PrimaryPath:   dir,
+		Branch:        "pr9k-2026-05-08-210000.000",
+		PID:           os.Getpid(),
+		Binary:        exe,
+	}
+	if err := writeActiveRun(stateFilePath, *state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got, freshErr := applyFreshFlag(stateFilePath, true, state, &buf)
+
+	if freshErr == nil {
+		t.Fatal("expected non-nil error for live process, got nil")
+	}
+	if !strings.Contains(freshErr.Error(), fmt.Sprintf("PID %d", os.Getpid())) {
+		t.Errorf("error must include PID, got %q", freshErr.Error())
+	}
+	if !strings.Contains(freshErr.Error(), "another pr9k appears to be running") {
+		t.Errorf("error must contain spec message, got %q", freshErr.Error())
+	}
+	if got != nil {
+		t.Errorf("expected nil state on live-process refusal, got %+v", got)
+	}
+	// State file must still exist — we refused, did not clean up.
+	if _, statErr := os.Stat(stateFilePath); statErr != nil {
+		t.Errorf("state file was removed despite live process: %v", statErr)
+	}
+}
+
+// TP-212-002: applyFreshFlag with --fresh and a dead-PID state file cleans up
+// the worktree, branch, and state file, then prints "Discarded prior run".
+func TestApplyFreshFlag_Fresh_DeadPID_WithWorktree_CleansUp(t *testing.T) {
+	t.Parallel()
+
+	primary := t.TempDir()
+	initGitRepo(t, primary)
+
+	stamp := "pr9k-2026-05-08-220000.000"
+	wtPath := filepath.Join(t.TempDir(), stamp)
+	if err := gitWorktreeAdd(primary, wtPath, stamp); err != nil {
+		t.Fatalf("gitWorktreeAdd: %v", err)
+	}
+
+	stateFilePath := filepath.Join(primary, ".pr9k", "active-run.json")
+	state := &ActiveRunState{
+		SchemaVersion: activeRunSchemaVersion,
+		WorktreeStamp: stamp,
+		WorktreePath:  wtPath,
+		PrimaryPath:   primary,
+		Branch:        stamp,
+		PID:           1,
+		Binary:        "/nonexistent/path/pr9k",
+	}
+	if err := writeActiveRun(stateFilePath, *state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
+
+	if err != nil {
+		t.Fatalf("expected nil error for dead PID, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil state return, got %+v", got)
+	}
+	if !strings.Contains(buf.String(), "Discarded prior run") {
+		t.Errorf("expected 'Discarded prior run' in stderr, got %q", buf.String())
+	}
+	if _, statErr := os.Stat(stateFilePath); !os.IsNotExist(statErr) {
+		t.Errorf("state file still exists after --fresh cleanup")
+	}
+	if _, statErr := os.Stat(wtPath); !os.IsNotExist(statErr) {
+		t.Errorf("worktree still exists after --fresh cleanup")
+	}
+}
+
+// TP-212-003: applyFreshFlag with --fresh and no state file (prior=nil) is a
+// no-op: no error, no output, proceeds fresh.
+func TestApplyFreshFlag_Fresh_NoStateFile_Noop(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+
+	var buf bytes.Buffer
+	got, err := applyFreshFlag(stateFilePath, true, nil, &buf)
+
+	if err != nil {
+		t.Fatalf("expected nil error when no state file, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil state return, got %+v", got)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("unexpected output for no-op case: %q", buf.String())
+	}
+}
+
+// TP-212-004: applyFreshFlag with --fresh treats binary-path mismatch as dead
+// (PID alive but binary path differs) and proceeds with cleanup.
+func TestApplyFreshFlag_Fresh_BinaryMismatch_TreatsAsDead(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
+
+	state := &ActiveRunState{
+		SchemaVersion: activeRunSchemaVersion,
+		WorktreeStamp: "pr9k-2026-05-08-230000.000",
+		WorktreePath:  filepath.Join(dir, "wt"),
+		PrimaryPath:   dir,
+		Branch:        "pr9k-2026-05-08-230000.000",
+		PID:           1,                        // alive PID (init/launchd)
+		Binary:        "/nonexistent/path/pr9k", // wrong binary → treated as dead
+	}
+	if err := writeActiveRun(stateFilePath, *state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	var buf bytes.Buffer
+	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
+
+	if err != nil {
+		t.Fatalf("expected nil error (binary mismatch treated as dead), got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil state return, got %+v", got)
+	}
+	if !strings.Contains(buf.String(), "Discarded prior run") {
+		t.Errorf("expected 'Discarded prior run' in stderr, got %q", buf.String())
 	}
 }
 

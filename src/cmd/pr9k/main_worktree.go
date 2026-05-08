@@ -77,16 +77,38 @@ func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState, ex
 	}
 }
 
-// applyFreshFlag removes the state file and clears prior state when --fresh is
-// set. If fresh is false or prior is nil, prior is returned unchanged.
-func applyFreshFlag(stateFilePath string, fresh bool, prior *ActiveRunState, stderr io.Writer) *ActiveRunState {
-	if !fresh || prior == nil {
-		return prior
+// applyFreshFlag handles the --fresh flag before the resume-validation step.
+//
+// If fresh is false, returns (prior, nil) unchanged.
+// If fresh is true and prior is nil (no state file), returns (nil, nil) — no-op.
+// If fresh is true and the recorded process is alive, returns an error with the
+// spec-committed concurrent-run message: "another pr9k appears to be running
+// for this primary checkout (PID N)".
+// If fresh is true and the process is dead, removes the worktree, branch, and
+// state file (warnings printed for git failures), emits "Discarded prior run"
+// to stderr, and returns (nil, nil).
+func applyFreshFlag(stateFilePath string, fresh bool, prior *ActiveRunState, stderr io.Writer) (*ActiveRunState, error) {
+	if !fresh {
+		return prior, nil
+	}
+	if prior == nil {
+		return nil, nil
+	}
+	if isProcessAlive(prior.PID, prior.Binary) {
+		return nil, fmt.Errorf("another pr9k appears to be running for this primary checkout (PID %d)", prior.PID)
+	}
+	// Dead process: remove worktree → branch → state file (mirrors autoCleanup order).
+	if err := gitWorktreeRemove(prior.PrimaryPath, prior.WorktreePath); err != nil {
+		fmt.Fprintf(stderr, "warning: --fresh: worktree cleanup: %v\n", err)
+	}
+	if err := gitBranchDelete(prior.PrimaryPath, prior.Branch); err != nil {
+		fmt.Fprintf(stderr, "warning: --fresh: branch cleanup: %v\n", err)
 	}
 	if err := os.Remove(stateFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(stderr, "warning: --fresh: could not remove state file: %v\n", err)
 	}
-	return nil
+	fmt.Fprintln(stderr, "Discarded prior run")
+	return nil, nil
 }
 
 // loadStepsForWorktrees loads the step file from workflowDir and returns the
