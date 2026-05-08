@@ -7,6 +7,11 @@ worktree on its own branch. This keeps the primary checkout clean, enables
 automatic resume after an interrupted run, and allows `pr9k worktree prune` to
 reclaim abandoned worktrees by branch-name pattern.
 
+The bundled "Ralph" workflow turns this on by default (`enabled: true`,
+`autoCleanup: true` in [`workflow/config.json`](../../workflow/config.json)).
+The user-facing description of what that means at runtime is in
+[Using Worktrees](../how-to/using-worktrees.md).
+
 ## Config schema
 
 The feature is controlled by a top-level `worktrees` block in `config.json`:

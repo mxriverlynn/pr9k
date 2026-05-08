@@ -47,7 +47,10 @@ Add the following to your `.gitignore` file:
 .pr9k/logs/
 .pr9k/iteration.jsonl
 .pr9k/artifacts/
+.pr9k/active-run.json
 ```
+
+(`.pr9k/active-run.json` is the worktree claim file — see [Using Worktrees](docs/how-to/using-worktrees.md).)
 
 Then run the following:
 ```bash

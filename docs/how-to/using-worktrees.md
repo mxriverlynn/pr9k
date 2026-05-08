@@ -5,6 +5,13 @@ worktree on its own branch. The primary checkout stays untouched during the
 run; changes land in a sibling directory that is created, used, and optionally
 cleaned up automatically.
 
+> **The bundled "Ralph" workflow ships with worktrees enabled and `autoCleanup`
+> on.** If you are running the default workflow you do not need to do anything
+> to opt in — every run already creates a `pr9k-*` worktree and cleans it up on
+> a clean exit. The rest of this page applies whether you are using the
+> bundled workflow as-is or authoring a custom one. For the actual config block
+> as shipped, see [`workflow/config.json`](../../workflow/config.json).
+
 ## Prerequisites
 
 - **git ≥ 2.17** — `git worktree list --porcelain` requires git 2.17 or later
@@ -121,3 +128,7 @@ On a resume, a third line appears first:
   `--dry-run`, and `--fresh` recovery scenarios
 - [Worktrees runtime behavior](../features/worktrees.md) — state-file schema,
   lifecycle, and resume decision tree
+- [Building Custom Workflows](building-custom-workflows.md) — how `worktrees`
+  fits among the other top-level `config.json` blocks
+- [Bundled `workflow/config.json`](../../workflow/config.json) — the shipped
+  default that turns this feature on

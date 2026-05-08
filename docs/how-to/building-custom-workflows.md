@@ -55,7 +55,12 @@ That's it. Drop those two files into `<your-target-repo>/.pr9k/workflow/` (with 
 | `iteration` | Once per issue (or once per loop pass) | The work itself: pick up an issue, do the work, push |
 | `finalize` | Once, after all iterations end | Cross-iteration cleanup: code review, doc update, deferred-work bookkeeping |
 
-Steps in each array execute top-to-bottom. The optional `statusLine` block configures a custom status-line command displayed in the TUI footer — see [Configuring a Status Line](configuring-a-status-line.md). The optional `defaults` block sets workflow-wide values (currently `effort` and `model`) that any Claude step can override per-step. See [Configuring Workflow Defaults](configuring-defaults.md).
+Steps in each array execute top-to-bottom. Optional top-level blocks:
+
+- `statusLine` — custom status-line command displayed in the TUI footer. See [Configuring a Status Line](configuring-a-status-line.md).
+- `defaults` — workflow-wide values (currently `effort` and `model`) that any Claude step can override per-step. See [Configuring Workflow Defaults](configuring-defaults.md).
+- `env` — host environment variable names to forward into the Docker sandbox for every Claude step. See [Passing Environment Variables](passing-environment-variables.md).
+- `worktrees` — wrap each run in a dedicated git worktree on a fresh `pr9k-*` branch (`enabled`), and optionally auto-clean it on `Completed` / `LoopBroken` exits (`autoCleanup`). See [Using Worktrees](using-worktrees.md). The bundled workflow ships with both turned on.
 
 The `finalize` array runs even when the iteration loop exits early (no more issues). Iteration-scoped variables (`ISSUE_ID`, `STARTING_SHA`) are *not* visible in finalize steps; using them substitutes the empty string. Built-in variables (`WORKFLOW_DIR`, `PROJECT_DIR`, `ITER`, `MAX_ITER`) remain available.
 
@@ -113,33 +118,52 @@ To override both candidates explicitly (for example, when testing a feature bran
 
 ## A bigger example: the bundled workflow
 
-The bundled "Ralph" workflow has 11 iteration steps and 7 finalize steps. Reading through it is the fastest way to see how the pieces compose.
+The bundled "Ralph" workflow has 13 iteration steps and 8 finalize steps. Reading through it is the fastest way to see how the pieces compose.
 
-**Iteration phase (11 steps):**
+**Top-level configuration:**
 
-1. **Get next issue** (shell, `breakLoopIfEmpty`) — picks the lowest-numbered open `ralph` issue assigned to the user; binds `ISSUE_ID`. When empty, pr9k exits the iteration loop and runs finalize.
-2. **Get starting SHA** (shell) — records `HEAD` as `STARTING_SHA` for diff references later in the iteration
-3. **Get issue body** (shell, `captureMode: fullStdout`) — fetches the issue title and body via `gh` and binds `ISSUE_BODY`
-4. **Get project card** (shell, `captureMode: fullStdout`) — probes build-config files and binds `PROJECT_CARD` (a short tech-stack summary)
-5. **Feature work** (sonnet) — implements the issue
-6. **Get post-feature diff** (shell, `captureMode: fullStdout`) — captures `git diff {{STARTING_SHA}}..HEAD --stat` as `PRE_REVIEW_DIFF` for the test-writing prompt
-7. **Test planning** (opus) — drafts a test plan
-8. **Test writing** (sonnet) — writes the tests
-9. **Summarize to issue** (shell) — posts a single end-of-iteration comment
-10. **Close issue** (shell) — `gh issue close`
-11. **Git push** (shell) — pushes the branch
+```json
+{
+  "env": ["GH_TOKEN"],
+  "statusLine": { "type": "command", "command": "scripts/statusline", "refreshIntervalSeconds": 5 },
+  "defaults":   { "effort": "medium", "model": "sonnet" },
+  "worktrees":  { "enabled": true, "autoCleanup": true }
+}
+```
 
-**Finalize phase (7 steps):**
+- `env: ["GH_TOKEN"]` forwards the host's `GH_TOKEN` into every Claude step's sandbox so `gh` calls work inside the container.
+- `statusLine` runs `scripts/statusline` every 5 s and shows its first non-empty stdout line in the TUI footer.
+- `defaults` sets sonnet + medium effort as the workflow-wide defaults; only the Test planning, Code review, and other opus steps override `model`, and no step currently overrides `effort`.
+- `worktrees` isolates the run in a sibling worktree on a `pr9k-*` branch and removes it on clean exit. See [Using Worktrees](using-worktrees.md).
+
+**Iteration phase (13 steps):**
+
+1. **Delete artifacts** (shell) — clears `.pr9k/artifacts/*` so per-iteration scratch files start clean
+2. **Claude Credentials** (shell) — refreshes the bundled Claude profile credentials before every iteration (`scripts/get_claude_credentials`)
+3. **Get next issue** (shell, `breakLoopIfEmpty`) — picks the lowest-numbered open `ralph` issue assigned to the user; binds `ISSUE_ID`. When empty, pr9k exits the iteration loop and runs finalize.
+4. **Get starting SHA** (shell) — records `HEAD` as `STARTING_SHA` for diff references later in the iteration
+5. **Get issue body** (shell, `captureMode: fullStdout`) — fetches the issue title and body via `gh` and binds `ISSUE_BODY`
+6. **Get project card** (shell, `captureMode: fullStdout`) — probes build-config files and binds `PROJECT_CARD` (a short tech-stack summary)
+7. **Feature work** (sonnet) — implements the issue
+8. **Get post-feature diff** (shell, `captureMode: fullStdout`) — captures `git diff {{STARTING_SHA}}..HEAD --stat` as `PRE_REVIEW_DIFF` for the test-writing prompt
+9. **Test planning** (opus) — drafts a test plan
+10. **Test writing** (sonnet, `timeoutSeconds: 1800`, `onTimeout: continue`) — writes the tests; if it overruns 30 min, the step is marked `[!]` and the iteration continues
+11. **Summarize to issue** (shell) — posts a single end-of-iteration comment via `scripts/post_issue_summary`
+12. **Git push** (shell) — pushes the run's `pr9k-*` branch upstream
+13. **Close issue** (shell) — `gh issue close`
+
+**Finalize phase (8 steps):**
 
 1. **Code review** (opus) — reviews every change on the branch; writes findings (or the `NOTHING-TO-FIX` sentinel) to `code-review.md`
-2. **Check review verdict** (shell) — reads `code-review.md` and binds `REVIEW_HAS_FIXES` (empty when the sentinel is present)
+2. **Check review verdict** (shell, `captureMode: lastLine`) — runs `scripts/review_verdict` and binds `REVIEW_HAS_FIXES` (empty when the sentinel is present)
 3. **Fix review items** (sonnet, `skipIfCaptureEmpty: REVIEW_HAS_FIXES`) — implements review findings; skipped when the reviewer found nothing
-4. **Update docs** (sonnet) — updates project docs for the whole branch
-5. **Deferred work** (sonnet) — files issues from `deferred.txt`
-6. **Lessons learned** (sonnet) — codifies entries from `progress.txt` into coding standards
-7. **Final git push** (shell)
+4. **Final CI check** (sonnet) — runs the project's CI / lint / test commands and fixes anything that fails
+5. **Update docs** (sonnet) — updates project docs for the whole branch
+6. **Deferred work** (sonnet) — files issues from `deferred.txt`
+7. **Lessons learned** (sonnet) — codifies entries from `progress.txt` into coding standards
+8. **Final git push** (shell)
 
-The bundled `config.json`, prompts, and scripts live in `workflow/` in the pr9k repo. Reading them alongside this list is the fastest way to learn the conventions.
+The bundled `config.json`, prompts, and scripts live in [`workflow/`](../../workflow/) in the pr9k repo. Reading them alongside this list is the fastest way to learn the conventions.
 
 ## Iteration without GitHub
 

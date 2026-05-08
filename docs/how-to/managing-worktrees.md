@@ -3,11 +3,17 @@
 This guide covers `pr9k worktree prune`, the `--dry-run` flag, and recovery
 scenarios using `--fresh`.
 
+> **Note:** The bundled "Ralph" workflow ships with `autoCleanup: true`, so a
+> normal run already cleans up its own worktree on `Completed` / `LoopBroken`.
+> The tools on this page are for the cases where automatic cleanup did *not*
+> happen — a SIGKILL, an OOM, a power loss, or `q` → `y` mid-run, all of
+> which intentionally preserve the worktree for resume.
+
 ## pr9k worktree prune
 
 Over time, interrupted or completed runs may leave `pr9k-*` linked worktrees on
-disk if `autoCleanup` was not set or a run was killed before cleanup ran.
-`pr9k worktree prune` removes those stale worktrees.
+disk if `autoCleanup` was not set, the workflow disabled it, or a run was
+killed before cleanup ran. `pr9k worktree prune` removes those stale worktrees.
 
 ```
 pr9k worktree prune [--dry-run] [--project-dir <path>]
