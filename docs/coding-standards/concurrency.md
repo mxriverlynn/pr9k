@@ -394,6 +394,36 @@ func copySelectedText(text string) tea.Cmd {
 
 The same rule applies to `cancel()` context cancellations that trigger blocking waits, and to any channel send that might block. If it can take more than a few microseconds, it belongs in a cmd closure.
 
+## Stamp-guard state file removal to prevent cross-process deletion
+
+When multiple processes each write their own state file (and later remove it), guard the removal with a stamp comparison: read the on-disk file, confirm your stamp matches, then delete. Without the guard, a race where process A's state file was replaced by process B leaves A deleting B's file.
+
+```go
+// removeActiveRun deletes the state file only if the on-disk WorktreeStamp
+// matches the caller's stamp. ENOENT is benign. Stamp mismatch → no-op.
+func removeActiveRun(path string, caller *ActiveRunState) error {
+    onDisk, err := readActiveRun(path)
+    if err != nil {
+        return err
+    }
+    if onDisk == nil {
+        return nil // ENOENT or renamed away — benign
+    }
+    if onDisk.WorktreeStamp != caller.WorktreeStamp {
+        // Another process claimed the file; do not delete it.
+        return nil
+    }
+    if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+        return fmt.Errorf("active-run: remove %s: %w", path, err)
+    }
+    return nil
+}
+```
+
+The stamp is a value minted at run start (e.g., a timestamp string) that is unique per invocation. A mismatch means another process won the write; the caller treats this as a no-op and does not log an error. ENOENT on the remove itself is also benign — another process may have already cleaned up.
+
+Apply this pattern to any shared on-disk state file that multiple processes may independently claim and release. The alternative — unconditional delete — silently destroys another process's claim.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -409,3 +439,4 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `terminated` / `timeoutFired` mutual exclusion and reset-then-record ordering in `stepDispatcher` (issue #130)
 - [Workflow Builder](../code-packages/workflowedit.md) — `deepCopyDoc` as the canonical reference-type deep-copy example; race between validator goroutine and UI goroutine on `doc.Env` / `doc.ContainerEnv` (workflow-builder-pt-2 review issue #1)
+- `src/cmd/pr9k/active_run.go` — `removeActiveRun` as the canonical stamp-guarded state file removal example (worktrees branch)
