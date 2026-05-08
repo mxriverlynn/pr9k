@@ -126,7 +126,7 @@ func buildVersionLabel() string {
 }
 
 func main() {
-	cfg, err := cli.Execute(newSandboxCmd(), newWorkflowCmd())
+	cfg, err := cli.Execute(newSandboxCmd(), newWorkflowCmd(), newWorktreeCmd())
 	if err != nil {
 		if !errors.Is(err, errSilentExit) {
 			fmt.Fprint(os.Stderr, formatUsageError(err))
