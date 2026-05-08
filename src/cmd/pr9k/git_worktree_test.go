@@ -129,6 +129,10 @@ func initGitRepo(t *testing.T, dir string) {
 	run("git", "init", "-b", "main")
 	run("git", "config", "user.email", "test@test")
 	run("git", "config", "user.name", "test")
+	// Isolate from the user's global git config: tests must not depend on
+	// signing being available (no gpg-agent in CI; gpg-agent OOM locally).
+	run("git", "config", "commit.gpgsign", "false")
+	run("git", "config", "tag.gpgsign", "false")
 	// create a commit so HEAD is valid
 	f := filepath.Join(dir, "README")
 	if err := os.WriteFile(f, []byte("hello\n"), 0o600); err != nil {
@@ -155,6 +159,13 @@ func TestGitWorktreeAddListRemove(t *testing.T) {
 		t.Fatalf("worktree dir missing after add: %v", err)
 	}
 
+	// git canonicalizes paths (e.g. resolves /var → /private/var on macOS),
+	// so compare against the symlink-resolved path.
+	wantPath, err := filepath.EvalSymlinks(wtPath)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", wtPath, err)
+	}
+
 	// list includes the new worktree
 	entries, err := gitWorktreeList(primary)
 	if err != nil {
@@ -162,7 +173,7 @@ func TestGitWorktreeAddListRemove(t *testing.T) {
 	}
 	found := false
 	for _, e := range entries {
-		if e.Path == wtPath {
+		if e.Path == wantPath {
 			found = true
 			if e.Branch != "refs/heads/"+branch {
 				t.Errorf("Branch: want refs/heads/%s, got %q", branch, e.Branch)
@@ -170,7 +181,7 @@ func TestGitWorktreeAddListRemove(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("worktree %q not found in list; entries: %+v", wtPath, entries)
+		t.Errorf("worktree %q not found in list; entries: %+v", wantPath, entries)
 	}
 
 	// remove worktree
