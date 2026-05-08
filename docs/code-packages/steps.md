@@ -149,37 +149,53 @@ Two steps run once before the iteration loop begins:
 
 ### Iteration Steps
 
-The 15 iteration steps run in sequence for each GitHub issue:
+The 13 iteration steps run in sequence for each GitHub issue:
 
-| # | Name | Type | Model | captureAs | captureMode | skipIfCaptureEmpty | timeoutSeconds |
-|---|------|------|-------|-----------|-------------|--------------------|----|
-| 1 | Get next issue | Shell | — | `ISSUE_ID` | lastLine | — | — |
-| 2 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine | — | — |
-| 3 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout | — | — |
-| 4 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout | — | — |
-| 5 | Feature work | Claude | sonnet | — | — | — | — |
-| 6 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout | — | — |
-| 7 | Test planning | Claude | opus | — | — | — | — |
-| 8 | Test writing | Claude | sonnet | — | — | — | 900 |
-| 9 | Code review | Claude | opus | — | — | — | — |
-| 10 | Check review verdict | Shell | — | `REVIEW_HAS_FIXES` | lastLine | — | — |
-| 11 | Fix review items | Claude | sonnet | — | — | `REVIEW_HAS_FIXES` | — |
-| 12 | Summarize to issue | Shell | — | — | — | — | — |
-| 13 | Close issue | Shell | — | — | — | — | — |
-| 14 | Update docs | Claude | sonnet | — | — | — | — |
-| 15 | Git push | Shell | — | — | — | — | — |
+| # | Name | Type | Model | captureAs | captureMode | breakLoopIfEmpty | timeoutSeconds | onTimeout |
+|---|------|------|-------|-----------|-------------|------------------|----------------|-----------|
+| 1 | Delete artifacts | Shell | — | — | — | — | — | — |
+| 2 | Claude Credentials | Shell | — | — | — | — | — | — |
+| 3 | Get next issue | Shell | — | `ISSUE_ID` | lastLine | true | — | — |
+| 4 | Get starting SHA | Shell | — | `STARTING_SHA` | lastLine | — | — | — |
+| 5 | Get issue body | Shell | — | `ISSUE_BODY` | fullStdout | — | — | — |
+| 6 | Get project card | Shell | — | `PROJECT_CARD` | fullStdout | — | — | — |
+| 7 | Feature work | Claude | sonnet | — | — | — | — | — |
+| 8 | Get post-feature diff | Shell | — | `PRE_REVIEW_DIFF` | fullStdout | — | — | — |
+| 9 | Test planning | Claude | opus | — | — | — | — | — |
+| 10 | Test writing | Claude | sonnet | — | — | — | 1800 | continue |
+| 11 | Summarize to issue | Shell | — | — | — | — | — | — |
+| 12 | Git push | Shell | — | — | — | — | — | — |
+| 13 | Close issue | Shell | — | — | — | — | — | — |
 
-"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 3, 4, and 6 use `captureMode: "fullStdout"` to capture multi-line output. "Fix review items" has `skipIfCaptureEmpty: "REVIEW_HAS_FIXES"` — when `scripts/review_verdict` emits empty stdout (sentinel: no fixes needed), the step is skipped. "Test writing" has `timeoutSeconds: 900` (15 min) — a conservative cap that lets normal runs complete while cutting the long tail of runaway iterations. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
+"Get next issue" has `breakLoopIfEmpty: true` — when `ISSUE_ID` is empty, the iteration loop exits. Steps 5, 6, and 8 use `captureMode: "fullStdout"` to capture multi-line output. "Test writing" has `timeoutSeconds: 1800` (30 min) and `onTimeout: "continue"` — if the cap fires the step is marked `[!]` and the iteration advances rather than entering error mode. Shell command steps use template variables (e.g., `{{ISSUE_ID}}`) that are substituted by `ResolveCommand` in the workflow package.
 
 ### Finalization Steps
 
-Three steps run once after all iterations complete:
+Eight steps run once after all iterations complete:
 
-| # | Name | Type | Model |
-|---|------|------|-------|
-| 1 | Deferred work | Claude | sonnet |
-| 2 | Lessons learned | Claude | sonnet |
-| 3 | Final git push | Shell | — |
+| # | Name | Type | Model | captureAs | captureMode | skipIfCaptureEmpty |
+|---|------|------|-------|-----------|-------------|--------------------|
+| 1 | Code review | Claude | opus | — | — | — |
+| 2 | Check review verdict | Shell | — | `REVIEW_HAS_FIXES` | lastLine | — |
+| 3 | Fix review items | Claude | sonnet | — | — | `REVIEW_HAS_FIXES` |
+| 4 | Final CI check | Claude | sonnet | — | — | — |
+| 5 | Update docs | Claude | sonnet | — | — | — |
+| 6 | Deferred work | Claude | sonnet | — | — | — |
+| 7 | Lessons learned | Claude | sonnet | — | — | — |
+| 8 | Final git push | Shell | — | — | — | — |
+
+"Fix review items" has `skipIfCaptureEmpty: "REVIEW_HAS_FIXES"` — when `scripts/review_verdict` emits empty stdout (sentinel: no fixes needed), the step is skipped.
+
+### Top-level configuration
+
+The bundled workflow also declares four top-level blocks alongside the three step arrays:
+
+| Block | Value | What it controls |
+|-------|-------|------------------|
+| `env` | `["GH_TOKEN"]` | Forwards the host's `GH_TOKEN` into every Claude step's sandbox so `gh` works inside the container. See [Passing Environment Variables](../how-to/passing-environment-variables.md). |
+| `statusLine` | `scripts/statusline`, 5 s refresh | Custom status-line command shown in the TUI footer. See [Configuring a Status Line](../how-to/configuring-a-status-line.md). |
+| `defaults` | `effort: medium`, `model: sonnet` | Workflow-wide defaults applied to every Claude step that does not override them. See [Configuring Workflow Defaults](../how-to/configuring-defaults.md). |
+| `worktrees` | `enabled: true`, `autoCleanup: true` | Wraps each run in a sibling git worktree on a `pr9k-*` branch and removes it on `Completed` / `LoopBroken`. See [Using Worktrees](../how-to/using-worktrees.md) and [Worktrees runtime behavior](../features/worktrees.md). |
 
 ### Prompt Building
 
