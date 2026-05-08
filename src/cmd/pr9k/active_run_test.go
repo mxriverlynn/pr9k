@@ -229,6 +229,69 @@ func TestValidateResume_NoFile(t *testing.T) {
 	}
 }
 
+// --- TP-209-001: validateActiveRun returns noActiveRun when process is dead ---
+
+func TestValidateResume_DeadProcess(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := activeRunPath(dir)
+
+	// pid 1 is always alive but binary="/nonexistent/path" won't match
+	// the running executable, so isProcessAlive returns false → noActiveRun.
+	state := ActiveRunState{
+		SchemaVersion: 1,
+		WorktreeStamp: "pr9k-2026-05-08-120000.000",
+		WorktreePath:  filepath.Join(dir, "wt"),
+		PrimaryPath:   dir,
+		Branch:        "pr9k-2026-05-08-120000.000",
+		PID:           1,
+		Binary:        "/nonexistent/path/pr9k",
+	}
+	if err := writeActiveRun(path, state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	result := validateActiveRun(path, dir)
+	if result != resumeResultNoActiveRun {
+		t.Errorf("want resumeResultNoActiveRun, got %v", result)
+	}
+}
+
+// --- TP-209-002: validateActiveRun returns worktreeMissing when WorktreePath does not exist ---
+
+func TestValidateResume_WorktreeMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := activeRunPath(dir)
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	canonDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		canonDir = dir
+	}
+
+	state := ActiveRunState{
+		SchemaVersion: 1,
+		WorktreeStamp: "pr9k-2026-05-08-120000.000",
+		WorktreePath:  filepath.Join(canonDir, "does-not-exist"),
+		PrimaryPath:   canonDir,
+		Branch:        "pr9k-2026-05-08-120000.000",
+		PID:           os.Getpid(),
+		Binary:        exe,
+	}
+	if err := writeActiveRun(path, state); err != nil {
+		t.Fatalf("writeActiveRun: %v", err)
+	}
+
+	result := validateActiveRun(path, canonDir)
+	if result != resumeResultWorktreeMissing {
+		t.Errorf("want resumeResultWorktreeMissing, got %v", result)
+	}
+}
+
 // --- identity check fall-through: Kill OK but binary-path read fails → treat as dead ---
 
 func TestIdentityCheck_BinaryReadError(t *testing.T) {
