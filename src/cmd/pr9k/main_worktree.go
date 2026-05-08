@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/mxriverlynn/pr9k/src/internal/steps"
 	"github.com/mxriverlynn/pr9k/src/internal/workflow"
@@ -59,14 +60,21 @@ func decideWorktreeAction(priorState *ActiveRunState, decision resumeResult, wor
 // a branch that is currently checked out in a worktree.
 // Errors from git operations are printed as warnings but do not stop subsequent steps.
 func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState, exitReason workflow.ExitReason, autoCleanup bool, stderr io.Writer) {
+	if state == nil {
+		return
+	}
 	switch exitReason {
 	case workflow.ExitReasonCompleted, workflow.ExitReasonLoopBroken:
 		if autoCleanup {
-			if err := gitWorktreeRemove(primaryPath, state.WorktreePath); err != nil {
-				fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
+			if state.WorktreePath != "" {
+				if err := gitWorktreeRemove(primaryPath, state.WorktreePath); err != nil {
+					fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
+				}
 			}
-			if err := gitBranchDelete(primaryPath, state.Branch); err != nil {
-				fmt.Fprintf(stderr, "warning: branch cleanup: %v\n", err)
+			if state.Branch != "" {
+				if err := gitBranchDelete(primaryPath, state.Branch); err != nil {
+					fmt.Fprintf(stderr, "warning: branch cleanup: %v\n", err)
+				}
 			}
 		}
 		if err := removeActiveRun(stateFilePath, state); err != nil {
@@ -84,10 +92,12 @@ func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState, ex
 // If fresh is true and the recorded process is alive, returns an error with the
 // spec-committed concurrent-run message: "another pr9k appears to be running
 // for this primary checkout (PID N)".
-// If fresh is true and the process is dead, removes the worktree, branch, and
-// state file (warnings printed for git failures), emits "Discarded prior run"
-// to stderr, and returns (nil, nil).
-func applyFreshFlag(stateFilePath string, fresh bool, prior *ActiveRunState, stderr io.Writer) (*ActiveRunState, error) {
+// If fresh is true and the process is dead, removes the state file unconditionally,
+// and removes the worktree and branch only when prior.PrimaryPath canonicalizes to
+// the same path as currentPrimaryPath (skipping git ops protects against accidental
+// cleanup after a primary-checkout rename or symlink retarget).
+// Emits "Discarded prior run" to stderr and returns (nil, nil).
+func applyFreshFlag(stateFilePath, currentPrimaryPath string, fresh bool, prior *ActiveRunState, stderr io.Writer) (*ActiveRunState, error) {
 	if !fresh {
 		return prior, nil
 	}
@@ -97,13 +107,24 @@ func applyFreshFlag(stateFilePath string, fresh bool, prior *ActiveRunState, std
 	if isProcessAlive(prior.PID, prior.Binary) {
 		return nil, fmt.Errorf("another pr9k appears to be running for this primary checkout (PID %d)", prior.PID)
 	}
-	// Dead process: remove worktree → branch → state file (mirrors autoCleanup order).
-	if err := gitWorktreeRemove(prior.PrimaryPath, prior.WorktreePath); err != nil {
-		fmt.Fprintf(stderr, "warning: --fresh: worktree cleanup: %v\n", err)
+
+	// Canonicalize both paths to handle symlinks (e.g. /var vs /private/var on macOS).
+	canon := func(p string) string {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			return resolved
+		}
+		return p
 	}
-	if err := gitBranchDelete(prior.PrimaryPath, prior.Branch); err != nil {
-		fmt.Fprintf(stderr, "warning: --fresh: branch cleanup: %v\n", err)
+	if canon(prior.PrimaryPath) == canon(currentPrimaryPath) {
+		// Same primary checkout — safe to destroy git objects.
+		if err := gitWorktreeRemove(prior.PrimaryPath, prior.WorktreePath); err != nil {
+			fmt.Fprintf(stderr, "warning: --fresh: worktree cleanup: %v\n", err)
+		}
+		if err := gitBranchDelete(prior.PrimaryPath, prior.Branch); err != nil {
+			fmt.Fprintf(stderr, "warning: --fresh: branch cleanup: %v\n", err)
+		}
 	}
+
 	if err := os.Remove(stateFilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(stderr, "warning: --fresh: could not remove state file: %v\n", err)
 	}

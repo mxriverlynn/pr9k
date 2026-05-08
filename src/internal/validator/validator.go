@@ -409,6 +409,11 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 		if vf.Worktrees.AutoCleanup && !vf.Worktrees.Enabled {
 			errs = append(errs, cfgErr("worktrees", "config", "", "autoCleanup requires enabled to be true"))
 		}
+		if vf.Worktrees.Enabled {
+			if msg := checkGitWorktreeSupport(); msg != "" {
+				errs = append(errs, Error{Severity: SeverityWarning, Category: "worktrees", Phase: "config", Problem: msg})
+			}
+		}
 	}
 
 	// statusLine validation.
@@ -999,6 +1004,29 @@ func readCompanionOrDisk(companions map[string][]byte, relKey, diskPath string) 
 // cfgErr constructs a validation Error.
 func cfgErr(category, phase, stepName, problem string) Error {
 	return Error{Category: category, Phase: phase, StepName: stepName, Problem: problem}
+}
+
+// checkGitWorktreeSupport returns a warning message if the installed git does
+// not support linked worktrees (requires git >= 2.17). Returns "" if the check
+// cannot be performed or if the version is sufficient.
+func checkGitWorktreeSupport() string {
+	out, err := exec.Command("git", "--version").Output()
+	if err != nil {
+		return ""
+	}
+	// "git version X.Y.Z[...]"
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		return ""
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(fields[2], "%d.%d", &major, &minor); err != nil {
+		return ""
+	}
+	if major < 2 || (major == 2 && minor < 17) {
+		return fmt.Sprintf("worktrees requires git >= 2.17; detected git %s", fields[2])
+	}
+	return ""
 }
 
 // copyScope returns a shallow copy of a scope map.

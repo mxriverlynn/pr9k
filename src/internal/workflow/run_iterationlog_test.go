@@ -868,7 +868,7 @@ func TestRun_IterationLog_InvocationStampAllPhases(t *testing.T) {
 	header := &fakeRunHeader{}
 	kh := newTestKeyHandler()
 
-	const wantStamp = "ralph-2026-05-08-120000.000"
+	const wantStamp = "pr9k-2026-05-08-120000.000"
 	cfg := RunConfig{
 		WorkflowDir:     t.TempDir(),
 		Iterations:      1,

@@ -361,7 +361,7 @@ func TestApplyFreshFlag_Fresh_DeadPID_RemovesAll(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, primary, true, state, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error for dead PID, got %v", err)
@@ -388,7 +388,7 @@ func TestApplyFreshFlag_Fresh_NilPrior_Noop(t *testing.T) {
 	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, true, nil, &buf)
+	got, err := applyFreshFlag(stateFilePath, dir, true, nil, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error when prior is nil, got %v", err)
@@ -416,7 +416,7 @@ func TestApplyFreshFlag_NotFresh_PriorUnchanged(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, false, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, dir, false, state, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error when fresh=false, got %v", err)
@@ -456,7 +456,7 @@ func TestApplyFreshFlag_Fresh_LiveProcess_RefusesWithPID(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got, freshErr := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, freshErr := applyFreshFlag(stateFilePath, dir, true, state, &buf)
 
 	if freshErr == nil {
 		t.Fatal("expected non-nil error for live process, got nil")
@@ -505,7 +505,7 @@ func TestApplyFreshFlag_Fresh_DeadPID_WithWorktree_CleansUp(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, primary, true, state, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error for dead PID, got %v", err)
@@ -533,7 +533,7 @@ func TestApplyFreshFlag_Fresh_NoStateFile_Noop(t *testing.T) {
 	stateFilePath := filepath.Join(dir, ".pr9k", "active-run.json")
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, true, nil, &buf)
+	got, err := applyFreshFlag(stateFilePath, dir, true, nil, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error when no state file, got %v", err)
@@ -568,7 +568,7 @@ func TestApplyFreshFlag_Fresh_BinaryMismatch_TreatsAsDead(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	got, err := applyFreshFlag(stateFilePath, true, state, &buf)
+	got, err := applyFreshFlag(stateFilePath, dir, true, state, &buf)
 
 	if err != nil {
 		t.Fatalf("expected nil error (binary mismatch treated as dead), got %v", err)

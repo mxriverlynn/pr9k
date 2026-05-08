@@ -150,14 +150,11 @@ func gitUncommittedCount(path string) int {
 	if err := cmd.Run(); err != nil {
 		return 0
 	}
-	lines := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
-	count := 0
-	for _, l := range lines {
-		if l != "" {
-			count++
-		}
+	out := strings.TrimRight(stdout.String(), "\n")
+	if out == "" {
+		return 0
 	}
-	return count
+	return len(strings.Split(out, "\n"))
 }
 
 // runWorktreePrune implements the prune logic. When dryRun is true, it prints

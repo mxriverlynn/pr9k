@@ -158,7 +158,7 @@ func main() {
 
 	// Handle --fresh: discard stale state and force a clean start.
 	var freshErr error
-	priorState, freshErr = applyFreshFlag(activeRunStatePath, cfg.Fresh, priorState, os.Stderr)
+	priorState, freshErr = applyFreshFlag(activeRunStatePath, primaryPath, cfg.Fresh, priorState, os.Stderr)
 	if freshErr != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", freshErr)
 		os.Exit(1)
@@ -202,12 +202,34 @@ func main() {
 		worktreePath = primaryPath
 	}
 
+	// claimDone is set to true once writeActiveRun+verifyActiveRunClaim both succeed.
+	// The defer and the explicit cleanup before startup failure both use removeUnclaimed
+	// to remove the just-created worktree if we exit before the claim is recorded.
+	var claimDone bool
+	removeUnclaimed := func() {}
+	if worktreesEnabled && !isResume {
+		removeUnclaimed = func() {
+			if err := gitWorktreeRemove(primaryPath, worktreePath); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: cleanup unclaimed worktree: %v\n", err)
+			}
+			if err := gitBranchDelete(primaryPath, branch); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: cleanup unclaimed branch: %v\n", err)
+			}
+		}
+		defer func() {
+			if !claimDone {
+				removeUnclaimed()
+			}
+		}()
+	}
+
 	// Step 5: startup with worktree path as projectDir so all downstream
 	// subsystems (sandbox bind-mount, logger, validator) operate against
 	// the worktree transparently (T2 from spec).
 	profileDir := preflight.ResolveProfileDir()
 	svc, ok := startup(cfg, worktreePath, profileDir, preflight.RealProber{}, os.Stderr)
 	if !ok {
+		removeUnclaimed()
 		os.Exit(1)
 	}
 	log := svc.log
@@ -232,6 +254,11 @@ func main() {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
+		if err := verifyActiveRunClaim(activeRunStatePath, *activeState); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		claimDone = true
 	}
 
 	// Step 7: log header lines recording the worktree context.

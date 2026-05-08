@@ -51,16 +51,22 @@ func readActiveRun(path string) (*ActiveRunState, error) {
 	var state ActiveRunState
 	if err := json.Unmarshal(data, &state); err != nil {
 		renamed := fmt.Sprintf("%s.corrupted-%d", path, time.Now().UnixNano())
-		_ = os.Rename(path, renamed)
-		fmt.Fprintf(os.Stderr, "active-run: corrupted state file renamed to %s\n", filepath.Base(renamed))
+		if renameErr := os.Rename(path, renamed); renameErr != nil {
+			fmt.Fprintf(os.Stderr, "pr9k: active-run: rename corrupted state file %s: %v\n", path, renameErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "active-run: corrupted state file renamed to %s\n", filepath.Base(renamed))
+		}
 		return nil, nil
 	}
 
 	if state.SchemaVersion != activeRunSchemaVersion {
 		renamed := fmt.Sprintf("%s.incompatible-%d", path, time.Now().UnixNano())
-		_ = os.Rename(path, renamed)
-		fmt.Fprintf(os.Stderr, "active-run: incompatible schemaVersion %d renamed to %s\n",
-			state.SchemaVersion, filepath.Base(renamed))
+		if renameErr := os.Rename(path, renamed); renameErr != nil {
+			fmt.Fprintf(os.Stderr, "pr9k: active-run: rename incompatible state file %s: %v\n", path, renameErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "active-run: incompatible schemaVersion %d renamed to %s\n",
+				state.SchemaVersion, filepath.Base(renamed))
+		}
 		return nil, nil
 	}
 
@@ -78,6 +84,24 @@ func writeActiveRun(path string, state ActiveRunState) error {
 	}
 	if err := atomicwrite.Write(path, data, 0o600); err != nil {
 		return fmt.Errorf("active-run: write %s: %w", path, err)
+	}
+	return nil
+}
+
+// verifyActiveRunClaim reads the state file back and confirms PID and
+// WorktreeStamp match claimed. A mismatch means a concurrent writer won the
+// read→validate→write race; the caller should abort with a clear message.
+func verifyActiveRunClaim(path string, claimed ActiveRunState) error {
+	onDisk, err := readActiveRun(path)
+	if err != nil {
+		return fmt.Errorf("active-run: claim verify read: %w", err)
+	}
+	if onDisk == nil {
+		return fmt.Errorf("active-run: claim verify: state file missing after write")
+	}
+	if onDisk.PID != claimed.PID || onDisk.WorktreeStamp != claimed.WorktreeStamp {
+		return fmt.Errorf("active-run: concurrent process claimed the run (on-disk pid=%d stamp=%s, ours pid=%d stamp=%s)",
+			onDisk.PID, onDisk.WorktreeStamp, claimed.PID, claimed.WorktreeStamp)
 	}
 	return nil
 }
