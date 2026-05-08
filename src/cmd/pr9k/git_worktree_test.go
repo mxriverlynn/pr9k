@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,6 +181,57 @@ func TestGitWorktreeAddListRemove(t *testing.T) {
 	// verify directory is gone
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("worktree dir still exists after remove: %v", err)
+	}
+}
+
+func TestGitWorktreeAdd_BranchAlreadyExists(t *testing.T) {
+	primary := t.TempDir()
+	initGitRepo(t, primary)
+
+	wtPath := filepath.Join(t.TempDir(), "wt-dup")
+	branch := "dup-branch"
+
+	if err := gitWorktreeAdd(primary, wtPath, branch); err != nil {
+		t.Fatalf("first gitWorktreeAdd: %v", err)
+	}
+
+	wtPath2 := filepath.Join(t.TempDir(), "wt-dup2")
+	err := gitWorktreeAdd(primary, wtPath2, branch)
+	if err == nil {
+		t.Fatal("expected error on duplicate branch, got nil")
+	}
+	msg := err.Error()
+	if !strings.HasPrefix(msg, "git: worktree add") {
+		t.Errorf("error message should start with %q, got %q", "git: worktree add", msg)
+	}
+	// stderr from git should be non-empty and included in the message
+	if len(msg) <= len("git: worktree add") {
+		t.Errorf("error message appears to have no stderr content: %q", msg)
+	}
+}
+
+func TestGitWorktreeRemove_ForceRemovesDirtyWorktree(t *testing.T) {
+	primary := t.TempDir()
+	initGitRepo(t, primary)
+
+	wtPath := filepath.Join(t.TempDir(), "wt-dirty")
+	branch := "dirty-branch"
+
+	if err := gitWorktreeAdd(primary, wtPath, branch); err != nil {
+		t.Fatalf("gitWorktreeAdd: %v", err)
+	}
+
+	// modify a tracked file to make the worktree dirty
+	if err := os.WriteFile(filepath.Join(wtPath, "README"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := gitWorktreeRemove(primary, wtPath); err != nil {
+		t.Fatalf("gitWorktreeRemove on dirty worktree: %v", err)
+	}
+
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Errorf("worktree dir still exists after force-remove: %v", err)
 	}
 }
 
