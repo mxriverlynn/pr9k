@@ -17,17 +17,19 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 
 ## Workflow: The Ralph Loop
 
+Every run is wrapped in a dedicated git worktree on a fresh branch (`pr9k-YYYY-MM-DD-HHMMSS.mmm`) — the bundled workflow ships with `worktrees.enabled = true` and `autoCleanup = true` in [`workflow/config.json`](workflow/config.json). The primary checkout is never modified; all work lands in a sibling worktree directory and is auto-cleaned on `Completed` / `LoopBroken`. See [`docs/how-to/using-worktrees.md`](docs/how-to/using-worktrees.md) and [`docs/features/worktrees.md`](docs/features/worktrees.md) for full behavior, and [`docs/how-to/managing-worktrees.md`](docs/how-to/managing-worktrees.md) for `--fresh` / `pr9k worktree prune` recovery.
+
 Each iteration:
 1. Find next open issue assigned to user with label "ralph" (lowest number first)
-2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Summarize to issue → Close issue → Git push
+2. Feature work (sonnet) → Test planning (opus) → Test writing (sonnet) → Summarize to issue → Git push → Close issue
 
 After all iterations, finalization steps run (once per run, against the full set of branch changes):
-1. Code review (opus) → Check review verdict → Fix review items (sonnet, skipped when the reviewer finds nothing) → Update docs (sonnet)
+1. Code review (opus) → Check review verdict → Fix review items (sonnet, skipped when the reviewer finds nothing) → Final CI check (sonnet) → Update docs (sonnet)
 2. Deferred work — creates issues from `deferred.txt`
 3. Lessons learned — codifies from `progress.txt`
 4. Final git push
 
-Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) are created in the **target repo's working directory**, never committed, and consumed/deleted by later steps.
+Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) are created in the **active worktree's working directory** (the project directory pr9k passes to all subsystems when worktrees are enabled), never committed, and consumed/deleted by later steps.
 
 ## Key Design Decisions
 
