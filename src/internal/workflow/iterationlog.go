@@ -13,30 +13,33 @@ import (
 // after each workflow step completes. SchemaVersion starts at 1; bump on
 // incompatible field changes.
 type IterationRecord struct {
-	SchemaVersion int     `json:"schema_version"`
-	IssueID       string  `json:"issue_id"`
-	IterationNum  int     `json:"iteration_num"`
-	StepName      string  `json:"step_name"`
-	Model         string  `json:"model,omitempty"`
-	Status        string  `json:"status"` // "done" | "skipped" | "failed" | "unknown"
-	DurationS     float64 `json:"duration_s"`
-	InputTokens   int     `json:"input_tokens,omitempty"`
-	OutputTokens  int     `json:"output_tokens,omitempty"`
-	SessionID     string  `json:"session_id,omitempty"`
-	Notes         string  `json:"notes,omitempty"`
+	SchemaVersion   int     `json:"schema_version"`
+	IssueID         string  `json:"issue_id"`
+	IterationNum    int     `json:"iteration_num"`
+	StepName        string  `json:"step_name"`
+	Model           string  `json:"model,omitempty"`
+	Status          string  `json:"status"` // "done" | "skipped" | "failed" | "unknown"
+	DurationS       float64 `json:"duration_s"`
+	InputTokens     int     `json:"input_tokens,omitempty"`
+	OutputTokens    int     `json:"output_tokens,omitempty"`
+	SessionID       string  `json:"session_id,omitempty"`
+	InvocationStamp string  `json:"invocation_stamp,omitempty"`
+	Notes           string  `json:"notes,omitempty"`
 }
 
-// newIterationRecord builds an IterationRecord with the common fields populated.
+// buildIterationRecord builds an IterationRecord with the common fields
+// populated. invocationStamp is the per-run identifier (logger.RunStamp()).
 // Callers set phase-specific fields (DurationS, InputTokens, OutputTokens,
 // SessionID, Notes) after construction.
-func newIterationRecord(issueID string, iterNum int, s steps.Step, status string) IterationRecord {
+func buildIterationRecord(invocationStamp, issueID string, iterNum int, s steps.Step, status string) IterationRecord {
 	return IterationRecord{
-		SchemaVersion: 1,
-		IssueID:       issueID,
-		IterationNum:  iterNum,
-		StepName:      s.Name,
-		Model:         s.Model,
-		Status:        status,
+		SchemaVersion:   1,
+		IssueID:         issueID,
+		IterationNum:    iterNum,
+		StepName:        s.Name,
+		Model:           s.Model,
+		Status:          status,
+		InvocationStamp: invocationStamp,
 	}
 }
 

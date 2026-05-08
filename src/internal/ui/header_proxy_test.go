@@ -38,7 +38,7 @@ func TestHeaderProxy_RenderIterationLine_SendsCorrectMsg(t *testing.T) {
 	send, got := capturingSend(t)
 	p := NewHeaderProxy(send)
 
-	p.RenderIterationLine(2, 5, "42")
+	p.RenderIterationLine(2, 5, "42", "wt-2026", true)
 
 	msg, ok := (*got).(headerIterationLineMsg)
 	if !ok {
@@ -52,6 +52,12 @@ func TestHeaderProxy_RenderIterationLine_SendsCorrectMsg(t *testing.T) {
 	}
 	if msg.issue != "42" {
 		t.Errorf("issue: want %q, got %q", "42", msg.issue)
+	}
+	if msg.worktreeBasename != "wt-2026" {
+		t.Errorf("worktreeBasename: want %q, got %q", "wt-2026", msg.worktreeBasename)
+	}
+	if !msg.resumed {
+		t.Errorf("resumed: want true, got false")
 	}
 }
 

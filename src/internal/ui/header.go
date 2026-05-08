@@ -139,9 +139,15 @@ func (h *StatusHeader) RenderInitializeLine(stepNum, stepCount int, stepName str
 // RenderIterationLine updates the iteration line for the iteration phase.
 // When maxIter == 0, the total is omitted (unbounded mode).
 // When issueID is empty, the issue suffix is omitted.
-// Example outputs: "Iteration 2/5 — Issue #42", "Iteration 3".
-func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+// When worktreeBasename is non-empty, the line is prefixed with "<basename> | ".
+// When resumed is true, " (resumed)" is appended at the end.
+// Example outputs: "Iteration 2/5 — Issue #42",
+// "pr9k-2026-05-08-xxx | Iteration 2/5 — Issue #42 (resumed)".
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID, worktreeBasename string, resumed bool) {
 	var b strings.Builder
+	if worktreeBasename != "" {
+		fmt.Fprintf(&b, "%s | ", worktreeBasename)
+	}
 	if maxIter > 0 {
 		fmt.Fprintf(&b, "Iteration %d/%d", iter, maxIter)
 	} else {
@@ -149,6 +155,9 @@ func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 	}
 	if issueID != "" {
 		fmt.Fprintf(&b, " — Issue #%s", issueID)
+	}
+	if resumed {
+		b.WriteString(" (resumed)")
 	}
 	h.IterationLine = b.String()
 }

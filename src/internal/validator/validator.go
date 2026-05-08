@@ -112,6 +112,7 @@ type vFile struct {
 	Env          *[]string          `json:"env"`
 	ContainerEnv *map[string]string `json:"containerEnv,omitempty"`
 	Defaults     *vDefaults         `json:"defaults,omitempty"`
+	Worktrees    *vWorktrees        `json:"worktrees,omitempty"`
 	Initialize   *[]vStep           `json:"initialize"`
 	Iteration    *[]vStep           `json:"iteration"`
 	Finalize     *[]vStep           `json:"finalize"`
@@ -122,6 +123,12 @@ type vFile struct {
 type vDefaults struct {
 	Effort string `json:"effort,omitempty"`
 	Model  string `json:"model,omitempty"`
+}
+
+// vWorktrees is the strict struct used when validating the optional worktrees block.
+type vWorktrees struct {
+	Enabled     bool `json:"enabled"`
+	AutoCleanup bool `json:"autoCleanup"`
 }
 
 // envNameRe is the regex all env passthrough names must match.
@@ -238,6 +245,12 @@ func docToVFile(doc workflowmodel.WorkflowDoc) vFile {
 		vf.Defaults = &vDefaults{
 			Effort: doc.Defaults.Effort,
 			Model:  doc.Defaults.Model,
+		}
+	}
+	if doc.Worktrees != nil {
+		vf.Worktrees = &vWorktrees{
+			Enabled:     doc.Worktrees.Enabled,
+			AutoCleanup: doc.Worktrees.AutoCleanup,
 		}
 	}
 	return vf
@@ -388,6 +401,18 @@ func validateVFile(vf vFile, workflowDir string, companions map[string][]byte) [
 	if vf.Defaults != nil {
 		if !isValidEffortValue(vf.Defaults.Effort) {
 			errs = append(errs, cfgErr("defaults", "config", "", fmt.Sprintf("effort %q is not valid; use one of %v or omit the field", vf.Defaults.Effort, validEffortValues)))
+		}
+	}
+
+	// worktrees validation.
+	if vf.Worktrees != nil {
+		if vf.Worktrees.AutoCleanup && !vf.Worktrees.Enabled {
+			errs = append(errs, cfgErr("worktrees", "config", "", "autoCleanup requires enabled to be true"))
+		}
+		if vf.Worktrees.Enabled {
+			if msg := checkGitWorktreeSupport(); msg != "" {
+				errs = append(errs, Error{Severity: SeverityWarning, Category: "worktrees", Phase: "config", Problem: msg})
+			}
 		}
 	}
 
@@ -979,6 +1004,29 @@ func readCompanionOrDisk(companions map[string][]byte, relKey, diskPath string) 
 // cfgErr constructs a validation Error.
 func cfgErr(category, phase, stepName, problem string) Error {
 	return Error{Category: category, Phase: phase, StepName: stepName, Problem: problem}
+}
+
+// checkGitWorktreeSupport returns a warning message if the installed git does
+// not support linked worktrees (requires git >= 2.17). Returns "" if the check
+// cannot be performed or if the version is sufficient.
+func checkGitWorktreeSupport() string {
+	out, err := exec.Command("git", "--version").Output()
+	if err != nil {
+		return ""
+	}
+	// "git version X.Y.Z[...]"
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		return ""
+	}
+	var major, minor int
+	if _, err := fmt.Sscanf(fields[2], "%d.%d", &major, &minor); err != nil {
+		return ""
+	}
+	if major < 2 || (major == 2 && minor < 17) {
+		return fmt.Sprintf("worktrees requires git >= 2.17; detected git %s", fields[2])
+	}
+	return ""
 }
 
 // copyScope returns a shallow copy of a scope map.

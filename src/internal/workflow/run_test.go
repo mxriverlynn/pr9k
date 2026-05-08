@@ -155,8 +155,10 @@ type renderPhaseCall struct {
 }
 
 type renderIterCall struct {
-	iter, maxIter int
-	issueID       string
+	iter, maxIter    int
+	issueID          string
+	worktreeBasename string
+	resumed          bool
 }
 
 type stepStateCall struct {
@@ -167,8 +169,8 @@ type stepStateCall struct {
 func (h *fakeRunHeader) RenderInitializeLine(stepNum, stepCount int, stepName string) {
 	h.renderInitializeCalls = append(h.renderInitializeCalls, renderPhaseCall{stepNum, stepCount, stepName})
 }
-func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID string) {
-	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID})
+func (h *fakeRunHeader) RenderIterationLine(iter, maxIter int, issueID, worktreeBasename string, resumed bool) {
+	h.renderIterationCalls = append(h.renderIterationCalls, renderIterCall{iter, maxIter, issueID, worktreeBasename, resumed})
 }
 func (h *fakeRunHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.renderFinalizeCalls = append(h.renderFinalizeCalls, renderPhaseCall{stepNum, stepCount, stepName})
@@ -2574,6 +2576,130 @@ func TestRun_CompletionSummary_AfterBreakLoopIfEmpty(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not return after writing the completion summary")
+	}
+}
+
+// --- ExitReason tests ---
+
+// TestRunResult_ExitReason_Completed verifies that a run completing all
+// iterations and finalization returns ExitReasonCompleted.
+func TestRunResult_ExitReason_Completed(t *testing.T) {
+	executor := &fakeExecutor{}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    2,
+		Steps:         nonClaudeSteps("step1"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonCompleted {
+		t.Errorf("expected ExitReasonCompleted, got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_LoopBroken verifies that a run exiting via
+// breakLoopIfEmpty returns ExitReasonLoopBroken (not ExitReasonCompleted).
+func TestRunResult_ExitReason_LoopBroken(t *testing.T) {
+	executor := &fakeExecutor{
+		runStepCaptures: []string{""},
+	}
+	header := &fakeRunHeader{}
+	kh := newTestKeyHandler()
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    3,
+		Steps:         []steps.Step{breakStep("get-issue", "ISSUE_ID")},
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonLoopBroken {
+		t.Errorf("expected ExitReasonLoopBroken, got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_UserQuit_FromInitialize verifies that ActionQuit
+// during the initialize phase returns ExitReasonUserQuit.
+func TestRunResult_ExitReason_UserQuit_FromInitialize(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("init failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init-step"),
+		Steps:           nonClaudeSteps("iter-step"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonUserQuit {
+		t.Errorf("expected ExitReasonUserQuit (initialize), got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_UserQuit_FromIteration verifies that ActionQuit
+// during an iteration step returns ExitReasonUserQuit.
+func TestRunResult_ExitReason_UserQuit_FromIteration(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final1"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonUserQuit {
+		t.Errorf("expected ExitReasonUserQuit (iteration), got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_UserQuit_FromFinalize verifies that ActionQuit
+// during a finalization step returns ExitReasonUserQuit.
+func TestRunResult_ExitReason_UserQuit_FromFinalize(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{nil, errors.New("finalize failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final-step"),
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonUserQuit {
+		t.Errorf("expected ExitReasonUserQuit (finalize), got %v", result.ExitReason)
 	}
 }
 

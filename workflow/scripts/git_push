@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-trap 'exit 0' EXIT
-
-result=$(git push)
-
-echo $result
-
-exit 0
+set -e
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git push --set-upstream origin "$BRANCH"

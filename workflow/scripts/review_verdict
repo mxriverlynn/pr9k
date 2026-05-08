@@ -16,7 +16,7 @@
 # Exit 0 in all normal cases. Non-zero only on unexpected I/O errors.
 set -euo pipefail
 
-REVIEW_FILE="code-review.md"
+REVIEW_FILE=".pr9k/artifacts/code-review.md"
 
 if [[ ! -s "$REVIEW_FILE" ]]; then
     # Missing or empty file — fail-safe: don't silently skip the fix step.

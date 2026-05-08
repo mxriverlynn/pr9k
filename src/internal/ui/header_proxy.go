@@ -21,8 +21,8 @@ func (p *HeaderProxy) SetStepState(idx int, state StepState) {
 	p.send(headerStepStateMsg{idx: idx, state: state})
 }
 
-func (p *HeaderProxy) RenderIterationLine(iter, max int, issue string) {
-	p.send(headerIterationLineMsg{iter: iter, max: max, issue: issue})
+func (p *HeaderProxy) RenderIterationLine(iter, max int, issue, worktreeBasename string, resumed bool) {
+	p.send(headerIterationLineMsg{iter: iter, max: max, issue: issue, worktreeBasename: worktreeBasename, resumed: resumed})
 }
 
 func (p *HeaderProxy) RenderInitializeLine(stepNum, stepCount int, stepName string) {

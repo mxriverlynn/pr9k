@@ -169,7 +169,7 @@ func (d *stepDispatcher) WriteToLog(line string) { d.exec.WriteToLog(line) }
 // *ui.StatusHeader satisfies this interface.
 type RunHeader interface {
 	RenderInitializeLine(stepNum, stepCount int, stepName string)
-	RenderIterationLine(iter, maxIter int, issueID string)
+	RenderIterationLine(iter, maxIter int, issueID, worktreeBasename string, resumed bool)
 	RenderFinalizeLine(stepNum, stepCount int, stepName string)
 	SetPhaseSteps(names []string)
 	SetStepState(idx int, state ui.StepState)
@@ -204,6 +204,25 @@ type RunConfig struct {
 	// Runner is the optional status-line runner. When nil, all PushState and
 	// Trigger calls are skipped.
 	Runner StatusRunner
+	// WorktreeBasename is the directory basename of the active worktree (e.g.
+	// "pr9k-2026-05-08-114530.123"). When non-empty, the iteration line is
+	// prefixed with "<basename> | " so parallel runs are visually distinct.
+	// Empty when worktrees are disabled.
+	WorktreeBasename string
+	// Resumed is true when this invocation is continuing a prior worktree run
+	// (worktreeAction == worktreeActionResume). When true, " (resumed)" is
+	// appended to the iteration line.
+	Resumed bool
+	// WorktreePath is the absolute path of the active worktree. When non-empty
+	// it is written to the final completion summary block.
+	WorktreePath string
+	// WorktreeBranch is the git branch name for the active worktree. When
+	// non-empty it is written to the final completion summary block.
+	WorktreeBranch string
+	// WorktreeCountFn, when non-nil, is called at completion time to obtain the
+	// current count of pr9k-* worktrees. The result is included in the final
+	// summary block. Pass nil when worktrees are disabled.
+	WorktreeCountFn func() int
 }
 
 // stateTracker is a ui.StepHeader that records the last StepState set without
@@ -307,6 +326,8 @@ type RunResult struct {
 	// It includes the iteration that triggered a breakLoopIfEmpty exit.
 	// Zero if the iteration loop never started.
 	IterationsRun int
+	// ExitReason describes how the run terminated.
+	ExitReason ExitReason
 }
 
 // Run is the main orchestration goroutine. It drives three config-defined phases
@@ -387,6 +408,14 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		return filepath.Join(executor.ProjectDir(), ".pr9k", "logs", cfg.RunStamp, filename)
 	}
 
+	// newIterationRecord is a local closure that shadows the package-level
+	// buildIterationRecord, baking cfg.RunStamp in as the invocation stamp (D-9).
+	// All eleven call sites inside Run pass the same four arguments they always
+	// have; the stamp flows automatically without per-site edits.
+	newIterationRecord := func(issueID string, iterNum int, s steps.Step, status string) IterationRecord {
+		return buildIterationRecord(cfg.RunStamp, issueID, iterNum, s, status)
+	}
+
 	// 1. Initialize phase: run each step in order, binding captureAs results
 	// into the persistent variable table so they are available in all phases.
 	vt.SetPhase(vars.Initialize)
@@ -457,7 +486,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevInitStats = disp.capturedStats
 		prevInitState = st.lastState
 		if action == ui.ActionQuit {
-			return RunResult{}
+			return RunResult{ExitReason: ExitReasonUserQuit}
 		}
 		if s.CaptureAs != "" {
 			captured := executor.LastCapture()
@@ -471,6 +500,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	// BreakLoopIfEmpty produces empty stdout capture on successful completion.
 	writePhaseBanner("Iterations")
 	iterationsRun := 0
+	loopBroken := false
 	for i := 1; cfg.Iterations == 0 || i <= cfg.Iterations; i++ {
 		iterationsRun = i
 		vt.ResetIteration()
@@ -480,7 +510,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		vt.SetPhase(vars.Iteration)
 		push(vars.Iteration)
 
-		header.RenderIterationLine(i, cfg.Iterations, "")
+		header.RenderIterationLine(i, cfg.Iterations, "", cfg.WorktreeBasename, cfg.Resumed)
 		iterStepNames := make([]string, len(cfg.Steps))
 		for j, s := range cfg.Steps {
 			iterStepNames[j] = s.Name
@@ -586,7 +616,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			prevIterStats = disp.capturedStats
 			prevIterState = th.lastState
 			if action == ui.ActionQuit {
-				return RunResult{IterationsRun: iterationsRun}
+				return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
 			}
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
@@ -595,7 +625,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				// Re-read issueID after the bind so that if this step captured
 				// ISSUE_ID, the header shows the freshly bound value.
 				updatedIssueID, _ := vt.GetInPhase(vars.Iteration, "ISSUE_ID")
-				header.RenderIterationLine(i, cfg.Iterations, updatedIssueID)
+				header.RenderIterationLine(i, cfg.Iterations, updatedIssueID, cfg.WorktreeBasename, cfg.Resumed)
 				writeCaptureLog(s.CaptureAs, captured)
 				// Record the final state so skipIfCaptureEmpty checks can verify
 				// the source step completed successfully (StepDone) before skipping.
@@ -608,6 +638,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 				for remaining := j + 1; remaining < len(cfg.Steps); remaining++ {
 					header.SetStepState(remaining, ui.StepSkipped)
 				}
+				loopBroken = true
 				breakOuter = true
 				break
 			}
@@ -719,7 +750,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevFinalStats = disp.capturedStats
 		prevFinalState = th.lastState
 		if action == ui.ActionQuit {
-			return RunResult{IterationsRun: iterationsRun}
+			return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
 		}
 		captured := executor.LastCapture()
 		if s.CaptureAs != "" {
@@ -745,8 +776,18 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 	// body log and return — the caller tears down the TUI.
 	emitBlank()
 	executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
+	if cfg.WorktreePath != "" && cfg.WorktreeCountFn != nil {
+		count := cfg.WorktreeCountFn()
+		for _, line := range ui.WorktreeDetails(cfg.WorktreePath, cfg.WorktreeBranch, count) {
+			executor.WriteToLog(line)
+		}
+	}
 
-	return RunResult{IterationsRun: iterationsRun}
+	exitReason := ExitReasonCompleted
+	if loopBroken {
+		exitReason = ExitReasonLoopBroken
+	}
+	return RunResult{IterationsRun: iterationsRun, ExitReason: exitReason}
 }
 
 // buildStep resolves a single step into a runnable ResolvedStep using vt for

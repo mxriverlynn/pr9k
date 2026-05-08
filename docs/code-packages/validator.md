@@ -87,6 +87,17 @@ The optional top-level `defaults` object holds workflow-wide values that individ
 
 Unknown subfields are rejected (strict decode). Absent `defaults` is valid and produces no errors. Default propagation (filling in `Step.Effort` / `Step.Model` from the defaults block when a step omits the field) happens at runtime in `steps.LoadSteps` — the validator only checks the values declared in JSON, plus the **effective**-value rules where applicable (e.g. the claude-step model requirement).
 
+### worktrees block (Category "worktrees")
+
+The optional top-level `worktrees` object enables isolated git linked worktrees per run. Validation runs before the phase walk; errors use `Category="worktrees"`, `Phase="config"`, no `StepName`.
+
+| Rule | Severity | Condition |
+|------|----------|-----------|
+| `autoCleanup` without `enabled` | fatal error | `autoCleanup: true` and `enabled: false` (or absent) — autoCleanup is meaningless without worktree creation |
+| git version | non-fatal warning | `enabled: true` and the installed git is older than 2.17 — `git worktree list --porcelain` requires git ≥ 2.17; checked via `git --version` at validate time; if `git --version` cannot be run or parsed, the check is skipped (no error) |
+
+Absent `worktrees` block or `enabled: false` suppresses all worktrees validation. Unknown subfields are rejected (strict decode).
+
 ### statusLine block (Category "statusline")
 
 The optional top-level `statusLine` object configures a status-line command displayed by the TUI. Validation runs before the phase walk; errors use `Category="statusline"`, `Phase="config"`, no `StepName`.
