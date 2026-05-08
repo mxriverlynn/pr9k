@@ -9,6 +9,10 @@
     "effort": "medium",
     "model": "sonnet"
   },
+  "worktrees": {
+    "enabled": true,
+    "autoCleanup": true
+  },
   "initialize": [
     { "name": "Splash",                "isClaude": false, "command": ["cat", "{{WORKFLOW_DIR}}/ralph-art.txt"] },
     { "name": "Get GitHub user",       "isClaude": false, "command": ["scripts/get_gh_user"], "captureAs": "GITHUB_USER" }
