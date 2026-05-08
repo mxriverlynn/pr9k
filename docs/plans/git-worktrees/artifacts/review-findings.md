@@ -368,15 +368,15 @@ Numbering starts at F1 for this companion file; it is independent of the F-NN / 
 
 ### F31: T4 lifecycle ordering claims `preflight.Run` creates `<primary>/.pr9k/`, but T1's redirect makes `preflight.Run` operate against the worktree path, not the primary
 
-- **Agent:** adversarial-validator (R3)
+- **Agent:** adversarial-validator (R3); resolved in R4 by self-review
 - **Category:** internal contradiction
-- **Finding:** T4's lifecycle-ordering subsection states the state-file write happens "after `preflight.Run` creates `<primary>/.pr9k/`." T1's required ordering is `worktree create → project-directory redirect → runtime-directory creation → runner construction`, with `preflight.Run` as the runtime-directory-creation step. After the redirect, `preflight.Run` receives the **worktree** path, so it creates `<worktree>/.pr9k/`, not `<primary>/.pr9k/`. The state-file write at Primary Flow step 7 targets `<primary>/.pr9k/active-run.json`, so its parent directory must exist independently. On a first-ever pr9k run on a repository that has never had any pr9k state, `<primary>/.pr9k/` may not exist when step 7 fires. **This finding is out of scope for the D17 revert** but was surfaced by the focused-delta team while reading T4 alongside T5; flagged here for visibility and a future review pass.
-- **Evidence considered:** T4 lifecycle-ordering subsection (`feature-technical-notes.md:55`); T1 ordering chain (`feature-technical-notes.md:9`); `src/internal/preflight/run.go:36-38` (`os.MkdirAll(filepath.Join(projectDir, ".pr9k"), 0o755)`); `src/internal/atomicwrite/write.go` (rename returns ENOENT when target directory does not exist).
-- **Resolution:** **Deferred to a future review** — flagged to the user but not edited in R3 because it pre-dates the D17 revert and reviewing/fixing T4 is outside the focused-delta scope the user requested.
-- **Resolved by:** deferred
-- **Raised in round:** R3
-- **Changed in plan:** —
-- **Changed in tech-notes:** —
+- **Finding:** T4's lifecycle-ordering subsection states the state-file write happens "after `preflight.Run` creates `<primary>/.pr9k/`." T1's required ordering is `worktree create → project-directory redirect → runtime-directory creation → runner construction`, with `preflight.Run` as the runtime-directory-creation step. After the redirect, `preflight.Run` receives the **worktree** path, so it creates `<worktree>/.pr9k/`, not `<primary>/.pr9k/`. The state-file write at Primary Flow step 7 targets `<primary>/.pr9k/active-run.json`, so its parent directory must exist independently. On a first-ever pr9k run on a repository that has never had any pr9k state, `<primary>/.pr9k/` may not exist when step 7 fires.
+- **Evidence considered (R3+R4):** T4 lifecycle-ordering subsection (`feature-technical-notes.md:55`); T1 ordering chain (`feature-technical-notes.md:9`); `src/internal/preflight/run.go:31-39` (verified — `Run(projectDir, ...)` calls `os.MkdirAll(filepath.Join(projectDir, ".pr9k"), 0o755)` and the projectDir argument is the worktree path under T1's redirect); `src/internal/atomicwrite/write.go` (rename returns ENOENT when target directory does not exist); Coordinations table rows at spec lines 221 and 227 (also asserted "after preflight" without distinguishing primary vs worktree).
+- **Resolution:** Made the state-file writer take responsibility for its own parent directory: T4's lifecycle-ordering subsection now explicitly states the writer calls `os.MkdirAll(<primary>/.pr9k/, 0o755)` immediately before `atomicwrite.Write`, and notes that under T1's redirect `preflight.Run` does not create the primary's `.pr9k/` directory. The two affected Coordinations rows ("Git (local)" and "Active-run state file") were rewritten to reflect the same ordering. No new T# was needed (T4 absorbed the change).
+- **Resolved by:** evidence
+- **Raised in round:** R3 (deferred); resolved in R4
+- **Changed in plan:** Coordinations (Git local row, active-run state file row); Summary (Open items remaining).
+- **Changed in tech-notes:** T4 (Lifecycle ordering subsection — write step now names the explicit MkdirAll on `<primary>/.pr9k/` and the reason it cannot rely on `preflight.Run`).
 
 ### F32: Coordinations row leaks POSIX file-open flags and internal lifecycle terminology into behavioral prose
 
@@ -392,15 +392,16 @@ Numbering starts at F1 for this companion file; it is independent of the F-NN / 
 
 ### F33: Primary Flow step 8's "first record written to the iteration log captures the same as a structured event" implies a record schema that does not exist
 
-- **Agent:** adversarial-validator (R3)
+- **Agent:** adversarial-validator (R3); resolved in R4 by self-review
 - **Category:** unstated assumption / internal contradiction
-- **Finding:** Primary Flow step 8 says the first record written to the iteration log captures the worktree path, primary path, branch name, worktree-stamp, and invocation-stamp "as a structured event." Today's `IterationRecord` has no such fields, and T5 §4 only adds `invocation_stamp`. Either step 8 implies a second record type unspecified anywhere, or the metadata only goes to the run's log file and the iteration-log mention is wrong. The default consumers' jq filter (`post_issue_summary` line 16 against `.step_name`, `.status`, `.notes`) would emit a malformed bullet for a non-IterationRecord line, so writing a different shape to `iteration.jsonl` would corrupt the GitHub comment for the resumed iteration. **This finding is out of scope for the D17 revert** — the step 8 sentence has been in the spec since R1 — but was surfaced by the focused-delta team because step 8 sits alongside the iteration-log scope the revert touched. Flagged for visibility and a future review pass.
-- **Evidence considered:** spec line 72 (Primary Flow step 8); `src/internal/workflow/iterationlog.go:15-27` (current `IterationRecord` schema); T5 §4; `workflow/scripts/post_issue_summary:16` (jq filter).
-- **Resolution:** **Deferred to a future review** — flagged to the user but not edited in R3 because the offending sentence pre-dates the revert and the cleanest fix (delete the iteration-log mention from step 8, since the metadata also goes to the run's log file) is outside the focused-delta scope.
-- **Resolved by:** deferred
-- **Raised in round:** R3
-- **Changed in plan:** —
+- **Finding:** Primary Flow step 8 says the first record written to the iteration log captures the worktree path, primary path, branch name, worktree-stamp, and invocation-stamp "as a structured event." Today's `IterationRecord` has no such fields, and T5 §4 only adds `invocation_stamp`. Either step 8 implies a second record type unspecified anywhere, or the metadata only goes to the run's log file and the iteration-log mention is wrong. The default consumers' jq filter (`post_issue_summary` line 16 against `.step_name`, `.status`, `.notes`) would emit a malformed bullet for a non-IterationRecord line, so writing a different shape to `iteration.jsonl` would corrupt the GitHub comment for the resumed iteration.
+- **Evidence considered (R3+R4):** spec line 72 (Primary Flow step 8); `src/internal/workflow/iterationlog.go:15-27` (verified — `IterationRecord` carries `schema_version`, `issue_id`, `iteration_num`, `step_name`, `model`, `status`, `duration_s`, `input_tokens`, `output_tokens`, `session_id`, `notes`; no fields for worktree/primary path or branch name); `workflow/scripts/post_issue_summary:13-16` (verified — the script gates on `[[ -s "$JSONL_FILE" ]]` and runs every line through the same jq filter; a record without `step_name`/`status` would render as `- null [null]` in the GitHub comment); T5 §4 (`invocation_stamp` is the only new field this feature adds to records).
+- **Resolution:** Withdrew the iteration-log first-record commitment from three places: Primary Flow step 8 (explicit "the iteration log itself is not extended with a separate metadata record" sentence with the consumer-corruption reason cited), D3 rationale (note that the original "first record" commitment was withdrawn in F33 with reason), and D11 surfaces list (now lists two surfaces rather than three, with a back-reference to D3 and F33). Per-invocation attribution inside the iteration log is satisfied by the `invocation_stamp` field on every per-step record (T5 §4); post-run grep needs are satisfied by the run's log file header. The behavioral commitments to the user are unchanged.
+- **Resolved by:** evidence
+- **Raised in round:** R3 (deferred); resolved in R4
+- **Changed in plan:** Primary Flow (step 8); Summary (Open items remaining).
 - **Changed in tech-notes:** —
+- **Changed in decision-log:** D3 (rationale appended with F33 reason), D11 (surfaces list reduced from three to two with back-reference).
 
 ### F34: Iteration-log growth bound is asserted unconditionally but applies only when `lessons-learned` runs to completion
 
