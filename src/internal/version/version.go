@@ -4,4 +4,4 @@
 package version
 
 // Version is the current pr9k release version.
-const Version = "0.8.1"
+const Version = "0.9.0"
