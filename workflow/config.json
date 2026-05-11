@@ -10,8 +10,8 @@
     "model": "sonnet"
   },
   "worktrees": {
-    "enabled": true,
-    "autoCleanup": true
+    "enabled": false,
+    "autoCleanup": false
   },
   "initialize": [
     { "name": "Splash",                "isClaude": false, "command": ["cat", "{{WORKFLOW_DIR}}/ralph-art.txt"] },
