@@ -206,7 +206,7 @@ type IterationRecord struct {
 | `"skipped"` | Step was skipped (`StepSkipped`) |
 | `"unknown"` | `SetStepState` was never called — step never started |
 
-**`invocation_stamp` field:** the per-run identifier from `logger.RunStamp()` (format `pr9k-YYYY-MM-DD-HHMMSS.mmm`). Set once per `Run` call and carried on every record emitted during that invocation. Absent (`omitempty`) when the stamp is empty.
+**`invocation_stamp` field:** the per-run identifier from `logger.RunStamp()` (format `ralph-YYYY-MM-DD-HHMMSS.mmm`). Set once per `Run` call and carried on every record emitted during that invocation. Absent (`omitempty`) when the stamp is empty.
 
 **Notes field:** populated in two cases: (1) `buildStep` prep error — value is the error string; (2) step timeout — value is `"timed out after Ns"`. Normal successful steps leave `notes` absent (`omitempty`).
 

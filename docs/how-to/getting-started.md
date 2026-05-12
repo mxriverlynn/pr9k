@@ -110,7 +110,7 @@ The first thing the TUI shows is the splash step (the `Power-Ralph.9000` ASCII b
 2. **Feature work** — Claude (sonnet by default) reads the issue body and implements the change
 3. **Test planning** (opus) → **Test writing** (sonnet) — drafts and writes tests
 4. **Summarize to issue** — posts a comment summarizing what changed
-5. **Git push** — pushes the run's `pr9k-*` branch upstream
+5. **Git push** — pushes the current branch upstream
 6. **Close issue** — `gh issue close`
 
 After every iteration, finalization runs once:

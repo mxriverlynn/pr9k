@@ -61,7 +61,6 @@ Reconstruct what happened after the fact.
 - **Run is on screen and something happened?** Section 2.
 - **Default workflow runs but you want your own?** Section 3.
 - **You wrote a workflow and want to harden it?** Section 4.
-- **Wondering where your `pr9k-*` branch came from, or how to clean up?** Section 5.
-- **Something went wrong?** Section 6 (and section 2 if it's still running).
+- **Something went wrong?** Section 5 (and section 2 if it's still running).
 
 For a higher-altitude view of how the pieces fit together, see the [architecture overview](../architecture.md).

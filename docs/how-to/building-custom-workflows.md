@@ -146,7 +146,7 @@ The bundled "Ralph" workflow has 13 iteration steps and 8 finalize steps. Readin
 9. **Test planning** (opus) — drafts a test plan
 10. **Test writing** (sonnet, `timeoutSeconds: 1800`, `onTimeout: continue`) — writes the tests; if it overruns 30 min, the step is marked `[!]` and the iteration continues
 11. **Summarize to issue** (shell) — posts a single end-of-iteration comment via `scripts/post_issue_summary`
-12. **Git push** (shell) — pushes the run's `pr9k-*` branch upstream
+12. **Git push** (shell) — pushes the current branch upstream
 13. **Close issue** (shell) — `gh issue close`
 
 **Finalize phase (8 steps):**
