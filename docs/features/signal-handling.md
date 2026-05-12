@@ -14,7 +14,7 @@ Handles OS signals (SIGINT/SIGTERM) to trigger clean shutdown of the pr9k workfl
 - The main goroutine tracks whether a signal was received to select the exit code: 0 for normal completion, 1 for signal-initiated shutdown
 
 Key files:
-- `src/cmd/src/main.go` — Signal setup, signal handler goroutine, exit code selection
+- `src/cmd/pr9k/main.go` — Signal setup, signal handler goroutine, exit code selection
 
 ## Architecture
 

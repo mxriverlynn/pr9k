@@ -728,7 +728,7 @@ The stdlib sort uses an adaptive introsort and degrades gracefully across all re
 
 ## Version on-disk state files and quarantine corrupt or incompatible files
 
-When writing a JSON state file (e.g., `active-run.json`) that will be read by future processes, include a `schemaVersion` field. On read, handle two distinct failure modes separately:
+When writing a JSON state file that will be read by future processes, include a `schemaVersion` field. On read, handle two distinct failure modes separately:
 
 **Corrupt JSON** — the file is unreadable as JSON. Rename it to `<name>.corrupted-<unixnano>` and return `(nil, nil)`. The process continues as if no state file exists; the renamed file is preserved for post-mortem diagnosis.
 
@@ -737,37 +737,37 @@ When writing a JSON state file (e.g., `active-run.json`) that will be read by fu
 Both rename-and-continue behaviors are preferable to deleting (destroys diagnostic evidence) or returning an error (blocks the user unnecessarily on a recoverable situation).
 
 ```go
-const activeRunSchemaVersion = 1
+const stateSchemaVersion = 1
 
-func readActiveRun(path string) (*ActiveRunState, error) {
+func readState(path string) (*State, error) {
     data, err := os.ReadFile(path)
     if err != nil {
         if errors.Is(err, os.ErrNotExist) {
             return nil, nil
         }
-        return nil, fmt.Errorf("active-run: read %s: %w", path, err)
+        return nil, fmt.Errorf("state: read %s: %w", path, err)
     }
 
-    var state ActiveRunState
-    if err := json.Unmarshal(data, &state); err != nil {
+    var s State
+    if err := json.Unmarshal(data, &s); err != nil {
         renamed := fmt.Sprintf("%s.corrupted-%d", path, time.Now().UnixNano())
         _ = os.Rename(path, renamed)
         return nil, nil
     }
 
-    if state.SchemaVersion != activeRunSchemaVersion {
+    if s.SchemaVersion != stateSchemaVersion {
         renamed := fmt.Sprintf("%s.incompatible-%d", path, time.Now().UnixNano())
         _ = os.Rename(path, renamed)
         return nil, nil
     }
 
-    return &state, nil
+    return &s, nil
 }
 ```
 
 Write the state file with `atomicwrite.Write` so a crash during write does not produce a half-written file that triggers the corruption path on the next start.
 
-Apply this pattern any time you write a versioned file that a future process will read: active-run state, session checkpoints, migration markers.
+Apply this pattern any time you write a versioned file that a future process will read: session checkpoints, migration markers, persisted caches.
 
 ## Use typed string constants for serializable or display-friendly enums
 

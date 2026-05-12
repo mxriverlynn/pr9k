@@ -95,28 +95,33 @@ type StatusRunner interface {
 
 // RunConfig holds all parameters needed by Run.
 type RunConfig struct {
-    WorkflowDir     string
-    Iterations      int
+    WorkflowDir string
+    Iterations  int
     // Env is the per-workflow env allowlist loaded from the "env" field of
     // config.json (StepFile.Env). Combined with sandbox.BuiltinEnvAllowlist
     // when building docker run args for claude steps.
-    Env             []string
-    InitializeSteps []steps.Step  // run once before the iteration loop
-    Steps           []steps.Step  // run each iteration
-    FinalizeSteps   []steps.Step  // run once after the loop
+    Env []string
+    // ContainerEnv is the per-workflow literal env map from the "containerEnv"
+    // field of config.json. Each entry is injected as -e KEY=VALUE into
+    // the Docker command. Emitted after Env allowlist entries so containerEnv
+    // wins on collision (Docker last-wins).
+    ContainerEnv    map[string]string
+    InitializeSteps []steps.Step // run once before the iteration loop
+    Steps           []steps.Step // run each iteration
+    FinalizeSteps   []steps.Step // run once after the loop
     // LogWidth is the column width used for full-width phase banner
     // underlines. 0 or negative falls back to ui.DefaultTerminalWidth.
     // main.go computes ui.TerminalWidth() - 2 (for rounded border glyphs)
     // and passes it here.
-    LogWidth        int
+    LogWidth int
     // RunStamp is the per-run identifier used to name the artifact directory
     // (e.g. "ralph-2026-04-14-173022.123"). Populated from Logger.RunStamp() in
     // main.go. When empty, JSONL artifact paths are not populated for claude
     // steps (persistence is skipped).
-    RunStamp        string
+    RunStamp string
     // Runner is the optional status-line runner. When nil, all PushState and
     // Trigger calls are skipped.
-    Runner          StatusRunner
+    Runner StatusRunner
 }
 
 // RunResult holds the outcome of a completed Run call.
@@ -125,16 +130,23 @@ type RunResult struct {
     // It includes the iteration that triggered a breakLoopIfEmpty exit.
     // Zero if the iteration loop never started.
     IterationsRun int
+    // ExitReason describes how the run terminated (Completed, LoopBroken,
+    // or UserQuit).
+    ExitReason ExitReason
 }
 
-// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep + WriteRunSummary.
+// StepExecutor wraps StepRunner + LastCapture + LastStats + ProjectDir + RunSandboxedStep + RunStepFull + SessionBlacklisted + WriteRunSummary.
 // *Runner satisfies this interface.
 type StepExecutor interface {
     ui.StepRunner
-    LastCapture() string                  // last non-empty stdout line (or Aggregator.Result() for claude steps)
-    LastStats() claudestream.StepStats    // StepStats from the most recent RunSandboxedStep pipeline call
-    ProjectDir() string                   // target repository directory used as cmd.Dir for every subprocess
+    LastCapture() string               // last non-empty stdout line (or Aggregator.Result() for claude steps)
+    LastStats() claudestream.StepStats // StepStats from the most recent RunSandboxedStep pipeline call
+    ProjectDir() string                // target repository directory used as cmd.Dir for every subprocess
     RunSandboxedStep(stepName string, command []string, opts SandboxOptions) error
+    RunStepFull(stepName string, command []string, captureMode ui.CaptureMode, timeoutSeconds int) error
+    // SessionBlacklisted reports whether id is in the session blacklist
+    // (timed-out sessions). Used by evaluateResumeGates (G5).
+    SessionBlacklisted(id string) bool
     // WriteRunSummary writes line to both the TUI (via sendLine) and the file
     // logger. Used by Run() for the run-level cumulative summary (D13 2c) so
     // the total spend line is persisted to disk, unlike WriteToLog which is
@@ -279,7 +291,11 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
     emitBlank()
     executor.WriteToLog(ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps)))
 
-    return RunResult{IterationsRun: iterationsRun}
+    exitReason := ExitReasonCompleted
+    if loopBroken {
+        exitReason = ExitReasonLoopBroken
+    }
+    return RunResult{IterationsRun: iterationsRun, ExitReason: exitReason}
 }
 ```
 
@@ -287,7 +303,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 - Sets VarTable phase to `vars.Initialize`
 - Writes `PhaseBanner("Initializing", logWidth)` if and only if `len(cfg.InitializeSteps) > 0` (no banner for an empty phase)
 - Calls `header.RenderInitializeLine(j+1, len(InitializeSteps), s.Name)` to update `IterationLine` before each step runs — so the header shows `"Initializing N/M: <step name>"` while that step executes
-- Calls `emitBlank` then `buildStep` and `ui.Orchestrate` with a `noopHeader{}` — step checkboxes are not updated during the initialize phase (no `SetPhaseSteps` call, no checkbox rendering); only `IterationLine` is updated via `RenderInitializeLine`. `Orchestrate` itself writes the `Starting step: <name>` banner + underline + trailing blank line to the log before running the step
+- Calls `emitBlank` then `buildStep` and `ui.Orchestrate` with a `stateTracker` — step checkboxes are not updated during the initialize phase (no `SetPhaseSteps` call, no checkbox rendering); only `IterationLine` is updated via `RenderInitializeLine`. `stateTracker` records the final `StepState` so the iteration log can capture per-step success/failure without producing visible TUI output. `Orchestrate` itself writes the `Starting step: <name>` banner + underline + trailing blank line to the log before running the step
 - After each step, if `s.CaptureAs != ""`, calls `executor.LastCapture()`, binds the value into the persistent VarTable scope via `vt.Bind(vars.Initialize, s.CaptureAs, ...)`, and calls `writeCaptureLog(s.CaptureAs, captured)` to append a `Captured VAR = "value"` line to the log body
 - Bound values (e.g. `GITHUB_USER`, `ISSUE_ID`) are available in all subsequent phases via VarTable resolution
 - If `Orchestrate` returns `ActionQuit`, returns immediately
@@ -317,7 +333,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 **Phase 4 — Completion:** after finalize completes normally:
 - Calls `Renderer{}.FinalizeRun(rs.invocations, rs.retries, rs.total)` and writes each returned line via `executor.WriteRunSummary` (D13 2c) — the run-level cumulative summary (e.g. `total claude spend across 7 step invocations: …`) is written to both the TUI and the file logger. Skipped when `rs.invocations == 0` (no claude steps ran)
 - Calls `emitBlank` then writes `ui.CompletionSummary(iterationsRun, len(cfg.FinalizeSteps))` — `"Ralph completed after N iteration(s) and M finalizing tasks."` — as the **last non-blank line of the log body**. The header's `IterationLine` retains the final `"Finalizing N/M: <step name>"` value from the last finalize step; there is no header-level completion line
-- Returns `RunResult{IterationsRun: iterationsRun}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process
+- Returns `RunResult{IterationsRun: iterationsRun, ExitReason: …}` — the caller (the workflow goroutine in `main.go`) then restores the terminal and exits the process. `ExitReason` is `ExitReasonCompleted` for a normal run, `ExitReasonLoopBroken` when the iteration loop was cut short by `breakLoopIfEmpty`, or `ExitReasonUserQuit` for `q`+`y` / SIGINT / SIGTERM exits during any phase
 
 ### Step Resolution
 
@@ -328,7 +344,7 @@ func buildStep(workflowDir string, s steps.Step, vt *vars.VarTable, phase vars.P
     if s.IsClaude {
         prompt, err := steps.BuildPrompt(workflowDir, s, vt, phase)
         ...
-        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, prompt)
+        argv := sandbox.BuildRunArgs(projectDir, profileDir, uid, gid, cidfile, envAllowlist, containerEnv, resumeSessionID, s.Model, s.Effort, prompt)
         return ui.ResolvedStep{
             Name:        s.Name,
             Command:     argv,
@@ -480,25 +496,40 @@ type stepDispatcher struct {
     exec       StepExecutor
     current    ui.ResolvedStep
     stats      *runStats
-    prevFailed bool  // true if the previous RunSandboxedStep returned an error
+    prevFailed bool // true if the previous RunSandboxedStep returned an error
+    // capturedStats holds the StepStats from the most recent RunSandboxedStep
+    // call so Run can read per-step stats for IterationRecord without a
+    // second LastStats() call.
+    capturedStats claudestream.StepStats
+    // onTimeoutRetry, when non-nil, is called at the start of RunStep whenever
+    // the previous call timed out. Run uses this to emit an IterationRecord
+    // for the timed-out attempt before the retry begins (WARN-001).
+    onTimeoutRetry func()
 }
 
 func (d *stepDispatcher) RunStep(name string, command []string) error {
+    // WARN-001: emit a record for a still-pending timed-out attempt before
+    // RunSandboxedStep / RunStepFull resets the flag.
+    if d.exec.WasTimedOut() && d.onTimeoutRetry != nil {
+        d.onTimeoutRetry()
+    }
     if d.current.IsClaude {
         err := d.exec.RunSandboxedStep(name, command, SandboxOptions{
-            CidfilePath:  d.current.CidfilePath,
-            ArtifactPath: d.current.ArtifactPath,
-            CaptureMode:  d.current.CaptureMode,
+            CidfilePath:    d.current.CidfilePath,
+            ArtifactPath:   d.current.ArtifactPath,
+            CaptureMode:    d.current.CaptureMode,
+            TimeoutSeconds: d.current.TimeoutSeconds,
         })
-        // Fold stats regardless of outcome — D21: the spend was real.
+        s := d.exec.LastStats()
+        d.capturedStats = s
         if d.stats != nil {
-            d.stats.add(d.exec.LastStats(), d.prevFailed)
+            d.stats.add(s, d.prevFailed)
         }
         d.prevFailed = err != nil
         return err
     }
     d.prevFailed = false
-    return d.exec.RunStep(name, command)
+    return d.exec.RunStepFull(name, command, d.current.CaptureMode, d.current.TimeoutSeconds)
 }
 ```
 
@@ -506,7 +537,7 @@ Each phase in `Run()` creates a fresh dispatcher per step and passes it as the `
 
 ```go
 // initialize phase
-action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, noopHeader{}, keyHandler)
+action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, &stateTracker{}, keyHandler)
 
 // iteration phase
 action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: executor, current: resolved, stats: rs}, th, keyHandler)
@@ -520,13 +551,19 @@ action := ui.Orchestrate([]ui.ResolvedStep{resolved}, &stepDispatcher{exec: exec
 Two adapter types route `SetStepState` calls to the correct TUI checkbox position depending on the workflow phase:
 
 ```go
-// noopHeader satisfies ui.StepHeader with no-op methods. Passed to
-// Orchestrate during the initialize phase to suppress step-checkbox updates
-// — the initialize phase has no checkbox grid. Note: IterationLine IS still
-// updated during initialize, but via header.RenderInitializeLine called
-// directly from Run, not through Orchestrate.
-type noopHeader struct{}
-func (noopHeader) SetStepState(int, ui.StepState) {}
+// stateTracker satisfies ui.StepHeader and records the last StepState set
+// without producing visible TUI output. Passed to Orchestrate during the
+// initialize phase to suppress step-checkbox updates — the initialize phase
+// has no checkbox grid — while still letting Run capture the per-step
+// success/failure for the iteration log. IterationLine IS still updated
+// during initialize via header.RenderInitializeLine, called directly from
+// Run rather than through Orchestrate.
+type stateTracker struct {
+    lastState ui.StepState
+}
+func (s *stateTracker) SetStepState(_ int, state ui.StepState) {
+    s.lastState = state
+}
 
 // trackingOffsetIterHeader adapts RunHeader to ui.StepHeader for a single
 // step at absolute index idx. It also records the last StepState set so Run
