@@ -23,7 +23,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
 │  │  │  Initialize Phase (once, before loop)                   │    ││
 │  │  │  buildStep → ui.Orchestrate → LastCapture → VarTable    │    ││
-│  │  │  (noopHeader: no TUI checkbox updates during init)      │    ││
+│  │  │  (stateTracker: no TUI checkbox updates during init)    │    ││
 │  │  └─────────────────────────────────────────────────────────┘    ││
 │  │                                                                 ││
 │  │  ┌─────────────────────────────────────────────────────────┐    ││
@@ -236,7 +236,7 @@ An eight-mode state machine (`ModeNormal`, `ModeError`, `ModeQuitConfirm`, `Mode
 
 Listens for SIGINT and SIGTERM via `os/signal.Notify`. On receipt, calls `KeyHandler.ForceQuit()` which first flips mode to `ModeQuitting` and updates the shortcut bar (so the footer shows `"Quitting..."` immediately), then terminates the current subprocess and injects `ActionQuit` into the actions channel using a non-blocking send. The orchestration loop picks up the quit action before the next step starts, enabling clean shutdown. The main goroutine tracks whether a signal was received to choose the exit code (0 for normal, 1 for signaled).
 
-**Package:** `cmd/src/` (`main.go`)
+**Package:** `cmd/pr9k/` (`main.go`)
 
 ### [File Logging](code-packages/logger.md)
 
@@ -356,7 +356,6 @@ internal/ansi                  (ANSI escape sequence stripper)
   - [Building Custom Workflows](how-to/building-custom-workflows.md) — Creating custom step sequences, adding prompts, mixing Claude and shell steps
   - [Workflow Variables](how-to/workflow-variables.md) — Variable injection into prompts/commands and file-based data passing between steps
   - [Passing Environment Variables](how-to/passing-environment-variables.md) — Forwarding host env vars into the Docker sandbox via the `env` field
-- [pr9k Plan](plans/pr9k.md) — Original specification with acceptance criteria, verification checklist, and design rationale
 - [Project Discovery](project-discovery.md) — Repository-level attributes: languages, frameworks, tooling, commands, and configuration
 - **Coding Standards** — Conventions that govern pr9k implementation:
   - [Concurrency](coding-standards/concurrency.md) — Mutex patterns, WaitGroup drain, channel dispatch, non-blocking sends

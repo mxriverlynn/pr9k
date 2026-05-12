@@ -11,7 +11,7 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 ## Repository Structure
 
 - `src/` — Go TUI orchestrator. See "pr9k" section below.
-- `workflow/` — Default workflow bundle: `config.json` (step definitions), `prompts/` (Claude prompt files), and `scripts/` (helper scripts: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
+- `workflow/` — Default workflow bundle: `config.json` (step definitions), `prompts/` (Claude prompt files), and `scripts/` (helper scripts: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_claude_credentials`, `get_commit_sha`, `git_push`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
 - `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans
 
@@ -112,9 +112,9 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 ## Coding Standards
 
 - [`docs/coding-standards/api-design.md`](docs/coding-standards/api-design.md) — API design patterns including unused parameter documentation, bounds guards, precondition validation, and adapter types. Apply when designing or modifying public interfaces and exported functions.
-- [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, non-blocking channel sends, and stamp-guarded state file removal. Apply when working with goroutines, mutexes, channels, shared state, or on-disk state files accessed by multiple processes.
-- [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, scanner error checking, and ordered cleanup with per-step warning tolerance. Apply to all error creation, wrapping, propagation, and multi-step cleanup sequences.
-- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution, 256KB scanner buffers, state file schema versioning with quarantine, forward-compatible external format parsers, typed string constants for serializable enums, and stderr injection for testable warning functions. Apply when working with CLI args, file paths, subprocess I/O, or on-disk state schemas.
+- [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, and non-blocking channel sends. Apply when working with goroutines, mutexes, channels, or shared state.
+- [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, and scanner error checking. Apply to all error creation, wrapping, and propagation.
+- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution, 256KB scanner buffers, state file schema versioning with quarantine, and typed string constants for serializable enums. Apply when working with CLI args, file paths, subprocess I/O, or on-disk state schemas.
 - [`docs/coding-standards/lint-and-tooling.md`](docs/coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited in any form (`//nolint`, `.golangci.yml` exclusions, disabled linters, etc.). Fix the root cause or escalate; never silence a finding. Apply to every commit and every PR review.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 - [`docs/coding-standards/versioning.md`](docs/coding-standards/versioning.md) — Semantic versioning standard: `version.Version` is the single source of truth, what counts as pr9k's public API (CLI flags, `config.json` schema, `{{VAR}}` language, `--version` output), `0.y.z` rules, and how to bump. Apply when changing any user-visible surface or preparing a release.
@@ -146,6 +146,7 @@ Problem-focused guides for users running pr9k against their own projects. When a
 - [`docs/how-to/configuring-defaults.md`](docs/how-to/configuring-defaults.md) — The full top-level `defaults` block (currently `effort` and `model`), the per-step override hierarchy, partial-defaults patterns, and the validator's effective-model requirement for claude steps
 - [`docs/how-to/using-the-workflow-builder.md`](docs/how-to/using-the-workflow-builder.md) — Step-by-step guide to launching `pr9k workflow`, creating or opening a workflow, navigating the outline, editing step fields, opening companion files in an external editor (`Ctrl+E`), saving, and quitting
 - [`docs/how-to/configuring-external-editor-for-workflow-builder.md`](docs/how-to/configuring-external-editor-for-workflow-builder.md) — How the builder resolves `$VISUAL`/`$EDITOR`, accepted and rejected values, recommended settings (`code --wait`, `nvim`, `nano`), the `--wait` requirement for GUI editors, verifying configuration via `Ctrl+E`, and SIGINT behavior during editor invocation
+
 ## Project Discovery
 
 - See [`docs/project-discovery.md`](docs/project-discovery.md) for full project discovery details including languages, frameworks, tooling, commands, test structure, documentation paths, and infrastructure.
