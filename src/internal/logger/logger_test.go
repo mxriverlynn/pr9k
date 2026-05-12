@@ -502,42 +502,6 @@ func TestNewLoggerWithPrefix_RunStampHasMatchingPrefix(t *testing.T) {
 	}
 }
 
-// TestFormatStamp_ExactOutput verifies FormatStamp against a fixed time produces the expected string.
-func TestFormatStamp_ExactOutput(t *testing.T) {
-	fixed := time.Date(2026, 5, 8, 14, 30, 45, 123000000, time.UTC)
-	want := "pr9k-2026-05-08-143045.123"
-	got := FormatStamp(fixed)
-	if got != want {
-		t.Errorf("FormatStamp(%v) = %q, want %q", fixed, got, want)
-	}
-}
-
-// TestFormatStamp_MatchesRunStampShape verifies FormatStamp output matches the same
-// YYYY-MM-DD-HHMMSS.mmm shape that RunStamp() uses (different prefix, same datetime layout).
-func TestFormatStamp_MatchesRunStampShape(t *testing.T) {
-	formatStampRe := regexp.MustCompile(`^pr9k-\d{4}-\d{2}-\d{2}-\d{6}\.\d{3}$`)
-	got := FormatStamp(time.Now())
-	if !formatStampRe.MatchString(got) {
-		t.Errorf("FormatStamp() = %q does not match expected shape pr9k-YYYY-MM-DD-HHMMSS.mmm", got)
-	}
-}
-
-// TestRunStamp_UnaffectedByFormatStamp confirms RunStamp() still returns its original shape
-// after the FormatStamp refactor.
-func TestRunStamp_UnaffectedByFormatStamp(t *testing.T) {
-	dir := t.TempDir()
-	l, err := NewLogger(dir)
-	if err != nil {
-		t.Fatalf("NewLogger: %v", err)
-	}
-	defer func() { _ = l.Close() }()
-
-	stamp := l.RunStamp()
-	if !runStampRe.MatchString(stamp) {
-		t.Errorf("RunStamp() = %q does not match expected shape after FormatStamp refactor", stamp)
-	}
-}
-
 // readLogLines reads all non-empty lines from the single log file in dir/.pr9k/logs/.
 func readLogLines(t *testing.T, dir string) []string {
 	t.Helper()

@@ -175,11 +175,6 @@ type RunResult struct {
 | `"loop_broken"` | The iteration loop exited early via `breakLoopIfEmpty`; finalization still ran |
 | `"user_quit"` | The user confirmed quit (`q`+`y`) during any phase |
 
-The worktrees post-run cleanup (`postRunCleanup` in `main_worktree.go`) reads
-`ExitReason` to decide whether to remove the linked worktree and branch: both
-`completed` and `loop_broken` trigger autoCleanup when enabled; `user_quit`
-preserves the worktree for auto-resume on the next invocation.
-
 After every step (including prep failures), `Run` appends one `IterationRecord` to `.pr9k/iteration.jsonl`. See [Iteration log](#iteration-log) below.
 
 ## Iteration log
@@ -211,7 +206,7 @@ type IterationRecord struct {
 | `"skipped"` | Step was skipped (`StepSkipped`) |
 | `"unknown"` | `SetStepState` was never called — step never started |
 
-**`invocation_stamp` field:** the per-run identifier from `logger.RunStamp()` (format `pr9k-YYYY-MM-DD-HHMMSS.mmm`). Set once per `Run` call and carried on every record emitted during that invocation. When the worktrees feature is enabled and a run is resumed, records from the original run and the resumed run carry different stamps, making the two segments distinguishable in `iteration.jsonl` even though they accumulate in the same file (R3). Absent (`omitempty`) when the stamp is empty.
+**`invocation_stamp` field:** the per-run identifier from `logger.RunStamp()` (format `pr9k-YYYY-MM-DD-HHMMSS.mmm`). Set once per `Run` call and carried on every record emitted during that invocation. Absent (`omitempty`) when the stamp is empty.
 
 **Notes field:** populated in two cases: (1) `buildStep` prep error — value is the error string; (2) step timeout — value is `"timed out after Ns"`. Normal successful steps leave `notes` absent (`omitempty`).
 

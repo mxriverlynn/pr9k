@@ -188,14 +188,13 @@ Eight steps run once after all iterations complete:
 
 ### Top-level configuration
 
-The bundled workflow also declares four top-level blocks alongside the three step arrays:
+The bundled workflow also declares three top-level blocks alongside the three step arrays:
 
 | Block | Value | What it controls |
 |-------|-------|------------------|
 | `env` | `["GH_TOKEN"]` | Forwards the host's `GH_TOKEN` into every Claude step's sandbox so `gh` works inside the container. See [Passing Environment Variables](../how-to/passing-environment-variables.md). |
 | `statusLine` | `scripts/statusline`, 5 s refresh | Custom status-line command shown in the TUI footer. See [Configuring a Status Line](../how-to/configuring-a-status-line.md). |
 | `defaults` | `effort: medium`, `model: sonnet` | Workflow-wide defaults applied to every Claude step that does not override them. See [Configuring Workflow Defaults](../how-to/configuring-defaults.md). |
-| `worktrees` | `enabled: true`, `autoCleanup: true` | Wraps each run in a sibling git worktree on a `pr9k-*` branch and removes it on `Completed` / `LoopBroken`. See [Using Worktrees](../how-to/using-worktrees.md) and [Worktrees runtime behavior](../features/worktrees.md). |
 
 ### Prompt Building
 

@@ -66,17 +66,3 @@ func CompletionSummary(iterationsRun, finalizeCount int) string {
 		iterationsRun, finalizeCount,
 	)
 }
-
-// WorktreeDetails returns three supplementary lines appended to the final
-// summary block when a run executes inside a worktree. The lines are:
-//
-//	"worktree: <path>"
-//	"branch: <branch>"
-//	"pr9k worktrees: <count>"
-func WorktreeDetails(path, branch string, count int) []string {
-	return []string{
-		fmt.Sprintf("worktree: %s", path),
-		fmt.Sprintf("branch: %s", branch),
-		fmt.Sprintf("pr9k worktrees: %d", count),
-	}
-}

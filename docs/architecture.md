@@ -4,8 +4,6 @@ pr9k is a Go TUI application that replaces the original `ralph-loop` bash script
 
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lip Gloss](https://github.com/charmbracelet/lipgloss) + [bubbles/viewport](https://github.com/charmbracelet/bubbles) for TUI rendering, pr9k streams subprocess output in real time via a `sendLine` callback through a buffered channel, displays workflow progress via a checkbox-based status header, and supports interactive error handling (retry, continue, quit) when steps fail.
 
-When the active workflow opts in (the bundled "Ralph" workflow does), each run is also wrapped in a dedicated git worktree on a fresh `pr9k-*` branch, so the primary checkout is never modified during the run. Worktree creation, the `active-run.json` claim file, the resume decision tree, and `autoCleanup` ordering are documented in [`features/worktrees.md`](features/worktrees.md); user-facing operation is in [`how-to/using-worktrees.md`](how-to/using-worktrees.md).
-
 ## System Block Diagram
 
 ```
@@ -275,12 +273,6 @@ The `internal/sandbox` package constructs the `docker run` argv that wraps every
 Startup validation that runs before the main orchestration loop. Resolves and validates the Claude profile directory (`ResolveProfileDir` / `CheckProfileDir`) and checks for Docker binary availability, daemon reachability, and sandbox image presence via the injectable `Prober` interface. Both `CheckProfileDir` and `CheckDocker` are claude-only prerequisites — they only run when the loaded workflow contains at least one claude step, so a non-claude workflow runs cleanly on a host with neither prerequisite. pr9k does not check or warn about the credentials file at startup; authentication is the user's responsibility (via `pr9k sandbox --interactive` to write `.credentials.json`, or by listing `ANTHROPIC_API_KEY` in the workflow's `env` array). All checks are collected before returning (collect-all-errors via `Run`) so the caller sees the full list of failures in one pass. `RealProber` uses `exec.CommandContext` with a 10-second timeout for each Docker probe to guard against a frozen daemon.
 
 **Package:** `internal/preflight/`
-
-### [Worktrees](features/worktrees.md)
-
-When the loaded `config.json` declares `worktrees.enabled: true`, every run is wrapped in a dedicated git linked worktree on a freshly minted `pr9k-YYYY-MM-DD-HHMMSS.mmm` branch. The worktree path becomes the project directory passed to all downstream subsystems (Docker bind-mount, logger artifact dir, `{{PROJECT_DIR}}` substitution, every step's `cmd.Dir`); the primary checkout is touched only for `git worktree add`, the `active-run.json` claim file, and post-run cleanup. After preflight passes, pr9k writes `<primaryPath>/.pr9k/active-run.json` recording the worktree path, branch, stamp, PID, and binary path; a post-write readback (`verifyActiveRunClaim`) catches concurrent claims. On the next invocation, a five-rule resume decision tree (FreshStart on `--fresh`, Refuse on live concurrent process, FreshStart on missing worktree/branch, Resume when prior state exists with worktrees enabled, otherwise FreshStart) decides whether to re-use the prior worktree or mint a new one. With `autoCleanup: true`, `Completed` and `LoopBroken` exits remove the worktree, branch, and state file in fixed order (worktree → branch → state); `UserQuit` preserves everything for the next resume. The bundled Ralph workflow ships with both flags on. See [`features/worktrees.md`](features/worktrees.md), [`features/worktree-prune.md`](features/worktree-prune.md), [`how-to/using-worktrees.md`](how-to/using-worktrees.md), and [`how-to/managing-worktrees.md`](how-to/managing-worktrees.md).
-
-**Packages:** `cmd/pr9k/` (`git_worktree.go`, `active_run.go`, `main_worktree.go`, `worktree.go`)
 
 ### [Stream JSON Pipeline](code-packages/claudestream.md)
 

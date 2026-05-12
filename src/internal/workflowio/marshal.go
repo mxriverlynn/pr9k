@@ -33,17 +33,12 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 		Effort string `json:"effort,omitempty"`
 		Model  string `json:"model,omitempty"`
 	}
-	type outWorktrees struct {
-		Enabled     bool `json:"enabled"`
-		AutoCleanup bool `json:"autoCleanup"`
-	}
 	type outConfig struct {
 		Initialize   []outStep         `json:"initialize"`
 		Iteration    []outStep         `json:"iteration"`
 		Finalize     []outStep         `json:"finalize"`
 		StatusLine   *outStatusLine    `json:"statusLine,omitempty"`
 		Defaults     *outDefaults      `json:"defaults,omitempty"`
-		Worktrees    *outWorktrees     `json:"worktrees,omitempty"`
 		Env          []string          `json:"env,omitempty"`
 		ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 	}
@@ -112,12 +107,5 @@ func marshalDoc(doc workflowmodel.WorkflowDoc) ([]byte, error) {
 			Model:  doc.Defaults.Model,
 		}
 	}
-	if doc.Worktrees != nil {
-		cfg.Worktrees = &outWorktrees{
-			Enabled:     doc.Worktrees.Enabled,
-			AutoCleanup: doc.Worktrees.AutoCleanup,
-		}
-	}
-
 	return json.MarshalIndent(cfg, "", "  ")
 }

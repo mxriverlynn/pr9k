@@ -47,18 +47,11 @@ Opt-in features you reach for when you outgrow the basics.
 18. [Setting Claude Effort](setting-claude-effort.md) — `effort` per step and `defaults.effort` workflow-wide, forwarded to the Claude CLI as `--effort`
 19. [Configuring Workflow Defaults](configuring-defaults.md) — the top-level `defaults` block, override hierarchy, and the supported keys (`effort`, `model`)
 
-## 5. Worktrees
-
-Each run is isolated in its own git worktree on a dedicated `pr9k-*` branch — enabled by default in the bundled workflow.
-
-20. [Using Worktrees](using-worktrees.md) — enable the feature, prerequisites (git ≥ 2.17), `enabled` / `autoCleanup` schema, what changes at run start, auto-resume on next invocation, and accepted limitations
-21. [Managing Worktrees](managing-worktrees.md) — `pr9k worktree prune` for stale worktrees, `--dry-run`, and the `--fresh` flag for stale-state recovery and concurrent-run refusal
-
-## 6. Debugging
+## 5. Debugging
 
 Reconstruct what happened after the fact.
 
-22. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
+20. [Debugging a Run](debugging-a-run.md) — read the log file, the iteration JSONL, the per-step JSONL artifacts, and reproduce a failure with `-n 1`
 
 ---
 

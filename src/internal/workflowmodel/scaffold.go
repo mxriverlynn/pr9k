@@ -68,12 +68,6 @@ type rawDefaults struct {
 	Model  string `json:"model,omitempty"`
 }
 
-// rawWorktrees is the JSON shape of the optional top-level "worktrees" block.
-type rawWorktrees struct {
-	Enabled     bool `json:"enabled"`
-	AutoCleanup bool `json:"autoCleanup"`
-}
-
 // rawConfig is the JSON shape of config.json.
 type rawConfig struct {
 	Initialize   []rawStep         `json:"initialize"`
@@ -81,7 +75,6 @@ type rawConfig struct {
 	Finalize     []rawStep         `json:"finalize"`
 	StatusLine   *rawStatusLine    `json:"statusLine,omitempty"`
 	Defaults     *rawDefaults      `json:"defaults,omitempty"`
-	Worktrees    *rawWorktrees     `json:"worktrees,omitempty"`
 	Env          []string          `json:"env,omitempty"`
 	ContainerEnv map[string]string `json:"containerEnv,omitempty"`
 }
@@ -122,12 +115,6 @@ func parseConfig(data []byte) (WorkflowDoc, error) {
 		doc.Defaults = &DefaultsBlock{
 			Effort: rc.Defaults.Effort,
 			Model:  rc.Defaults.Model,
-		}
-	}
-	if rc.Worktrees != nil {
-		doc.Worktrees = &WorktreesBlock{
-			Enabled:     rc.Worktrees.Enabled,
-			AutoCleanup: rc.Worktrees.AutoCleanup,
 		}
 	}
 	return doc, nil

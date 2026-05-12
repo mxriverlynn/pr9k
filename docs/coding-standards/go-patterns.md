@@ -769,31 +769,6 @@ Write the state file with `atomicwrite.Write` so a crash during write does not p
 
 Apply this pattern any time you write a versioned file that a future process will read: active-run state, session checkpoints, migration markers.
 
-## Ignore unknown fields in external format parsers for forward compatibility
-
-When parsing the structured output of an external tool (e.g., `git worktree list --porcelain`), silently ignore any field or line that does not match a known key. Future versions of the tool may add new fields; an unknown-field error would break existing code on a tool upgrade.
-
-```go
-// parseWorktreePorcelain parses `git worktree list --porcelain` output.
-// Unknown fields are silently ignored so that future git versions are
-// forward-compatible.
-func parseWorktreePorcelain(output string) []WorktreeEntry {
-    for _, line := range strings.Split(output, "\n") {
-        switch {
-        case strings.HasPrefix(line, "worktree "):
-            // ...
-        case strings.HasPrefix(line, "branch "):
-            // ...
-        // default: unknown field — silently skip
-        }
-    }
-}
-```
-
-This mirrors Go's `encoding/json` `omitempty` philosophy: unknown keys in the input do not cause a decode error. Document the "unknown fields silently ignored" behavior in the function's comment so future maintainers know it is intentional.
-
-Apply any time your code parses line-based or structured output from a system tool (`git`, `docker`, OS commands) that may evolve independently of your codebase.
-
 ## Use typed string constants for serializable or display-friendly enums
 
 When an enum type needs to survive serialization, logging, or direct comparison without a `String()` method, define it as `type X string` with string constants rather than an iota-based int.
@@ -824,36 +799,6 @@ Choose `type X string` when:
 
 Choose `type X int` with iota when the values are internal, never serialized, and the set may grow frequently (iota automatically assigns the next integer, reducing merge conflicts).
 
-## Pass stderr as io.Writer for testable warning-output functions
-
-Functions that may emit warnings (non-fatal output to stderr) should accept `stderr io.Writer` as an explicit parameter rather than calling `os.Stderr` directly. This makes the function testable without capturing global state and avoids the parallel-safety issues of package-level var seams.
-
-```go
-// Good — stderr is injected; tests capture output with bytes.Buffer
-func postRunCleanup(primaryPath, stateFilePath string, state *ActiveRunState,
-    exitReason workflow.ExitReason, autoCleanup bool, stderr io.Writer) {
-    if err := gitWorktreeRemove(primaryPath, state.WorktreePath); err != nil {
-        fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
-    }
-    // ...
-}
-
-// Test — no global state mutation, safe for t.Parallel()
-func TestPostRunCleanup_WarnsOnWorktreeError(t *testing.T) {
-    t.Parallel()
-    var buf bytes.Buffer
-    postRunCleanup(primary, statePath, state, workflow.ExitReasonCompleted, true, &buf)
-    if !strings.Contains(buf.String(), "warning:") {
-        t.Error("expected warning in output")
-    }
-}
-
-// Production call site
-postRunCleanup(primaryPath, stateFilePath, activeState, result.ExitReason, autoCleanup, os.Stderr)
-```
-
-This is the per-call-site complement to the function-field injection seam (see [API Design](api-design.md)): use an `io.Writer` parameter when the function is invoked once per operation (not by a long-lived type), keeping the production call simple while making tests self-contained.
-
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -877,7 +822,4 @@ This is the per-call-site complement to the function-field injection seam (see [
 - [File Logging](../code-packages/logger.md) — `O_APPEND` added to logger open flags to prevent write-position reset on re-open (workflow-builder branch)
 - `src/cmd/pr9k/workflow.go` — `realEditorRunner.Run` as the canonical `strings.Fields` length-guard example (workflow-builder-pt-2 review issue #3)
 - `src/internal/workflowedit/outline.go` — `sortedKeys` as the canonical stdlib-sort example; replaced hand-rolled insertion sort with `sort.Strings` (workflow-builder-pt-2 review issue #8)
-- `src/cmd/pr9k/active_run.go` — `readActiveRun` as the canonical state-file versioning with quarantine example (worktrees branch)
-- `src/cmd/pr9k/git_worktree.go` — `parseWorktreePorcelain` as the canonical forward-compatible external format parser example (worktrees branch)
-- `src/internal/workflow/exit_reason.go` — `ExitReason` as the canonical typed-string enum example (worktrees branch)
-- `src/cmd/pr9k/main_worktree.go` — `postRunCleanup` as the canonical io.Writer stderr injection example (worktrees branch)
+- `src/internal/workflow/exit_reason.go` — `ExitReason` as the canonical typed-string enum example

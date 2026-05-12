@@ -218,7 +218,7 @@ func TestRenderInitializeLine_WritesToIterationLine(t *testing.T) {
 
 func TestRenderIterationLine_Bounded(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.RenderIterationLine(2, 5, "42", "", false)
+	h.RenderIterationLine(2, 5, "42")
 
 	want := "Iteration 2/5 — Issue #42"
 	if h.IterationLine != want {
@@ -228,7 +228,7 @@ func TestRenderIterationLine_Bounded(t *testing.T) {
 
 func TestRenderIterationLine_Unbounded(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.RenderIterationLine(3, 0, "42", "", false)
+	h.RenderIterationLine(3, 0, "42")
 
 	want := "Iteration 3 — Issue #42"
 	if h.IterationLine != want {
@@ -238,7 +238,7 @@ func TestRenderIterationLine_Unbounded(t *testing.T) {
 
 func TestRenderIterationLine_EmptyIssueID(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.RenderIterationLine(1, 5, "", "", false)
+	h.RenderIterationLine(1, 5, "")
 
 	want := "Iteration 1/5"
 	if h.IterationLine != want {
@@ -248,7 +248,7 @@ func TestRenderIterationLine_EmptyIssueID(t *testing.T) {
 
 func TestRenderIterationLine_UnboundedEmptyIssueID(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.RenderIterationLine(4, 0, "", "", false)
+	h.RenderIterationLine(4, 0, "")
 
 	want := "Iteration 4"
 	if h.IterationLine != want {
@@ -258,7 +258,7 @@ func TestRenderIterationLine_UnboundedEmptyIssueID(t *testing.T) {
 
 func TestRenderIterationLine_WritesToIterationLine(t *testing.T) {
 	h := NewStatusHeader(8)
-	h.RenderIterationLine(1, 3, "99", "", false)
+	h.RenderIterationLine(1, 3, "99")
 	if h.IterationLine == "" {
 		t.Error("RenderIterationLine did not write to IterationLine")
 	}
@@ -291,58 +291,6 @@ func TestRenderFinalizeLine_WritesToIterationLine(t *testing.T) {
 	h.RenderFinalizeLine(1, 2, "Cleanup")
 	if h.IterationLine == "" {
 		t.Error("RenderFinalizeLine did not write to IterationLine")
-	}
-}
-
-// --- RenderIterationLine: worktree basename prefix and (resumed) suffix ---
-
-// TP-213-001: fresh start with worktree basename, no resume.
-func TestRenderIterationLine_WithWorktreeBasename(t *testing.T) {
-	h := NewStatusHeader(8)
-	h.RenderIterationLine(2, 5, "42", "pr9k-2026-05-08-114530.123", false)
-	want := "pr9k-2026-05-08-114530.123 | Iteration 2/5 — Issue #42"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
-	}
-}
-
-// TP-213-002: resume run with worktree basename.
-func TestRenderIterationLine_WithBasenameAndResumed(t *testing.T) {
-	h := NewStatusHeader(8)
-	h.RenderIterationLine(3, 5, "99", "pr9k-2026-05-08-114530.123", true)
-	want := "pr9k-2026-05-08-114530.123 | Iteration 3/5 — Issue #99 (resumed)"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
-	}
-}
-
-// TP-213-003: resumed run without worktree basename (non-worktree mode).
-func TestRenderIterationLine_WithResumedNoBasename(t *testing.T) {
-	h := NewStatusHeader(8)
-	h.RenderIterationLine(1, 3, "7", "", true)
-	want := "Iteration 1/3 — Issue #7 (resumed)"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
-	}
-}
-
-// TP-213-004: basename prefix present with empty issue ID.
-func TestRenderIterationLine_BasenameNoIssue(t *testing.T) {
-	h := NewStatusHeader(8)
-	h.RenderIterationLine(1, 5, "", "wt-2026", false)
-	want := "wt-2026 | Iteration 1/5"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
-	}
-}
-
-// TP-213-005: both basename and resumed with no issue ID.
-func TestRenderIterationLine_BasenameResumedNoIssue(t *testing.T) {
-	h := NewStatusHeader(8)
-	h.RenderIterationLine(2, 0, "", "wt-abc", true)
-	want := "wt-abc | Iteration 2 (resumed)"
-	if h.IterationLine != want {
-		t.Errorf("got %q, want %q", h.IterationLine, want)
 	}
 }
 
