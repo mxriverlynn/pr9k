@@ -4,8 +4,6 @@
 
 **pr9k (Power-Ralph.9000)** is an automated development workflow orchestrator that drives the `claude` CLI through multi-step coding loops. It picks up GitHub issues labeled `ralph`, implements features, writes tests, runs code reviews, and pushes — all unattended.
 
-Each run is isolated in its own [git worktree](docs/how-to/using-worktrees.md) on a dedicated `pr9k-*` branch (enabled by default in the bundled workflow), so your primary checkout stays untouched while pr9k works.
-
 Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-started-with-ralph).
 
 ## When to use pr9k
@@ -47,10 +45,7 @@ Add the following to your `.gitignore` file:
 .pr9k/logs/
 .pr9k/iteration.jsonl
 .pr9k/artifacts/
-.pr9k/active-run.json
 ```
-
-(`.pr9k/active-run.json` is the worktree claim file — see [Using Worktrees](docs/how-to/using-worktrees.md).)
 
 Then run the following:
 ```bash

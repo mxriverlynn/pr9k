@@ -19,10 +19,10 @@ Key files:
 - `src/internal/cli/args.go` — `Execute`, `NewCommand`, `Config`, `resolveWorkflowDir`, `resolveProjectDir`
 - `src/internal/cli/args_test.go` — 28 test cases covering all argument parsing branches (including `--version`, `-v`, symlink resolution, file-not-directory guards, `-p` guidance message, and subcommand dispatch)
 - `src/internal/version/version.go` — The `Version` constant consumed by cobra's built-in version flag
-- `src/cmd/src/main.go` — Entry point that calls `Execute` and distributes `Config`; assembles all services and starts the status-line runner before handing off to `runWithShutdown`
-- `src/cmd/src/wiring.go` — Pure helper functions extracted from `main.go` for testability: `modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `buildRunConfig`, `runWithShutdown`, and the `teaProgram`/`shutdownable` interfaces
-- `src/cmd/src/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
-- `src/cmd/src/wiring_test.go` — 14 unit tests for all wiring helpers (mode-string table, sender payload discard, mode-getter freshness, config nil/populated, shutdown ordering, run-error propagation, RunConfig field mapping)
+- `src/cmd/pr9k/main.go` — Entry point that calls `Execute` and distributes `Config`; assembles all services and starts the status-line runner before handing off to `runWithShutdown`
+- `src/cmd/pr9k/wiring.go` — Pure helper functions extracted from `main.go` for testability: `modeString`, `newModeGetter`, `newStatusLineSender`, `buildStatusLineConfig`, `buildRunConfig`, `runWithShutdown`, and the `teaProgram`/`shutdownable` interfaces
+- `src/cmd/pr9k/main_test.go` — Tests for the `stepNames` helper and `startup()` wiring
+- `src/cmd/pr9k/wiring_test.go` — 14 unit tests for all wiring helpers (mode-string table, sender payload discard, mode-getter freshness, config nil/populated, shutdown ordering, run-error propagation, RunConfig field mapping)
 
 ## Architecture
 
@@ -85,7 +85,7 @@ Key files:
 |------|---------|
 | `src/internal/cli/args.go` | `Execute`, `NewCommand`, `Config` struct, `resolveWorkflowDir`, `resolveProjectDir` |
 | `src/internal/cli/args_test.go` | Unit tests for all argument parsing branches |
-| `src/cmd/src/main.go` | Entry point — calls `Execute`, distributes `Config` to subsystems |
+| `src/cmd/pr9k/main.go` | Entry point — calls `Execute`, distributes `Config` to subsystems |
 
 ## Core Types
 
@@ -358,7 +358,7 @@ The two version tests read the expected string from `version.Version` rather tha
 
 ### startup() Tests
 
-`src/cmd/src/main_test.go` covers `startup()` wiring and the `stepNames` helper:
+`src/cmd/pr9k/main_test.go` covers `startup()` wiring and the `stepNames` helper:
 
 | Test | What It Validates |
 |------|-------------------|
@@ -377,7 +377,7 @@ The two version tests read the expected string from `version.Version` rather tha
 
 ### wiring.go Tests
 
-`src/cmd/src/wiring_test.go` covers the pure helper functions extracted from `main.go`:
+`src/cmd/pr9k/wiring_test.go` covers the pure helper functions extracted from `main.go`:
 
 | Test | What It Validates |
 |------|-------------------|

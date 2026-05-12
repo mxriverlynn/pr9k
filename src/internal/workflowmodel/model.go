@@ -68,19 +68,11 @@ type DefaultsBlock struct {
 	Model  string
 }
 
-// WorktreesBlock holds the optional top-level "worktrees" block.
-// Both fields default to false (feature disabled) when absent.
-type WorktreesBlock struct {
-	Enabled     bool
-	AutoCleanup bool
-}
-
 // WorkflowDoc is the mutable in-memory representation of a config.json bundle.
 type WorkflowDoc struct {
 	DefaultModel string
 	StatusLine   *StatusLineBlock
 	Defaults     *DefaultsBlock
-	Worktrees    *WorktreesBlock
 	Env          []string          // passthrough env var names (top-level env array)
 	ContainerEnv map[string]string // literal key-value env vars (top-level containerEnv)
 	Steps        []Step

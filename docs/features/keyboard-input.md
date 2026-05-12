@@ -1,6 +1,6 @@
 # Keyboard Input & Error Recovery
 
-A seven-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
+An eight-mode state machine that routes keypresses and communicates user decisions to the orchestration goroutine via a channel.
 
 - **Last Updated:** 2026-04-17
 - **Authors:**

@@ -10,15 +10,8 @@ import (
 	"time"
 )
 
-// stampDateLayout is the datetime portion shared by FormatStamp and NewLoggerWithPrefix.
+// stampDateLayout is the datetime portion of the log filename.
 const stampDateLayout = "2006-01-02-150405.000"
-
-// FormatStamp formats t as a pr9k run-stamp: "pr9k-YYYY-MM-DD-HHMMSS.mmm".
-// Use this to mint a stamp before a Logger exists (e.g. when naming a worktree
-// that must be known before the log file can be opened).
-func FormatStamp(t time.Time) string {
-	return t.Format("pr9k-" + stampDateLayout)
-}
 
 // Logger writes timestamped, prefixed log lines to a file.
 // It is safe for concurrent use.

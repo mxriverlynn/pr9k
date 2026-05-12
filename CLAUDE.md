@@ -11,13 +11,11 @@ Based on [AI Hero's Getting Started with Ralph](https://www.aihero.dev/getting-s
 ## Repository Structure
 
 - `src/` — Go TUI orchestrator. See "pr9k" section below.
-- `workflow/` — Default workflow bundle: `config.json` (step definitions), `prompts/` (Claude prompt files), and `scripts/` (helper scripts: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_commit_sha`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
+- `workflow/` — Default workflow bundle: `config.json` (step definitions), `prompts/` (Claude prompt files), and `scripts/` (helper scripts: `get_next_issue`, `close_gh_issue`, `get_gh_user`, `get_claude_credentials`, `get_commit_sha`, `git_push`, `box-text`, `post_issue_summary`, `statusline`, `project_card`, `review_verdict`)
 - `bin/` — Build output from `make build` (binary, prompts, scripts, configs)
 - `docs/` — Architecture, feature docs, how-to guides, coding standards, and plans
 
 ## Workflow: The Ralph Loop
-
-Every run is wrapped in a dedicated git worktree on a fresh branch (`pr9k-YYYY-MM-DD-HHMMSS.mmm`) — the bundled workflow ships with `worktrees.enabled = true` and `autoCleanup = true` in [`workflow/config.json`](workflow/config.json). The primary checkout is never modified; all work lands in a sibling worktree directory and is auto-cleaned on `Completed` / `LoopBroken`. See [`docs/how-to/using-worktrees.md`](docs/how-to/using-worktrees.md) and [`docs/features/worktrees.md`](docs/features/worktrees.md) for full behavior, and [`docs/how-to/managing-worktrees.md`](docs/how-to/managing-worktrees.md) for `--fresh` / `pr9k worktree prune` recovery.
 
 Each iteration:
 1. Find next open issue assigned to user with label "ralph" (lowest number first)
@@ -29,7 +27,7 @@ After all iterations, finalization steps run (once per run, against the full set
 3. Lessons learned — codifies from `progress.txt`
 4. Final git push
 
-Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) are created in the **active worktree's working directory** (the project directory pr9k passes to all subsystems when worktrees are enabled), never committed, and consumed/deleted by later steps.
+Intermediate files (`progress.txt`, `deferred.txt`, `test-plan.md`, `code-review.md`) are created in the project working directory, never committed, and consumed/deleted by later steps.
 
 ## Key Design Decisions
 
@@ -77,8 +75,6 @@ User-facing behavior, configuration, and cross-package integration. Each file li
 - [`docs/features/status-line.md`](docs/features/status-line.md) — Status-line feature: purpose, config schema, path resolution, script contract (stdin JSON payload, stdout rules, timeout), refresh triggers, cold-start fallback, help modal, concurrency model, lifecycle, observability, and out-of-scope list
 - [`docs/features/docker-sandbox.md`](docs/features/docker-sandbox.md) — Docker sandbox architecture: mount layout (`<projectDir>` → `/home/agent/workspace`, `<profileDir>` → `/home/agent/.claude`), `BuildRunArgs` command shape, env allowlist behavior, UID/GID mapping, cidfile-driven termination, and residual risks
 - [`docs/features/sandbox-subcommand.md`](docs/features/sandbox-subcommand.md) — `sandbox create` subcommand, `sandbox --interactive` (`-i`) flag, and `sandbox shell` subcommand: Docker check, image pull, smoke test with ANSI sanitization for create; interactive claude REPL with auto-pull and profile-dir auto-create for `--interactive`; interactive bash shell with project + profile mounts and `--rm` cleanup for shell; shared helpers and dependency injection design
-- [`docs/features/worktree-prune.md`](docs/features/worktree-prune.md) — `pr9k worktree prune` subcommand: behavior, --dry-run, --project-dir, filter-key (branch name vs. directory basename), active-run and CWD exclusions
-- [`docs/features/worktrees.md`](docs/features/worktrees.md) — Worktrees runtime behavior: config schema, stamp and branch naming, state-file location and schema, resume decision tree, project-directory substitution, autoCleanup ordering, ExitReason mapping, and TUI surfaces
 - [`docs/features/workflow-builder.md`](docs/features/workflow-builder.md) — `pr9k workflow` interactive workflow-builder TUI: edit-view layout (menu bar + session header + outline + detail pane + footer), keyboard map (menu activation, global shortcuts, outline navigation, detail-pane field kinds), File menu flows (New/Open/Save/Quit), session header banners, external editor integration, validator integration, session-event logging, save durability, and Visual Layout (9-row chrome frame, D48 minimum-size guard, session-header 5 slots, banner priority/short-form tags, findings summary, validation indicator, browse-only signals, transient footer)
 
 ## Code Package Documentation
@@ -88,7 +84,7 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 - [`docs/code-packages/steps.md`](docs/code-packages/steps.md) — `internal/steps`: JSON step configuration loading and prompt building with `{{VAR}}` substitution for iteration context
 - [`docs/code-packages/logger.md`](docs/code-packages/logger.md) — `internal/logger`: Concurrent-safe timestamped file logger with millisecond-precision filenames and `RunStamp()` accessor for artifact directory naming
 - [`docs/code-packages/vars.md`](docs/code-packages/vars.md) — `internal/vars`: `VarTable` with persistent and iteration scopes, built-in variables, and phase-based resolution
-- [`docs/code-packages/validator.md`](docs/code-packages/validator.md) — `internal/validator`: D13 config validator for config.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), containerEnv validation, captureMode validation, effort and defaults-block validation (`effort`, `model` with effective-model rule for claude steps), sandbox isolation rules B and C, statusLine block validation, worktrees block validation (autoCleanup rule, git ≥ 2.17 warning), severity-based error collection (`IsFatal`, `FatalErrorCount`), and non-fatal warning/info handling
+- [`docs/code-packages/validator.md`](docs/code-packages/validator.md) — `internal/validator`: D13 config validator for config.json: schema shape, file existence, variable scope resolution, env passthrough validation (Category 10), containerEnv validation, captureMode validation, effort and defaults-block validation (`effort`, `model` with effective-model rule for claude steps), sandbox isolation rules B and C, statusLine block validation, severity-based error collection (`IsFatal`, `FatalErrorCount`), and non-fatal warning/info handling
 - [`docs/code-packages/statusline.md`](docs/code-packages/statusline.md) — `internal/statusline`: `Runner` goroutine lifecycle, `State` snapshot, `BuildPayload` stdin JSON, `Sanitize` ANSI output filtering, single-flight exec, 8 KB stdout limit, full-env trust model, and cold-start / shutdown ordering
 - [`docs/code-packages/sandbox.md`](docs/code-packages/sandbox.md) — `internal/sandbox`: `BuildRunArgs` argv construction, `BuiltinEnvAllowlist`, cidfile lifecycle (`Path`/`Cleanup`), and `NewTerminator` closure for container signal delivery
 - [`docs/code-packages/preflight.md`](docs/code-packages/preflight.md) — `internal/preflight`: `ResolveProfileDir`, `CheckProfileDir`, `Prober` interface, `RealProber`, `CheckDocker`, and `Run` (collect-all-errors startup validation; `CheckProfileDir` and `CheckDocker` gated on `hasClaudeSteps`)
@@ -116,9 +112,9 @@ Per-Go-package API references (types, methods, synchronization, lifecycle) for c
 ## Coding Standards
 
 - [`docs/coding-standards/api-design.md`](docs/coding-standards/api-design.md) — API design patterns including unused parameter documentation, bounds guards, precondition validation, and adapter types. Apply when designing or modifying public interfaces and exported functions.
-- [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, non-blocking channel sends, and stamp-guarded state file removal. Apply when working with goroutines, mutexes, channels, shared state, or on-disk state files accessed by multiple processes.
-- [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, scanner error checking, and ordered cleanup with per-step warning tolerance. Apply to all error creation, wrapping, propagation, and multi-step cleanup sequences.
-- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution, 256KB scanner buffers, state file schema versioning with quarantine, forward-compatible external format parsers, typed string constants for serializable enums, and stderr injection for testable warning functions. Apply when working with CLI args, file paths, subprocess I/O, or on-disk state schemas.
+- [`docs/coding-standards/concurrency.md`](docs/coding-standards/concurrency.md) — Concurrency patterns including snapshot-then-unlock, WaitGroup drain, mutex-protected writes, and non-blocking channel sends. Apply when working with goroutines, mutexes, channels, or shared state.
+- [`docs/coding-standards/error-handling.md`](docs/coding-standards/error-handling.md) — Error handling conventions including package-prefixed messages, file paths in I/O errors, and scanner error checking. Apply to all error creation, wrapping, and propagation.
+- [`docs/coding-standards/go-patterns.md`](docs/coding-standards/go-patterns.md) — Go-specific patterns including symlink-safe path resolution, 256KB scanner buffers, state file schema versioning with quarantine, and typed string constants for serializable enums. Apply when working with CLI args, file paths, subprocess I/O, or on-disk state schemas.
 - [`docs/coding-standards/lint-and-tooling.md`](docs/coding-standards/lint-and-tooling.md) — Lint suppressions are prohibited in any form (`//nolint`, `.golangci.yml` exclusions, disabled linters, etc.). Fix the root cause or escalate; never silence a finding. Apply to every commit and every PR review.
 - [`docs/coding-standards/testing.md`](docs/coding-standards/testing.md) — Testing standards including race detector requirement, closeable idempotency tests, input immutability tests, and test helper path resolution. Apply when writing or modifying any test code.
 - [`docs/coding-standards/versioning.md`](docs/coding-standards/versioning.md) — Semantic versioning standard: `version.Version` is the single source of truth, what counts as pr9k's public API (CLI flags, `config.json` schema, `{{VAR}}` language, `--version` output), `0.y.z` rules, and how to bump. Apply when changing any user-visible surface or preparing a release.
@@ -150,8 +146,6 @@ Problem-focused guides for users running pr9k against their own projects. When a
 - [`docs/how-to/configuring-defaults.md`](docs/how-to/configuring-defaults.md) — The full top-level `defaults` block (currently `effort` and `model`), the per-step override hierarchy, partial-defaults patterns, and the validator's effective-model requirement for claude steps
 - [`docs/how-to/using-the-workflow-builder.md`](docs/how-to/using-the-workflow-builder.md) — Step-by-step guide to launching `pr9k workflow`, creating or opening a workflow, navigating the outline, editing step fields, opening companion files in an external editor (`Ctrl+E`), saving, and quitting
 - [`docs/how-to/configuring-external-editor-for-workflow-builder.md`](docs/how-to/configuring-external-editor-for-workflow-builder.md) — How the builder resolves `$VISUAL`/`$EDITOR`, accepted and rejected values, recommended settings (`code --wait`, `nvim`, `nano`), the `--wait` requirement for GUI editors, verifying configuration via `Ctrl+E`, and SIGINT behavior during editor invocation
-- [`docs/how-to/using-worktrees.md`](docs/how-to/using-worktrees.md) — Enabling the worktrees feature, prerequisites (git ≥ 2.17), config schema, what changes at run start, auto-resume behavior, autoCleanup ordering, and R3 limitation (`iteration.jsonl` accumulation across resumed runs)
-- [`docs/how-to/managing-worktrees.md`](docs/how-to/managing-worktrees.md) — `pr9k worktree prune` usage, --dry-run, --project-dir, recovery scenarios with `--fresh` (stale state after crash, concurrent-run refusal)
 
 ## Project Discovery
 

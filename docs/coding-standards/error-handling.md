@@ -213,41 +213,6 @@ if validator.FatalErrorCount(errs) > 0 {
 
 Apply to any validator that collects findings rather than returning on the first error. The pattern prevents a class of "validator blocks everything" regressions when a new warning rule is added.
 
-## Respect domain-imposed cleanup order and continue past individual failures
-
-When a cleanup sequence has steps whose ordering is imposed by an external constraint (e.g., git requires removing a worktree before deleting its branch because a branch checked out in a worktree cannot be deleted), document the ordering constraint in a comment and enforce it unconditionally. Misorder the steps and the cleanup fails with a cryptic external-tool error.
-
-When individual cleanup steps can fail independently, emit each failure as a warning rather than returning an error that aborts the remainder. Partial cleanup is better than no cleanup.
-
-```go
-// postRunCleanup removes the worktree, then the branch, then the state file.
-// Order matters (D-3): worktree must be removed before branch deletion
-// because git prevents deleting a branch checked out in a worktree.
-// Errors from git operations are printed as warnings but do not abort
-// subsequent steps — partial cleanup is preferable to none.
-func postRunCleanup(..., stderr io.Writer) {
-    if state.WorktreePath != "" {
-        if err := gitWorktreeRemove(primaryPath, state.WorktreePath); err != nil {
-            fmt.Fprintf(stderr, "warning: worktree cleanup: %v\n", err)
-        }
-    }
-    if state.Branch != "" {
-        if err := gitBranchDelete(primaryPath, state.Branch); err != nil {
-            fmt.Fprintf(stderr, "warning: branch cleanup: %v\n", err)
-        }
-    }
-    if err := removeActiveRun(stateFilePath, state); err != nil {
-        fmt.Fprintf(stderr, "warning: state file removal: %v\n", err)
-    }
-}
-```
-
-Checklist when writing a multi-step cleanup function:
-1. Identify external constraints that impose a required order between steps.
-2. Document the constraint with a comment that names the tool and the rule.
-3. Use `fmt.Fprintf(stderr, "warning: ...")` for individual step failures; never `return err` mid-sequence unless the failure prevents all subsequent steps.
-4. Test the ordering: does the function still reach step N+1 when step N fails?
-
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -263,4 +228,3 @@ Checklist when writing a multi-step cleanup function:
 - [Docker Sandbox](../features/docker-sandbox.md) — `errors.As` for `*exec.ExitError` in bash-subprocess test helpers (issues #127, #128)
 - [Config Validation](../code-packages/validator.md) — `IsFatal` / `FatalErrorCount` / `Severity` model as the canonical non-fatal severity tier implementation (issue #122)
 - [Workflow IO](../code-packages/workflowio.md) — `pathContainedIn` as the canonical EvalSymlinks-on-both-sides containment check; `DetectExternalWorkflow` as the canonical prefix-check with symlink resolution on both sides
-- `src/cmd/pr9k/main_worktree.go` — `postRunCleanup` as the canonical ordered-cleanup-with-warning-tolerance example; worktree→branch→state-file order imposed by git constraint (worktrees branch)

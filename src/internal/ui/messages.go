@@ -36,11 +36,9 @@ type headerStepStateMsg struct {
 
 // headerIterationLineMsg sets the iteration-phase header line.
 type headerIterationLineMsg struct {
-	iter             int
-	max              int
-	issue            string
-	worktreeBasename string
-	resumed          bool
+	iter  int
+	max   int
+	issue string
 }
 
 // headerInitializeLineMsg sets the initialize-phase header line.

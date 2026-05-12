@@ -20,7 +20,7 @@ Key implementation files:
 - `src/internal/ui/model.go` — footer rendering switch, help-modal overlay
 - `src/internal/ui/ui.go` — `ModeHelp`, `HelpModeShortcuts`, `StatusLineActive`
 - `src/internal/ui/keys.go` — `?` handler, `handleHelp`
-- `src/cmd/src/main.go` — wiring (construct Runner, wire sender, set mode getter)
+- `src/cmd/pr9k/main.go` — wiring (construct Runner, wire sender, set mode getter)
 - `src/internal/workflow/run.go` — push closure at every VarTable mutation site
 
 See [`docs/code-packages/statusline.md`](../code-packages/statusline.md) for the package-level reference (Runner API, State, BuildPayload, Sanitize).

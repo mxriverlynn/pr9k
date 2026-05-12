@@ -77,19 +77,16 @@ In the GitHub repo you want pr9k to work on:
 
 3. **Apply the `ralph` label and assign each issue to yourself.** pr9k's `get_next_issue` script picks the lowest-numbered open issue that is both labeled `ralph` *and* assigned to the current `gh` user, so both conditions must hold.
 
-4. **Ignore pr9k's runtime state in `.gitignore`.** pr9k writes its logs, iteration log, per-step JSONL artifacts, and (when worktrees are enabled — they are in the bundled workflow) the `active-run.json` claim file under `.pr9k/`. Without these entries, every run leaves untracked files in your tree:
+4. **Ignore pr9k's runtime state in `.gitignore`.** pr9k writes its logs, iteration log, and per-step JSONL artifacts under `.pr9k/`. Without these entries, every run leaves untracked files in your tree:
 
     ```
     # pr9k temp files and logs
     .pr9k/logs/
     .pr9k/iteration.jsonl
     .pr9k/artifacts/
-    .pr9k/active-run.json
     ```
 
     Do **not** ignore the entire `.pr9k/` folder — `.pr9k/workflow/` is a tracked source directory when you commit a per-repo workflow override (see [Building Custom Workflows](building-custom-workflows.md)).
-
-    `active-run.json` is written to your **primary checkout** (not the worktree) and records the worktree path, branch, PID, and binary so the next pr9k invocation can auto-resume an interrupted run. See [Using Worktrees](using-worktrees.md) for the lifecycle.
 
 ## Step 4 — First run
 
@@ -107,22 +104,13 @@ Without `-n` (or with `-n 0`), pr9k keeps picking up issues until `get_next_issu
 
 ### What a successful run looks like
 
-Before the first step, pr9k creates a fresh git **worktree** for the run on a sibling directory of your target repo and switches into it on a new branch named `pr9k-YYYY-MM-DD-HHMMSS.mmm`. The TUI log shows two header lines like:
-
-```
-[worktrees] worktree: /repos/<your-repo>-pr9k-2026-05-08-120000.000
-[worktrees] branch: pr9k-2026-05-08-120000.000
-```
-
-All step subprocesses (Claude steps, `git`, `gh`, helper scripts) execute against the worktree, not the primary checkout. The bundled workflow ships with `autoCleanup: true`, so when the run completes (or the iteration loop exits via `breakLoopIfEmpty`), the worktree and branch are removed automatically. If you press `q` → `y` to quit early instead, the worktree is preserved and the next invocation auto-resumes it. See [Using Worktrees](using-worktrees.md) for the full lifecycle, and [Managing Worktrees](managing-worktrees.md) for `--fresh` / `pr9k worktree prune` recovery.
-
-The first thing the TUI shows after the worktree banner is the splash step (the `Power-Ralph.9000` ASCII banner), then it captures the GitHub username. From there it loops once per issue:
+The first thing the TUI shows is the splash step (the `Power-Ralph.9000` ASCII banner), then it captures the GitHub username. From there it loops once per issue:
 
 1. **Get next issue** — picks the lowest-numbered open `ralph`-labeled issue assigned to you and binds it to `ISSUE_ID`
 2. **Feature work** — Claude (sonnet by default) reads the issue body and implements the change
 3. **Test planning** (opus) → **Test writing** (sonnet) — drafts and writes tests
 4. **Summarize to issue** — posts a comment summarizing what changed
-5. **Git push** — pushes the run's `pr9k-*` branch upstream
+5. **Git push** — pushes the current branch upstream
 6. **Close issue** — `gh issue close`
 
 After every iteration, finalization runs once:
