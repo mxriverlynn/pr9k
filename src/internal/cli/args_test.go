@@ -728,6 +728,50 @@ func TestResolveWorkflowDirWith_ProjectIsFile_ExecPresent_ReturnsExec(t *testing
 	}
 }
 
+// Issue #218: --cmux flag tests.
+
+// TestNewCommand_CmuxFlagTrue verifies --cmux parses to cfg.Cmux == true.
+func TestNewCommand_CmuxFlagTrue(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := runNewCommand(t, []string{"--cmux", "--workflow-dir", dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Cmux {
+		t.Error("expected cfg.Cmux == true when --cmux is passed, got false")
+	}
+}
+
+// TestNewCommand_CmuxDefaultFalse verifies cfg.Cmux defaults to false when --cmux is omitted.
+func TestNewCommand_CmuxDefaultFalse(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := runNewCommand(t, []string{"--workflow-dir", dir})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Cmux {
+		t.Error("expected cfg.Cmux == false when --cmux is omitted, got true")
+	}
+}
+
+// TestNewCommand_CmuxHelpText verifies --help output contains the experimental help text.
+func TestNewCommand_CmuxHelpText(t *testing.T) {
+	cfg := &Config{}
+	var ranE bool
+	cmd := newCommandImpl(cfg, &ranE)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error for --help: %v", err)
+	}
+	const wantSubstr = "experimental: launches a four-pane placeholder workspace"
+	if !strings.Contains(out.String(), wantSubstr) {
+		t.Errorf("expected --help output to contain %q, got:\n%s", wantSubstr, out.String())
+	}
+}
+
 // TP-011 (issue #145): a plain workflow/ directory inside projectDir is NOT
 // auto-discovered. Only <projectDir>/.pr9k/workflow and <execDir>/.pr9k/workflow
 // are valid candidates; make build is required to install the bundle.
