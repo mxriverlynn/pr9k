@@ -6,9 +6,17 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 )
+
+// fastDismissal returns a DismissalConfig with a 1ms poll interval so existing
+// RunPhase1 tests complete quickly. WorkspaceList returns nil by default, so
+// the observer fires dismissal on the first poll (workspace not found).
+func fastDismissal() cmuxctl.DismissalConfig {
+	return cmuxctl.DismissalConfig{PollInterval: time.Millisecond}
+}
 
 // ---- D11 sanitization tests --------------------------------------------------
 
@@ -61,7 +69,7 @@ func TestRunPhase1_WorkspaceNameShape(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -93,7 +101,7 @@ func TestRunPhase1_CollisionRetrySucceeds(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -110,7 +118,7 @@ func TestRunPhase1_CollisionRetryFailsOnSecondCollision(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal())
 	if err == nil {
 		t.Fatal("expected error on second collision, got nil")
 	}
@@ -134,7 +142,7 @@ func TestRunPhase1_CollisionRetryDifferentTimestamps(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf); err != nil {
+	if err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal()); err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
 	if len(names) != 2 {
@@ -158,7 +166,7 @@ func TestRunPhase1_PreSanitizedBasenameNotInOutput(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	_ = cmuxctl.RunPhase1(context.Background(), fake, projectDir, &buf)
+	_ = cmuxctl.RunPhase1(context.Background(), fake, projectDir, &buf, fastDismissal())
 
 	output := buf.String()
 	// "my repo!unsafe" is the pre-sanitized form and must not appear
@@ -199,7 +207,7 @@ func TestRunPhase1_SpawnOrder(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -255,7 +263,7 @@ func TestRunPhase1_OrchestratorSpawnArgv(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -293,7 +301,7 @@ func TestRunPhase1_VisiblePaneSpawnArgvContainsTailFDev(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -329,7 +337,7 @@ func TestRunPhase1_ConfirmationPrintedAfterCreate(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -359,7 +367,7 @@ func TestRunPhase1_CapturesPriorWorkspace(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1: %v", err)
 	}
@@ -379,7 +387,7 @@ func TestRunPhase1_EmptyCurrentWorkspaceIsOK(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1 with empty current workspace: %v", err)
 	}
@@ -401,7 +409,7 @@ func TestRunPhase1_WorkspaceCurrentErrorDegraces(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf, fastDismissal())
 	if err != nil {
 		t.Fatalf("RunPhase1 must return nil when WorkspaceCurrent errors; got: %v", err)
 	}

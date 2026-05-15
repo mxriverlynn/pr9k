@@ -66,13 +66,18 @@ func composeWorkspaceName(sanitized string) string {
 //     a. SurfaceSplit → orchPaneID; SurfaceSpawn orchestrator (sh -c 'tail -f /dev/null').
 //     b. SurfaceHide orchestrator.
 //     c. SurfaceSplit + SurfaceSpawn for header, log, footer (shell one-liners per D-4).
+//  6. Start the dismissal-observation goroutine (D6, D9, D22) and block until
+//     either a dismissal event is received or ctx is cancelled.
+//
+// dismissalCfg controls the polling cadence and per-call timeout; zero values
+// use package defaults (500ms interval, 5s timeout).
 //
 // Any error from a cmux RPC after workspace creation is returned directly;
 // partial-setup teardown (#224) is wired in a later issue.
 //
 // out receives only the sanitized workspace name (D-23: the pre-sanitized
 // filepath.Base(projectDir) must never appear in operator-visible output).
-func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer) error {
+func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig) error {
 	// Step 1: capture current workspace (spec D10).
 	priorWorkspace, err := client.WorkspaceCurrent(ctx)
 	if err != nil {
@@ -135,5 +140,19 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		}
 	}
 
-	return nil
+	// Step 6: start dismissal-observation goroutine and block until dismissal or
+	// context cancellation (spec D9, D22). Teardown (#224) is wired later.
+	obs := StartDismissalObserver(ctx, client, workspaceName, dismissalCfg)
+	defer obs.Wait()
+	defer obs.Cancel()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case evt := <-obs.Ch:
+		if evt.Fatal {
+			return fmt.Errorf("cmuxctl: dismissal poll fatal: %d consecutive timeouts; workspace %s may need manual cleanup", maxConsecutiveTimeouts, workspaceName)
+		}
+		return nil
+	}
 }

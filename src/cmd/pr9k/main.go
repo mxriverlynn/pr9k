@@ -146,7 +146,7 @@ func runCmuxMode(ctx context.Context, cfg *cli.Config, projectDir, profileDir st
 		return false
 	}
 
-	if err := cmuxctl.RunPhase1(ctx, client, projectDir, out); err != nil {
+	if err := cmuxctl.RunPhase1(ctx, client, projectDir, out, cmuxctl.DismissalConfig{}); err != nil {
 		_, _ = fmt.Fprintln(errOut, err)
 		return false
 	}
