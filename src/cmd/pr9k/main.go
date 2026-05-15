@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -183,7 +184,23 @@ func main() {
 	if cfg.Cmux {
 		client := cmuxctl.NewProductionClient()
 		defer client.Stop()
-		if !runCmuxMode(context.Background(), cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, os.Stdout, os.Stderr) {
+
+		// Cancellable context so the signal handler can abort RunPhase1 cleanly.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// Buffered cap ≥ 2 to absorb two rapid signals without blocking (D-9, D-10).
+		sigChan := make(chan os.Signal, 2)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+		var teardownOnce sync.Once
+		// teardownFn cancels the RunPhase1 context; #224 will add RPC teardown here.
+		teardownFn := cancel
+		runCmuxSignalHandler(sigChan, &teardownOnce, teardownFn, func() {}, os.Exit)
+
+		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, os.Stdout, os.Stderr)
+		signal.Stop(sigChan)
+		if !ok {
 			os.Exit(1)
 		}
 		os.Exit(0)
