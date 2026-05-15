@@ -74,13 +74,23 @@ func TestRunCmuxSignalHandler_SecondSignalCallsExitFn(t *testing.T) {
 	teardownBlock := make(chan struct{})
 	teardownFn := func() { <-teardownBlock } // block to simulate in-progress RPC
 
+	// cleanupStarted is closed by setShuttingDown so we know the cleanup goroutine
+	// has consumed the first signal and opened the watchdog gate before we send the
+	// second signal — deterministic replacement for time.Sleep.
+	cleanupStarted := make(chan struct{})
+	setShuttingDown := func() { close(cleanupStarted) }
+
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, func() {}, exitFn)
+	runCmuxSignalHandler(sigCh, &once, teardownFn, setShuttingDown, exitFn)
 
 	// First signal: triggers cleanup goroutine.
 	sendSignal(sigCh, syscall.SIGTERM)
-	// Wait for cleanup goroutine to consume first signal and open the watchdog gate.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until cleanup goroutine has consumed the first signal and opened the gate.
+	select {
+	case <-cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("setShuttingDown not called within 1s after first signal")
+	}
 	// Second signal: watchdog fires exitFn(1).
 	sendSignal(sigCh, syscall.SIGINT)
 
@@ -134,6 +144,51 @@ func TestRunCmuxSignalHandler_SIGTERMTriggersTeardown(t *testing.T) {
 	case <-teardownDone:
 	case <-time.After(time.Second):
 		t.Fatal("teardown not called within 1s after SIGTERM")
+	}
+}
+
+// TP-223-006: single signal must NOT call exitFn — first signal is graceful only.
+// This pins the "first signal ⇒ zero exitFn calls" invariant so that a regression
+// in the started-gate ordering (watchdog winning the first signal) would be caught.
+func TestRunCmuxSignalHandler_SingleSignalDoesNotCallExitFn(t *testing.T) {
+	t.Parallel()
+
+	sigCh := make(chan os.Signal, 2)
+
+	exitCalled := make(chan int, 1)
+	exitFn := func(code int) { exitCalled <- code }
+
+	teardownDone := make(chan struct{})
+	teardownFn := func() { close(teardownDone) }
+
+	shuttingDownSet := make(chan struct{})
+	setShuttingDown := func() { close(shuttingDownSet) }
+
+	var once sync.Once
+	runCmuxSignalHandler(sigCh, &once, teardownFn, setShuttingDown, exitFn)
+
+	sendSignal(sigCh, syscall.SIGTERM)
+
+	// Wait for the cleanup goroutine to complete teardown.
+	select {
+	case <-teardownDone:
+	case <-time.After(time.Second):
+		t.Fatal("teardownFn not called within 1s after single signal")
+	}
+
+	// shuttingDown must be set.
+	select {
+	case <-shuttingDownSet:
+	default:
+		t.Error("shuttingDown not set after first signal")
+	}
+
+	// exitFn must NOT have been called.
+	select {
+	case code := <-exitCalled:
+		t.Errorf("exitFn called with code %d after only one signal — watchdog must not fire on first signal", code)
+	default:
+		// correct: no exit after a single signal
 	}
 }
 
