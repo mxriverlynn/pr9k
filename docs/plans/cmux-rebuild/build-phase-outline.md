@@ -375,6 +375,7 @@ The spec commits to a method-presence capability check rather than a version-str
 - **Option A — Pin to the current latest cmux release as the floor and re-evaluate per release.** Simple and honest: we tested against this version, we know it works, anything older is not supported. New cmux releases get a quick validation pass.
 - **Option B — Test against a curated set (latest plus the previous 1–2 releases) and document the range.** Wider compatibility, more test burden.
 - **Recommendation: Option A.** The capability check already covers the case where a future cmux removes a required method. Naming a single floor version is the lightest commitment that still answers the operator's "what should I install" question. Re-evaluate at each cmux release rather than maintaining a multi-version compatibility matrix.
+- **RESOLVED 2026-05-15.** Pinned **cmux v0.64.6** with a rolling-update policy (the pinned version moves every time cmux ships a new release). See implementation [D-28](phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release) for rationale, evidence, and the operationalization plan. The capability check from parent D18 remains the runtime safety net for operators on older cmux versions.
 
 ### OQ-2. How does the team test cmux mode in CI? {#oq-2}
 

@@ -152,8 +152,8 @@ Phase 1 introduces no on-disk state beyond what the standard preflight already c
 
 | ID | Assumption | What Changes If Wrong | Verifier | Status |
 |----|------------|-----------------------|----------|--------|
-| A1 | Cmux exposes per-pane exit status via `surface.list` or an equivalent introspection method | [D-19](artifacts/implementation-decision-log.md#d-19-per-pane-exit-observation-via-surfacelist-or-equivalent) degradation path activates: D9 placeholder-exit arm collapses to workspace-list-only | OI-1 release-readiness check against pinned cmux version | Unverified — blocks Phase 1 release-readiness, not implementation start |
-| A2 | Cmux's `system.identify` response contains a recognizable identity string (e.g., `"name": "cmux"` or `"product": "cmux"`) | [D-15](artifacts/implementation-decision-log.md#d-15-cmux_socket_path-validation-before-netdial) cannot reject non-cmux fake-socket responses; SEC-003 mitigation weakens | OI-1 release-readiness check against pinned cmux version | Unverified — blocks setup how-to |
+| A1 | Cmux exposes per-pane exit status via `surface.list` or an equivalent introspection method | [D-19](artifacts/implementation-decision-log.md#d-19-per-pane-exit-observation-via-surfacelist-or-equivalent) degradation path activates: D9 placeholder-exit arm collapses to workspace-list-only | Verify against cmux v0.64.6 (the [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release) pinned version) during #226 documentation work | Unverified — verifier scoped to #226 acceptance criteria |
+| A2 | Cmux's `system.identify` response contains a recognizable identity string (e.g., `"name": "cmux"` or `"product": "cmux"`) | [D-15](artifacts/implementation-decision-log.md#d-15-cmux_socket_path-validation-before-netdial) cannot reject non-cmux fake-socket responses; SEC-003 mitigation weakens | Verify against cmux v0.64.6 (the [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release) pinned version) during #220 Preflight implementation | Unverified — verifier scoped to #220 acceptance criteria |
 | A3 | The shell one-liner `sh -c 'printf ... && tail -f /dev/null'` works inside cmux-spawned panes on macOS BSD `sh` and Linux `sh` (dash, bash) | [D-4](artifacts/implementation-decision-log.md#d-4-placeholder-process-is-a-shell-one-liner) reverts to a `pr9k display` subcommand | Manual demo on macOS during Phase 1 implementation; second demo on Linux if a Linux runner is available | Unverified — verifiable during U4 implementation |
 | A4 | `os.Exit(1)` from the watchdog goroutine cleanly terminates pr9k even with the cleanup goroutine blocked in `net.Conn.Read` | Watchdog cannot deliver second-signal-immediate-exit guarantee; spec D6 violated | Unit test for the two-goroutine pattern with injected signal channel | Unverified — verifiable in U6 |
 | A5 | Cmux's `WorkspaceClose` failure during teardown is the rare path, not the common path | The operator-visible orphan diagnostic per [D-11](artifacts/implementation-decision-log.md#d-11-best-effort-teardown-with-operator-visible-diagnostic-on-workspaceclose-failure) becomes operator-visible noise on every successful run | Phase 1 demo on a healthy host; subsequent ratio observed during dogfooding | Unverified — verifiable post-ship via real-use telemetry |
@@ -162,14 +162,14 @@ Phase 1 introduces no on-disk state beyond what the standard preflight already c
 
 | ID | Issue | Owner | Next Step |
 |----|-------|-------|-----------|
-| I1 | OI-1 (pinned cmux version) is unresolved and is now a release-readiness blocker (not just a documentation gap) per devops DOR-009/DOR-012 | project-manager | Pin a cmux version per build-outline OQ-1 recommendation (current latest cmux release); update setup how-to with the pinned version |
-| I2 | OI-3 (cmux setup how-to documenting the dismissal gestures) is unresolved and depends on OI-1 | project-manager | After OI-1 resolves, document the workspace-close and close-pane gestures for the pinned cmux version |
+| I1 | ~~OI-1 (pinned cmux version) is unresolved~~ **RESOLVED 2026-05-15** — pinned cmux v0.64.6 with rolling-update policy per [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release). | project-manager | — |
+| I2 | OI-3 (cmux setup how-to documenting the dismissal gestures) is unresolved (no longer blocked on OI-1; target is cmux v0.64.6 per D-28) | project-manager | Document the workspace-close and close-pane gestures for cmux v0.64.6 in `docs/how-to/setting-up-cmux.md` (#226) |
 
 ### Dependencies
 
 | ID | Dependency | Owner | Status |
 |----|------------|-------|--------|
-| Dep1 | Pinned cmux version (OI-1) — needed for setup how-to and for verifying assumptions A1, A2 | project-manager | Open |
+| Dep1 | ~~Pinned cmux version (OI-1)~~ **RESOLVED 2026-05-15** — pinned cmux v0.64.6 per [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release); rolling-pin policy committed. A1/A2 verification work moves to #226 acceptance criteria. | project-manager | Closed |
 | Dep2 | Cmux's documented JSON-RPC method names for the Phase 1 RPC surface (`workspace.create`, `surface.split`, `surface.spawn`, `surface.hide`, `surface.list`, `workspace.list`, `workspace.close`, `workspace.current`, `workspace.select`, `system.identify`) — needed to implement `RealClient` | `devops-engineer` | Investigation doc (`docs/plans/cmux-rebuild/investigation.md`) sketches the API; verify against pinned cmux version |
 
 ## Testing Strategy
@@ -283,9 +283,9 @@ The YAGNI gate at Step 7.5 demoted the following items to this section. Each can
 
 ## Open Items
 
-- **OI-1: Named minimum-supported cmux version (inherited from spec).**
-  - **Resolves when:** the team picks a cmux release to pin (build-outline OQ-1 recommendation: current latest cmux release).
-  - **Blocks implementation:** No for the code (capability check is method-presence-based per parent D18); **Yes for the setup how-to** (operators need a "tested against version X" line) per devops DOR-009/DOR-012. Now a release-readiness blocker.
+- **OI-1: Named minimum-supported cmux version (inherited from spec).** **RESOLVED 2026-05-15** — pinned **cmux v0.64.6** with a rolling-update policy per [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release). The setup how-to (#226) now has a concrete "tested against" target. The pin updates every cmux release; doc-only commits land alongside the cadence.
+  - **Was resolved when:** the team picked v0.64.6 (current latest at https://github.com/manaflow-ai/cmux/releases/tag/v0.64.6) and committed to a rolling pin.
+  - **Blocks implementation:** No longer blocking. Setup how-to (#226) is unblocked; assumptions A1 and A2 below remain "Verify against v0.64.6 before merging #226."
 - **OI-2: CI testing strategy for cmux mode (inherited from spec).**
   - **Resolves when:** the team commits to a testing approach (build-outline OQ-2 recommendation: mock through Phase 5; revisit at Phase 6).
   - **Blocks implementation:** No — Phase 1 ships with mocked-only coverage; live-cmux integration testing is deferred to Phase 6 per YAGNI-4.
@@ -301,10 +301,10 @@ The YAGNI gate at Step 7.5 demoted the following items to this section. Each can
 - **Outcome delivered:** an opt-in `--cmux` launch mode that stands up a four-pane cmux workspace with placeholder content, holds it open until dismissal, tears down cleanly with focus restored, and ships with the docs + version bump that the project's coding standards require.
 - **Team size:** 7 specialists active (devops, behavioral, concurrency, test-engineer, junior, security, project-manager), 6 stood down or not needed — see [artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md)
 - **Rounds of facilitation:** 2 — see [artifacts/implementation-iteration-history.md](artifacts/implementation-iteration-history.md)
-- **Decisions committed:** 27 (24 full + 3 trivial) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
+- **Decisions committed:** 28 (25 full + 3 trivial) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
 - **Decisions settled by evidence:** 23 — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
 - **Decisions settled by junior-developer reframing:** 3 (D-2, D-13, D-20 — junior-developer findings reframed into evidence-backed accept-the-risk + YAGNI-defer outcomes) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
-- **Decisions settled by user input:** 1 (D-12, exit-code distinction dropped) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
-- **Rejected alternatives recorded:** 75+ — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
-- **Open items remaining:** 4 (OI-1 + OI-2 + OI-3 inherited from spec; OI-A new spec-amendment recommendation)
-- **Recommendation:** **Ship as planned.** Implementation can begin immediately on U1 + U2 + U8 (independent of OI-1). U3 partial — env-var validation can ship without OI-1 — and U4 + U5 + U6 + U7 can ship as soon as the package skeleton is in place. U9 documentation must wait for OI-1 to resolve (one open dependency: pin a cmux version per build-outline OQ-1 recommendation). U10 version-bump lands with U9 in the same PR.
+- **Decisions settled by user input:** 2 (D-12, exit-code distinction dropped; D-28, cmux v0.64.6 pinned with rolling-update policy) — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
+- **Rejected alternatives recorded:** 80+ — see [artifacts/implementation-decision-log.md](artifacts/implementation-decision-log.md)
+- **Open items remaining:** 3 (OI-2 + OI-3 inherited from spec; OI-A new spec-amendment recommendation). **OI-1 RESOLVED 2026-05-15** per [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release) (pinned cmux v0.64.6 with rolling-update policy).
+- **Recommendation:** **Ship as planned.** All work units are now unblocked. Implementation can begin immediately on U1 + U2 + U8 (independent dependencies); U3 + U4 + U5 + U6 + U7 ship as the package skeleton lands; **U9 documentation is now unblocked** by [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release)'s v0.64.6 pin and can run in parallel with the implementation work; U10 version-bump lands with U9 in the same PR.

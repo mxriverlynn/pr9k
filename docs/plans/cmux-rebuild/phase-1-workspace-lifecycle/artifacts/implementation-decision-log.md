@@ -417,3 +417,22 @@ Phase 1 decisions D1–D12 are inherited from the source spec's [decision-log.md
 - **Driven by rounds:** R1
 - **Dependent decisions:** D-26
 - **Referenced in plan:** Decomposition and Sequencing (U9, U10), Definition of Done, Open Items
+
+### D-28: Pin cmux v0.64.6 as the supported floor; update the pin every cmux release
+
+- **Question:** OI-1 — what cmux version does pr9k pin as the named minimum-supported release in the setup how-to and the Phase 1 release notes? And how is the pin maintained as cmux ships new releases?
+- **Decision:** Pin **cmux v0.64.6** (released 2026-05-14, the current latest release as of plan-implementation completion) as the named minimum-supported version. The pin is **rolling**: the team commits to updating the pinned version every time cmux ships a new release. The capability check from parent D18 is the runtime safety net for operators on older versions; the pinned version is the operator-facing recommendation in the setup how-to and the release notes.
+- **Rationale:** Build-outline OQ-1 recommended "Option A — pin to the current latest cmux release as the floor and re-evaluate per release"; v0.64.6 is the current latest. cmux's release pace is high — four releases in 8 days at the time of pinning (v0.64.3 on 2026-05-06, v0.64.4 on 2026-05-11, v0.64.5 on 2026-05-13, v0.64.6 on 2026-05-14) — which makes a one-time pin stale within days. Committing to a rolling pin acknowledges this. cmux is in `0.y.z` semver; per the semver spec, MINOR bumps may carry breaking API changes — the capability check from parent D18 is the right tool for that risk, and the rolling pin keeps the documented "tested against" target accurate. Updates to the pinned version are doc-only changes (no code change unless the capability check fires for a method removal); they ship under the documentation-only commit exception in `docs/coding-standards/versioning.md`.
+- **Evidence:** cmux GitHub repo at https://github.com/manaflow-ai/cmux; latest release v0.64.6 fetched via `gh release view --repo manaflow-ai/cmux` on 2026-05-15; cmux release cadence visible in `gh release list --repo manaflow-ai/cmux`; build-outline OQ-1 Option A recommendation; user direction to "pin the most recent cmux version with an explicit note that we will update cmux as often as possible."
+- **Rejected alternatives:**
+  - Pin a major version range (e.g., `>=0.64.0`) — rejected; cmux's `0.y.z` numbering means MINOR bumps may carry breaking API changes per the semver §4 rule for the `0.y.z` initial-development tier; the capability check is the right tool for that risk, not a documented version range.
+  - Pin a specific older "stable" release — rejected; nothing about an older release is more stable than the latest, and pinning older defeats the purpose of operators tracking cmux's active development.
+  - Defer the pin until Phase 1 ships — rejected; the cmux setup how-to (#226) cannot ship without the pin per [D-24](#d-24-phase-1-pr-scope--code--docs--version-bump-in-single-pr), and Phase 1 cannot complete without #226 per the same decision.
+  - Don't pin; rely entirely on the runtime capability check — rejected; operators benefit from a "tested against version X" line in the docs even when the runtime check would catch incompatibilities. The capability check is the safety net, not the primary documentation contract.
+  - One-time pin (no rolling-update commitment) — rejected; cmux's high release cadence makes a one-time pin stale within days.
+- **Specialist owner:** project-manager (decision); `devops-engineer` (operationalization — runs `gh release view --repo manaflow-ai/cmux` before each pr9k release and updates the setup how-to + release notes if the pinned version has moved).
+- **Revisit criterion:** **Whenever cmux ships a new release.** The doc-only update path is a single-commit change to `docs/how-to/setting-up-cmux.md` (and the Phase release notes if the bump coincides with a pr9k release) bumping the pinned version. The capability check needs no change unless a cmux release removes a method pr9k requires — in which case the runtime error from parent D18's check fires and prompts a separate fix.
+- **Dissent (if any):** —
+- **Driven by rounds:** R2 (deferred to user input until plan synthesis; user provided the version-pin direction post-synthesis with the rolling-update policy).
+- **Dependent decisions:** D-17 (YAGNI-1 dotted-name re-verification trigger now fires against v0.64.6).
+- **Referenced in plan:** Open Items (OI-1 resolution), Decomposition and Sequencing (U9), Definition of Done.

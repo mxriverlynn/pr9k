@@ -126,9 +126,9 @@ Phase 1 does not run any pr9k workflow content. The orchestrator pane hosts a pl
 
 ## Open Items
 
-- **OI-1: Named minimum-supported cmux version.** The capability check is method-presence-based and admits any cmux build that exposes the required methods, but the cmux setup how-to and the Phase 1 release notes need a concrete "tested against version X" line so operators have a target to install. Tracked in the parent build outline as [OQ-1](../build-phase-outline.md#oq-1).
-  - **Resolves when:** the team picks a cmux release to pin as the floor (recommendation in the parent build outline: pin to the current latest cmux release and re-evaluate per release).
-  - **Blocks implementation:** No — the capability check works regardless. Yes for the setup how-to and release notes that ship with Phase 1.
+- **OI-1: Named minimum-supported cmux version. RESOLVED 2026-05-15** — pinned **cmux v0.64.6** per implementation [D-28](artifacts/implementation-decision-log.md#d-28-pin-cmux-v0646-as-the-supported-floor-update-the-pin-every-cmux-release) with a **rolling-update policy** (the team commits to bumping the pinned version every time cmux ships a new release). The capability check from parent D18 remains the runtime safety net for operators on older versions; the pinned version is the operator-facing recommendation in the setup how-to and release notes. Tracked in the parent build outline as [OQ-1](../build-phase-outline.md#oq-1).
+  - **Was resolved when:** the team picked v0.64.6 (the current latest at https://github.com/manaflow-ai/cmux/releases/tag/v0.64.6) and committed to the rolling pin.
+  - **Blocks implementation:** No longer blocking. Setup how-to is unblocked.
 - **OI-2: CI testing strategy for cmux mode.** cmux is a graphical application; the standard pr9k CI runners cannot launch it. The team needs to decide whether Phase 1's coverage relies on mocked cmux interactions, a live cmux smoke test on a capable runner, or both. Tracked in the parent build outline as [OQ-2](../build-phase-outline.md#oq-2).
   - **Resolves when:** the team commits to a testing approach (recommendation in the parent build outline: mock cmux's programmatic interface for Phase 1 through 5; revisit for Phase 6).
   - **Blocks implementation:** No — Phase 1 can be implemented and manually demoed without a CI strategy in place. Yes for the durability of the Phase 1 test suite.
