@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -67,6 +69,16 @@ type ioResult struct {
 }
 
 // ---- Constructor and lifecycle ----------------------------------------------
+
+// NewProductionClient creates a RealClient using CMUX_SOCKET_PATH (or the
+// platform default) and DefaultTimeout. Intended for use in main() only.
+func NewProductionClient() *RealClient {
+	socketPath := strings.TrimSpace(os.Getenv("CMUX_SOCKET_PATH"))
+	if socketPath == "" {
+		socketPath = defaultSocketPath
+	}
+	return NewRealClient(socketPath, DefaultTimeout)
+}
 
 // NewRealClient creates a RealClient and starts its internal queue goroutine.
 // timeout is the per-call deadline; use DefaultTimeout for production.

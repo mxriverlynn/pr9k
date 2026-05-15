@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
+	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 	"github.com/mxriverlynn/pr9k/src/internal/logger"
 	"github.com/mxriverlynn/pr9k/src/internal/preflight"
 	"github.com/mxriverlynn/pr9k/src/internal/statusline"
@@ -54,16 +55,16 @@ type services struct {
 	stepFile steps.StepFile
 }
 
-// startup performs the full pre-run sequence: load steps, run D13 config
-// validation, run preflight checks. Errors from both are collected before
-// any output is written, so all problems appear together. On success the
-// services are fully initialised and warnings (if any) have been printed.
-// profileDir must be resolved by the caller (preflight.ResolveProfileDir).
-func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, stderr io.Writer) (*services, bool) {
+// startupValidate runs the load-steps, D13 validation, and preflight phase
+// without creating a logger or artifact directory. It is called by startup (non-cmux
+// path) and directly by runCmuxMode (cmux path, which skips the logger per D-16).
+// Errors from both validation and preflight are collected before any output is
+// written, so all problems appear together.
+func startupValidate(cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, stderr io.Writer) (steps.StepFile, bool) {
 	stepFile, err := steps.LoadSteps(cfg.WorkflowDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "error: %v\n", err)
-		return nil, false
+		return steps.StepFile{}, false
 	}
 
 	validationErrs := validator.Validate(cfg.WorkflowDir)
@@ -81,16 +82,29 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 		for _, e := range preflightResult.Errors {
 			_, _ = fmt.Fprintln(stderr, e.Error())
 		}
-		return nil, false
+		return steps.StepFile{}, false
 	}
 	// Print non-fatal validation findings (warnings, info notices) after passing
 	// the fatal-error gate so they appear alongside preflight warnings.
 	for _, ve := range validationErrs {
 		_, _ = fmt.Fprintln(stderr, ve.Error())
 	}
-
 	for _, w := range preflightResult.Warnings {
 		_, _ = fmt.Fprintln(stderr, w)
+	}
+	return stepFile, true
+}
+
+// startup performs the full pre-run sequence: load steps, run D13 config
+// validation, run preflight checks, create the logger and artifact directory.
+// Errors from both validation and preflight are collected before any output is
+// written, so all problems appear together. On success the services are fully
+// initialised and warnings (if any) have been printed.
+// profileDir must be resolved by the caller (preflight.ResolveProfileDir).
+func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, stderr io.Writer) (*services, bool) {
+	stepFile, ok := startupValidate(cfg, projectDir, profileDir, prober, stderr)
+	if !ok {
+		return nil, false
 	}
 
 	log, err := logger.NewLogger(projectDir)
@@ -112,6 +126,31 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 		runner:   workflow.NewRunner(log, projectDir),
 		stepFile: stepFile,
 	}, true
+}
+
+// runCmuxMode is the cmux-path entry point. It runs standard validation +
+// preflight (via startupValidate), then the cmux preflight, then RunPhase1.
+// It does not create a logger or Bubble Tea program (D-16).
+// Returns true on success, false on any error (errors are printed to errOut).
+func runCmuxMode(ctx context.Context, cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, cmuxProber cmuxctl.CmuxProber, client cmuxctl.CmuxClient, out, errOut io.Writer) bool {
+	// Standard preflight runs first per spec D8.
+	if _, ok := startupValidate(cfg, projectDir, profileDir, prober, errOut); !ok {
+		return false
+	}
+
+	// Cmux preflight: five distinguishable failure conditions + CMUX_SOCKET_PATH validation.
+	if errs := cmuxctl.Preflight(ctx, cmuxProber, client); len(errs) > 0 {
+		for _, e := range errs {
+			_, _ = fmt.Fprintln(errOut, e)
+		}
+		return false
+	}
+
+	if err := cmuxctl.RunPhase1(ctx, client, projectDir, out); err != nil {
+		_, _ = fmt.Fprintln(errOut, err)
+		return false
+	}
+	return true
 }
 
 // formatUsageError formats a CLI parse error into the standard user-facing
@@ -138,9 +177,20 @@ func main() {
 		return
 	}
 
+	profileDir := preflight.ResolveProfileDir()
+
+	// Cmux path: skip logger/Bubble Tea wiring per D-16.
+	if cfg.Cmux {
+		client := cmuxctl.NewProductionClient()
+		defer client.Stop()
+		if !runCmuxMode(context.Background(), cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, os.Stdout, os.Stderr) {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// Step 2: startup loads the step file, runs validation, and runs preflight
 	// checks against the project directory.
-	profileDir := preflight.ResolveProfileDir()
 	svc, ok := startup(cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, os.Stderr)
 	if !ok {
 		os.Exit(1)
