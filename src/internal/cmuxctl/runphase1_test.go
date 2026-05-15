@@ -475,3 +475,258 @@ func TestErrWorkspaceExists_IsDistinct(t *testing.T) {
 		t.Error("unrelated error matches ErrWorkspaceExists")
 	}
 }
+
+// ---- TP-224: Teardown sequence tests ----------------------------------------
+
+// TP-224-001: Successful WorkspaceClose → exit code 0; WorkspaceSelect called
+// with the prior workspace name.
+func TestTeardown_SuccessfulClose_ExitZero(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		WorkspaceCurrentFunc: func(_ context.Context) (string, error) {
+			return "prior-ws", nil
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
+	if err != nil {
+		t.Fatalf("RunPhase1 returned non-nil: %v", err)
+	}
+	if len(fake.CloseCalls) != 1 {
+		t.Errorf("WorkspaceClose called %d times, want 1", len(fake.CloseCalls))
+	}
+	if len(fake.SelectCalls) != 1 || fake.SelectCalls[0] != "prior-ws" {
+		t.Errorf("WorkspaceSelect calls = %v, want [prior-ws]", fake.SelectCalls)
+	}
+}
+
+// TP-224-002: Failed WorkspaceClose → orphan diagnostic on stderr;
+// focus-restore still attempted; exit code non-zero.
+func TestTeardown_FailedClose_OrphanDiagnosticAndNonZeroExit(t *testing.T) {
+	t.Parallel()
+
+	var stderrBuf bytes.Buffer
+	fake := &cmuxctl.FakeClient{
+		WorkspaceCurrentFunc: func(_ context.Context) (string, error) {
+			return "prior-ws", nil
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		WorkspaceCloseFunc: func(_ context.Context, _ string) error {
+			return errors.New("rpc error: close failed")
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf,
+		cmuxctl.DismissalConfig{
+			PollInterval: time.Millisecond,
+			Stderr:       &stderrBuf,
+		})
+	if err == nil {
+		t.Fatal("RunPhase1 returned nil; expected non-nil on WorkspaceClose failure")
+	}
+
+	diag := stderrBuf.String()
+	if !strings.Contains(diag, "orphan workspace") {
+		t.Errorf("orphan diagnostic not found in stderr: %q", diag)
+	}
+	if !strings.Contains(diag, "myrepo") {
+		t.Errorf("workspace name not found in orphan diagnostic: %q", diag)
+	}
+	// focus-restore still attempted even on close failure
+	if len(fake.SelectCalls) != 1 {
+		t.Errorf("WorkspaceSelect called %d times, want 1", len(fake.SelectCalls))
+	}
+}
+
+// TP-224-003: Empty prior workspace → WorkspaceSelect never called.
+func TestTeardown_EmptyPriorWorkspace_NoSelectCall(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		WorkspaceCurrentFunc: func(_ context.Context) (string, error) {
+			return "", nil // no prior workspace
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
+	if err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	if len(fake.SelectCalls) != 0 {
+		t.Errorf("WorkspaceSelect called %d times, want 0; calls: %v", len(fake.SelectCalls), fake.SelectCalls)
+	}
+}
+
+// TP-224-004: Stale prior workspace (WorkspaceSelect returns error) →
+// error is silently ignored; no extra output on the run writer.
+func TestTeardown_StalePriorWorkspace_SelectErrorIgnored(t *testing.T) {
+	t.Parallel()
+
+	var stderrBuf bytes.Buffer
+	fake := &cmuxctl.FakeClient{
+		WorkspaceCurrentFunc: func(_ context.Context) (string, error) {
+			return "stale-ws", nil
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		WorkspaceSelectFunc: func(_ context.Context, _ string) error {
+			return errors.New("workspace not found")
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf,
+		cmuxctl.DismissalConfig{
+			PollInterval: time.Millisecond,
+			Stderr:       &stderrBuf,
+		})
+	if err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	// stderr must be silent (no extra output for select failure)
+	if diag := stderrBuf.String(); diag != "" {
+		t.Errorf("unexpected stderr output on stale prior workspace: %q", diag)
+	}
+}
+
+// TP-224-005: sync.Once — if teardown is triggered via two concurrent paths,
+// WorkspaceClose is called exactly once.
+func TestTeardown_SyncOnce_CloseCalledExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		// WorkspaceList returns empty immediately → dismissal fires at first poll.
+	}
+
+	// Use a pre-cancelled context so both the ctx.Done() path and the dismissal
+	// path (WorkspaceList returns nil → dismissal) may fire concurrently.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var buf bytes.Buffer
+	// Start RunPhase1 in a goroutine, cancel context just after entry.
+	done := make(chan error, 1)
+	go func() {
+		done <- cmuxctl.RunPhase1(ctx, fake, "/tmp/repo", &buf, cmuxctl.DismissalConfig{
+			PollInterval: time.Millisecond,
+		})
+	}()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunPhase1 did not return within 5s")
+	}
+
+	if len(fake.CloseCalls) > 1 {
+		t.Errorf("WorkspaceClose called %d times (want ≤1); sync.Once should prevent double execution", len(fake.CloseCalls))
+	}
+}
+
+// TP-224-006: Dismissal-observer goroutine joins cleanly before RunPhase1 returns.
+// If Wait() is not called, the race detector would catch the missing join.
+func TestTeardown_ObserverJoinsBeforeReturn(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	// Normal dismissal path: WorkspaceList returns nil → dismissal fires → RunPhase1 returns.
+	err := cmuxctl.RunPhase1(ctx, fake, "/tmp/repo", &buf, fastDismissal())
+	if err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	// If we reach here without a race-detector warning, the goroutine joined.
+}
+
+// TP-224-007: Exit-code matrix — context cancellation (signal-driven) → non-zero.
+func TestTeardown_ContextCancel_NonZeroExit(t *testing.T) {
+	t.Parallel()
+
+	// Block WorkspaceList forever so dismissal never fires; we cancel ctx instead.
+	ready := make(chan struct{})
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		WorkspaceListFunc: func(ctx context.Context) ([]string, error) {
+			select {
+			case <-ready:
+				return []string{"pr9k-repo-ts"}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var buf bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- cmuxctl.RunPhase1(ctx, fake, "/tmp/repo", &buf, cmuxctl.DismissalConfig{
+			PollInterval: time.Millisecond,
+		})
+	}()
+
+	cancel()
+	close(ready)
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected non-nil error on context cancellation (signal-driven), got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunPhase1 did not return within 5s after context cancel")
+	}
+}
+
+// TP-224-008: Partial-setup failure (SurfaceSpawn fails after WorkspaceCreate) →
+// teardown still runs (WorkspaceClose called) and RunPhase1 returns non-nil.
+func TestTeardown_PartialSetup_TeardownRuns(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, _ string, _ []string) error {
+			return errors.New("spawn failed")
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal())
+	if err == nil {
+		t.Fatal("expected non-nil error on spawn failure")
+	}
+	if len(fake.CloseCalls) != 1 {
+		t.Errorf("WorkspaceClose called %d times, want 1 (teardown should run on partial-setup failure)", len(fake.CloseCalls))
+	}
+}

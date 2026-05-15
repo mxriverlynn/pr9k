@@ -2,6 +2,7 @@ package cmuxctl
 
 import (
 	"context"
+	"io"
 	"sync"
 	"time"
 )
@@ -20,9 +21,12 @@ type DismissalEvent struct {
 
 // DismissalConfig configures the dismissal-observation goroutine.
 // Zero values use package defaults (500ms interval, 5s per-call timeout).
+// Stderr, when non-nil, receives teardown diagnostics (e.g., the orphan-workspace
+// message on WorkspaceClose failure). Nil means os.Stderr.
 type DismissalConfig struct {
 	PollInterval time.Duration
 	PollTimeout  time.Duration
+	Stderr       io.Writer
 }
 
 // DismissalObserver manages the dismissal-observation goroutine lifecycle per

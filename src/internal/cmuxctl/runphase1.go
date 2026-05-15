@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -53,8 +55,9 @@ func composeWorkspaceName(sanitized string) string {
 	return "pr9k-" + sanitized + "-" + ts
 }
 
-// RunPhase1 implements the workspace lifecycle setup half of cmux Phase 1:
+// RunPhase1 implements the workspace lifecycle setup and teardown for cmux Phase 1.
 //
+// Setup sequence:
 //  1. Capture the current workspace via WorkspaceCurrent (spec D10; empty result
 //     is recorded as "no prior workspace" without error).
 //  2. Sanitize filepath.Base(projectDir) per D11 (SanitizeBasename), compose the
@@ -69,21 +72,37 @@ func composeWorkspaceName(sanitized string) string {
 //  6. Start the dismissal-observation goroutine (D6, D9, D22) and block until
 //     either a dismissal event is received or ctx is cancelled.
 //
-// dismissalCfg controls the polling cadence and per-call timeout; zero values
-// use package defaults (500ms interval, 5s timeout).
+// Teardown sequence (D-11, D-12, spec D10):
+//  1. Set shuttingDown on the observer; cancel its context.
+//  2. Best-effort WorkspaceClose: on failure print an orphan diagnostic to stderr
+//     and return a non-nil error.
+//  3. Silent focus-restore: if a prior workspace was captured, call WorkspaceSelect;
+//     any error is silently ignored (D10).
+//  4. Join the dismissal-observer goroutine via WaitGroup.
 //
-// Any error from a cmux RPC after workspace creation is returned directly;
-// partial-setup teardown (#224) is wired in a later issue.
+// Teardown is wrapped in sync.Once so it runs exactly once regardless of how
+// many code paths invoke it (dismissal, signal-driven context cancel, partial-setup
+// failure). A partial-setup failure (any error after WorkspaceCreate) also triggers
+// teardown via the deferred cleanup.
+//
+// Exit-code policy (D-12): every normal dismissal observation returns nil (exit 0).
+// Non-zero exits are reserved for: WorkspaceClose failure, partial-setup failure,
+// signal-driven context cancellation, and fatal dismissal (N=3 poll timeouts).
 //
 // out receives only the sanitized workspace name (D-23: the pre-sanitized
 // filepath.Base(projectDir) must never appear in operator-visible output).
-func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig) error {
+func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig) (returnErr error) {
+	// Resolve stderr for teardown diagnostics; nil means os.Stderr.
+	stderr := dismissalCfg.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+
 	// Step 1: capture current workspace (spec D10).
 	priorWorkspace, err := client.WorkspaceCurrent(ctx)
 	if err != nil {
 		priorWorkspace = "" // record as "no prior workspace" on error
 	}
-	_ = priorWorkspace // consumed by teardown in #224
 
 	// Step 2: compose workspace name.
 	// D-23: SanitizeBasename consumes filepath.Base(projectDir); the result
@@ -107,6 +126,46 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	// D-23: only the composed workspaceName (which contains only the sanitized form)
 	// is printed; the pre-sanitized basename is never referenced after this point.
 	_, _ = fmt.Fprintf(out, "pr9k workspace: %s\n", workspaceName)
+
+	// Teardown is wrapped in sync.Once so it runs exactly once from any path:
+	// the deferred cleanup below (partial-setup failure, normal/fatal dismissal,
+	// context cancellation) and any concurrent signal-handler path.
+	var (
+		teardownOnce sync.Once
+		teardownErr  error
+		obs          *DismissalObserver
+	)
+	runTeardown := func() {
+		teardownOnce.Do(func() {
+			if obs != nil {
+				obs.SetShuttingDown()
+				obs.Cancel()
+			}
+			// Best-effort WorkspaceClose with a fresh context (D-11): the parent
+			// ctx may already be cancelled on the signal-driven path.
+			closeCtx := context.Background()
+			if err := client.WorkspaceClose(closeCtx, workspaceName); err != nil {
+				fmt.Fprintf(stderr, "pr9k: orphan workspace %q could not be closed; dismiss it manually via cmux's controls\n", workspaceName)
+				teardownErr = err
+			}
+			// Silent focus-restore (spec D10): skip when no prior workspace was
+			// recorded; ignore any error when the prior workspace is stale.
+			if priorWorkspace != "" {
+				_ = client.WorkspaceSelect(closeCtx, priorWorkspace)
+			}
+			if obs != nil {
+				obs.Wait()
+			}
+		})
+	}
+	// Always run teardown on return; the named return value lets the deferred
+	// func inject teardownErr when the primary return would otherwise be nil.
+	defer func() {
+		runTeardown()
+		if returnErr == nil && teardownErr != nil {
+			returnErr = fmt.Errorf("cmuxctl: workspace close failed: %w", teardownErr)
+		}
+	}()
 
 	// Step 5a: spawn orchestrator pane (D-3, D-4).
 	orchPaneID, err := client.SurfaceSplit(ctx, SplitOpts{})
@@ -141,10 +200,8 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	}
 
 	// Step 6: start dismissal-observation goroutine and block until dismissal or
-	// context cancellation (spec D9, D22). Teardown (#224) is wired later.
-	obs := StartDismissalObserver(ctx, client, workspaceName, dismissalCfg)
-	defer obs.Wait()
-	defer obs.Cancel()
+	// context cancellation (spec D9, D22).
+	obs = StartDismissalObserver(ctx, client, workspaceName, dismissalCfg)
 
 	select {
 	case <-ctx.Done():
