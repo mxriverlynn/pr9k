@@ -192,3 +192,83 @@ func TestStripForTerminalOutput_DoesNotMutateInput(t *testing.T) {
 		t.Errorf("input was mutated: got %q, want %q", input, original)
 	}
 }
+
+// --- TP-001: C1 DCS (0x90) payload stripped (SEC-004) ---
+
+func TestStripForTerminalOutput_8BitC1DCSStripped(t *testing.T) {
+	cases := []struct {
+		name  string
+		input []byte
+	}{
+		// BEL terminator: 0x90 payload 'p','a','y' BEL 'o','k'
+		{"DCS BEL terminator", []byte{0x90, 'p', 'a', 'y', 0x07, 'o', 'k'}},
+		// C1-ST terminator: 0x90 payload 'p','a','y' 0x9C 'o','k'
+		{"DCS C1-ST terminator", []byte{0x90, 'p', 'a', 'y', 0x9C, 'o', 'k'}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := ansi.StripForTerminalOutput(tc.input)
+			if !bytes.Equal(output, []byte("ok")) {
+				t.Errorf("%s: expected %q, got %q", tc.name, "ok", output)
+			}
+			if bytes.IndexByte(output, 0x90) != -1 {
+				t.Errorf("%s: output contains 0x90 (C1 DCS): %q", tc.name, output)
+			}
+		})
+	}
+}
+
+// --- TP-002: double-ESC contract pinned for StripForTerminalOutput (SEC-002) ---
+
+func TestStripForTerminalOutput_DoubleESC(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    []byte
+		expected []byte
+	}{
+		{"CSI color", []byte("\x1b[31mred\x1b[0m"), []byte("red")},
+		{"OSC BEL", []byte("\x1b]0;title\x07after"), []byte("after")},
+		{"OSC ST", []byte("\x1b]8;;url\x1b\\link\x1b]8;;\x1b\\"), []byte("link")},
+		{"two-byte ESC", []byte("\x1bMX"), []byte("X")},
+		{"bare ESC at end", []byte("hello\x1b"), []byte("hello")},
+		{"double ESC", []byte("\x1b\x1b[31mred"), []byte("[31mred")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := ansi.StripForTerminalOutput(tc.input)
+			if bytes.IndexByte(output, 0x1b) != -1 {
+				t.Errorf("%s: output contains ESC byte: %q", tc.name, output)
+			}
+			if !bytes.Equal(output, tc.expected) {
+				t.Errorf("%s: expected %q, got %q", tc.name, tc.expected, output)
+			}
+		})
+	}
+}
+
+// --- TP-003: unterminated C1 OSC/DCS/CSI sequences (EOF/bounds guard) ---
+
+func TestStripForTerminalOutput_UnterminatedC1(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    []byte
+		expected []byte
+	}{
+		// unterminated C1 OSC: consumed to EOF, nothing leaks
+		{"unterminated C1 OSC", []byte{0x9D, 'a', 'b', 'c'}, []byte{}},
+		// unterminated C1 DCS: consumed to EOF, nothing leaks
+		{"unterminated C1 DCS", []byte{0x90, 'a', 'b', 'c'}, []byte{}},
+		// text before unterminated C1 CSI: text passes through, sequence stripped
+		{"text before unterminated C1 CSI", []byte{'x', 0x9B, '3', '1'}, []byte("x")},
+		// 7-bit ESC ST is NOT a recognized C1 OSC terminator; SEC-004: no payload leak
+		{"C1 OSC with embedded 7-bit ST consumed to EOF", []byte{0x9D, '0', ';', 'e', 0x1b, '\\', 'z'}, []byte{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			output := ansi.StripForTerminalOutput(tc.input)
+			if !bytes.Equal(output, tc.expected) {
+				t.Errorf("%s: expected %q, got %q", tc.name, tc.expected, output)
+			}
+		})
+	}
+}
