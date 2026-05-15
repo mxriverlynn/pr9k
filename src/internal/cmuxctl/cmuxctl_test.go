@@ -515,3 +515,159 @@ func TestRealClient_ContextCancelAfterSend(t *testing.T) {
 		t.Fatal("expected error from context timeout, got nil")
 	}
 }
+
+// TP-219-001: RealClient surfaces a JSON-RPC error payload as a Go error,
+// and the connection is NOT closed on a protocol-level error (only on
+// transport errors), so a subsequent successful call on the same connection
+// succeeds.
+func TestRealClient_RPCErrorSurfacedAsGoError(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	// Server: first request → JSON-RPC error; subsequent requests → result.
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		enc := json.NewEncoder(conn)
+		first := true
+		for {
+			var req rpcMsg
+			if err := dec.Decode(&req); err != nil {
+				return
+			}
+			if first {
+				first = false
+				_ = enc.Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"error":   map[string]any{"code": -32000, "message": "boom"},
+					"id":      req.ID,
+				})
+			} else {
+				_ = enc.Encode(map[string]any{
+					"jsonrpc": "2.0",
+					"result":  json.RawMessage(`null`),
+					"id":      req.ID,
+				})
+			}
+		}
+	}()
+
+	c := cmuxctl.NewRealClient(socketPath, testTimeout)
+	defer c.Stop()
+
+	// First call: must return a non-nil error containing "cmuxctl:" and "boom".
+	err = c.WorkspaceCreate(context.Background(), "ws")
+	if err == nil {
+		t.Fatal("expected error from JSON-RPC error response, got nil")
+	}
+	if !contains(err.Error(), "cmuxctl:") {
+		t.Errorf("error %q missing package prefix \"cmuxctl:\"", err.Error())
+	}
+	if !contains(err.Error(), "boom") {
+		t.Errorf("error %q missing message \"boom\"", err.Error())
+	}
+
+	// Second call: must succeed — protocol errors must not disconnect the socket.
+	err = c.WorkspaceClose(context.Background(), "ws")
+	if err != nil {
+		t.Errorf("expected nil error on follow-up call after RPC error, got: %v", err)
+	}
+}
+
+// contains is a simple substring check to avoid importing strings in the test.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || func() bool {
+		for i := 0; i <= len(s)-len(substr); i++ {
+			if s[i:i+len(substr)] == substr {
+				return true
+			}
+		}
+		return false
+	}())
+}
+
+// TP-219-002: RealClient.Stop() is idempotent — calling it twice must not
+// panic, deadlock, or hang.
+func TestRealClient_StopIdempotent(t *testing.T) {
+	result := json.RawMessage(`["ws1"]`)
+	socketPath := respondingServer(t, result)
+	c := cmuxctl.NewRealClient(socketPath, testTimeout)
+
+	c.Stop()
+	// Second Stop must return promptly without panic.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Stop()
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("second Stop() did not return within 1s — possible deadlock")
+	}
+}
+
+// TP-219-003: RealClient encodes the correct method name and params on the wire.
+// WorkspaceCreate → method "workspace.create", params {"name":"my-ws"}.
+func TestRealClient_WireMethodAndParams(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	captured := make(chan rpcMsg, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		dec := json.NewDecoder(conn)
+		enc := json.NewEncoder(conn)
+		var req rpcMsg
+		if err := dec.Decode(&req); err != nil {
+			return
+		}
+		captured <- req
+		_ = enc.Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"result":  json.RawMessage(`null`),
+			"id":      req.ID,
+		})
+	}()
+
+	c := cmuxctl.NewRealClient(socketPath, testTimeout)
+	defer c.Stop()
+
+	if err := c.WorkspaceCreate(context.Background(), "my-ws"); err != nil {
+		t.Fatalf("WorkspaceCreate: %v", err)
+	}
+
+	select {
+	case req := <-captured:
+		if req.Method != "workspace.create" {
+			t.Errorf("method = %q, want %q", req.Method, "workspace.create")
+		}
+		var params struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			t.Fatalf("unmarshal params: %v", err)
+		}
+		if params.Name != "my-ws" {
+			t.Errorf("params.Name = %q, want %q", params.Name, "my-ws")
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("timed out waiting for captured request")
+	}
+}
