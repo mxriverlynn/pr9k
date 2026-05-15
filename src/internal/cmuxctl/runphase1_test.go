@@ -421,6 +421,49 @@ func TestRunPhase1_WorkspaceCurrentErrorDegraces(t *testing.T) {
 	}
 }
 
+// ---- TP-222-009: RunPhase1 returns fatal error on N=3 consecutive timeouts ---
+
+// TestRunPhase1_FatalDismissal_ReturnsError verifies that when the dismissal
+// observer escalates to Fatal=true (D7: three consecutive poll timeouts),
+// RunPhase1 returns a non-nil error whose message contains "dismissal poll fatal"
+// and the sanitized workspace name. A non-nil return here is the contract that
+// lets #224 teardown choose a non-zero exit code.
+func TestRunPhase1_FatalDismissal_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "some-pane", nil
+		},
+		WorkspaceListFunc: func(ctx context.Context) ([]string, error) {
+			// Block until context is cancelled — simulates a hung RPC so every
+			// call times out, driving the N=3 consecutive-timeout escalation.
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+
+	cfg := cmuxctl.DismissalConfig{
+		PollInterval: time.Millisecond,
+		PollTimeout:  5 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(ctx, fake, "/tmp/myrepo", &buf, cfg)
+	if err == nil {
+		t.Fatal("RunPhase1 returned nil; expected a non-nil fatal-dismissal error")
+	}
+	if !strings.Contains(err.Error(), "dismissal poll fatal") {
+		t.Errorf("error message %q does not contain %q", err.Error(), "dismissal poll fatal")
+	}
+	if !strings.Contains(err.Error(), "myrepo") {
+		t.Errorf("error message %q does not contain sanitized workspace name %q", err.Error(), "myrepo")
+	}
+}
+
 // ---- ErrWorkspaceExists sentinel --------------------------------------------
 
 func TestErrWorkspaceExists_IsDistinct(t *testing.T) {
