@@ -385,6 +385,34 @@ func TestRunPhase1_EmptyCurrentWorkspaceIsOK(t *testing.T) {
 	}
 }
 
+// ---- WorkspaceCurrent error degrades gracefully (spec D10) — TP-221-002 -----
+
+// TestRunPhase1_WorkspaceCurrentErrorDegraces verifies that a WorkspaceCurrent
+// RPC error is swallowed per spec D10 ("record no prior workspace on error")
+// and RunPhase1 continues to create the workspace and spawn panes.
+func TestRunPhase1_WorkspaceCurrentErrorDegraces(t *testing.T) {
+	fake := &cmuxctl.FakeClient{
+		WorkspaceCurrentFunc: func(_ context.Context) (string, error) {
+			return "", errors.New("rpc down")
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+	}
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/myrepo", &buf)
+	if err != nil {
+		t.Fatalf("RunPhase1 must return nil when WorkspaceCurrent errors; got: %v", err)
+	}
+	if len(fake.CreateCalls) == 0 {
+		t.Error("WorkspaceCreate was not called after WorkspaceCurrent error")
+	}
+	if len(fake.SpawnCalls) == 0 {
+		t.Error("SurfaceSpawn was not called after WorkspaceCurrent error")
+	}
+}
+
 // ---- ErrWorkspaceExists sentinel --------------------------------------------
 
 func TestErrWorkspaceExists_IsDistinct(t *testing.T) {

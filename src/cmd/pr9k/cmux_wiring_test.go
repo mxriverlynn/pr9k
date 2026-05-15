@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,6 +110,67 @@ func TestRunCmuxMode_SkipsLoggerAndBubbleTea(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(projectDir, ".pr9k", "logs")); !os.IsNotExist(err) {
 		t.Errorf(".pr9k/logs/ must NOT exist on cmux path; err=%v", err)
+	}
+}
+
+// TestRunCmuxMode_SuccessPath is TP-221-001: the happy-path wiring
+// startupValidate → cmuxctl.Preflight → RunPhase1 is exercised end to end.
+// It creates a real Unix socket so Preflight's dial check passes, wires a
+// FakeClient whose SystemIdentify returns a cmux identity and SurfaceSplit
+// returns pane IDs, and verifies that RunPhase1 side effects are present and
+// no .pr9k/logs/ directory is created (D-16).
+func TestRunCmuxMode_SuccessPath(t *testing.T) {
+	workflowDir := t.TempDir()
+	projectDir := t.TempDir()
+	profileDir := t.TempDir()
+	writeMinimalStepFile(t, workflowDir)
+
+	// Create a real Unix socket so Preflight's dial check (condition 2/3/4) passes.
+	socketDir := t.TempDir()
+	socketPath := filepath.Join(socketDir, "cmux.sock")
+	uln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
+	if err != nil {
+		t.Fatalf("create socket: %v", err)
+	}
+	uln.SetUnlinkOnClose(false)
+	defer uln.Close()
+	t.Setenv("CMUX_SOCKET_PATH", socketPath)
+
+	splitN := 0
+	fake := &cmuxctl.FakeClient{
+		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
+			return cmuxctl.Identity{Name: "cmux", Version: "0.64.6"}, nil
+		},
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			splitN++
+			return "pane-" + string(rune('0'+splitN)), nil
+		},
+	}
+
+	prober := &fakeProber{binaryAvailable: true, imagePresent: true}
+	cmuxProber := &fakeCmuxProber{available: true}
+	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir, Cmux: true}
+
+	var out, errOut bytes.Buffer
+	ok := runCmuxMode(context.Background(), cfg, projectDir, profileDir, prober, cmuxProber, fake, &out, &errOut)
+	if !ok {
+		t.Fatalf("runCmuxMode returned false; errOut: %s", errOut.String())
+	}
+
+	// RunPhase1 must have spawned panes.
+	if len(fake.SpawnCalls) == 0 {
+		t.Error("RunPhase1 did not spawn any panes (SpawnCalls is empty)")
+	}
+
+	// Workspace confirmation must appear in out (sanitized name only, per D-23).
+	outStr := out.String()
+	if !strings.Contains(outStr, "pr9k-") {
+		t.Errorf("workspace name confirmation not in out; got: %q", outStr)
+	}
+
+	// D-16: no .pr9k/logs/ directory must be created on the cmux path.
+	if _, statErr := os.Stat(filepath.Join(projectDir, ".pr9k", "logs")); !os.IsNotExist(statErr) {
+		t.Errorf(".pr9k/logs/ must NOT be created on cmux path; statErr=%v", statErr)
 	}
 }
 
