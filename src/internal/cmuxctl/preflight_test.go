@@ -311,6 +311,64 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 	}
 }
 
+// ---- TP-220-001: ANSI escape sequences in cmux-supplied text are stripped ---
+
+func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
+	dir := t.TempDir()
+	socketPath, ln := createSocket(t, dir)
+	t.Cleanup(func() { ln.Close() })
+	t.Setenv("CMUX_SOCKET_PATH", socketPath)
+
+	client := &cmuxctl.FakeClient{
+		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
+			return cmuxctl.Identity{Name: "evil\x1b[31m\x1b]0;pwn\x07", Version: "1.0"}, nil
+		},
+	}
+
+	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	msg := errs[0].Error()
+	if !hasSubstr(msg, "cmuxctl:") {
+		t.Errorf("error missing package prefix: %q", msg)
+	}
+	if !hasSubstr(msg, "incompatible") {
+		t.Errorf("error missing 'incompatible' fragment: %q", msg)
+	}
+	if strings.Contains(msg, "\x1b") {
+		t.Errorf("error message contains raw ANSI escape byte: %q", msg)
+	}
+}
+
+func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
+	dir := t.TempDir()
+	socketPath, ln := createSocket(t, dir)
+	t.Cleanup(func() { ln.Close() })
+	t.Setenv("CMUX_SOCKET_PATH", socketPath)
+
+	client := &cmuxctl.FakeClient{
+		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
+			return cmuxctl.Identity{}, errors.New("boom\x1b[2J clear screen injection")
+		},
+	}
+
+	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
+	}
+	msg := errs[0].Error()
+	if !hasSubstr(msg, "cmuxctl:") {
+		t.Errorf("error missing package prefix: %q", msg)
+	}
+	if !hasSubstr(msg, "incompatible") {
+		t.Errorf("error missing 'incompatible' fragment: %q", msg)
+	}
+	if strings.Contains(msg, "\x1b") {
+		t.Errorf("error message contains raw ANSI escape byte: %q", msg)
+	}
+}
+
 // ---- Happy path -------------------------------------------------------------
 
 func TestPreflight_HappyPath(t *testing.T) {
