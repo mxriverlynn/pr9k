@@ -8,7 +8,7 @@ Load-bearing mechanics that the behavioral specification of pr9k cmux mode relie
 
 - **Context:** the spec's [Coordinations](../feature-specification.md#coordinations) row for cmux commits pr9k to "outbound" calls that create workspaces, split panes, spawn processes, push sidebar entries, fire notifications, focus workspaces, and close workspaces. That commitment, and the per-call timeout in [D15](decision-log.md#d15-cmux-api-per-call-timeout-is-fatal), are only correct because cmux exposes a specific programmatic surface.
 - **Technical detail:** cmux exposes a control-plane API only — there is no facility to read pane contents, subscribe to pane output, capture pane state, or render cmux in a headless mode. The methods pr9k uses fall in six categories: workspace lifecycle, surface (pane) splitting/focus, input forwarding into a surface's stdin, notifications, sidebar status / progress / log, and system identity (used by [D18](decision-log.md#d18-startup-capability-check) to detect API skew). The protocol is newline-delimited JSON-RPC 2.0 over a Unix domain socket. Calls are individually addressable by request id; responses indicate success or a failure with diagnostic text. Calls can hang silently — the socket may accept connections and complete handshakes but never deliver a response if cmux's event loop is saturated or deadlocked, which is why [D15](decision-log.md#d15-cmux-api-per-call-timeout-is-fatal) commits to a per-call timeout.
-- **Supports decisions:** D5, D6, D15, D18
+- **Supports decisions:** D5, D6, D15, D18, D27
 - **Driven by findings:** —
 - **Referenced in spec:** Preconditions, Coordinations, Edge Cases and Failure Modes
 

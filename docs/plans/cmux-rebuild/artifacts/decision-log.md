@@ -32,7 +32,7 @@ _(none — every decision settled so far has either rejected alternatives or loa
   - Replace the standard TUI entirely — rejected because of platform portability.
 - **Linked technical notes:** —
 - **Driven by findings:** F28
-- **Dependent decisions:** D3
+- **Dependent decisions:** D3, D25
 - **Referenced in spec:** Outcome, Actors and Triggers, Out of Scope
 
 ### D3: Cmux availability is a hard precondition, not a fallback
@@ -76,7 +76,7 @@ _(none — every decision settled so far has either rejected alternatives or loa
   - No sidebar usage at all — rejected because it would waste cmux's main differentiator without reason.
 - **Linked technical notes:** T1
 - **Driven by findings:** F2
-- **Dependent decisions:** D6
+- **Dependent decisions:** D6, D26
 - **Referenced in spec:** Outcome, Primary Flow, User Interactions
 
 ### D6: Fire cmux notifications at named lifecycle moments
@@ -211,7 +211,7 @@ _(none — every decision settled so far has either rejected alternatives or loa
   - Timeout that prints a warning but continues — rejected because subsequent calls will hit the same hang and the run state diverges from the operator's view.
 - **Linked technical notes:** T1
 - **Driven by findings:** F11, F26
-- **Dependent decisions:** D10
+- **Dependent decisions:** D10, D27
 - **Referenced in spec:** Edge Cases and Failure Modes, Coordinations
 
 ### D16: Per-launch readiness handshake before workflow starts
@@ -296,7 +296,7 @@ _(none — every decision settled so far has either rejected alternatives or loa
   - Repo-only names — rejected; concurrent runs against the same repo would collide.
 - **Linked technical notes:** —
 - **Driven by findings:** F19, F20, F22
-- **Dependent decisions:** D23
+- **Dependent decisions:** D23, D29
 - **Referenced in spec:** Primary Flow
 
 ### D22: Prior workspace is captured and restored
@@ -323,7 +323,7 @@ _(none — every decision settled so far has either rejected alternatives or loa
   - Block until acknowledged — rejected as needless ceremony.
 - **Linked technical notes:** —
 - **Driven by findings:** F6, F22
-- **Dependent decisions:** —
+- **Dependent decisions:** D28
 - **Referenced in spec:** Primary Flow, Edge Cases and Failure Modes, Out of Scope
 
 ### D24: Operator pane close is treated as display loss
@@ -339,3 +339,78 @@ _(none — every decision settled so far has either rejected alternatives or loa
 - **Driven by findings:** F23
 - **Dependent decisions:** D10
 - **Referenced in spec:** Edge Cases and Failure Modes
+
+### D25: Launch surface is the `--cmux` flag
+
+- **Question:** What is the exact invocation form for cmux mode — a flag on `pr9k`, a new subcommand, or a separate binary?
+- **Decision:** A `--cmux` flag on the existing run invocation. No new subcommand surface; no separate binary.
+- **Rationale:** Consistent with the existing cobra-flag convention established in [docs/adr/20260409135303-cobra-cli-framework.md](../../../adr/20260409135303-cobra-cli-framework.md). A subcommand would imply cmux mode is a separate command tree (it is not — same run loop, same `config.json`, same target repository, same exit codes); a separate binary would fragment installation and packaging. A flag is the lightest-weight addition that honors how operators already type `pr9k`. As [F28](team-findings.md#f28-versioning--documentation-impact-of-the-new-cli-surface-was-unflagged) called out, this is a new public CLI surface and requires a MINOR version bump plus matching feature-doc updates in the same PR per the versioning and documentation standards.
+- **Evidence:** [docs/adr/20260409135303-cobra-cli-framework.md](../../../adr/20260409135303-cobra-cli-framework.md); [docs/coding-standards/versioning.md](../../../coding-standards/versioning.md); [docs/coding-standards/documentation.md](../../../coding-standards/documentation.md); operator confirmation accepting the spec's recommended provisional answer.
+- **Rejected alternatives:**
+  - `pr9k cmux run` subcommand — rejected because cmux mode is not a separate command tree; it is an alternate presentation of the same run.
+  - Separate `pr9k-cmux` binary — rejected because it would fragment installation and break shared workflow config discovery.
+  - Environment variable (e.g., `PR9K_CMUX=1`) — rejected because hidden launch modes are surprising; explicit flags are more honest.
+- **Linked technical notes:** —
+- **Driven by findings:** F28
+- **Dependent decisions:** —
+- **Referenced in spec:** Actors and Triggers
+
+### D26: Status-line script runs in the footer pane unchanged
+
+- **Question:** Does cmux mode honor the existing status-line script, or is the status line routed to cmux's sidebar?
+- **Decision:** The existing status-line script runs in the footer pane unchanged. Sidebar mirroring of the status line is deferred per YAGNI ([Deferred (YAGNI)](../feature-specification.md#deferred-yagni)).
+- **Rationale:** The status-line script is already a working surface in the standard TUI ([docs/features/status-line.md](../../../features/status-line.md)); reusing it as-is in the footer pane is the simplest path and matches the principle of "cmux mode is an alternate presentation, not a new workflow" ([D1](#d1-cmux-mode-is-an-alternate-presentation-not-a-new-workflow)). Routing the status line into cmux's sidebar would duplicate the information without observable benefit until the footer pane is itself dropped. The sidebar entries pr9k does push ([D5](#d5-mirror-key-state-into-cmux-sidebar)) are limited to step name and iteration progress for precisely this reason: minimum sidebar surface, maximum reuse of existing code.
+- **Evidence:** [docs/features/status-line.md](../../../features/status-line.md); [D1](#d1-cmux-mode-is-an-alternate-presentation-not-a-new-workflow); operator confirmation.
+- **Rejected alternatives:**
+  - Route the status line to the cmux sidebar — deferred per YAGNI simpler-version test.
+  - Drop the status line in cmux mode — rejected; the status line is operator-configured behavior and dropping it would be a regression.
+- **Linked technical notes:** —
+- **Driven by findings:** —
+- **Dependent decisions:** —
+- **Referenced in spec:** User Interactions
+
+### D27: cmux per-call timeout value
+
+- **Question:** What is the cmux-API per-call timeout value committed in [D15](#d15-cmux-api-per-call-timeout-is-fatal), and is it operator-configurable?
+- **Decision:** A fixed timeout in the 5–10 second range (the exact value chosen by the implementation), not operator-configurable in the initial release.
+- **Rationale:** 5–10 seconds is long enough that healthy cmux responses always fit (cmux's API methods are control-plane operations that should return in well under a second on a healthy host) and short enough that a hung socket aborts before the operator's Docker / git / claude state diverges materially from the operator's view. Not configurable in the initial release because adding a configuration surface for a value most operators will never need to change is YAGNI; operators on unusually slow hosts can request configuration in a follow-up if real evidence emerges.
+- **Evidence:** [D15](#d15-cmux-api-per-call-timeout-is-fatal); operator confirmation.
+- **Rejected alternatives:**
+  - Sub-second timeout — rejected; healthy cmux on a loaded host could exceed sub-second response times.
+  - Configurable from the start — rejected per YAGNI; no operator has reported needing it.
+  - No fixed value (let the implementation choose without a stated range) — rejected; a spec-level commitment to "5–10 seconds" keeps the implementation honest and gives reviewers a target to push back against.
+- **Linked technical notes:** T1
+- **Driven by findings:** —
+- **Dependent decisions:** —
+- **Referenced in spec:** Edge Cases and Failure Modes
+
+### D28: Orphan advisory fires when any orphan exists
+
+- **Question:** How many orphan pr9k workspaces trigger the startup advisory ([D23](#d23-orphan-workspace-startup-advisory)), and what does the advisory contain?
+- **Decision:** Any time more than zero orphan workspaces exist, pr9k prints a one-line advisory listing the orphan workspace names and continues without waiting for acknowledgement. No threshold above zero; no interactive prompt.
+- **Rationale:** Orphans accumulate from crash failure modes ([D10](#d10-display-pane-loss-aborts-the-run), [D15](#d15-cmux-api-per-call-timeout-is-fatal), [D24](#d24-operator-pane-close-is-treated-as-display-loss), SIGKILL edge case). Operator visibility into accumulation matters from the first orphan, not after some arbitrary threshold; thresholds are surface area without value. A single-line listing is enough to give the operator the workspace name(s) needed to dismiss them in cmux. Not waiting for acknowledgement honors the principle that startup advisories should be informational, not interactive — operators who launched pr9k want to run pr9k, not answer prompts.
+- **Evidence:** [D23](#d23-orphan-workspace-startup-advisory); operator confirmation.
+- **Rejected alternatives:**
+  - Threshold > 0 (e.g., advise only when 5+ orphans exist) — rejected as arbitrary; the cost of advising on one orphan is negligible.
+  - Block on acknowledgement — rejected as needless ceremony.
+  - Don't advise (silent) — rejected per [D23](#d23-orphan-workspace-startup-advisory).
+- **Linked technical notes:** —
+- **Driven by findings:** —
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow
+
+### D29: Workspace name pattern
+
+- **Question:** What is the exact pattern for cmux workspace names committed in [D21](#d21-workspace-name-format)?
+- **Decision:** `pr9k-<repo-basename>-<nanosecond-timestamp>`, where `<repo-basename>` is the target repository directory's basename and `<nanosecond-timestamp>` is a high-resolution UTC timestamp with nanosecond precision (e.g., `pr9k-myrepo-20260515T103045.123456789Z`).
+- **Rationale:** Three pieces of information, each carrying its own weight: the `pr9k-` prefix lets [D23](#d23-orphan-workspace-startup-advisory) detect orphans without scanning content; the repo basename lets the operator distinguish concurrent runs against different repos in cmux's workspace list; nanosecond precision prevents collisions between rapid or concurrent launches (a same-second collision would silently fail at workspace creation). Timestamps in UTC avoid surprises when operators run pr9k across timezone changes (e.g., when traveling).
+- **Evidence:** [D21](#d21-workspace-name-format); operator confirmation; [docs/coding-standards/go-patterns.md](../../../coding-standards/go-patterns.md) timestamp conventions.
+- **Rejected alternatives:**
+  - Second-precision timestamps — rejected per [F19](team-findings.md#f19-workspace-uniqueness-mechanism-was-unspecified); same-second launches would collide.
+  - Local-time timestamps — rejected; UTC is unambiguous across hosts and timezones.
+  - Random IDs (e.g., UUID) — rejected; operators cannot scan a workspace list and recognize the run they care about.
+  - Repo-only names — rejected; concurrent runs against the same repo would collide.
+- **Linked technical notes:** —
+- **Driven by findings:** —
+- **Dependent decisions:** —
+- **Referenced in spec:** Primary Flow

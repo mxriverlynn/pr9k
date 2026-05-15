@@ -11,7 +11,7 @@ When the run ends — whether by successful completion, error escalation, or ope
 ## Actors and Triggers
 
 - **Primary actor:** the human operator running pr9k against a target repository.
-- **Trigger:** the operator launches pr9k with the cmux-mode opt-in (the exact invocation form is recorded in [D2](artifacts/decision-log.md#d2-cmux-mode-is-opt-in-at-launch); [OI-1](#open-items) defers the surface choice between flag and subcommand).
+- **Trigger:** the operator launches pr9k with the `--cmux` flag on the existing run invocation ([D25](artifacts/decision-log.md#d25-launch-surface-is-the-cmux-flag); the opt-in nature itself is committed in [D2](artifacts/decision-log.md#d2-cmux-mode-is-opt-in-at-launch)).
 - **Preconditions:**
   - cmux is installed on the host and its programmatic interface is reachable ([T1](artifacts/feature-technical-notes.md#t1-cmux-programmatic-interface-shape)).
   - The pr9k invocation is itself running inside a cmux session so it is permitted to connect to cmux's interface ([T2](artifacts/feature-technical-notes.md#t2-cmux-access-model)).
@@ -23,8 +23,8 @@ When the run ends — whether by successful completion, error escalation, or ope
 1. The operator launches pr9k in cmux mode, pointing at a target repository.
 2. pr9k records which cmux workspace the operator was in before launch so that workspace can be returned to focus on cleanup ([D22](artifacts/decision-log.md#d22-prior-workspace-is-captured-and-restored)).
 3. pr9k probes cmux: confirms it is reachable, that pr9k is permitted to drive it, and that the API exposes every method pr9k will call ([D18](artifacts/decision-log.md#d18-startup-capability-check)). If any check fails, pr9k aborts with a precondition error that names the specific failure condition (see [Edge Cases](#edge-cases-and-failure-modes) for the four distinguishable cases) ([D3](artifacts/decision-log.md#d3-cmux-availability-is-a-hard-precondition-not-a-fallback)).
-4. pr9k counts how many existing cmux workspaces still carry pr9k's naming pattern from prior runs; if more than a small threshold remain, pr9k prints a one-line advisory before continuing (no automatic cleanup) ([D23](artifacts/decision-log.md#d23-orphan-workspace-startup-advisory)).
-5. pr9k asks cmux to create a fresh workspace whose name encodes the target repository's basename plus a high-resolution timestamp so two concurrent or rapid launches do not collide and so the operator can later distinguish workspaces ([D21](artifacts/decision-log.md#d21-workspace-name-format)). pr9k prints the workspace name to the launching terminal so the operator has a paper trail.
+4. pr9k counts how many existing cmux workspaces still carry pr9k's `pr9k-` naming prefix from prior runs; if any remain, pr9k prints a one-line advisory listing the orphan workspace names and continues without waiting for acknowledgement ([D28](artifacts/decision-log.md#d28-orphan-advisory-fires-when-any-orphan-exists)).
+5. pr9k asks cmux to create a fresh workspace whose name follows the `pr9k-<repo-basename>-<nanosecond-timestamp>` pattern, ensuring two concurrent or rapid launches do not collide and the operator can later distinguish workspaces ([D29](artifacts/decision-log.md#d29-workspace-name-pattern)). pr9k prints the workspace name to the launching terminal so the operator has a paper trail.
 6. pr9k asks cmux to lay out four panes in the new workspace — the orchestrator pane (kept hidden), the header pane on top, the log pane in the middle, the footer pane at the bottom — and to spawn one pr9k process inside each pane ([D4](artifacts/decision-log.md#d4-three-pane-vertical-layout), [D13](artifacts/decision-log.md#d13-orchestrator-runs-in-a-hidden-cmux-pane)). The three visible panes are focused display renderers; the hidden pane is the workflow orchestrator.
 7. The orchestrator pane waits for all three display panes to signal readiness before starting the workflow, so the first step's state reaches the operator's screen without dropped events ([D16](artifacts/decision-log.md#d16-per-launch-readiness-handshake-before-workflow-starts)).
 8. The orchestrator runs the configured workflow (the existing `initialize` / `iteration` / `finalize` phase semantics from the narrow-reading principle apply unchanged).
@@ -81,7 +81,7 @@ When the run ends — whether by successful completion, error escalation, or ope
 | cmux is running but pr9k is not a descendant of a cmux process (default access mode rejects it). | pr9k aborts and prints "cmux mode must be launched from inside a cmux session" plus the offending socket path ([T2](artifacts/feature-technical-notes.md#t2-cmux-access-model)). |
 | cmux is reachable but the socket is explicitly disabled by configuration (`Off` access mode). | pr9k aborts and prints "cmux socket is disabled in cmux configuration; re-enable it and try again." |
 | cmux is reachable but does not expose every API method pr9k requires (version skew, breaking change). | pr9k aborts and prints "cmux version is incompatible with pr9k cmux mode" plus the missing method names, so the operator knows what to update ([D18](artifacts/decision-log.md#d18-startup-capability-check)). |
-| A cmux API call has not returned a response within the configured per-call timeout (cmux is hung or otherwise unresponsive). | pr9k treats the timeout as equivalent to display-process loss: aborts the run, fires a "run aborted" notification, marks the workspace as failed, and exits non-zero. The operator's prior workspace is restored on dismissal ([D15](artifacts/decision-log.md#d15-cmux-api-per-call-timeout-is-fatal), [T1](artifacts/feature-technical-notes.md#t1-cmux-programmatic-interface-shape)). |
+| A cmux API call has not returned a response within the per-call timeout (cmux is hung or otherwise unresponsive). | pr9k treats the timeout as equivalent to display-process loss: aborts the run, fires a "run aborted" notification, marks the workspace as failed, and exits non-zero. The timeout is fixed in the 5–10 second range and not operator-configurable in the initial release ([D15](artifacts/decision-log.md#d15-cmux-api-per-call-timeout-is-fatal), [D27](artifacts/decision-log.md#d27-cmux-per-call-timeout-value), [T1](artifacts/feature-technical-notes.md#t1-cmux-programmatic-interface-shape)). The operator's prior workspace is restored on dismissal. |
 | cmux's API rejects a request mid-flow (workspace cannot be created, pane cannot be split, display process cannot be spawned). | pr9k tears down anything it already created in cmux, prints the failing call's diagnostic, and exits with a non-zero status. The operator's prior cmux session is restored without surprises. |
 | A display pane dies while the orchestrator is still running. | The orchestrator finishes the cmux API call it is currently making (so cmux is left in a consistent state), then aborts the run, fires a "run aborted" notification, marks the workspace as failed, and exits non-zero ([D10](artifacts/decision-log.md#d10-display-process-loss-aborts-the-run)). |
 | The operator closes one of the pr9k panes using cmux's own close-pane gesture. | Treated identically to display-process loss: the run aborts. The cmux setup how-to and the in-run help modal both call this out as a known constraint of cmux mode: closing a pane closes the run ([D24](artifacts/decision-log.md#d24-operator-pane-close-is-treated-as-display-loss)). |
@@ -166,41 +166,15 @@ When the run ends — whether by successful completion, error escalation, or ope
 
 ## Open Items
 
-The interview surfaced several decisions that genuinely need the operator's judgment. The review pass closed two earlier open items (OI-1 about orchestrator location; OI-5 about launch ancestry); they are now committed decisions ([D13](artifacts/decision-log.md#d13-orchestrator-runs-in-a-hidden-cmux-pane)).
-
-- **OI-1: What is the exact launch form — a `--cmux` flag on `pr9k`, a new subcommand like `pr9k cmux run`, or a separate binary?**
-  - **Recommended provisional answer:** a `--cmux` flag on the existing run invocation. Consistent with the existing cobra-flag convention; no new subcommand surface.
-  - **Versioning / docs impact:** whichever form is chosen, the new CLI surface is part of pr9k's public API (per the versioning standard) and requires a MINOR version bump plus matching feature-doc updates in the same PR (per the documentation standard).
-  - **Resolves when:** the operator confirms the flag form.
-  - **Blocks implementation:** No — pure surface-level naming.
-
-- **OI-2: Does cmux mode honor the existing status-line script, or is the status line routed to cmux's sidebar?**
-  - **Recommended provisional answer:** the existing status-line script runs in the footer pane unchanged. Sidebar mirroring is deferred ([Deferred (YAGNI)](#deferred-yagni)).
-  - **Resolves when:** the operator confirms.
-  - **Blocks implementation:** No.
-
-- **OI-3: What is the cmux-API per-call timeout value, and is it configurable?**
-  - **Recommended provisional answer:** a fixed timeout in the 5–10 second range, not configurable in the initial release. Long enough that healthy cmux responses always fit; short enough that a hung socket aborts before the operator's Docker/git/claude state diverges materially ([D15](artifacts/decision-log.md#d15-cmux-api-per-call-timeout-is-fatal)).
-  - **Resolves when:** the operator confirms the value (or names a preferred behavior).
-  - **Blocks implementation:** No — but operators on slow hosts may want a different default.
-
-- **OI-4: How many orphan workspaces trigger the startup advisory, and what exact text appears?**
-  - **Recommended provisional answer:** any time more than zero orphans exist, print one advisory line listing the orphan workspace names; pr9k continues without waiting for acknowledgement.
-  - **Resolves when:** the operator confirms or asks for a higher threshold.
-  - **Blocks implementation:** No.
-
-- **OI-5: What is the cmux name pattern that distinguishes "pr9k-owned" workspaces from operator-created ones?**
-  - **Recommended provisional answer:** prefix `pr9k-` followed by the repository basename and a high-resolution timestamp (e.g., `pr9k-myrepo-20260514T103045.123456789Z`). The prefix lets the startup advisory ([D23](artifacts/decision-log.md#d23-orphan-workspace-startup-advisory)) detect orphans without false positives.
-  - **Resolves when:** the operator confirms the pattern.
-  - **Blocks implementation:** No.
+None. All open items from the initial draft have been settled — the original OI-1 (orchestrator location) and OI-5 (launch ancestry) were closed by the review pass into [D13](artifacts/decision-log.md#d13-orchestrator-runs-in-a-hidden-cmux-pane); the five operator-input items that remained after review (launch flag, status-line routing, timeout value, orphan-advisory threshold, workspace-name pattern) are now committed as [D25](artifacts/decision-log.md#d25-launch-surface-is-the-cmux-flag) through [D29](artifacts/decision-log.md#d29-workspace-name-pattern).
 
 ## Summary
 
 - **Outcome delivered:** an opt-in launch mode that renders pr9k's run UI as a native cmux workspace with header, log, footer, and hidden-orchestrator panes, plus sidebar and notification integration.
 - **Primary actors:** the human operator running pr9k against a target repository.
 - **Decisions settled by evidence:** 24 — see [artifacts/decision-log.md](artifacts/decision-log.md)
-- **Decisions settled by user input:** 0 (open questions surfaced via [Open Items](#open-items)) — see [artifacts/decision-log.md](artifacts/decision-log.md)
+- **Decisions settled by user input:** 5 (D25–D29; operator accepted the spec's recommended provisional answers for every open item) — see [artifacts/decision-log.md](artifacts/decision-log.md)
 - **Sub-agents consulted:** junior-developer, devops-engineer, edge-case-explorer — see [artifacts/team-findings.md](artifacts/team-findings.md)
 - **Key adjustments from review:** orchestrator moved into a hidden cmux pane (closes original OI-1); workspace stays open until operator dismisses it (replaces grace period); explicit per-call cmux timeout, capability check, IPC stall threshold, and SIGKILL behavior added; 7-of-8 keyboard modes survive (the `v` select mode is dropped); workspace name format and orphan-workspace advisory added; log-file artifacts explicitly preserved; cmux pane-close gesture treated as display loss with documentation called out. — see [artifacts/team-findings.md](artifacts/team-findings.md)
-- **Remaining open items:** 5
+- **Remaining open items:** 0
 - **Technical notes:** 5 — see [artifacts/feature-technical-notes.md](artifacts/feature-technical-notes.md)
