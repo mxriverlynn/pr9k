@@ -702,8 +702,51 @@ func TestTeardown_ContextCancel_NonZeroExit(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected non-nil error on context cancellation (signal-driven), got nil")
 		}
+		// Gap-2: WorkspaceClose must have run on a fresh context even though the
+		// parent was cancelled — this pins the context.Background() closeCtx decision.
+		if len(fake.CloseCalls) != 1 {
+			t.Errorf("WorkspaceClose called %d times after ctx cancel, want 1 (fresh closeCtx must survive parent cancellation)", len(fake.CloseCalls))
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("RunPhase1 did not return within 5s after context cancel")
+	}
+}
+
+// TP-224-009: Fatal dismissal (N=3 consecutive poll timeouts) still runs
+// teardown — WorkspaceClose is called exactly once on the fatal path.
+// This pins the deferred runTeardown contract: the fatal branch must not
+// return before the deferred fires.
+func TestTeardown_FatalDismissal_TeardownRuns(t *testing.T) {
+	t.Parallel()
+
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		WorkspaceListFunc: func(ctx context.Context) ([]string, error) {
+			// Block until context is cancelled — simulates a hung RPC so every
+			// call times out, driving the N=3 consecutive-timeout escalation.
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+
+	cfg := cmuxctl.DismissalConfig{
+		PollInterval: time.Millisecond,
+		PollTimeout:  5 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	err := cmuxctl.RunPhase1(ctx, fake, "/tmp/myrepo", &buf, cfg)
+	if err == nil {
+		t.Fatal("RunPhase1 returned nil; expected non-nil fatal-dismissal error")
+	}
+	// Teardown must have run on the fatal path.
+	if len(fake.CloseCalls) != 1 {
+		t.Errorf("WorkspaceClose called %d times on fatal path, want 1 (teardown must run via defer)", len(fake.CloseCalls))
 	}
 }
 
