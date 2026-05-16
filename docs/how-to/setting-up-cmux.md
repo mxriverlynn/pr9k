@@ -10,8 +10,10 @@ cmux is an AI-powered terminal multiplexer developed primarily for macOS.
 
 **macOS (primary platform)**
 
+From [cmux getting-started docs](https://cmux.com/docs/getting-started)
 ```
-brew install zed-industries/zed/cmux
+brew tap manaflow-ai/cmux
+brew install --cask cmux
 ```
 
 Verify the install:
