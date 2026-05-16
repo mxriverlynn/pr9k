@@ -53,11 +53,19 @@ The stripper is written as a single linear scan with no heap allocations beyond 
 
 `workflowio.Load` reads up to 8 KiB of `config.json` and calls `StripAll` before returning it as `LoadResult.RecoveryView`. This produces a human-readable snippet free of terminal control sequences even if the file was accidentally written with embedded escape codes or corrupted.
 
+## Use Case: cmux Terminal Output
+
+`cmuxctl.Preflight` applies `StripAll` to error text returned by the cmux daemon's `system.identify` response before embedding it in operator-visible error messages (D-14 terminal injection defence). This prevents a compromised or malicious cmux daemon from injecting ANSI escape sequences into the launching terminal.
+
+`cmuxctl.RunPhase1` (and related cmux mode paths in `main.go`) use `StripForTerminalOutput` to sanitize any text sourced from cmux diagnostic output before printing it. Because cmux output may contain C1 cursor-movement sequences, the stricter function is required there.
+
 ## Testing
 
-- `src/internal/ansi/strip_test.go`
-- Tests cover: CSI stripping, OSC stripping (BEL and ST terminators), SGR codes, OSC 8 hyperlinks, bare ESC, two-byte sequences, empty input, no-ESC passthrough
+- `src/internal/ansi/strip_test.go` — `StripAll` coverage: CSI stripping, OSC stripping (BEL and ST terminators), SGR codes, OSC 8 hyperlinks, bare ESC, two-byte sequences, empty input, no-ESC passthrough
+- `src/internal/ansi/strip_strict_test.go` — `StripForTerminalOutput` coverage: C0 cursor-movement bytes, C1 DCS (0x90), C1 CSI (0x9B), C1 OSC (0x9D), double-ESC sequences, unterminated C1 gaps
 
 ## Related Documentation
 
 - [`docs/code-packages/workflowio.md`](workflowio.md) — How `StripAll` is used in the load recovery path
+- [`docs/code-packages/cmuxctl.md`](cmuxctl.md) — D-14 terminal injection defence; `StripAll` applied to cmux `system.identify` error text
+- [`docs/features/cmux-mode.md`](../features/cmux-mode.md) — cmux mode feature that drives the `StripForTerminalOutput` use case

@@ -196,11 +196,17 @@ Each feature is documented in detail under [`docs/features/`](features/) (user-f
 
 ### [CLI & Configuration](features/cli-configuration.md)
 
-Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `config.json`, `prompts/`, and `scripts/` live) via a two-candidate search when not given explicitly: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The executable path is dereferenced via `os.Executable()` + `filepath.EvalSymlinks` to follow symlinks correctly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
+Parses command-line flags (`--iterations`/`-n`, `--workflow-dir`, `--project-dir`, `--cmux`, and `--version`/`-v`) using [spf13/cobra](https://github.com/spf13/cobra). `--workflow-dir` resolves the install directory (where `config.json`, `prompts/`, and `scripts/` live) via a two-candidate search when not given explicitly: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The executable path is dereferenced via `os.Executable()` + `filepath.EvalSymlinks` to follow symlinks correctly. `--project-dir` resolves the target repo from `os.Getwd()` + `filepath.EvalSymlinks` when not given explicitly. Neither dir flag has a short form. Iterations defaults to 0 (run until done). `--cmux` is a boolean flag that, when set, skips the normal logger / validator / TUI path entirely and branches into cmux mode (`cmuxctl.Preflight` + `cmuxctl.RunPhase1`). The `--version` flag is wired through cobra's built-in `cmd.Version` field, which reads from `internal/version.Version` (the single source of truth for the app version — see the [Versioning](coding-standards/versioning.md) standard).
 
 The `pr9k workflow` subcommand is registered as a peer to `pr9k sandbox`. It accepts `--workflow-dir` and `--project-dir` but intentionally omits `--iterations`. The `workflow` subcommand does **not** call `startup()` — it bypasses the main preflight / step-loading / TUI-orchestration wiring and creates its own logger via `logger.NewLoggerWithPrefix`. This is an intentional design boundary: the future workflow builder is a standalone editor, not a runner. The subcommand wires the inner-ring packages (`atomicwrite`, `ansi`, `workflowmodel`, `workflowio`, `workflowvalidate`) and the `internal/workflowedit` Bubble Tea model. See [`docs/features/workflow-builder.md`](features/workflow-builder.md) for the full feature reference.
 
 **Packages:** `internal/cli/`, `internal/version/`, `cmd/pr9k/workflow.go`
+
+### [cmux Mode](features/cmux-mode.md)
+
+An opt-in launch mode activated by `--cmux`. When set, `main()` bypasses the normal TUI workflow entirely and runs a five-condition `cmuxctl.Preflight` check followed by `cmuxctl.RunPhase1`, which creates a recognisably-named cmux workspace with a four-pane scaffold (orchestrator hidden + header/log/footer as Phase 1 placeholders), holds it open via a 500 ms dismissal-observation polling loop, and tears it down cleanly with prior-workspace focus restore. SIGINT, SIGTERM, and SIGHUP all route through the same teardown path. The workspace name is composed as `pr9k-<sanitized-basename>-<nanosecond-timestamp>` and printed to stdout on creation. No workflow steps are executed in Phase 1.
+
+**Package:** `internal/cmuxctl/`
 
 ### [Step Definitions & Prompt Building](code-packages/steps.md)
 
@@ -283,9 +289,11 @@ Parses, renders, aggregates, and persists the NDJSON stream emitted by `claude -
 ## Package Dependency Graph
 
 ```
-cmd/pr9k/main.go                    (root command: run workflow)
+cmd/pr9k/main.go                    (root command: run workflow or cmux mode)
     ├── internal/cli           (argument parsing)
     │       └── internal/version
+    ├── internal/cmuxctl       (cmux mode: preflight, workspace lifecycle, dismissal)
+    │       └── internal/ansi
     ├── internal/logger        (file logging)
     ├── internal/preflight     (startup validation)
     │       └── internal/sandbox
@@ -327,6 +335,9 @@ internal/workflowio            (load/save/detect)
 internal/workflowvalidate      (bridge to internal/validator)
     ├── internal/workflowmodel
     └── internal/validator
+
+internal/cmuxctl               (cmux mode: CmuxClient interface, RealClient, FakeClient, Preflight, RunPhase1, DismissalObserver)
+    └── internal/ansi
 
 internal/claudestream          (stream-json parsing, rendering, aggregation)
     (no internal dependencies)
