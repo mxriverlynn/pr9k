@@ -394,6 +394,111 @@ func copySelectedText(text string) tea.Cmd {
 
 The same rule applies to `cancel()` context cancellations that trigger blocking waits, and to any channel send that might block. If it can take more than a few microseconds, it belongs in a cmd closure.
 
+## Two-goroutine signal handler: cleanup then forced exit
+
+When a long-running goroutine (e.g., a workspace teardown that may block on RPCs) must be interruptible, use a two-goroutine signal handler:
+
+1. **Cleanup goroutine** — receives the first signal, sets the shuttingDown flag, closes an internal started gate, then invokes `teardownOnce.Do(teardownFn)`. It may block during teardown; that is acceptable.
+2. **Watchdog goroutine** — waits on the started gate (ensuring cleanup has consumed the first signal), then waits for a second signal and calls `exitFn(1)` immediately — without waiting for the cleanup goroutine to finish.
+
+The started gate channel prevents a race where both goroutines consume signals from the same channel: the watchdog only begins listening after the cleanup goroutine has confirmed it received the first signal.
+
+```go
+func runCmuxSignalHandler(
+    sigCh <-chan os.Signal,
+    teardownOnce *sync.Once,
+    teardownFn func(),
+    setShuttingDown func(),
+    exitFn func(int),
+) {
+    started := make(chan struct{})
+
+    // Cleanup: first signal → set flag → close gate → run teardown (may block).
+    go func() {
+        <-sigCh
+        setShuttingDown()
+        close(started)
+        teardownOnce.Do(teardownFn)
+    }()
+
+    // Watchdog: wait for cleanup to start, then force exit on second signal.
+    go func() {
+        <-started
+        <-sigCh
+        exitFn(1)
+    }()
+}
+```
+
+Inject `exitFn` rather than calling `os.Exit` directly so the handler is testable without spawning a subprocess. Inject `setShuttingDown` as a separate argument so tests can verify flag transitions independently from `teardownFn` execution.
+
+## sync.Once teardown with named-return error injection
+
+When a function can exit via multiple code paths (normal completion, context cancellation, partial-setup failure) and teardown must run exactly once, combine `sync.Once` with a named return value:
+
+- Wrap teardown in a `sync.Once` closure so any code path can call it without double-execution.
+- Use a named return value (`returnErr`) in the function signature.
+- In the deferred func, inject the teardown error into `returnErr` when the primary return would otherwise be nil. This prevents silently swallowing teardown failures on the success path.
+
+```go
+func RunPhase1(ctx context.Context, ...) (returnErr error) {
+    var (
+        teardownOnce sync.Once
+        teardownErr  error
+    )
+    runTeardown := func() {
+        teardownOnce.Do(func() {
+            if err := client.WorkspaceClose(context.Background(), name); err != nil {
+                teardownErr = err
+            }
+        })
+    }
+    defer func() {
+        runTeardown()
+        if returnErr == nil && teardownErr != nil {
+            returnErr = fmt.Errorf("workspace close failed: %w", teardownErr)
+        }
+    }()
+
+    // ... setup steps that may return early on error ...
+
+    // Normal path: blocks until dismissal or cancellation.
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case evt := <-obs.Ch:
+        return nil // teardown still runs via defer
+    }
+}
+```
+
+The `context.Background()` in the teardown closure is intentional: the parent `ctx` is already cancelled on the signal-driven path, so teardown needs its own fresh context for cleanup RPCs.
+
+## Check ctx.Err() after timer.C fires in a select
+
+When a goroutine selects on both `ctx.Done()` and `timer.C`, the Go runtime chooses randomly when both are ready simultaneously. Add an explicit `ctx.Err() != nil` check immediately after the timer fires before doing any work:
+
+```go
+for {
+    t := time.NewTimer(pollInterval)
+    select {
+    case <-ctx.Done():
+        t.Stop()
+        return
+    case <-t.C:
+    }
+
+    // Guard against ctx cancellation that arrived exactly as the timer fired.
+    if ctx.Err() != nil {
+        return
+    }
+
+    // ... do poll work ...
+}
+```
+
+Without the guard, a cancellation that races with a timer expiry can cause one extra poll iteration to run after the goroutine was supposed to stop — potentially issuing an RPC against a closed connection or reporting a spurious error.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -409,3 +514,6 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `terminated` / `timeoutFired` mutual exclusion and reset-then-record ordering in `stepDispatcher` (issue #130)
 - [Workflow Builder](../code-packages/workflowedit.md) — `deepCopyDoc` as the canonical reference-type deep-copy example; race between validator goroutine and UI goroutine on `doc.Env` / `doc.ContainerEnv` (workflow-builder-pt-2 review issue #1)
+- `src/cmd/pr9k/cmux_signal.go` — `runCmuxSignalHandler` as the canonical two-goroutine watchdog+cleanup example (issue #223)
+- `src/internal/cmuxctl/runphase1.go` — `RunPhase1` as the canonical `sync.Once` + named-return teardown error injection example (issue #221/224)
+- `src/internal/cmuxctl/dismissal.go` — `DismissalObserver.run` as the canonical ctx.Err() guard after timer.C fire example (issue #222)

@@ -148,6 +148,69 @@ func TestRun_InitializeBuildErrorContinuesToNextInitStep(t *testing.T) {
 
 Do not use `time.Sleep` to wait for goroutines or background work in tests. Sleep-based synchronization is inherently racy: it fails under load and passes when the system happens to be fast enough.
 
+## Use channel-based hang injection to test timeout behavior
+
+When a test double must simulate a blocking or hung call (to verify timeout handling), add opt-in `HangNext` and `HangRelease` channels rather than using `time.Sleep`. The test sends a token to `HangNext` before the call it wants to block; the fake checks the channel non-blockingly and, if a token is present, blocks on `HangRelease` or context cancellation.
+
+```go
+// In the fake (test double):
+type FakeClient struct {
+    HangNext    chan struct{} // send one token to make the next call block
+    HangRelease chan struct{} // send one token to unblock the hung call
+
+    // ... other fields ...
+}
+
+func (f *FakeClient) maybehang(ctx context.Context) error {
+    if f.HangNext == nil {
+        return nil
+    }
+    select {
+    case <-f.HangNext: // consume the hang token
+    default:
+        return nil
+    }
+    select {
+    case <-f.HangRelease:
+        return nil
+    case <-ctx.Done():
+        return ctx.Err()
+    }
+}
+
+func (f *FakeClient) WorkspaceList(ctx context.Context) ([]string, error) {
+    if err := f.maybehang(ctx); err != nil {
+        return nil, err
+    }
+    // ... normal behavior ...
+}
+```
+
+```go
+// In the test:
+f := &cmuxctl.FakeClient{
+    HangNext:    make(chan struct{}, 1),
+    HangRelease: make(chan struct{}),
+}
+f.HangNext <- struct{}{} // queue one hang
+
+done := make(chan error, 1)
+go func() { done <- f.WorkspaceList(context.Background()) }()
+
+// Verify the call is blocked, then release it.
+select {
+case <-done:
+    t.Fatal("call returned before release")
+default:
+}
+f.HangRelease <- struct{}{}
+if err := <-done; err != nil {
+    t.Fatalf("unexpected error: %v", err)
+}
+```
+
+This pattern is opt-in: both channels are nil by default so tests that do not need hang injection create the fake with `&FakeClient{}` and pay no overhead. Tests that do need it initialize both channels before use. Context cancellation during the hang returns `ctx.Err()`, enabling tests to verify timeout paths without real wall-clock delays.
+
 Use channels, `sync.WaitGroup`, or other signaling primitives instead. If a test currently uses sleep as a pragmatic shortcut, note it explicitly and expect to replace it if the test becomes flaky.
 
 ```go
@@ -908,3 +971,4 @@ This decouples the test from the library's internal escape encoding.
 - [Config Validation](../code-packages/validator.md) — `prompts_structure_test.go` as the canonical t.Run + sorted-iteration test example (issue #125); `production_steps_test.go` as the canonical production-config integration test (issue #124)
 - [Workflow IO](../code-packages/workflowio.md) — `TestSave_PreservesPhaseBoundaries` as the canonical round-trip phase-boundary test; the missing test allowed all steps to silently collapse into the iteration phase on marshal (workflow-builder branch)
 - [TUI Rendering](tui-rendering.md) — generation counter pattern for stale async banner rejection; `render_helpers_test.go` as the canonical shared strip-helper convention; runtime-derived styling assertions
+- `src/internal/cmuxctl/fake.go` — `FakeClient` with `HangNext`/`HangRelease` as the canonical channel-based hang injection example (issue #219/221)
