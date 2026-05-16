@@ -24,6 +24,9 @@ profile.cov
 # Go workspace file
 go.work
 go.work.sum
+.go-cache/
+.go-path/
+.golangci-cache/
 
 # env file
 .env
