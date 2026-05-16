@@ -127,7 +127,7 @@ func (c *RealClient) run() {
 	dial := func() error {
 		disconnect()
 		var err error
-		conn, err = net.Dial("unix", c.socketPath)
+		conn, err = net.DialUnix("unix", nil, &net.UnixAddr{Name: c.socketPath, Net: "unix"})
 		if err != nil {
 			return fmt.Errorf("cmuxctl: dial %s: %w", c.socketPath, err)
 		}

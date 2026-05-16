@@ -50,7 +50,9 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 	}
 
 	// Conditions 2, 3, 4: classify the dial error.
-	conn, dialErr := net.Dial("unix", socketPath)
+	// net.DialUnix is used instead of net.Dial to avoid the address-resolution
+	// path (LookupPort) that is unnecessary for Unix sockets.
+	conn, dialErr := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if dialErr != nil {
 		return []error{classifyDialError(dialErr, socketPath)}
 	}
