@@ -173,7 +173,6 @@ func (c *RealClient) run() {
 			}()
 
 			timer := time.NewTimer(c.timeout)
-			defer timer.Stop()
 			select {
 			case res := <-ioDone:
 				timer.Stop()

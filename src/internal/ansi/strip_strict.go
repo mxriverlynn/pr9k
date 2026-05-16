@@ -16,6 +16,14 @@ package ansi
 // Preserved: LF (0x0A) and HT (0x09) — diagnostic text legitimately uses
 // these for line breaks and tab alignment.
 //
+// NON-ASCII (UTF-8) SAFETY: bytes in 0x80–0x9F are dropped unconditionally,
+// which means any multi-byte UTF-8 sequence whose continuation byte falls in
+// that range is corrupted. For example, the em-dash (U+2014, 0xE2 0x80 0x94)
+// would lose its 0x80 byte and become invalid UTF-8. This is a deliberate
+// safety-over-fidelity choice for untrusted terminal output: over-stripping is
+// preferable to letting 8-bit C1 escape sequences through. Callers must treat
+// the return value as potentially lossy when the input contains non-ASCII text.
+//
 // The input slice is never mutated.
 func StripForTerminalOutput(b []byte) []byte {
 	if len(b) == 0 {

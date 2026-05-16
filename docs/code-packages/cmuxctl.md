@@ -126,6 +126,8 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 2. Socket-type check — the resolved path must be a Unix socket (`fs.ModeSocket`).
 3. World-writable parent directory check — rejects sockets in directories writable by all users (SEC-003 mitigation).
 
+**Residual risk — symlink-swap window:** `resolveSocketPath` validates the *resolved* canonical path, but `NewProductionClient` independently re-reads `CMUX_SOCKET_PATH` and dials the *unresolved* value. A symlink swap between preflight completion and the first `net.Dial` could redirect the connection to a different socket, defeating the SEC-003 mitigation. This is accepted as a Phase-1 residual risk: the attack window is very narrow (milliseconds between two reads of the same env var), and the validation still closes the persistent symlink classes. Mitigation (threading the validated canonical path into the client constructor) is deferred to a later phase.
+
 **Terminal injection defence (D-14):** error text from `system.identify` is passed through `ansi.StripAll` before it is included in operator-visible messages. This prevents a compromised or malicious cmux daemon from injecting ANSI escape sequences into the launching terminal.
 
 ## RunPhase1

@@ -111,6 +111,12 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	workspaceName := composeWorkspaceName(sanitized)
 
 	// Step 3: create workspace with one collision retry (spec D12).
+	// In practice collisions are essentially impossible because composeWorkspaceName
+	// embeds a UTC nanosecond timestamp; the retry branch is defensive and is only
+	// exercised by FakeClient in tests (RealClient never wraps ErrWorkspaceExists —
+	// see handleIOResult). If a real duplicate-name error ever reaches this path it
+	// will be returned as a fatal workspace-create error rather than triggering the
+	// retry.
 	if err := client.WorkspaceCreate(ctx, workspaceName); err != nil {
 		if !errors.Is(err, ErrWorkspaceExists) {
 			return fmt.Errorf("cmuxctl: workspace create: %w", err)
