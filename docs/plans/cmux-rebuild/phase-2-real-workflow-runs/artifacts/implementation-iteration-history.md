@@ -124,6 +124,23 @@ For each Open Question, the deterministic aggregation tags the resolution path. 
 
 **Continue iterating — Round 2 focused on:**
 1. **User escalation pass** for OQ-2-19 (version bump coordination), OQ-2-10 (sharpening "byte-for-byte" wording), OQ-2-S1 + OQ-2-S2 (resize / help-modal user preferences). Recommend defaults; ask user to confirm or override.
-2. **No new specialist engagement** — Round 1 produced enough material for synthesis once user input is in. The deterministic aggregation has already settled all plan-level items by plan decision or evidence; no findings require fresh specialist analysis.
+2. **No new specialist engagement** — Round 1 produced enough material for synthesis once user input is in.
 
-If user defers all four user-input items to recommended defaults, Round 2 may be skipped and the skill proceeds straight to YAGNI sweep + synthesis (Step 7.5 + Step 8).
+## R2: Focused user escalation pass
+
+- **Specialists engaged:** None — Round 1 produced enough material; only the four user-input items needed resolution.
+- **New input provided:** Four-question batch presented to the user with recommended defaults derived from Round 1 aggregation.
+- **Claim ledger:** (No new findings; user-input items only.)
+
+  | Item | User answer | Source |
+  |------|-------------|--------|
+  | OQ-2-19 (version bump) | **Phase 2 absorbs to 0.11.0** (recommended). | User input. |
+  | OQ-2-10 (D17 wording) | **Equivalent content, modulo run-specifics** (recommended). Per-step JSONL artifacts + step-content lines match; RunStamp directory name, wall-clock timestamps, and lipgloss-width-dependent renders excluded from the comparison. | User input. |
+  | OQ-2-S1 (resize behavior) | **Use existing MinTerminalWidth thresholds** (recommended). Each pane uses standard TUI's `MinTerminalWidth=60` / `MinTerminalHeight=16` constants from `internal/uichrome`. Below threshold: render a "make this pane wider" advisory. | User input. |
+  | OQ-2-S2 (help modal form) | **Inline expand above footer** (recommended). Footer content expands upward when `?` is pressed, bounded to available pane height; press `?` or `esc` to collapse. | User input. |
+- **Open Questions raised:** None new. All Round 1 plan-level items now resolved by plan decision, evidence, or user input.
+- **Spec-maturity tags:** No new findings — no gate to compute.
+- **Resolution source:** User input on all four items.
+- **Decisions produced:** — (PM commits in synthesis.)
+- **Changed in plan:** — (PM writes in synthesis.)
+- **Project-manager next-step recommendation:** **Go to synthesis.** Deterministic stop rule satisfied: zero unresolved Open Questions, zero outstanding specialist handoffs, all user-input items answered.
