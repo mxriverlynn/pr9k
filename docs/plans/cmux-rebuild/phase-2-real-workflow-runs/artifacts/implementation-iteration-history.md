@@ -114,11 +114,11 @@ For each Open Question, the deterministic aggregation tags the resolution path. 
 
 ### Decisions produced
 
-— (Decisions are committed during PM synthesis in Step 8.)
+R1 produced 17 of the 21 final decisions: D-1 (Unix-socket interaction channel), D-2 (per-connection goroutine fan-out), D-3 (separate read/write goroutines), D-4 (readiness handshake protocol), D-5 (KeyHandler proxy adapter), D-6 (`ActionSkip` enum addition — trivial), D-7 (logger creation in orchestrator), D-8 (header pre-population), D-9 (statusline.Runner nil logger), D-10 (drop heartbeat in cmux), D-14 (three test doubles), D-15 (workspace-done protocol message + ack-wait), D-16 (reuse Phase 1 `DismissalObserver` unchanged), D-18 (version label preserved in footer — trivial), D-19 (`FakeClient.HangNext` mutex fix — trivial), D-20 (per-pane sub-commands in `pr9k` binary), D-21 (socket path under `.pr9k/` umbrella), D-22 (`SetStatusLineActive(true)` unconditional in footer — trivial). Four decisions were framed in R1 with user-input resolution paths and committed in R2: D-11, D-12, D-13, D-17.
 
 ### Changed in plan
 
-— (Plan is written during PM synthesis in Step 8.)
+R1 shaped: Source Specification (inherited parent decisions and T-notes); Outcome (interaction-channel package, `pr9k cmux-pane` sub-command, logger in orchestrator, workspace-done, heartbeat drop, test doubles, `FakeClient` race fix); Context (driving constraint, stakeholders, future-state concern, out-of-scope boundary); Team Composition and Participation (four specialists active + the eleven stood-down / not-engaged entries); Implementation Approach all four sub-sections (Architecture and Integration Points, Data Model and Persistence, Runtime Behavior — launch sequence + completion sequence + failure paths, External Interfaces); Decomposition and Sequencing (U1–U10, U12); RAID Log (Risks R1–R7, Assumptions A1–A5, Issue I1, Dependencies Dep1–Dep2); Testing Strategy (observable behaviors, test doubles posture, edge cases, test levels, race detector); Security Posture; Operational Readiness; Definition of Done (most checklist items); Specialist Handoffs; Deferred (YAGNI) (YAGNI-1 through YAGNI-8); Open Items (OI-1).
 
 ### Project-manager next-step recommendation
 
@@ -141,6 +141,6 @@ For each Open Question, the deterministic aggregation tags the resolution path. 
 - **Open Questions raised:** None new. All Round 1 plan-level items now resolved by plan decision, evidence, or user input.
 - **Spec-maturity tags:** No new findings — no gate to compute.
 - **Resolution source:** User input on all four items.
-- **Decisions produced:** — (PM commits in synthesis.)
-- **Changed in plan:** — (PM writes in synthesis.)
+- **Decisions produced:** R2 committed the four user-input decisions: D-11 (reuse `internal/uichrome` minimum-size thresholds per pane, with "make this pane wider" advisory below threshold); D-12 (help modal renders as inline expansion above the footer); D-13 (log-artifact equivalence is content-modulo-run-specifics, not byte-identity); D-17 (Phase 2 absorbs version bump 0.10.0 → 0.11.0 — trivial). All four are listed with `Driven by rounds: R1, R2` in the decision log because R1 framed them and R2 committed them.
+- **Changed in plan:** R2 updated the following sections of the plan to reflect the four user-input decisions: Outcome (version bump 0.11.0, minimum-size advisory, inline help expand); Context (out-of-scope boundary mentions the user-confirmed defaults); Implementation Approach → Runtime Behavior (resize behavior, help-modal inline expand); Decomposition and Sequencing (U8 absorbs the minimum-size advisory and inline help expand; U12 absorbs the version bump); RAID Log (R6 ack timeout consideration); Testing Strategy (help inline expand toggle, minimum-size advisory, log-artifact equivalence comparator); Definition of Done (Phase 2 7-step demo's step 5 references the inline help expand; version label step references `pr9k v0.11.0`); Open Items (OI-2 spec-amendment recommendation for D17 wording sharpening).
 - **Project-manager next-step recommendation:** **Go to synthesis.** Deterministic stop rule satisfied: zero unresolved Open Questions, zero outstanding specialist handoffs, all user-input items answered.
