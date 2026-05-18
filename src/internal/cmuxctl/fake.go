@@ -48,19 +48,36 @@ type FakeClient struct {
 // Compile-time interface assertion — must stay in the production file.
 var _ CmuxClient = (*FakeClient)(nil)
 
+// SetHangChannels sets HangNext and HangRelease under f.mu so callers can
+// update them safely while methods may be running concurrently on other
+// goroutines.
+func (f *FakeClient) SetHangChannels(next, release chan struct{}) {
+	f.mu.Lock()
+	f.HangNext = next
+	f.HangRelease = release
+	f.mu.Unlock()
+}
+
 // maybehang blocks the current call if HangNext has a pending value.
-// It waits on HangRelease or ctx cancellation.
+// It waits on HangRelease or ctx cancellation. Snapshots HangNext and
+// HangRelease under f.mu (snapshot-then-unlock) so concurrent writes via
+// SetHangChannels do not race with the channel reads below.
 func (f *FakeClient) maybehang(ctx context.Context) error {
-	if f.HangNext == nil {
+	f.mu.Lock()
+	hangNext := f.HangNext
+	hangRelease := f.HangRelease
+	f.mu.Unlock()
+
+	if hangNext == nil {
 		return nil
 	}
 	select {
-	case <-f.HangNext:
+	case <-hangNext:
 	default:
 		return nil
 	}
 	select {
-	case <-f.HangRelease:
+	case <-hangRelease:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
