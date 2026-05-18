@@ -7,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mxriverlynn/pr9k/src/internal/interactionchannel"
 	"github.com/mxriverlynn/pr9k/src/internal/ui"
 )
+
+// Compile-time assertion: *FakeInteractionChannel must satisfy orchChannel.
+var _ orchChannel = (*interactionchannel.FakeInteractionChannel)(nil)
 
 // suppressCobra silences cobra's default error output for a command under test,
 // so test output stays clean when we deliberately invoke invalid arguments.

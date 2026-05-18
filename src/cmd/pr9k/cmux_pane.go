@@ -29,7 +29,13 @@ type orchChannel interface {
 	Send(msg interactionchannel.Message) error
 	Recv() <-chan interactionchannel.Message
 	Close()
+	SendStateHeader(msg interactionchannel.StateHeader)
+	SendStateLog(msg interactionchannel.StateLog)
+	SendStateFooter(msg interactionchannel.StateFooter)
 }
+
+// Compile-time assertion: *interactionchannel.Channel must satisfy orchChannel.
+var _ orchChannel = (*interactionchannel.Channel)(nil)
 
 // newCmuxPaneCmd returns the cobra sub-command for internal per-pane processes
 // launched by cmux mode. Operators must not run this directly; it is invoked
