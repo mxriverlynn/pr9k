@@ -1,6 +1,6 @@
 # cmux Mode
 
-An opt-in launch mode (`--cmux`) that runs a real pr9k workflow inside a recognisably-named cmux workspace, streaming live state to three visible panes (header, log, footer) over a Unix-socket interaction channel. Phase 1 introduced the four-pane workspace scaffold; Phase 2 added the real workflow execution path.
+An opt-in launch mode (`--cmux`) that runs a real pr9k workflow inside a recognisably-named cmux workspace, streaming live state to three visible panes (header, log, footer) over a Unix-socket interaction channel. Phase 1 introduced the four-pane workspace scaffold; Phase 2 added the real workflow execution path; Phase 3 added interactive error recovery — a failing step is now recoverable from inside the footer pane with the same continue / retry / quit semantics as the standard display.
 
 ## Activation
 
@@ -118,6 +118,24 @@ The footer pane renders three rows:
 
 **Quit flow** — pressing `q` then `y` produces one `ActionQuit` intent that reaches the orchestrator cleanly. Pressing `q` then `Esc` cancels without effect.
 
+## Interactive error recovery
+
+When a workflow step exits non-zero in a way that triggers pr9k's existing error mode, the cmux workspace becomes interactively recoverable. The same condition that triggers error mode in the standard display triggers it here — the semantics are inherited unchanged:
+
+- **Header pane** — the failing step's checkbox shows `[✗]`. A successful retry advances it to `[✓]`; a retry that fails again marks it `[✗]` again.
+- **Log pane** — the error output appears as ordinary streamed content. On retry, a separator line (`── <step name> (retry) ─────────────`) is written to the log **before** any retried-step output.
+- **Footer pane** — switches to the error-mode shortcut hints (continue / retry / quit).
+
+The operator focuses the footer pane and resolves the error:
+
+- **Continue (`c`)** — advances past the failed step and resumes the workflow.
+- **Retry (`r`)** — re-runs the step with the same resolved command and prompt. A retry that fails again re-enters error mode with the separator written first; there is no retry-count cap and no auto-timeout.
+- **Quit (`q`)** — runs the two-step confirmation (`q` then `y`). Pressing `Esc` or `n` cancels and returns the footer to the error prompt. Any non-confirmation key during the quit confirmation is ignored and not buffered for replay.
+
+Control keys pressed while the header or log pane is focused are absorbed silently — no error, no bell, no notification. The footer pane is the only control surface. If a step fails while the operator's focus is on a different pane or workspace, the orchestrator blocks indefinitely; the run stays paused until the footer pane is focused and the prompt is answered. A directing cmux notification ships in Phase 5.
+
+The three in-workspace failure signals (header `[✗]`, error output in the log, error-mode hints in the footer) converge near-simultaneously, subject to the same small bounded cross-pane desynchronization Phase 2 accepts — each pane is an independent renderer. A keystroke delivered in the brief window between the prompt appearing and the orchestrator entering error mode is not dropped: the buffered `Actions` channel and the synchronous `onModeChange` hook ensure it is acted on once the orchestrator is ready.
+
 ## Completion behavior
 
 When the workflow finishes, the orchestrator:
@@ -160,11 +178,13 @@ Either gesture reaches the same teardown path and results in exit code 0 on succ
 
 If the dismissal observer sees N=3 consecutive poll timeouts (each call exceeding the 5 s per-call deadline), it fires a fatal dismissal event. pr9k attempts teardown and exits non-zero with a message identifying the workspace name for manual cleanup.
 
-## Out of scope (Phase 2)
+## Out of scope (Phase 3)
 
+- No cmux notification on step failure directing the operator to the footer pane (planned for Phase 5)
+- No sidebar failure label on step failure (planned for Phase 4)
 - No sidebar entries or notifications in the cmux workspace (planned for Phase 4)
-- No in-workspace error-recovery prompts (planned for Phase 3)
 - No completion notification to the launching terminal (planned for a later phase)
+- No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6; behavior is unchanged from Phase 2)
 - No automatic orphan cleanup after crash (orphan workspaces have the `pr9k-` prefix and must be dismissed manually via cmux)
 - No live-cmux integration test in CI (deferred to Phase 6 per YAGNI-5)
 - No heartbeat indicator forwarding across the process boundary (dropped per D-10 / YAGNI-1)
@@ -175,8 +195,11 @@ If the dismissal observer sees N=3 consecutive poll timeouts (each call exceedin
 
 - [Feature specification — Phase 1](../plans/cmux-rebuild/phase-1-workspace-lifecycle/feature-specification.md)
 - [Feature implementation plan — Phase 2](../plans/cmux-rebuild/phase-2-real-workflow-runs/feature-implementation-plan.md)
+- [Feature specification — Phase 3](../plans/cmux-rebuild/phase-3-interactive-error-recovery/feature-specification.md)
+- [Feature implementation plan — Phase 3](../plans/cmux-rebuild/phase-3-interactive-error-recovery/feature-implementation-plan.md)
 - [cmuxctl code package doc](../code-packages/cmuxctl.md)
 - [interactionchannel code package doc](../code-packages/interactionchannel.md)
 - [Setting up cmux how-to](../how-to/setting-up-cmux.md)
 - [Phase 1 implementation decision log](../plans/cmux-rebuild/phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md)
 - [Phase 2 implementation decision log](../plans/cmux-rebuild/phase-2-real-workflow-runs/artifacts/implementation-decision-log.md)
+- [Phase 3 implementation decision log](../plans/cmux-rebuild/phase-3-interactive-error-recovery/artifacts/implementation-decision-log.md)

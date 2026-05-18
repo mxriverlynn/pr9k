@@ -92,6 +92,24 @@ Press `q` in the footer pane. pr9k enters quit-confirmation mode; the footer sho
 
 Press `Esc` after `q` to cancel quit without effect.
 
+### Recovering from a failed step
+
+When a workflow step exits non-zero and triggers pr9k's error mode, all three visible panes signal the failure near-simultaneously:
+
+| Pane | What you see |
+|---|---|
+| **Header** | The failing step's checkbox changes to `[✗]` |
+| **Log** | The step's error output appears as ordinary streamed content |
+| **Footer** | The shortcut bar switches to the error-mode hints: continue / retry / quit |
+
+Focus the footer pane and choose one of three actions:
+
+- **`c` — Continue** — advance past the failed step and resume the workflow.
+- **`r` — Retry** — re-run the same step. On retry, the log shows a separator line (`── <step name> (retry) ─────────────`) before any new output. A retry that fails again re-enters error mode; there is no retry-count cap and no auto-timeout — the run stays paused until you decide.
+- **`q` — Quit** — enter the two-step quit confirmation. Press `y` to abort the run or `Esc`/`n` to cancel and return to the error prompt.
+
+Control keys pressed while the header or log pane is focused are absorbed silently — those panes are read-only. If you are focused on a different pane or workspace when a step fails, the orchestrator blocks indefinitely and the footer shows the error prompt; switch to the footer pane when you are ready to respond. (A directing notification that surfaces the error elsewhere ships in Phase 5.)
+
 ## Step 5: Dismiss the workspace
 
 When you are done inspecting the workspace, dismiss it using cmux's own controls. Two gestures both work:
