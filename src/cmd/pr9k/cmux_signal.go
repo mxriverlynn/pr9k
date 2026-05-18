@@ -16,11 +16,16 @@ import (
 // consumed the first signal), then waits for a second signal and immediately
 // calls exitFn(1) regardless of whether the cleanup goroutine has returned.
 //
+// done is closed by the caller when cmux mode exits normally. Both goroutines
+// select on done so they exit cleanly when no signal was received, rather than
+// leaking blocked goroutines if the caller returns without terminating the process.
+//
 // exitFn replaces os.Exit and is injectable for testing per api-design.md.
 // setShuttingDown is injectable so tests can verify the flag transitions
 // independently from teardownFn execution.
 func runCmuxSignalHandler(
 	sigCh <-chan os.Signal,
+	done <-chan struct{},
 	teardownOnce *sync.Once,
 	teardownFn func(),
 	setShuttingDown func(),
@@ -31,17 +36,27 @@ func runCmuxSignalHandler(
 	// Cleanup goroutine: receives first signal, sets shuttingDown, then runs teardown.
 	// The teardown MAY block on cmux RPCs (each bounded by its own per-call timeout).
 	go func() {
-		<-sigCh
-		setShuttingDown()
-		close(started)
-		teardownOnce.Do(teardownFn)
+		select {
+		case <-sigCh:
+			setShuttingDown()
+			close(started)
+			teardownOnce.Do(teardownFn)
+		case <-done:
+		}
 	}()
 
 	// Watchdog goroutine: waits until cleanup has consumed the first signal,
 	// then waits for the second signal and exits immediately (spec D-9).
 	go func() {
-		<-started
-		<-sigCh
-		exitFn(1)
+		select {
+		case <-started:
+		case <-done:
+			return
+		}
+		select {
+		case <-sigCh:
+			exitFn(1)
+		case <-done:
+		}
 	}()
 }

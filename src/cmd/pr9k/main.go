@@ -183,9 +183,6 @@ func main() {
 	// Cmux path: skip logger/Bubble Tea wiring per D-16.
 	if cfg.Cmux {
 		client := cmuxctl.NewProductionClient()
-		// No defer client.Stop() or defer cancel(): this branch always ends with
-		// os.Exit, which bypasses defers. The OS reclaims the socket and goroutines;
-		// RunPhase1 performs workspace teardown before returning.
 
 		// Cancellable context so the signal handler can abort RunPhase1 cleanly.
 		ctx, cancel := context.WithCancel(context.Background())
@@ -194,15 +191,21 @@ func main() {
 		sigChan := make(chan os.Signal, 2)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
+		// done is closed after signal.Stop so runCmuxSignalHandler goroutines exit
+		// cleanly when the process returns without receiving a signal.
+		done := make(chan struct{})
+
 		var teardownOnce sync.Once
 		// teardownFn cancels the RunPhase1 context, which unblocks the obs.Ch select
 		// and drives ctx.Done() → deferred runTeardown (WorkspaceClose + focus-restore)
 		// inside RunPhase1.
 		teardownFn := cancel
-		runCmuxSignalHandler(sigChan, &teardownOnce, teardownFn, func() {}, os.Exit)
+		runCmuxSignalHandler(sigChan, done, &teardownOnce, teardownFn, func() {}, os.Exit)
 
 		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, os.Stdout, os.Stderr)
 		signal.Stop(sigChan)
+		close(done)
+		client.Stop()
 		if !ok {
 			os.Exit(1)
 		}

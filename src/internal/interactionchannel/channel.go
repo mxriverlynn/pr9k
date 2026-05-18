@@ -239,7 +239,11 @@ func (c *Channel) startConn(nc net.Conn) {
 	// Write goroutine: consumes all outbound channels and serializes to nc.
 	go func() {
 		defer c.wg.Done()
+		defer c.removeConn(co)
 		c.writeLoop(nc, co)
+		// Close nc so readLoop's io.ReadFull unblocks promptly on write failure,
+		// rather than waiting for ctx cancellation to reach the watcher goroutine.
+		_ = nc.Close()
 	}()
 
 	// Watcher goroutine: closes nc when the Channel context is done, which
@@ -448,12 +452,6 @@ func Serve(ctx context.Context, socketPath string) (*Channel, error) {
 
 	ch.wg.Add(1)
 	go ch.acceptLoop(ln)
-
-	// Close the listener when the context is cancelled so acceptLoop unblocks.
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
-	}()
 
 	return ch, nil
 }

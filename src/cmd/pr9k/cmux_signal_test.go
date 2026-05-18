@@ -38,7 +38,9 @@ func TestRunCmuxSignalHandler_FirstSignalSetsShuttingDownAndCallsTeardown(t *tes
 	}
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, setShuttingDown, func(int) {})
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, setShuttingDown, func(int) {})
 
 	sendSignal(sigCh, syscall.SIGINT)
 
@@ -81,7 +83,9 @@ func TestRunCmuxSignalHandler_SecondSignalCallsExitFn(t *testing.T) {
 	setShuttingDown := func() { close(cleanupStarted) }
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, setShuttingDown, exitFn)
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, setShuttingDown, exitFn)
 
 	// First signal: triggers cleanup goroutine.
 	sendSignal(sigCh, syscall.SIGTERM)
@@ -115,7 +119,9 @@ func TestRunCmuxSignalHandler_SIGHUPTriggersTeardown(t *testing.T) {
 	teardownFn := func() { close(teardownDone) }
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, func() {}, func(int) {})
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, func() {}, func(int) {})
 
 	sendSignal(sigCh, syscall.SIGHUP)
 
@@ -136,7 +142,9 @@ func TestRunCmuxSignalHandler_SIGTERMTriggersTeardown(t *testing.T) {
 	teardownFn := func() { close(teardownDone) }
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, func() {}, func(int) {})
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, func() {}, func(int) {})
 
 	sendSignal(sigCh, syscall.SIGTERM)
 
@@ -165,7 +173,9 @@ func TestRunCmuxSignalHandler_SingleSignalDoesNotCallExitFn(t *testing.T) {
 	setShuttingDown := func() { close(shuttingDownSet) }
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, setShuttingDown, exitFn)
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, setShuttingDown, exitFn)
 
 	sendSignal(sigCh, syscall.SIGTERM)
 
@@ -214,7 +224,9 @@ func TestRunCmuxSignalHandler_SyncOnce_TeardownCalledExactlyOnce(t *testing.T) {
 	}
 
 	var once sync.Once
-	runCmuxSignalHandler(sigCh, &once, teardownFn, func() {}, func(int) {})
+	done := make(chan struct{})
+	defer close(done)
+	runCmuxSignalHandler(sigCh, done, &once, teardownFn, func() {}, func(int) {})
 
 	sendSignal(sigCh, syscall.SIGINT)
 

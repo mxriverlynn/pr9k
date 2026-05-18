@@ -190,9 +190,12 @@ func (c *RealClient) run() {
 				}
 			case <-c.done:
 				// Stop() called while call in flight; abandon and exit.
+				// disconnect() closes the socket so the I/O goroutine exits promptly;
+				// we wait for it so Stop() truly joins all goroutines before returning.
 				timer.Stop()
 				disconnect()
 				call.reply <- rpcResult{err: fmt.Errorf("cmuxctl: %s: client stopped", call.method)}
+				<-ioDone
 				return
 			}
 

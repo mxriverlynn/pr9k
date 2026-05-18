@@ -134,6 +134,7 @@ func readLines(path string) ([]string, error) {
 
 	var lines []string
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 256*1024)
 	for sc.Scan() {
 		lines = append(lines, sc.Text())
 	}
