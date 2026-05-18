@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 	"time"
@@ -154,6 +155,13 @@ func TestMessageJSONRoundTrip(t *testing.T) {
 			if got.WireType() != tc.msg.WireType() {
 				t.Errorf("WireType: got %q, want %q", got.WireType(), tc.msg.WireType())
 			}
+			// For StateLog, verify [][]byte round-trips correctly through base64.
+			if sl, ok := got.(interactionchannel.StateLog); ok {
+				orig := tc.msg.(interactionchannel.StateLog)
+				if !reflect.DeepEqual(sl.Lines, orig.Lines) {
+					t.Errorf("StateLog.Lines: got %v, want %v", sl.Lines, orig.Lines)
+				}
+			}
 		})
 	}
 }
@@ -264,5 +272,26 @@ func TestAllIntentTypes(t *testing.T) {
 		if it == "" {
 			t.Errorf("IntentType constant is empty string")
 		}
+	}
+}
+
+// TestSendAfterClose verifies that Send returns an error (not a panic) after
+// Close has been called and the connection slice is empty.
+func TestSendAfterClose(t *testing.T) {
+	t.Parallel()
+	sock := sockPath(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server, err := interactionchannel.Serve(ctx, sock)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	server.Close()
+
+	err = server.Send(interactionchannel.StateHeader{IterationLine: "x"})
+	if err == nil {
+		t.Error("Send after Close: expected non-nil error, got nil")
 	}
 }
