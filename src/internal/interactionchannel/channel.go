@@ -20,15 +20,38 @@ const ReadyHandshakeTimeout = 10 * time.Second
 // recvBufSize is the capacity of the per-Channel inbound message channel.
 const recvBufSize = 64
 
-// writeBufSize is the per-connection outbound channel capacity.
+// writeBufSize is the per-connection general outbound channel capacity.
 const writeBufSize = 32
+
+// logBufSize is the per-connection log outbound channel capacity.
+// Drop-oldest semantics apply when this is exceeded (D-2).
+const logBufSize = 256
 
 // conn is an internal per-connection handle owned by Channel.
 // It carries the outbound write channel and the underlying net.Conn
 // (needed for forced close on context cancellation).
+//
+// Role-specific outbound channels are initialized in startConn and populated
+// via SendStateHeader/Log/Footer after the role is bound by bindRole (D-2).
 type conn struct {
 	nc net.Conn
-	wc chan Message
+	wc chan Message // general broadcast channel (WorkspaceDone, etc.)
+
+	// Log outbound channel: 256-capacity, drop-oldest on overflow (D-2).
+	logCh chan StateLog
+
+	// Header latest-wins slot (D-2). Protected by headerMu.
+	// headerNotify (capacity 1) signals the write goroutine when the slot is dirty.
+	headerMu     sync.Mutex
+	headerSlot   StateHeader
+	headerDirty  bool
+	headerNotify chan struct{}
+
+	// Footer latest-wins slot (D-2). Protected by footerMu.
+	footerMu     sync.Mutex
+	footerSlot   StateFooter
+	footerDirty  bool
+	footerNotify chan struct{}
 }
 
 // Channel manages a set of connections over a Unix domain socket.
@@ -52,6 +75,11 @@ type Channel struct {
 	readyMu    sync.Mutex
 	readyRoles map[string]bool
 	readyNewCh chan struct{}
+
+	// Role-to-connection mapping (Serve side). Populated by bindRole when
+	// a Ready message is received. Protected by rolesMu.
+	rolesMu sync.Mutex
+	roles   map[string]*conn
 }
 
 // Recv returns the receive channel. Incoming messages from all connections
@@ -83,6 +111,94 @@ func (c *Channel) Send(msg Message) error {
 	return nil
 }
 
+// SendStateHeader sends a StateHeader message to the header pane's connection
+// using latest-wins semantics (D-2). If the write goroutine is busy, the slot
+// is overwritten with the newest value so only the latest is delivered.
+// No-op if the header role has not yet bound (before AwaitReady returns).
+func (c *Channel) SendStateHeader(msg StateHeader) {
+	co, ok := c.connForRole("header")
+	if !ok {
+		return
+	}
+	co.headerMu.Lock()
+	co.headerSlot = msg
+	if !co.headerDirty {
+		co.headerDirty = true
+		select {
+		case co.headerNotify <- struct{}{}:
+		default:
+			// already signaled; write goroutine will read the latest slot
+		}
+	}
+	co.headerMu.Unlock()
+}
+
+// SendStateLog sends a StateLog message to the log pane's connection using
+// drop-oldest semantics (D-2). If the 256-deep log channel is full, the
+// oldest entry is evicted to make room. Never blocks the caller.
+// No-op if the log role has not yet bound.
+func (c *Channel) SendStateLog(msg StateLog) {
+	co, ok := c.connForRole("log")
+	if !ok {
+		return
+	}
+	for {
+		select {
+		case co.logCh <- msg:
+			return
+		case <-c.ctx.Done():
+			return
+		default:
+		}
+		// Channel full — evict oldest entry, then retry.
+		select {
+		case <-co.logCh:
+		case <-c.ctx.Done():
+			return
+		default:
+		}
+	}
+}
+
+// SendStateFooter sends a StateFooter message to the footer pane's connection
+// using latest-wins semantics (D-2), analogous to SendStateHeader.
+// No-op if the footer role has not yet bound.
+func (c *Channel) SendStateFooter(msg StateFooter) {
+	co, ok := c.connForRole("footer")
+	if !ok {
+		return
+	}
+	co.footerMu.Lock()
+	co.footerSlot = msg
+	if !co.footerDirty {
+		co.footerDirty = true
+		select {
+		case co.footerNotify <- struct{}{}:
+		default:
+		}
+	}
+	co.footerMu.Unlock()
+}
+
+// connForRole looks up the connection bound to role. Returns (nil, false) if
+// no connection has been bound yet (before the Ready handshake for that role).
+func (c *Channel) connForRole(role string) (*conn, bool) {
+	c.rolesMu.Lock()
+	co, ok := c.roles[role]
+	c.rolesMu.Unlock()
+	return co, ok
+}
+
+// bindRole associates co with role. Called by readLoop when a Ready message
+// arrives, so SendState* methods can target the correct connection. Safe for
+// concurrent calls; later calls for the same role silently overwrite (idempotent
+// in the duplicate-Ready case, which notifyReady already handles).
+func (c *Channel) bindRole(role string, co *conn) {
+	c.rolesMu.Lock()
+	c.roles[role] = co
+	c.rolesMu.Unlock()
+}
+
 // Close shuts down the Channel: cancels the context (causing all goroutines
 // to unblock), closes the listener (Serve side), and waits for all goroutines
 // to finish. On the Serve side it also unlinks the socket file.
@@ -101,8 +217,11 @@ func (c *Channel) Close() {
 // (read, write, watcher) that service it.
 func (c *Channel) startConn(nc net.Conn) {
 	co := &conn{
-		nc: nc,
-		wc: make(chan Message, writeBufSize),
+		nc:           nc,
+		wc:           make(chan Message, writeBufSize),
+		logCh:        make(chan StateLog, logBufSize),
+		headerNotify: make(chan struct{}, 1),
+		footerNotify: make(chan struct{}, 1),
 	}
 	c.mu.Lock()
 	c.conns = append(c.conns, co)
@@ -117,7 +236,7 @@ func (c *Channel) startConn(nc net.Conn) {
 		c.readLoop(nc, co)
 	}()
 
-	// Write goroutine: consumes co.wc and serializes frames to nc.
+	// Write goroutine: consumes all outbound channels and serializes to nc.
 	go func() {
 		defer c.wg.Done()
 		c.writeLoop(nc, co)
@@ -143,7 +262,7 @@ func (c *Channel) removeConn(co *conn) {
 	}
 }
 
-func (c *Channel) readLoop(nc net.Conn, _ *conn) {
+func (c *Channel) readLoop(nc net.Conn, co *conn) {
 	br := bufio.NewReaderSize(nc, 4096)
 	for {
 		msg, err := readMessage(br)
@@ -152,6 +271,7 @@ func (c *Channel) readLoop(nc net.Conn, _ *conn) {
 		}
 		if r, ok := msg.(Ready); ok {
 			c.notifyReady(r.Role)
+			c.bindRole(r.Role, co)
 		}
 		select {
 		case c.recv <- msg:
@@ -241,6 +361,11 @@ func missingReadyRoles(ready map[string]bool) []string {
 	return missing
 }
 
+// writeLoop serializes all outbound messages to nc. It services four sources:
+//   - co.wc: general broadcast messages (WorkspaceDone, etc.)
+//   - co.logCh: log-line batches with drop-oldest semantics (D-2)
+//   - co.headerNotify + co.headerSlot: latest-wins header state (D-2)
+//   - co.footerNotify + co.footerSlot: latest-wins footer state (D-2)
 func (c *Channel) writeLoop(nc net.Conn, co *conn) {
 	bw := bufio.NewWriterSize(nc, 4096)
 	for {
@@ -248,6 +373,32 @@ func (c *Channel) writeLoop(nc net.Conn, co *conn) {
 		case msg := <-co.wc:
 			if err := writeMessage(bw, msg); err != nil {
 				return
+			}
+		case msg := <-co.logCh:
+			if err := writeMessage(bw, msg); err != nil {
+				return
+			}
+		case <-co.headerNotify:
+			co.headerMu.Lock()
+			v := co.headerSlot
+			dirty := co.headerDirty
+			co.headerDirty = false
+			co.headerMu.Unlock()
+			if dirty {
+				if err := writeMessage(bw, v); err != nil {
+					return
+				}
+			}
+		case <-co.footerNotify:
+			co.footerMu.Lock()
+			v := co.footerSlot
+			dirty := co.footerDirty
+			co.footerDirty = false
+			co.footerMu.Unlock()
+			if dirty {
+				if err := writeMessage(bw, v); err != nil {
+					return
+				}
 			}
 		case <-c.ctx.Done():
 			return
@@ -292,6 +443,7 @@ func Serve(ctx context.Context, socketPath string) (*Channel, error) {
 		cancel:     cancel,
 		readyRoles: make(map[string]bool),
 		readyNewCh: make(chan struct{}, 3),
+		roles:      make(map[string]*conn),
 	}
 
 	ch.wg.Add(1)
@@ -320,6 +472,7 @@ func Dial(ctx context.Context, socketPath, _ string) (*Channel, error) {
 		recv:   make(chan Message, recvBufSize),
 		ctx:    ctx,
 		cancel: cancel,
+		roles:  make(map[string]*conn),
 	}
 	ch.startConn(nc)
 	return ch, nil

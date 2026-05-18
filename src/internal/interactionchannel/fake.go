@@ -47,6 +47,22 @@ func (f *FakeInteractionChannel) Send(msg Message) error {
 	return nil
 }
 
+// SendStateHeader records a StateHeader message, identical to Send but typed.
+// Convenience method for orchestrator-side tests that call the role-targeted API.
+func (f *FakeInteractionChannel) SendStateHeader(msg StateHeader) {
+	_ = f.Send(msg)
+}
+
+// SendStateLog records a StateLog message, identical to Send but typed.
+func (f *FakeInteractionChannel) SendStateLog(msg StateLog) {
+	_ = f.Send(msg)
+}
+
+// SendStateFooter records a StateFooter message, identical to Send but typed.
+func (f *FakeInteractionChannel) SendStateFooter(msg StateFooter) {
+	_ = f.Send(msg)
+}
+
 // Close marks the fake closed so subsequent Send calls return an error.
 // Idempotent.
 func (f *FakeInteractionChannel) Close() {
