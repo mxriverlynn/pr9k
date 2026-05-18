@@ -32,7 +32,7 @@ type CmuxClient interface {
 	WorkspaceClose(ctx context.Context, name string) error
 	WorkspaceSelect(ctx context.Context, name string) error
 	SurfaceSplit(ctx context.Context, opts SplitOpts) (string, error)
-	SurfaceSpawn(ctx context.Context, paneID string, argv []string) error
+	SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error
 	SurfaceHide(ctx context.Context, paneID string) error
 	SurfaceList(ctx context.Context, workspaceName string) ([]PaneInfo, error)
 }

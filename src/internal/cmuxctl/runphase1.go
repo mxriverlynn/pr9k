@@ -12,6 +12,16 @@ import (
 	"time"
 )
 
+// resolveExecutable returns the path to the current binary, resolved through
+// any symlinks. Used to construct the per-pane spawn argv (Assumption A5).
+func resolveExecutable() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}
+
 // ErrWorkspaceExists is returned (or wrapped) when a workspace name is already
 // in use. RunPhase1 uses it as the retry trigger for spec D12 collision retry.
 var ErrWorkspaceExists = errors.New("cmuxctl: workspace already exists")
@@ -173,12 +183,22 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		}
 	}()
 
+	// Resolve the pr9k binary path (Assumption A5) once and reuse across all spawns.
+	exe, err := resolveExecutable()
+	if err != nil {
+		return fmt.Errorf("cmuxctl: resolve binary path: %w", err)
+	}
+
+	// Compute the interaction-channel socket path: <projectDir>/.pr9k/cmux-pane-<workspaceName>.sock
+	socketPath := filepath.Join(projectDir, ".pr9k", "cmux-pane-"+workspaceName+".sock")
+	spawnEnv := map[string]string{"PR9K_CMUX_SOCKET": socketPath}
+
 	// Step 5a: spawn orchestrator pane (D-3, D-4).
 	orchPaneID, err := client.SurfaceSplit(ctx, SplitOpts{})
 	if err != nil {
 		return fmt.Errorf("cmuxctl: split orchestrator pane: %w", err)
 	}
-	if err := client.SurfaceSpawn(ctx, orchPaneID, []string{"sh", "-c", "tail -f /dev/null"}); err != nil {
+	if err := client.SurfaceSpawn(ctx, orchPaneID, []string{exe, "cmux-pane", "--role=orchestrator"}, spawnEnv); err != nil {
 		return fmt.Errorf("cmuxctl: spawn orchestrator: %w", err)
 	}
 
@@ -188,20 +208,14 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	}
 
 	// Step 5c-5e: spawn header, log, footer panes (D-3, D-4).
-	// Each uses POSIX-portable tail -f /dev/null (not GNU sleep infinity).
-	visiblePanes := []struct{ role, label string }{
-		{"header", "header \xe2\x80\x94 Phase 1 placeholder"},
-		{"log", "log \xe2\x80\x94 Phase 1 placeholder"},
-		{"footer", "footer \xe2\x80\x94 Phase 1 placeholder"},
-	}
-	for _, p := range visiblePanes {
+	visibleRoles := []string{"header", "log", "footer"}
+	for _, role := range visibleRoles {
 		paneID, err := client.SurfaceSplit(ctx, SplitOpts{})
 		if err != nil {
-			return fmt.Errorf("cmuxctl: split %s pane: %w", p.role, err)
+			return fmt.Errorf("cmuxctl: split %s pane: %w", role, err)
 		}
-		oneliner := `printf "` + p.label + `\n" && tail -f /dev/null`
-		if err := client.SurfaceSpawn(ctx, paneID, []string{"sh", "-c", oneliner}); err != nil {
-			return fmt.Errorf("cmuxctl: spawn %s pane: %w", p.role, err)
+		if err := client.SurfaceSpawn(ctx, paneID, []string{exe, "cmux-pane", "--role=" + role}, spawnEnv); err != nil {
+			return fmt.Errorf("cmuxctl: spawn %s pane: %w", role, err)
 		}
 	}
 

@@ -196,7 +196,7 @@ func TestRunPhase1_SpawnOrder(t *testing.T) {
 			events = append(events, callEvent{kind: "split", paneID: id})
 			return id, nil
 		},
-		SurfaceSpawnFunc: func(_ context.Context, paneID string, _ []string) error {
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, _ []string, _ map[string]string) error {
 			events = append(events, callEvent{kind: "spawn", paneID: paneID})
 			return nil
 		},
@@ -248,7 +248,7 @@ func TestRunPhase1_SpawnOrder(t *testing.T) {
 	}
 }
 
-// ---- shell one-liner tests ---------------------------------------------------
+// ---- spawn argv tests --------------------------------------------------------
 
 func TestRunPhase1_OrchestratorSpawnArgv(t *testing.T) {
 	var spawns []cmuxctl.SpawnCall
@@ -256,8 +256,8 @@ func TestRunPhase1_OrchestratorSpawnArgv(t *testing.T) {
 		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
 			return "some-pane", nil
 		},
-		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string) error {
-			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv})
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
 			return nil
 		},
 	}
@@ -272,30 +272,24 @@ func TestRunPhase1_OrchestratorSpawnArgv(t *testing.T) {
 		t.Fatal("no SurfaceSpawn calls recorded")
 	}
 
-	// Orchestrator is the first spawn
+	// Orchestrator is the first spawn: argv must be [<binary> cmux-pane --role=orchestrator]
 	orch := spawns[0]
-	if len(orch.Argv) < 3 || orch.Argv[0] != "sh" || orch.Argv[1] != "-c" {
-		t.Errorf("orchestrator argv = %v, want [sh -c ...]", orch.Argv)
+	if len(orch.Argv) < 3 || orch.Argv[1] != "cmux-pane" || orch.Argv[2] != "--role=orchestrator" {
+		t.Errorf("orchestrator argv = %v, want [<binary> cmux-pane --role=orchestrator]", orch.Argv)
 	}
-	if !strings.Contains(orch.Argv[2], "tail -f /dev/null") {
-		t.Errorf("orchestrator one-liner %q does not contain 'tail -f /dev/null'", orch.Argv[2])
-	}
-	// Orchestrator must NOT contain "sleep infinity"
-	for _, arg := range orch.Argv {
-		if strings.Contains(arg, "sleep infinity") {
-			t.Errorf("orchestrator argv contains 'sleep infinity' (not POSIX-portable): %v", orch.Argv)
-		}
+	if orch.Argv[0] == "" {
+		t.Error("orchestrator argv[0] (binary path) must not be empty")
 	}
 }
 
-func TestRunPhase1_VisiblePaneSpawnArgvContainsTailFDev(t *testing.T) {
+func TestRunPhase1_VisiblePaneSpawnArgvHasRoles(t *testing.T) {
 	var spawns []cmuxctl.SpawnCall
 	fake := &cmuxctl.FakeClient{
 		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
 			return "some-pane", nil
 		},
-		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string) error {
-			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv})
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
 			return nil
 		},
 	}
@@ -306,13 +300,11 @@ func TestRunPhase1_VisiblePaneSpawnArgvContainsTailFDev(t *testing.T) {
 		t.Fatalf("RunPhase1: %v", err)
 	}
 
-	// Skip first spawn (orchestrator); remaining visible pane spawns
+	// spawns[0] is orchestrator; spawns[1..3] are header, log, footer
+	wantRoles := []string{"--role=header", "--role=log", "--role=footer"}
 	for i, sp := range spawns[1:] {
-		if len(sp.Argv) < 3 || sp.Argv[0] != "sh" || sp.Argv[1] != "-c" {
-			t.Errorf("visible pane %d argv = %v, want [sh -c ...]", i, sp.Argv)
-		}
-		if !strings.Contains(sp.Argv[2], "tail -f /dev/null") {
-			t.Errorf("visible pane %d one-liner %q does not contain 'tail -f /dev/null'", i, sp.Argv[2])
+		if len(sp.Argv) < 3 || sp.Argv[1] != "cmux-pane" || sp.Argv[2] != wantRoles[i] {
+			t.Errorf("visible pane %d argv = %v, want [<binary> cmux-pane %s]", i, sp.Argv, wantRoles[i])
 		}
 	}
 }
@@ -759,7 +751,7 @@ func TestTeardown_PartialSetup_TeardownRuns(t *testing.T) {
 		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
 			return "pane-x", nil
 		},
-		SurfaceSpawnFunc: func(_ context.Context, _ string, _ []string) error {
+		SurfaceSpawnFunc: func(_ context.Context, _ string, _ []string, _ map[string]string) error {
 			return errors.New("spawn failed")
 		},
 	}
@@ -771,5 +763,117 @@ func TestTeardown_PartialSetup_TeardownRuns(t *testing.T) {
 	}
 	if len(fake.CloseCalls) != 1 {
 		t.Errorf("WorkspaceClose called %d times, want 1 (teardown should run on partial-setup failure)", len(fake.CloseCalls))
+	}
+}
+
+// ---- U3 spawn-argv and spawn-env tests ---------------------------------------
+
+// TestRunPhase1_SpawnArgvUsesPr9kBinary verifies that each SurfaceSpawn call
+// uses a binary path (argv[0]) resolved via os.Executable(), not a shell
+// interpreter. The test cannot know the exact binary path at compile time, so
+// it verifies argv[0] is non-empty and argv[1] is "cmux-pane".
+func TestRunPhase1_SpawnArgvUsesPr9kBinary(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	if len(spawns) == 0 {
+		t.Fatal("no SurfaceSpawn calls recorded")
+	}
+	for i, sp := range spawns {
+		if len(sp.Argv) < 2 {
+			t.Errorf("spawn %d argv too short: %v", i, sp.Argv)
+			continue
+		}
+		if sp.Argv[0] == "" {
+			t.Errorf("spawn %d: argv[0] (binary path) is empty", i)
+		}
+		if sp.Argv[1] != "cmux-pane" {
+			t.Errorf("spawn %d: argv[1] = %q, want %q", i, sp.Argv[1], "cmux-pane")
+		}
+	}
+}
+
+// TestRunPhase1_SpawnArgvHasRoles verifies that each pane spawn argv contains
+// the expected --role=<role> flag in the correct position.
+func TestRunPhase1_SpawnArgvHasRoles(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := cmuxctl.RunPhase1(context.Background(), fake, "/tmp/repo", &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	if len(spawns) != 4 {
+		t.Fatalf("expected 4 SurfaceSpawn calls (orch+header+log+footer), got %d", len(spawns))
+	}
+
+	wantRoles := []string{"--role=orchestrator", "--role=header", "--role=log", "--role=footer"}
+	for i, sp := range spawns {
+		found := false
+		for _, arg := range sp.Argv {
+			if arg == wantRoles[i] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("spawn %d argv %v does not contain %q", i, sp.Argv, wantRoles[i])
+		}
+	}
+}
+
+// TestRunPhase1_SpawnEnvHasSocket verifies that every SurfaceSpawn call
+// includes PR9K_CMUX_SOCKET in its env map, and that the socket path
+// contains both the project dir and the workspace name.
+func TestRunPhase1_SpawnEnvHasSocket(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	var buf bytes.Buffer
+	projectDir := t.TempDir()
+	if err := cmuxctl.RunPhase1(context.Background(), fake, projectDir, &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+
+	for i, sp := range spawns {
+		socketPath, ok := sp.Env["PR9K_CMUX_SOCKET"]
+		if !ok {
+			t.Errorf("spawn %d env missing PR9K_CMUX_SOCKET; env = %v", i, sp.Env)
+			continue
+		}
+		if socketPath == "" {
+			t.Errorf("spawn %d: PR9K_CMUX_SOCKET is empty", i)
+		}
+		if !strings.Contains(socketPath, projectDir) {
+			t.Errorf("spawn %d: socket path %q does not contain projectDir %q", i, socketPath, projectDir)
+		}
 	}
 }

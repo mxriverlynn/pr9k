@@ -105,7 +105,7 @@ func TestFakeClient_RecordsSelectCalls(t *testing.T) {
 func TestFakeClient_RecordsSpawnCalls(t *testing.T) {
 	f := &cmuxctl.FakeClient{}
 	argv := []string{"sh", "-c", "echo hi"}
-	if err := f.SurfaceSpawn(context.Background(), "p1", argv); err != nil {
+	if err := f.SurfaceSpawn(context.Background(), "p1", argv, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(f.SpawnCalls) != 1 || f.SpawnCalls[0].PaneID != "p1" {
@@ -219,7 +219,7 @@ func TestFakeClient_DefaultZeroValues(t *testing.T) {
 	if s, err := f.SurfaceSplit(ctx, cmuxctl.SplitOpts{}); err != nil || s != "" {
 		t.Errorf("SurfaceSplit: got (%q, %v)", s, err)
 	}
-	if err := f.SurfaceSpawn(ctx, "p1", []string{"sh"}); err != nil {
+	if err := f.SurfaceSpawn(ctx, "p1", []string{"sh"}, nil); err != nil {
 		t.Errorf("SurfaceSpawn: %v", err)
 	}
 	if err := f.SurfaceHide(ctx, "p1"); err != nil {

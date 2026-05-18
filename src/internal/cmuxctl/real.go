@@ -252,8 +252,9 @@ type paneIDParam struct {
 }
 
 type spawnParam struct {
-	PaneID string   `json:"pane_id"`
-	Argv   []string `json:"argv"`
+	PaneID string            `json:"pane_id"`
+	Argv   []string          `json:"argv"`
+	Env    map[string]string `json:"env,omitempty"`
 }
 
 type surfaceListParam struct {
@@ -329,8 +330,8 @@ func (c *RealClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (string, 
 	return result.PaneID, nil
 }
 
-func (c *RealClient) SurfaceSpawn(ctx context.Context, paneID string, argv []string) error {
-	_, err := c.do(ctx, "surface.spawn", spawnParam{PaneID: paneID, Argv: argv})
+func (c *RealClient) SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error {
+	_, err := c.do(ctx, "surface.spawn", spawnParam{PaneID: paneID, Argv: argv, Env: env})
 	return err
 }
 

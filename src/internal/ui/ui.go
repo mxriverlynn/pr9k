@@ -9,6 +9,7 @@ const (
 	ActionRetry StepAction = iota
 	ActionContinue
 	ActionQuit
+	ActionSkip
 )
 
 // Mode represents the current keyboard dispatch mode.

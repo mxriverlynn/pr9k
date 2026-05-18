@@ -9,6 +9,7 @@ import (
 type SpawnCall struct {
 	PaneID string
 	Argv   []string
+	Env    map[string]string
 }
 
 // FakeClient is a test double for CmuxClient. Every method is scriptable via
@@ -28,7 +29,7 @@ type FakeClient struct {
 	WorkspaceCloseFunc   func(ctx context.Context, name string) error
 	WorkspaceSelectFunc  func(ctx context.Context, name string) error
 	SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (string, error)
-	SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string) error
+	SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string, env map[string]string) error
 	SurfaceHideFunc      func(ctx context.Context, paneID string) error
 	SurfaceListFunc      func(ctx context.Context, workspaceName string) ([]PaneInfo, error)
 
@@ -179,16 +180,16 @@ func (f *FakeClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (string, 
 	return "", nil
 }
 
-func (f *FakeClient) SurfaceSpawn(ctx context.Context, paneID string, argv []string) error {
+func (f *FakeClient) SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error {
 	if err := f.maybehang(ctx); err != nil {
 		return err
 	}
 	f.mu.Lock()
-	f.SpawnCalls = append(f.SpawnCalls, SpawnCall{PaneID: paneID, Argv: argv})
+	f.SpawnCalls = append(f.SpawnCalls, SpawnCall{PaneID: paneID, Argv: argv, Env: env})
 	fn := f.SurfaceSpawnFunc
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, paneID, argv)
+		return fn(ctx, paneID, argv, env)
 	}
 	return nil
 }

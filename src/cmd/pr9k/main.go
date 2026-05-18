@@ -167,7 +167,7 @@ func buildVersionLabel() string {
 
 func main() {
 	// Step 1: parse CLI flags.
-	cfg, err := cli.Execute(newSandboxCmd(), newWorkflowCmd())
+	cfg, err := cli.Execute(newSandboxCmd(), newWorkflowCmd(), newCmuxPaneCmd())
 	if err != nil {
 		if !errors.Is(err, errSilentExit) {
 			fmt.Fprint(os.Stderr, formatUsageError(err))
