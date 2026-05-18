@@ -156,7 +156,7 @@ func TestFooterMachineWith_QY_ForwardsIntentQuit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T-4: q→esc produces no intent (quit cancelled locally)
+// T-4: q→esc produces no intent and restores the error-mode shortcut render
 // ---------------------------------------------------------------------------
 
 func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
@@ -164,17 +164,91 @@ func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
 	fch := interactionchannel.NewFakeInteractionChannel()
 	var out bytes.Buffer
 
-	src.Press("q")
-	src.Press("esc")
-
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()
+
+	// Pre-seed ModeError so the machine starts in error mode.
+	fch.InjectMessage(interactionchannel.StateFooter{
+		Mode:         int(ui.ModeError),
+		ShortcutLine: ui.ErrorShortcuts,
+	})
+
+	// Wait for error mode to be rendered before pressing keys.
+	if !waitForOutputFW(time.Second, 10*time.Millisecond, &out, func(s string) bool {
+		return strings.Contains(s, ui.ErrorShortcuts)
+	}) {
+		t.Fatal("error-mode render did not appear before key presses")
+	}
+
+	src.Press("q")
+	src.Press("esc")
 
 	// Give the machine time to process both keys.
 	time.Sleep(100 * time.Millisecond)
 
 	if _, ok := drainIntentFromSent(fch); ok {
 		t.Error("expected no intent after q+esc, but one was forwarded")
+	}
+
+	// B: cancel must restore the error-mode shortcut render.
+	if !waitForOutputFW(time.Second, 10*time.Millisecond, &out, func(s string) bool {
+		// ErrorShortcuts must appear after any QuitConfirmPrompt occurrence.
+		eIdx := strings.LastIndex(s, ui.ErrorShortcuts)
+		qIdx := strings.LastIndex(s, ui.QuitConfirmPrompt)
+		return eIdx != -1 && eIdx > qIdx
+	}) {
+		t.Errorf("expected ErrorShortcuts to be the last shortcut line after q+esc; output:\n%q", out.String())
+	}
+
+	cancel()
+	waitDone(t, done)
+}
+
+// ---------------------------------------------------------------------------
+// T-A: non-confirmation key in quit-confirm is ignored and not buffered
+// ---------------------------------------------------------------------------
+
+func TestFooterMachineWith_QXEsc_NonConfirmKeyIgnoredNotBuffered(t *testing.T) {
+	src := interactionchannel.NewFakeFooterKeySource()
+	fch := interactionchannel.NewFakeInteractionChannel()
+	var out bytes.Buffer
+
+	cancel, done := runMachineFixture(t, src, fch, &out)
+	defer cancel()
+
+	// Pre-seed ModeError so the machine starts in error mode.
+	fch.InjectMessage(interactionchannel.StateFooter{
+		Mode:         int(ui.ModeError),
+		ShortcutLine: ui.ErrorShortcuts,
+	})
+
+	// Wait for error mode to be rendered before pressing keys.
+	if !waitForOutputFW(time.Second, 10*time.Millisecond, &out, func(s string) bool {
+		return strings.Contains(s, ui.ErrorShortcuts)
+	}) {
+		t.Fatal("error-mode render did not appear before key presses")
+	}
+
+	src.Press("q")   // enter ModeQuitConfirm
+	src.Press("x")   // non-confirmation key — must be dropped, not buffered
+	src.Press("esc") // cancel quit, return to ModeError
+
+	// Give the machine time to process all keys.
+	time.Sleep(100 * time.Millisecond)
+
+	// No intent must have been forwarded.
+	if _, ok := drainIntentFromSent(fch); ok {
+		t.Error("expected no intent after q+x+esc, but one was forwarded")
+	}
+
+	// The 'x' key must not have been replayed into ModeError — the last
+	// shortcut render must be ErrorShortcuts, not something triggered by 'x'.
+	if !waitForOutputFW(time.Second, 10*time.Millisecond, &out, func(s string) bool {
+		eIdx := strings.LastIndex(s, ui.ErrorShortcuts)
+		qIdx := strings.LastIndex(s, ui.QuitConfirmPrompt)
+		return eIdx != -1 && eIdx > qIdx
+	}) {
+		t.Errorf("expected ErrorShortcuts after q+x+esc; output:\n%q", out.String())
 	}
 
 	cancel()
