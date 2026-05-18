@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -364,6 +365,39 @@ func TestWorkspaceDone_PaneContinuesAfterSocketClose(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("header pane did not return after context cancel")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrator handshake error propagation (G1)
+// ---------------------------------------------------------------------------
+
+// TestWorkspaceDone_OrchestratorHandshakeErrorPropagates verifies that a
+// failed AwaitReady is returned as a "handshake:" wrapped error and that the
+// orchestrator does not broadcast WorkspaceDone in that case.
+func TestWorkspaceDone_OrchestratorHandshakeErrorPropagates(t *testing.T) {
+	fake := interactionchannel.NewFakeInteractionChannel()
+
+	// A pre-cancelled context causes FakeInteractionChannel.AwaitReady to
+	// return context.Canceled immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	projectDir := t.TempDir()
+
+	err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake)
+	if err == nil {
+		t.Fatal("expected an error from runCmuxOrchestratorWith but got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected error to wrap context.Canceled; got: %v", err)
+	}
+
+	// The orchestrator must not have broadcast WorkspaceDone on handshake failure.
+	for _, m := range fake.SentMessages() {
+		if _, ok := m.(interactionchannel.WorkspaceDone); ok {
+			t.Error("orchestrator broadcast WorkspaceDone despite handshake failure")
+		}
 	}
 }
 
