@@ -71,6 +71,24 @@ func (f *FakeInteractionChannel) Close() {
 	f.closed = true
 }
 
+// IsClosed reports whether Close has been called.
+func (f *FakeInteractionChannel) IsClosed() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closed
+}
+
+// AwaitReady is a stub that satisfies the orchChannel interface. It returns nil
+// immediately unless the context is already done.
+func (f *FakeInteractionChannel) AwaitReady(ctx context.Context, _ time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		return nil
+	}
+}
+
 // EnqueueReady injects a Ready{Role: role} message into the Recv channel as
 // if it arrived from the wire. Panics if the channel is full (recvBufSize
 // slots — callers must drain between bulk injections).

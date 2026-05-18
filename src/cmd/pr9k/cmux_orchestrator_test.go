@@ -87,14 +87,19 @@ func TestRunCmuxOrchestrator_EmptyProjectDir_ReturnsError(t *testing.T) {
 // PR9K_PROJECT_DIR is set to a valid temp directory.
 func TestCmuxPaneCmd_OrchestratorRole_RequiresProjectDir(t *testing.T) {
 	projectDir := t.TempDir()
-	t.Setenv("PR9K_CMUX_SOCKET", "/tmp/test.sock")
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 
 	cmd := newCmuxPaneCmd()
 	suppressCobra(cmd)
 	cmd.SetArgs([]string{"--role=orchestrator"})
-	// We expect it to return nil or a context-cancelled error (not a "project dir not set" error).
-	err := cmd.Execute()
+	// Use a pre-cancelled context so the orchestrator returns immediately without
+	// waiting for the full 10-second AwaitReady handshake timeout.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := cmd.ExecuteContext(ctx)
+	// We expect it to return nil or a context/handshake error — not a "project dir not set" error.
 	if err != nil && strings.Contains(err.Error(), "PR9K_PROJECT_DIR") {
 		t.Errorf("cmux-pane --role=orchestrator should not complain about PR9K_PROJECT_DIR when it is set; got: %v", err)
 	}

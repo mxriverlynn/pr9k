@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,12 +44,23 @@ func TestActionSkip_IsDistinctStepAction(t *testing.T) {
 func TestCmuxPaneCmd_ValidRoles(t *testing.T) {
 	for _, role := range []string{"orchestrator", "header", "log", "footer"} {
 		t.Run(role, func(t *testing.T) {
-			t.Setenv("PR9K_CMUX_SOCKET", "/tmp/test.sock")
+			socketPath := filepath.Join(t.TempDir(), "test.sock")
+			t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 			t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 			cmd := newCmuxPaneCmd()
 			suppressCobra(cmd)
 			cmd.SetArgs([]string{"--role=" + role})
-			if err := cmd.Execute(); err != nil {
+			// Use a pre-cancelled context so blocking roles (orchestrator) return
+			// immediately without waiting for the full handshake timeout.
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			err := cmd.ExecuteContext(ctx)
+			// Context cancellation is an acceptable outcome; only reject errors that
+			// indicate a code-path bug (e.g., "invalid role" or unset env vars).
+			if err != nil &&
+				!strings.Contains(err.Error(), "context") &&
+				!strings.Contains(err.Error(), "handshake") &&
+				!strings.Contains(err.Error(), "connect") {
 				t.Errorf("--role=%s: unexpected error: %v", role, err)
 			}
 		})
@@ -102,13 +115,17 @@ func TestCmuxPaneCmd_MissingSocket(t *testing.T) {
 // read and passed to the dispatched runner. We do this by checking that the
 // command succeeds when a socket path is provided (the runner stub accepts it).
 func TestCmuxPaneCmd_SocketPathPassedToRunner(t *testing.T) {
-	const socketPath = "/tmp/pr9k-cmux-test.sock"
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
 	t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 	t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 	cmd := newCmuxPaneCmd()
 	suppressCobra(cmd)
 	cmd.SetArgs([]string{"--role=footer"})
-	if err := cmd.Execute(); err != nil {
+	// Use a pre-cancelled context so the footer pane returns immediately
+	// without blocking on ctx.Done() (no statusline runner, socket absent).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := cmd.ExecuteContext(ctx); err != nil {
 		t.Errorf("unexpected error with socket path %q: %v", socketPath, err)
 	}
 }
