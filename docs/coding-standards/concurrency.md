@@ -590,6 +590,118 @@ func (c *Channel) Close() {
 
 If context cancellation alone does not unblock a blocking call (e.g., `Accept`), close the resource explicitly in `Close()` — not via an anonymous goroutine.
 
+## Prevent busy-spin with a Ready() channel on input interfaces
+
+When a goroutine polls for input in a loop, never use a `default:` branch in the select — it spins at 100% CPU when no input is available.
+
+Instead, add a `Ready() <-chan struct{}` method to the input interface. The goroutine selects on `Ready()` before calling `Next()`:
+
+```go
+type FooterKeySource interface {
+    // Next returns the next available key. Returns ("", false) when empty —
+    // callers must wait for Ready() to fire before calling Next.
+    Next() (string, bool)
+    // Ready returns a channel that fires when at least one key is available.
+    // A nil return blocks forever (used by the noop production implementation).
+    Ready() <-chan struct{}
+}
+
+// Production goroutine — blocks until input or context cancellation.
+go func() {
+    defer wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-src.Ready():
+            machine.Step() // calls src.Next() inside
+        }
+    }
+}()
+```
+
+The two canonical implementations:
+
+```go
+// Noop (production, non-interactive pane): nil channel blocks select forever.
+type noopFooterKeySource struct{}
+func (noopFooterKeySource) Next() (string, bool)   { return "", false }
+func (noopFooterKeySource) Ready() <-chan struct{}  { return nil } // nil blocks forever in select
+
+// Fake (test double): capacity-1 level-trigger channel.
+// Press signals it when the queue transitions from empty to non-empty.
+// Next re-signals it if keys remain after popping.
+type FakeFooterKeySource struct {
+    mu    sync.Mutex
+    keys  []string
+    keyCh chan struct{} // capacity 1; level-triggered
+}
+
+func NewFakeFooterKeySource() *FakeFooterKeySource {
+    return &FakeFooterKeySource{keyCh: make(chan struct{}, 1)}
+}
+
+func (f *FakeFooterKeySource) Press(key string) {
+    f.mu.Lock()
+    f.keys = append(f.keys, key)
+    f.mu.Unlock()
+    select { case f.keyCh <- struct{}{}: default: } // signal without blocking
+}
+
+func (f *FakeFooterKeySource) Next() (string, bool) {
+    f.mu.Lock()
+    if len(f.keys) == 0 { f.mu.Unlock(); return "", false }
+    k := f.keys[0]; f.keys = f.keys[1:]; remaining := len(f.keys)
+    f.mu.Unlock()
+    if remaining > 0 { select { case f.keyCh <- struct{}{}: default: } } // re-signal for next key
+    return k, true
+}
+
+func (f *FakeFooterKeySource) Ready() <-chan struct{} { return f.keyCh }
+```
+
+Apply any time a goroutine needs to poll an interface for availability. A `default:` branch in a select on a polling loop is always a busy-spin — replace it with a `Ready()` signal channel.
+
+## Pass mutable view state as a parameter, not a shared field
+
+When two goroutines both access a struct field — one goroutine writes it, the other reads it during rendering — the race can sometimes be eliminated entirely by removing the field and passing the value as a function parameter.
+
+This approach is preferable to adding a mutex when the value is produced and consumed in the same call chain: one goroutine computes the value and immediately passes it to `Render(value)` without storing it anywhere.
+
+```go
+// Bad — two goroutines race on renderer.shortcutLine:
+// keystroke goroutine writes it via SetShortcutLine;
+// main select loop reads it via Render.
+type cmuxFooterRenderer struct {
+    shortcutLine string // data race: written by goroutine A, read by goroutine B
+}
+
+func (r *cmuxFooterRenderer) SetShortcutLine(line string) { r.shortcutLine = line }
+func (r *cmuxFooterRenderer) Render(sl string) string     { return r.shortcutLine + " " + sl }
+
+// goroutine A:
+r.renderer.SetShortcutLine(line)
+fmt.Fprint(out, r.renderer.Render(sl))
+
+// Good — shortcutLine is never stored; passed directly as a parameter:
+type cmuxFooterRenderer struct{} // no shared mutable state
+
+func (r *cmuxFooterRenderer) Render(sl, shortcutLine string) string {
+    return shortcutLine + " " + sl
+}
+
+// Both goroutines compute and pass shortcutLine locally; no race possible.
+fmt.Fprint(out, r.renderer.Render(sl, line))
+```
+
+Checklist for applying this pattern:
+1. Confirm the field is written immediately before it is read (same goroutine, same call).
+2. Confirm no other goroutine reads the field between writes.
+3. Delete the field; add a parameter to the function that was reading it.
+4. Run `go test -race` to verify the race is gone.
+
+When the value needs to persist across calls from different goroutines, use a mutex instead (see "Protect all shared io.Writer writes" above).
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -610,3 +722,6 @@ If context cancellation alone does not unblock a blocking call (e.g., `Accept`),
 - `src/internal/cmuxctl/dismissal.go` — `DismissalObserver.run` as the canonical ctx.Err() guard after timer.C fire example (issue #222)
 - `src/internal/interactionchannel/channel.go` — `startConn` as the canonical write-goroutine-closes-conn pattern; absence of anonymous listener-close goroutine as the canonical redundant-goroutine avoidance example (cmux-p2 review F1/F2)
 - `src/internal/cmuxctl/real.go` — `run` method `<-ioDone` drain in the `<-c.done` case as the canonical Stop()-must-join-all-goroutines example (cmux-p2 review F3)
+- `src/cmd/pr9k/cmux_pane.go` — `noopFooterKeySource` as the canonical nil-Ready() implementation; `runCmuxFooterMachineWith` as the canonical `<-src.Ready()` goroutine pattern (cmux-p3 review)
+- `src/internal/interactionchannel/fake.go` — `FakeFooterKeySource` as the canonical level-trigger Ready() test double (cmux-p3 review)
+- `src/cmd/pr9k/cmux_footer_wiring.go` — `footerPaneSink.SetMode` as the canonical pass-as-parameter (no shared field) race elimination (cmux-p3 review)

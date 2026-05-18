@@ -867,6 +867,41 @@ safe := string(ansi.StripAll([]byte(err.Error())))
 
 Also: never route a raw user-supplied identifier (e.g., `filepath.Base(projectDir)`) directly to terminal output. Sanitize it first (e.g., via `cmuxctl.SanitizeBasename`) and only use the sanitized form in any message shown to the operator. Raw identifiers can contain CR, ESC, or other control bytes.
 
+## Extract shared constants for cross-renderer format strings
+
+When two renderers in the same codebase independently format the same display element — a separator, a label prefix, a status symbol — extract the repeated string to a named constant in the shared package and use it in both places. Without a shared constant, the two renderers diverge silently: a one-character typo in one renderer produces output that differs from the other without any compiler signal.
+
+```go
+// Bad — two renderers, same separator, independently specified.
+// A future edit to one won't automatically update the other.
+
+// In ui/header.go:
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+    ...
+    fmt.Fprintf(&b, " — Issue #%s", issueID) // em-dash + space
+}
+
+// In cmd/pr9k/cmux_workflow.go:
+func buildIterationStatus(iter int, issueID string) string {
+    ...
+    fmt.Fprintf(&b, " - Issue #%s", issueID) // ASCII hyphen — not the same!
+}
+
+// Good — shared constant; both renderers are byte-identical for the same input.
+// In ui/constants.go:
+const IterationIssueSep = " — " // em-dash with surrounding spaces
+
+// In ui/header.go:
+fmt.Fprintf(&b, "%sIssue #%s", ui.IterationIssueSep, issueID)
+
+// In cmux_workflow.go:
+fmt.Fprintf(&b, "%sIssue #%s", ui.IterationIssueSep, issueID)
+```
+
+The same principle applies to step marker glyphs, status prefixes, and any other symbol that appears in more than one renderer. If a switch statement mapping a state to a display string is duplicated across two renderers, extract the switch into a shared helper in the common package.
+
+Apply any time a code-review diff shows two renderers producing similar but independently-written format strings for the same concept. The tell is two nearly-identical `fmt.Fprintf` or string-literal lines in different files — find the common constant and name it.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -893,3 +928,4 @@ Also: never route a raw user-supplied identifier (e.g., `filepath.Base(projectDi
 - `src/internal/workflow/exit_reason.go` — `ExitReason` as the canonical typed-string enum example
 - `src/internal/cmuxctl/preflight.go` — `resolveSocketPath` as the canonical Unix socket validation checklist; `classifyDialError` for dial-error classification; `net.DialUnix` usage (issue #220, fix ae6adbe1d)
 - `src/internal/ansi/strip_strict.go` — `StripForTerminalOutput` as the canonical strict terminal-output sanitizer (issue #225)
+- `src/internal/ui/header.go` + `src/cmd/pr9k/cmux_workflow.go` — `ui.IterationIssueSep` and `ui.StepMarkerGlyph` as canonical shared-constant examples (cmux-p3 review)
