@@ -214,16 +214,22 @@ func TestWorkspaceDone_OrchestratorUnlinksSocket(t *testing.T) {
 // Display pane WorkspaceDone handling tests
 // ---------------------------------------------------------------------------
 
-// startServerAndWaitForRole starts a Channel server at socketPath, then waits
-// for a single Ready message for the given role (not using AwaitReady which
-// requires all 3 roles).
-func startServerAndWaitForRole(t *testing.T, ctx context.Context, socketPath, role string) *interactionchannel.Channel {
+// mustServe starts a Channel server at socketPath and returns it. The test
+// fails immediately if Serve returns an error. Call this BEFORE starting pane
+// goroutines so that Dial can connect to the socket.
+func mustServe(t *testing.T, ctx context.Context, socketPath string) *interactionchannel.Channel {
 	t.Helper()
 	server, err := interactionchannel.Serve(ctx, socketPath)
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	// Wait for the pane's Ready message.
+	return server
+}
+
+// awaitPaneReady waits up to 3 seconds for server to receive a Ready message
+// for the given role.
+func awaitPaneReady(t *testing.T, server *interactionchannel.Channel, role string) {
+	t.Helper()
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
 	for {
@@ -233,12 +239,24 @@ func startServerAndWaitForRole(t *testing.T, ctx context.Context, socketPath, ro
 				t.Fatal("server channel closed before Ready arrived")
 			}
 			if r, ok := msg.(interactionchannel.Ready); ok && r.Role == role {
-				return server
+				return
 			}
 		case <-deadline.C:
 			t.Fatalf("timed out waiting for Ready from %q pane", role)
 		}
 	}
+}
+
+// startServerAndWaitForRole is a convenience wrapper: start the server, then
+// call the provided startPane function (so the pane dials into a live socket),
+// then wait for Ready. Call sites that need to capture the pane's error channel
+// should pass a closure that starts the goroutine.
+func startServerAndWaitForRole(t *testing.T, ctx context.Context, socketPath, role string, startPane func()) *interactionchannel.Channel {
+	t.Helper()
+	server := mustServe(t, ctx, socketPath)
+	startPane()
+	awaitPaneReady(t, server, role)
+	return server
 }
 
 // waitForDoneAck drains server.Recv until DoneAck{Role: role} is received or
@@ -270,11 +288,9 @@ func TestWorkspaceDone_HeaderPaneSendsDoneAck(t *testing.T) {
 	defer cancel()
 
 	paneErr := make(chan error, 1)
-	go func() {
-		paneErr <- runCmuxHeaderPane(ctx, socketPath)
-	}()
-
-	server := startServerAndWaitForRole(t, ctx, socketPath, "header")
+	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
+		go func() { paneErr <- runCmuxHeaderPane(ctx, socketPath) }()
+	})
 	defer server.Close()
 
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
@@ -291,11 +307,9 @@ func TestWorkspaceDone_LogPaneSendsDoneAck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go func() {
-		_ = runCmuxLogPane(ctx, socketPath)
-	}()
-
-	server := startServerAndWaitForRole(t, ctx, socketPath, "log")
+	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
+		go func() { _ = runCmuxLogPane(ctx, socketPath) }()
+	})
 	defer server.Close()
 
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
@@ -312,11 +326,9 @@ func TestWorkspaceDone_FooterPaneSendsDoneAck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go func() {
-		_ = runCmuxFooterPane(ctx, socketPath)
-	}()
-
-	server := startServerAndWaitForRole(t, ctx, socketPath, "footer")
+	server := startServerAndWaitForRole(t, ctx, socketPath, "footer", func() {
+		go func() { _ = runCmuxFooterPane(ctx, socketPath) }()
+	})
 	defer server.Close()
 
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
@@ -335,11 +347,9 @@ func TestWorkspaceDone_PaneContinuesAfterSocketClose(t *testing.T) {
 	defer cancel()
 
 	paneErr := make(chan error, 1)
-	go func() {
-		paneErr <- runCmuxHeaderPane(ctx, socketPath)
-	}()
-
-	server := startServerAndWaitForRole(t, ctx, socketPath, "header")
+	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
+		go func() { paneErr <- runCmuxHeaderPane(ctx, socketPath) }()
+	})
 
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
 	if !waitForDoneAck(t, server, "header", 2*time.Second) {
@@ -409,11 +419,9 @@ func TestWorkspaceDone_PaneExactlyOneDoneAck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go func() {
-		_ = runCmuxHeaderPane(ctx, socketPath)
-	}()
-
-	server := startServerAndWaitForRole(t, ctx, socketPath, "header")
+	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
+		go func() { _ = runCmuxHeaderPane(ctx, socketPath) }()
+	})
 	defer server.Close()
 
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})

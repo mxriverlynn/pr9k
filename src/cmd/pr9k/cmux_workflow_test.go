@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -536,5 +537,113 @@ func TestRunCmuxWorkflowAdapted_ReturnsZeroOnSuccess(t *testing.T) {
 	code := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf)
 	if code != 0 {
 		t.Errorf("expected exit code 0 on successful workflow, got %d", code)
+	}
+}
+
+// writeFailingWorkflowConfig writes a config.json with a single non-claude
+// iteration step that always fails ("false"). No captureAs / breakLoopIfEmpty,
+// so the workflow enters error mode and blocks on h.Actions.
+func writeFailingWorkflowConfig(t *testing.T, dir string) {
+	t.Helper()
+	cfg := map[string]interface{}{
+		"iteration": []map[string]interface{}{
+			{
+				"name":     "fail-step",
+				"isClaude": false,
+				"command":  []string{"false"},
+			},
+		},
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
+		t.Fatalf("write config.json: %v", err)
+	}
+}
+
+// --- T-1: Intent → StepAction routing ---
+
+// TestKeyAdapterLoop_IntentToStepAction verifies that the four intent kinds
+// (Retry, Continue, Next, Skip) are each translated to the matching StepAction
+// by keyAdapterLoop. The goroutine is wired directly with a controlled actions
+// channel so the routing table can be asserted without going through workflow.Run.
+func TestKeyAdapterLoop_IntentToStepAction(t *testing.T) {
+	cases := []struct {
+		intent interactionchannel.IntentType
+		want   ui.StepAction
+	}{
+		{interactionchannel.IntentRetry, ui.ActionRetry},
+		{interactionchannel.IntentContinue, ui.ActionContinue},
+		{interactionchannel.IntentNext, ui.ActionNext},
+		{interactionchannel.IntentSkip, ui.ActionSkip},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(string(tc.intent), func(t *testing.T) {
+			ch := interactionchannel.NewFakeInteractionChannel()
+			actions := make(chan ui.StepAction, 10)
+			log := mustNewTestLogger(t)
+			runner := workflow.NewRunner(log, t.TempDir())
+			kh := newCmuxKeyHandler(runner, actions)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				keyAdapterLoop(ctx, ch, actions, kh)
+			}()
+
+			ch.InjectMessage(interactionchannel.Intent{Kind: tc.intent})
+
+			select {
+			case got := <-actions:
+				if got != tc.want {
+					t.Errorf("intent %v: got StepAction %v, want %v", tc.intent, got, tc.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("intent %v: timeout waiting for StepAction", tc.intent)
+			}
+		})
+	}
+}
+
+// --- T-2: IntentQuit → ExitReasonUserQuit → exit code 1 ---
+
+// TestRunCmuxWorkflowAdapted_IntentQuitReturnsOne verifies that injecting
+// IntentQuit while the workflow is running causes runCmuxWorkflowAdapted to
+// return exit code 1. A failing step is used so the workflow blocks in error
+// mode on h.Actions, giving the key-adapter goroutine time to forward the quit.
+func TestRunCmuxWorkflowAdapted_IntentQuitReturnsOne(t *testing.T) {
+	projectDir := t.TempDir()
+	workflowDir := t.TempDir()
+	writeFailingWorkflowConfig(t, workflowDir)
+	sf := loadTestStepFile(t, workflowDir)
+
+	log := mustNewTestLogger(t)
+	ch := interactionchannel.NewFakeInteractionChannel()
+
+	// Pre-inject IntentQuit. The key-adapter goroutine forwards it to
+	// keyHandler.ForceQuit(), which injects ActionQuit into h.Actions. The
+	// failing step blocks in error mode on h.Actions, so the quit is picked up
+	// deterministically regardless of goroutine scheduling.
+	ch.InjectMessage(interactionchannel.Intent{Kind: interactionchannel.IntentQuit})
+
+	done := make(chan int, 1)
+	go func() {
+		done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf)
+	}()
+
+	select {
+	case code := <-done:
+		if code != 1 {
+			t.Errorf("IntentQuit: expected exit code 1, got %d", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runCmuxWorkflowAdapted did not return after IntentQuit (possible goroutine leak)")
 	}
 }

@@ -163,44 +163,7 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case msg, ok := <-ch.Recv():
-				if !ok {
-					return
-				}
-				intent, ok := msg.(interactionchannel.Intent)
-				if !ok {
-					continue
-				}
-				switch intent.Kind {
-				case interactionchannel.IntentRetry:
-					select {
-					case actions <- ui.ActionRetry:
-					default:
-					}
-				case interactionchannel.IntentContinue:
-					select {
-					case actions <- ui.ActionContinue:
-					default:
-					}
-				case interactionchannel.IntentNext:
-					select {
-					case actions <- ui.ActionNext:
-					default:
-					}
-				case interactionchannel.IntentSkip:
-					select {
-					case actions <- ui.ActionSkip:
-					default:
-					}
-				case interactionchannel.IntentQuit:
-					keyHandler.ForceQuit()
-				}
-			case <-keyCtx.Done():
-				return
-			}
-		}
+		keyAdapterLoop(keyCtx, ch, actions, keyHandler)
 	}()
 
 	runCfg := workflow.RunConfig{
@@ -225,4 +188,49 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 		return 1
 	}
 	return 0
+}
+
+// keyAdapterLoop translates Intent messages received from ch into StepAction
+// sends on actions, calling kh.ForceQuit on IntentQuit. It runs until ctx is
+// done or ch.Recv() is closed. Extracted so it can be tested without calling
+// workflow.Run.
+func keyAdapterLoop(ctx context.Context, ch orchChannel, actions chan ui.StepAction, kh *ui.KeyHandler) {
+	for {
+		select {
+		case msg, ok := <-ch.Recv():
+			if !ok {
+				return
+			}
+			intent, ok := msg.(interactionchannel.Intent)
+			if !ok {
+				continue
+			}
+			switch intent.Kind {
+			case interactionchannel.IntentRetry:
+				select {
+				case actions <- ui.ActionRetry:
+				default:
+				}
+			case interactionchannel.IntentContinue:
+				select {
+				case actions <- ui.ActionContinue:
+				default:
+				}
+			case interactionchannel.IntentNext:
+				select {
+				case actions <- ui.ActionNext:
+				default:
+				}
+			case interactionchannel.IntentSkip:
+				select {
+				case actions <- ui.ActionSkip:
+				default:
+				}
+			case interactionchannel.IntentQuit:
+				kh.ForceQuit()
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
