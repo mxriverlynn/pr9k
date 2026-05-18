@@ -41,7 +41,7 @@ func TestCmuxFooterRenderer_HelpExpanded_RenderIsNonEmpty(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(uichrome.MinTerminalWidth, uichrome.MinTerminalHeight)
 	r.HandleKey("?")
-	got := r.Render("")
+	got := r.Render("", "")
 	if got == "" {
 		t.Error("Render must return non-empty string when help is expanded")
 	}
@@ -55,7 +55,7 @@ func TestCmuxFooterRenderer_HelpExpanded_ShortPane_DoesNotPanic(t *testing.T) {
 	// Exactly at threshold — just enough height.
 	r.SetSize(uichrome.MinTerminalWidth, uichrome.MinTerminalHeight)
 	r.HandleKey("?")
-	got := r.Render("")
+	got := r.Render("", "")
 	if got == "" {
 		t.Error("Render must return non-empty string even for minimum-size pane")
 	}
@@ -70,7 +70,7 @@ func TestCmuxFooterRenderer_HelpExpanded_ShortPane_DoesNotPanic(t *testing.T) {
 func TestCmuxFooterRenderer_VersionLabel_MatchesVersion(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(80, 24)
-	got := r.Render("")
+	got := r.Render("", "")
 	want := "pr9k v" + version.Version
 	if !strings.Contains(got, want) {
 		t.Errorf("expected render to contain %q; got:\n%s", want, got)
@@ -86,7 +86,7 @@ func TestCmuxFooterRenderer_VersionLabel_MatchesVersion(t *testing.T) {
 func TestCmuxFooterRenderer_MinSizeAdvisory_BelowThreshold_Width(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(uichrome.MinTerminalWidth-1, uichrome.MinTerminalHeight)
-	got := r.Render("")
+	got := r.Render("", "")
 	if !strings.Contains(got, "≥") {
 		t.Errorf("expected min-size advisory below width threshold; got: %q", got)
 	}
@@ -100,7 +100,7 @@ func TestCmuxFooterRenderer_MinSizeAdvisory_BelowThreshold_Width(t *testing.T) {
 func TestCmuxFooterRenderer_MinSizeAdvisory_BelowThreshold_Height(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(uichrome.MinTerminalWidth, uichrome.MinTerminalHeight-1)
-	got := r.Render("")
+	got := r.Render("", "")
 	if !strings.Contains(got, "≥") {
 		t.Errorf("expected min-size advisory below height threshold; got: %q", got)
 	}
@@ -111,7 +111,7 @@ func TestCmuxFooterRenderer_MinSizeAdvisory_BelowThreshold_Height(t *testing.T) 
 func TestCmuxFooterRenderer_MinSizeAdvisory_AtThreshold_NoAdvisory(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(uichrome.MinTerminalWidth, uichrome.MinTerminalHeight)
-	got := r.Render("")
+	got := r.Render("", "")
 	if strings.Contains(got, "make this pane") {
 		t.Errorf("must NOT show advisory at threshold size; got: %q", got)
 	}
@@ -184,7 +184,7 @@ func TestCmuxOrchestratorPaneRender_AtThreshold_NoAdvisory(t *testing.T) {
 func TestCmuxFooterRenderer_Render_NormalMode_IncludesStatusLine(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(80, 24)
-	got := r.Render("[15:04] step 3/8")
+	got := r.Render("[15:04] step 3/8", "")
 	if !strings.Contains(got, "[15:04] step 3/8") {
 		t.Errorf("expected render to contain statusLine text; got: %q", got)
 	}
@@ -199,7 +199,7 @@ func TestCmuxFooterRenderer_HelpExpanded_SuppressesStatusLine(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(80, 24)
 	r.HandleKey("?")
-	got := r.Render("step 3/8")
+	got := r.Render("step 3/8", "")
 	if !strings.Contains(got, "quit") {
 		t.Errorf("expected help content (quit) while expanded; got: %q", got)
 	}
@@ -216,7 +216,7 @@ func TestCmuxFooterRenderer_HelpExpanded_SuppressesStatusLine(t *testing.T) {
 func TestCmuxFooterRenderer_MinSizeAdvisory_NoVersionLabel(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(uichrome.MinTerminalWidth-1, uichrome.MinTerminalHeight)
-	got := r.Render("anything")
+	got := r.Render("anything", "")
 	if strings.Contains(got, "pr9k v") {
 		t.Errorf("version label must not appear in advisory mode; got: %q", got)
 	}

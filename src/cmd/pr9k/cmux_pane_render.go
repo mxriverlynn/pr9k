@@ -38,23 +38,10 @@ func renderCmuxStateHeader(msg interactionchannel.StateHeader) string {
 	return sb.String()
 }
 
-// cmuxStepMarker returns the single-character marker for a step state, matching
-// the standard display's cellStyle glyph set.
+// cmuxStepMarker returns the single-character marker for a step state.
+// Delegates to ui.StepMarkerGlyph so the glyph set stays in one place.
 func cmuxStepMarker(state ui.StepState) string {
-	switch state {
-	case ui.StepActive:
-		return "▸"
-	case ui.StepDone:
-		return "✓"
-	case ui.StepFailed:
-		return "✗"
-	case ui.StepSkipped:
-		return "-"
-	case ui.StepTimedOutContinuing:
-		return "!"
-	default:
-		return " "
-	}
+	return ui.StepMarkerGlyph(state)
 }
 
 // renderCmuxHeaderPaneContent returns the string to display in the header

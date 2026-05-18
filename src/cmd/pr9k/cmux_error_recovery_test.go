@@ -1,3 +1,7 @@
+// Polling helpers in this file (pollModeErrorCount) use poll-with-condition
+// loops with bounded timeouts, not blind sleeps. Standard timeout budget: 5s
+// for workflow-step transitions, with 5ms poll interval. Sub-cases that wait
+// for orchestrator return use a separate 5s deadline.
 package main
 
 import (

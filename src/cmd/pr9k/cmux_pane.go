@@ -301,4 +301,5 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 // used in production when no real terminal keystroke reader is wired.
 type noopFooterKeySource struct{}
 
-func (noopFooterKeySource) Next() (string, bool) { return "", false }
+func (noopFooterKeySource) Next() (string, bool)   { return "", false }
+func (noopFooterKeySource) Ready() <-chan struct{} { return nil } // nil blocks forever in select

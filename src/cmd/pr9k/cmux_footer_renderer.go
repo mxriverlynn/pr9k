@@ -8,26 +8,20 @@ import (
 )
 
 // cmuxFooterRenderer holds the display state for the cmux footer pane.
-// It is responsible only for rendering: terminal dimensions, help-expand
-// toggle, and the current shortcut line pushed from the orchestrator.
+// It is responsible only for rendering: terminal dimensions and help-expand
+// toggle. shortcutLine is passed as a parameter to Render to avoid storing
+// shared mutable state that the keystroke goroutine and main select loop
+// would race over.
 type cmuxFooterRenderer struct {
 	termW        int
 	termH        int
 	helpExpanded bool
-	shortcutLine string
 }
 
 // newCmuxFooterRenderer creates a renderer with a generous default size so
 // normal rendering is used until SetSize is called with real terminal dimensions.
 func newCmuxFooterRenderer() *cmuxFooterRenderer {
 	return &cmuxFooterRenderer{termW: 999, termH: 999}
-}
-
-// SetShortcutLine replaces the currently displayed shortcut line. Called when
-// a StateFooter message arrives from the orchestrator or when the local footer
-// state machine transitions to a new mode.
-func (r *cmuxFooterRenderer) SetShortcutLine(line string) {
-	r.shortcutLine = line
 }
 
 // SetSize updates the pane's terminal dimensions.
@@ -47,8 +41,11 @@ func (r *cmuxFooterRenderer) HandleKey(key string) {
 }
 
 // Render returns the string to display in the footer pane. statusLine is the
-// current status-line script output (may be empty).
-func (r *cmuxFooterRenderer) Render(statusLine string) string {
+// current status-line script output (may be empty). shortcutLine is the
+// current mode shortcut hint (may be empty); it is passed as a parameter
+// rather than stored on the renderer to avoid a data race between the
+// keystroke goroutine and the main select loop (both call SetMode).
+func (r *cmuxFooterRenderer) Render(statusLine, shortcutLine string) string {
 	if cmuxPaneTooSmall(r.termW, r.termH) {
 		return cmuxMinSizeAdvisory()
 	}
@@ -70,8 +67,8 @@ func (r *cmuxFooterRenderer) Render(statusLine string) string {
 	}
 
 	parts := []string{versionLabel}
-	if r.shortcutLine != "" {
-		parts = append(parts, r.shortcutLine)
+	if shortcutLine != "" {
+		parts = append(parts, shortcutLine)
 	}
 	if statusLine != "" {
 		parts = append(parts, statusLine)

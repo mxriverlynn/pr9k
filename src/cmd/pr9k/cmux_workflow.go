@@ -82,7 +82,7 @@ func (h *cmuxHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 		h.iterLine = fmt.Sprintf("Iteration %d", iter)
 	}
 	if issueID != "" {
-		h.iterLine += " — Issue #" + issueID
+		h.iterLine += ui.IterationIssueSep + issueID
 	}
 	snap := h.snapshotLocked()
 	h.mu.Unlock()

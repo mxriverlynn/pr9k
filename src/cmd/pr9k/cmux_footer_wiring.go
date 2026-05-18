@@ -32,20 +32,22 @@ type footerPaneSink struct {
 }
 
 // SetMode is called by footerStateMachine on every local mode transition. It
-// updates the renderer's shortcut line and triggers a re-render. The shortcut
-// line is computed from the mode using the same ui constants that the
-// orchestrator's KeyHandler uses.
+// triggers a re-render with the new shortcut line. line is passed directly to
+// Render rather than stored on the renderer, eliminating the data race between
+// the keystroke goroutine (Step) and the main select loop (external SetMode).
 func (s *footerPaneSink) SetMode(mode int) {
 	line := footerShortcutForMode(ui.Mode(mode))
 	s.mu.Lock()
-	s.renderer.SetShortcutLine(line)
 	sl := s.statusLine
 	s.mu.Unlock()
-	_, _ = fmt.Fprint(s.out, s.renderer.Render(sl))
+	_, _ = fmt.Fprint(s.out, s.renderer.Render(sl, line))
 }
 
 // RecordIntent is called by footerStateMachine when a fully-resolved intent is
 // ready. It sends an Intent message to the orchestrator over the pane channel.
+// Send errors are intentionally ignored: the orchestrator may have closed the
+// channel during shutdown, and there is no logger available in the footer pane
+// (D-9). Best-effort delivery is acceptable here.
 func (s *footerPaneSink) RecordIntent(kind interactionchannel.IntentType) {
 	_ = s.ch.Send(interactionchannel.Intent{Kind: kind})
 }
@@ -90,6 +92,9 @@ func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch foote
 	machine := newFooterStateMachine(src, sink)
 
 	// Establish WaitGroup before starting the goroutine (concurrency standard).
+	// The goroutine blocks on src.Ready() rather than spinning: noopFooterKeySource
+	// returns a nil channel (blocks forever); FakeFooterKeySource signals the channel
+	// on Press. This prevents 100% CPU burn when no keys are available.
 	var wg sync.WaitGroup
 	kCtx, kCancel := context.WithCancel(ctx)
 	defer kCancel()
@@ -100,7 +105,7 @@ func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch foote
 			select {
 			case <-kCtx.Done():
 				return
-			default:
+			case <-src.Ready():
 				machine.Step()
 			}
 		}

@@ -1,3 +1,6 @@
+// Polling helpers in this file (waitConditionFP) use poll-with-condition loops
+// with bounded timeouts, not blind sleeps. Standard timeout budget: 3s for
+// subprocess execution, 2s for goroutine-exit, with 20ms poll interval.
 package main
 
 import (

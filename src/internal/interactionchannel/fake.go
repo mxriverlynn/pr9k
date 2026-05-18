@@ -269,12 +269,14 @@ func (p *FakeDisplayPane) Received() []Message {
 
 // FakeFooterKeySource is a test double for the footer pane's keystroke source.
 // Tests script a keystroke sequence via Press; the footer state machine
-// consumes keys via Next. The state machine reports its current mode via
-// SetMode and records forwarded intents via RecordIntent. All mutable state
-// is protected by mu.
+// consumes keys via Next. keyCh is a capacity-1 channel used as a level
+// trigger: Press signals it when adding to an empty queue, Next re-signals
+// it if keys remain after popping. This prevents the keystroke goroutine from
+// busy-spinning (Ready returns nil when using noopFooterKeySource in production).
 type FakeFooterKeySource struct {
 	mu            sync.Mutex
 	keys          []string
+	keyCh         chan struct{}
 	mode          int
 	lastIntent    IntentType
 	lastIntentSet bool
@@ -283,27 +285,46 @@ type FakeFooterKeySource struct {
 // NewFakeFooterKeySource returns an initialized FakeFooterKeySource with an
 // empty key queue.
 func NewFakeFooterKeySource() *FakeFooterKeySource {
-	return &FakeFooterKeySource{}
+	return &FakeFooterKeySource{keyCh: make(chan struct{}, 1)}
 }
 
-// Press appends key to the scripted key queue.
+// Press appends key to the scripted key queue and signals Ready if the queue
+// was previously empty.
 func (f *FakeFooterKeySource) Press(key string) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.keys = append(f.keys, key)
+	f.mu.Unlock()
+	select {
+	case f.keyCh <- struct{}{}:
+	default:
+	}
 }
 
 // Next pops and returns the next key from the queue. Returns ("", false) if
-// the queue is empty.
+// the queue is empty. Re-signals Ready if keys remain after the pop so the
+// goroutine loop is woken for each queued key.
 func (f *FakeFooterKeySource) Next() (string, bool) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if len(f.keys) == 0 {
+		f.mu.Unlock()
 		return "", false
 	}
 	k := f.keys[0]
 	f.keys = f.keys[1:]
+	remaining := len(f.keys)
+	f.mu.Unlock()
+	if remaining > 0 {
+		select {
+		case f.keyCh <- struct{}{}:
+		default:
+		}
+	}
 	return k, true
+}
+
+// Ready returns the channel that is signalled when keys are available.
+func (f *FakeFooterKeySource) Ready() <-chan struct{} {
+	return f.keyCh
 }
 
 // SetMode records the state machine's current mode. Called by the footer

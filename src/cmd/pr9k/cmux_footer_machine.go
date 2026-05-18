@@ -1,13 +1,20 @@
 package main
 
 import (
+	"sync"
+
 	"github.com/mxriverlynn/pr9k/src/internal/interactionchannel"
 	"github.com/mxriverlynn/pr9k/src/internal/ui"
 )
 
 // FooterKeySource is the source of raw key strings for the footer state machine.
 type FooterKeySource interface {
+	// Next returns the next available key. Returns ("", false) when no key is
+	// ready — callers must wait for Ready() to fire before calling Next.
 	Next() (string, bool)
+	// Ready returns a channel that receives or is closed when at least one key
+	// is available. A nil return blocks forever (used by noopFooterKeySource).
+	Ready() <-chan struct{}
 }
 
 // FooterStateSink receives mode transitions and resolved intents from the
@@ -24,9 +31,12 @@ type FooterStateSink interface {
 // footerStateMachine runs the footer pane's keyboard state machine.
 // It handles q/y quit-confirmation and n/y next-step-confirmation locally;
 // only fully resolved intents reach the sink.
+// mu protects mode and prev; sink calls are made outside the lock
+// (snapshot-unlock-dispatch, per docs/coding-standards/concurrency.md).
 type footerStateMachine struct {
 	src  FooterKeySource
 	sink FooterStateSink
+	mu   sync.Mutex
 	mode ui.Mode
 	prev ui.Mode
 }
@@ -39,7 +49,9 @@ func newFooterStateMachine(src FooterKeySource, sink FooterStateSink) *footerSta
 // SetMode updates the machine's current mode from an external push (e.g.,
 // a StateFooter message received from the orchestrator). The sink is notified.
 func (m *footerStateMachine) SetMode(mode ui.Mode) {
+	m.mu.Lock()
 	m.mode = mode
+	m.mu.Unlock()
 	m.sink.SetMode(int(mode))
 }
 
@@ -50,7 +62,10 @@ func (m *footerStateMachine) Step() bool {
 	if !ok {
 		return false
 	}
-	switch m.mode {
+	m.mu.Lock()
+	mode := m.mode
+	m.mu.Unlock()
+	switch mode {
 	case ui.ModeNormal:
 		m.handleNormal(key)
 	case ui.ModeError:
@@ -115,12 +130,17 @@ func (m *footerStateMachine) handleDone(key string) {
 }
 
 func (m *footerStateMachine) enterMode(next ui.Mode) {
+	m.mu.Lock()
 	m.prev = m.mode
 	m.mode = next
+	m.mu.Unlock()
 	m.sink.SetMode(int(next))
 }
 
 func (m *footerStateMachine) restoreMode() {
+	m.mu.Lock()
 	m.mode = m.prev
-	m.sink.SetMode(int(m.mode))
+	restored := m.mode
+	m.mu.Unlock()
+	m.sink.SetMode(int(restored))
 }

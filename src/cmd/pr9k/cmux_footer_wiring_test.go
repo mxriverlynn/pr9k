@@ -1,3 +1,8 @@
+// Polling helpers in this file (waitForOutputFW, drainIntentFromSent) are
+// poll-with-condition loops with bounded timeouts, not blind sleeps.
+// Standard timeout budget: 1s for render assertions, 2s for goroutine-exit
+// assertions, with 10ms poll interval. This keeps the test suite responsive
+// while accommodating CI scheduler jitter.
 package main
 
 import (
@@ -314,7 +319,7 @@ func TestFooterMachineWith_WorkspaceDone_SendsDoneAck(t *testing.T) {
 func TestFooterRenderer_NoIsolatedKeyHandler(t *testing.T) {
 	r := newCmuxFooterRenderer()
 	r.SetSize(80, 24)
-	out := r.Render("")
+	out := r.Render("", "")
 	if out == "" {
 		t.Error("expected non-empty render output")
 	}
