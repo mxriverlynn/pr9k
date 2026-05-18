@@ -1,6 +1,6 @@
 # Setting Up cmux for pr9k
 
-This guide covers installing cmux, verifying that pr9k can reach it, and understanding the dismissal gestures you will use to end a cmux-mode session.
+This guide covers installing cmux, verifying that pr9k can reach it, running a real workflow in cmux mode, and understanding the dismissal gestures you will use to end a cmux-mode session.
 
 > **Tested against:** cmux v0.64.6 (rolling-update policy: newer patch releases of the same minor are expected to work; breaking API changes are tracked under OI-1 in the implementation plan).
 
@@ -54,7 +54,7 @@ echo $CMUX_SOCKET_PATH
 
 If `CMUX_SOCKET_PATH` is unset, pr9k uses the platform default `/run/cmux.sock`. Override it by setting `CMUX_SOCKET_PATH` in your shell environment before running pr9k.
 
-## Step 4: Run pr9k in cmux mode
+## Step 4: Run pr9k in cmux mode against a real workflow
 
 From inside your cmux session, in the terminal pane where you want pr9k to run:
 
@@ -68,6 +68,30 @@ pr9k runs its standard preflight checks (Docker, Claude profile) and then its cm
 pr9k workspace: pr9k-myrepo-20260515T123456.000000000Z
 ```
 
+The four panes start immediately. The three visible panes each connect back to the (hidden) orchestrator over a Unix-socket interaction channel. Once all three have completed the readiness handshake (up to 10 seconds), the workflow begins.
+
+### What each pane shows
+
+| Pane | What you see |
+|---|---|
+| **Header** | Step-checkbox grid (one checkbox per step) and iteration counter, ticking over as steps complete |
+| **Log** | Streaming subprocess output — the same output you would see in standard mode's log panel |
+| **Footer** | Status-line output on its configured cadence, shortcut hints, and the pr9k version label |
+
+### Navigating the panes
+
+Focus the log pane in cmux to scroll back through output. Scrolling controls are your terminal emulator's standard scroll controls inside the focused pane. The log pane uses a viewport; all buffered lines are accessible.
+
+### Expanding inline help
+
+Press `?` in the footer pane to expand the shortcut reference inline above the footer row. The expansion is bounded to the available pane height. Press `Esc` to collapse it.
+
+### Quitting cleanly
+
+Press `q` in the footer pane. pr9k enters quit-confirmation mode; the footer shows a confirmation prompt. Press `y` to confirm. The orchestrator aborts the workflow cleanly, broadcasts a final state to each pane, and waits for acknowledgement. The workspace remains open in cmux showing the final state on each pane. Dismiss the workspace (Step 5) to return to your prior workspace.
+
+Press `Esc` after `q` to cancel quit without effect.
+
 ## Step 5: Dismiss the workspace
 
 When you are done inspecting the workspace, dismiss it using cmux's own controls. Two gestures both work:
@@ -79,6 +103,16 @@ When you are done inspecting the workspace, dismiss it using cmux's own controls
 Either gesture triggers the same pr9k teardown sequence: `WorkspaceClose`, focus restore to the prior workspace, and exit.
 
 After dismissal, your original workspace regains focus automatically.
+
+## Step 6: Verify log artifacts (optional)
+
+After a cmux-mode run, pr9k writes the same per-step JSONL artifacts as standard mode under:
+
+```
+<projectDir>/.pr9k/logs/<run-stamp>/
+```
+
+To confirm cmux mode produced equivalent output to a standard-mode run on the same workflow and inputs, compare the per-step `.jsonl` files. The content should match modulo run-specific fields (timestamps, run-stamp paths, width-dependent renders). This equivalence check is described in the Phase 2 implementation decision log at D-13.
 
 ## Orphan workspace recognition
 
@@ -106,9 +140,13 @@ pr9k: orphan workspace "pr9k-myrepo-..." could not be closed; dismiss it manuall
 | `cmux socket is disabled` | cmux config has socket disabled | Re-enable the socket in cmux's settings |
 | `cmux version is incompatible` | `system.identify` returned an unexpected name or error | Update cmux to v0.64.6 or later |
 | `CMUX_SOCKET_PATH parent directory ... is world-writable` | Socket parent dir is writable by all users | Correct the directory permissions |
+| `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
+| Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |
 
 ## References
 
 - [cmux mode feature doc](../features/cmux-mode.md)
 - [cmuxctl code package doc](../code-packages/cmuxctl.md)
+- [interactionchannel code package doc](../code-packages/interactionchannel.md)
 - [Implementation decision log — D-20 (allow-all caveat)](../plans/cmux-rebuild/phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md)
+- [Phase 2 implementation decision log — D-13 (log artifact equivalence)](../plans/cmux-rebuild/phase-2-real-workflow-runs/artifacts/implementation-decision-log.md)
