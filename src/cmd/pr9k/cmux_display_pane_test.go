@@ -358,3 +358,84 @@ func TestRenderCmuxStateHeader_MultipleSteps_GridLayout(t *testing.T) {
 		t.Errorf("renderCmuxStateHeader: expected [✗] for step c (StepFailed), got: %q", out)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cross-role guard tests (T-1, T-2)
+// ---------------------------------------------------------------------------
+
+// TestDisplayPane_LogPane_IgnoresStateHeader verifies that the log pane does not
+// render header content when it receives a StateHeader message. The role guard in
+// the dispatch loop must prevent header rendering in the log pane.
+func TestDisplayPane_LogPane_IgnoresStateHeader(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
+		go func() {
+			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
+		}()
+	})
+	defer server.Close()
+
+	// Send a StateHeader with a recognizable step name, then WorkspaceDone.
+	server.SendStateHeader(interactionchannel.StateHeader{
+		StepNames:  []string{"build-XYZ"},
+		StepStates: []int{int(ui.StepFailed)},
+	})
+	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
+	if !waitForDoneAck(t, server, "log", 2*time.Second) {
+		t.Fatal("log pane did not send DoneAck")
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "build-XYZ") {
+		t.Errorf("log pane rendered StateHeader step name — role guard is missing: %q", out)
+	}
+	if strings.Contains(out, "[✗]") || strings.Contains(out, "[✓]") {
+		t.Errorf("log pane rendered header step markers — role guard is missing: %q", out)
+	}
+}
+
+// TestDisplayPane_LogPane_HasNoKeyPath verifies that the log pane is
+// display-only: it produces no Intent even when it receives a StateLog message.
+// Spec D4 requires both display panes to be display-only.
+func TestDisplayPane_LogPane_HasNoKeyPath(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
+		go func() {
+			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
+		}()
+	})
+	defer server.Close()
+
+	server.SendStateLog(interactionchannel.StateLog{
+		Lines: [][]byte{[]byte("some log output")},
+	})
+	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
+	if !waitForDoneAck(t, server, "log", 2*time.Second) {
+		t.Fatal("log pane did not send DoneAck")
+	}
+
+	// Drain any remaining messages and verify no Intent was sent.
+	deadline := time.NewTimer(100 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		select {
+		case msg, ok := <-server.Recv():
+			if !ok {
+				return
+			}
+			if _, ok := msg.(interactionchannel.Intent); ok {
+				t.Error("log pane sent an Intent — it must be display-only with no key path")
+			}
+		case <-deadline.C:
+			return
+		}
+	}
+}
