@@ -289,22 +289,16 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 		return nil
 	}
 
-	for {
-		select {
-		case msg, ok := <-paneCh.Recv():
-			if !ok {
-				// Socket closed by orchestrator — stay alive for final-state render.
-				<-ctx.Done()
-				return nil
-			}
-			if _, ok := msg.(interactionchannel.WorkspaceDone); ok {
-				_ = paneCh.Send(interactionchannel.DoneAck{Role: "footer"})
-				// Keep running until context is cancelled or process is killed.
-				<-ctx.Done()
-				return nil
-			}
-		case <-ctx.Done():
-			return nil
-		}
-	}
+	// Run the footer state machine: consumes StateFooter from the interaction
+	// channel, renders mode-appropriate hints, and forwards resolved intents
+	// back to the orchestrator as Intent messages. The keystroke goroutine is
+	// WaitGroup-drained on context cancel.
+	runCmuxFooterMachineWith(ctx, noopFooterKeySource{}, paneCh, out)
+	return nil
 }
+
+// noopFooterKeySource is a FooterKeySource that never produces keys. It is
+// used in production when no real terminal keystroke reader is wired.
+type noopFooterKeySource struct{}
+
+func (noopFooterKeySource) Next() (string, bool) { return "", false }

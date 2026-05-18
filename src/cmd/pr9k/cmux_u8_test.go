@@ -9,20 +9,6 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// D-22: SetStatusLineActive(true) called in footer renderer constructor
-// ---------------------------------------------------------------------------
-
-// TestCmuxFooterRenderer_SetStatusLineActive_CalledInInit verifies that
-// newCmuxFooterRenderer unconditionally calls SetStatusLineActive(true) on the
-// KeyHandler so the ? key always opens the inline help expansion (D-22).
-func TestCmuxFooterRenderer_SetStatusLineActive_CalledInInit(t *testing.T) {
-	r := newCmuxFooterRenderer()
-	if !r.keyHandler.StatusLineActive() {
-		t.Error("newCmuxFooterRenderer must call SetStatusLineActive(true) on the KeyHandler (D-22)")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // D-12: ? toggles inline help expansion; esc collapses it
 // ---------------------------------------------------------------------------
 

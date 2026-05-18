@@ -3,26 +3,31 @@ package main
 import (
 	"strings"
 
-	"github.com/mxriverlynn/pr9k/src/internal/ui"
 	"github.com/mxriverlynn/pr9k/src/internal/uichrome"
 	"github.com/mxriverlynn/pr9k/src/internal/version"
 )
 
 // cmuxFooterRenderer holds the display state for the cmux footer pane.
+// It is responsible only for rendering: terminal dimensions, help-expand
+// toggle, and the current shortcut line pushed from the orchestrator.
 type cmuxFooterRenderer struct {
 	termW        int
 	termH        int
 	helpExpanded bool
-	keyHandler   *ui.KeyHandler
+	shortcutLine string
 }
 
-// newCmuxFooterRenderer creates a renderer. SetStatusLineActive(true) is called
-// unconditionally so ? always opens the inline help expansion (D-22).
+// newCmuxFooterRenderer creates a renderer with a generous default size so
+// normal rendering is used until SetSize is called with real terminal dimensions.
 func newCmuxFooterRenderer() *cmuxFooterRenderer {
-	actions := make(chan ui.StepAction, 10)
-	h := ui.NewKeyHandler(nil, actions)
-	h.SetStatusLineActive(true)
-	return &cmuxFooterRenderer{keyHandler: h}
+	return &cmuxFooterRenderer{termW: 999, termH: 999}
+}
+
+// SetShortcutLine replaces the currently displayed shortcut line. Called when
+// a StateFooter message arrives from the orchestrator or when the local footer
+// state machine transitions to a new mode.
+func (r *cmuxFooterRenderer) SetShortcutLine(line string) {
+	r.shortcutLine = line
 }
 
 // SetSize updates the pane's terminal dimensions.
@@ -64,10 +69,14 @@ func (r *cmuxFooterRenderer) Render(statusLine string) string {
 		return strings.Join(lines, "\n") + "\n" + versionLabel
 	}
 
-	if statusLine != "" {
-		return versionLabel + "\n" + statusLine
+	parts := []string{versionLabel}
+	if r.shortcutLine != "" {
+		parts = append(parts, r.shortcutLine)
 	}
-	return versionLabel
+	if statusLine != "" {
+		parts = append(parts, statusLine)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // buildFooterHelpLines returns the help text for the footer pane's inline
