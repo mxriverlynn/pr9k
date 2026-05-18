@@ -120,6 +120,77 @@ func TestAwaitReady_DuplicateReadyIdempotent(t *testing.T) {
 	}
 }
 
+// TestAwaitReady_UnknownRoleIgnored verifies that an unrecognized Ready.Role
+// does not count toward the all-ready condition. Only the canonical
+// "header", "log", and "footer" roles satisfy the handshake.
+func TestAwaitReady_UnknownRoleIgnored(t *testing.T) {
+	t.Parallel()
+	sock := sockPath(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server, err := interactionchannel.Serve(ctx, sock)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer server.Close()
+
+	// bogus role should not satisfy any handshake slot.
+	bogus := connectAndSendReady(t, ctx, sock, "bogus")
+	defer bogus.Close()
+	// header and log connect normally; footer never signals.
+	for _, role := range []string{"header", "log"} {
+		c := connectAndSendReady(t, ctx, sock, role)
+		defer c.Close()
+	}
+
+	// Allow the server time to receive all Ready messages before the deadline.
+	time.Sleep(20 * time.Millisecond)
+	err = server.AwaitReady(ctx, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("AwaitReady: expected non-nil error for unknown role, got nil")
+	}
+	if !strings.Contains(err.Error(), "footer") {
+		t.Errorf("AwaitReady error should name missing role 'footer', got: %v", err)
+	}
+}
+
+// TestAwaitReady_BlocksUntilClientsConnect verifies that AwaitReady blocks on
+// the readyNewCh select arm when called before any client has dialled. This
+// exercises the cold-start path where the fast-path check (channel.go:197-200)
+// cannot short-circuit because no roles are ready yet.
+func TestAwaitReady_BlocksUntilClientsConnect(t *testing.T) {
+	t.Parallel()
+	sock := sockPath(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server, err := interactionchannel.Serve(ctx, sock)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer server.Close()
+
+	// Call AwaitReady before any client connects, exercising the select loop.
+	done := make(chan error, 1)
+	go func() {
+		done <- server.AwaitReady(ctx, 2*time.Second)
+	}()
+
+	// Give the goroutine a moment to enter the blocking select.
+	time.Sleep(10 * time.Millisecond)
+
+	// Now connect all three panes.
+	for _, role := range []string{"header", "log", "footer"} {
+		c := connectAndSendReady(t, ctx, sock, role)
+		defer c.Close()
+	}
+
+	if err := <-done; err != nil {
+		t.Errorf("AwaitReady: expected nil when all roles connect after call, got %v", err)
+	}
+}
+
 // TestAwaitReady_ContextCancellation verifies that cancelling the context
 // passed to AwaitReady returns ctx.Err() cleanly without blocking.
 func TestAwaitReady_ContextCancellation(t *testing.T) {

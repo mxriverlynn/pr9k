@@ -161,10 +161,17 @@ func (c *Channel) readLoop(nc net.Conn, _ *conn) {
 	}
 }
 
-// notifyReady marks role as ready. If the role was not previously ready it
-// sends a signal to readyNewCh. Duplicate calls for the same role are no-ops.
-// Safe to call from any goroutine.
+// notifyReady marks role as ready. Only the canonical display roles
+// ("header", "log", "footer") are accepted; unknown roles are silently
+// dropped to prevent a misbehaving client from satisfying the handshake.
+// If the role was not previously ready it sends a signal to readyNewCh.
+// Duplicate calls for the same role are no-ops. Safe to call from any goroutine.
 func (c *Channel) notifyReady(role string) {
+	switch role {
+	case "header", "log", "footer":
+	default:
+		return
+	}
 	c.readyMu.Lock()
 	if c.readyRoles == nil || c.readyRoles[role] {
 		c.readyMu.Unlock()
