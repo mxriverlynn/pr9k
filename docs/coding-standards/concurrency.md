@@ -512,6 +512,84 @@ for {
 
 Without the guard, a cancellation that races with a timer expiry can cause one extra poll iteration to run after the goroutine was supposed to stop — potentially issuing an RPC against a closed connection or reporting a spurious error.
 
+## Write goroutine closes conn on exit to unblock the reader
+
+In a three-goroutine connection model (read + write + watcher), the write goroutine must close `nc` when it exits so the paired read goroutine's blocked `io.ReadFull` unblocks promptly. Without this, a write failure leaves the reader waiting until the watcher eventually cancels the context — adding unnecessary latency to connection teardown.
+
+```go
+// Write goroutine: serializes outbound messages; closes nc on exit.
+go func() {
+    defer c.wg.Done()
+    defer c.removeConn(co)
+    c.writeLoop(nc, co)
+    // Close nc so readLoop's io.ReadFull unblocks promptly on write failure,
+    // rather than waiting for ctx cancellation to reach the watcher goroutine.
+    _ = nc.Close()
+}()
+
+// Watcher goroutine: closes nc when the Channel context is done (normal shutdown).
+go func() {
+    defer c.wg.Done()
+    <-c.ctx.Done()
+    _ = nc.Close()
+}()
+```
+
+`net.Conn.Close()` is idempotent, so the watcher's `nc.Close()` on context cancellation and the write goroutine's `nc.Close()` on write failure do not interfere.
+
+## Stop() must join every goroutine it starts before returning
+
+Any `Stop()`, `Close()`, or `Shutdown()` method that claims to fully stop a component must join — via channel drain or WaitGroup — every goroutine started by that component. A partial stop (one that initiates shutdown without joining) makes callers unsafe: code that runs after `Stop()` returns may race with goroutines still doing network I/O or accessing shared state.
+
+When `Stop()` closes a socket to interrupt an in-flight I/O goroutine, it must drain the goroutine's done channel before returning:
+
+```go
+case <-c.done:
+    // Stop() called while I/O goroutine is in-flight.
+    // disconnect() closes the socket so the goroutine exits promptly;
+    // <-ioDone joins it so Stop() truly completes before returning.
+    timer.Stop()
+    disconnect()
+    call.reply <- rpcResult{err: fmt.Errorf("cmuxctl: %s: client stopped", call.method)}
+    <-ioDone
+    return
+```
+
+The same obligation applies to background goroutines started during construction: if `New()` starts a goroutine, `Stop()` must join it even for goroutines that were never given work.
+
+## Don't spawn goroutines to close resources that Close() already handles
+
+Never spawn an anonymous goroutine whose sole purpose is to close a resource (listener, connection, file) that an explicit `Close()` method already closes. Such goroutines:
+
+- Are not tracked by any WaitGroup, so they can execute after `Close()` has already returned and cleaned up.
+- Create a double-close race — both the anonymous goroutine and `Close()` call `Close()` on the same resource.
+- Add noise without adding any lifecycle guarantee the caller can rely on.
+
+```go
+// Bad — anonymous goroutine races with the explicit ln.Close() in Close().
+func (c *Channel) Serve(socketPath string) error {
+    ln, err := net.Listen("unix", socketPath)
+    // ...
+    go func() { <-c.ctx.Done(); ln.Close() }() // redundant and racy
+    // ...
+}
+
+func (c *Channel) Close() {
+    c.cancel()
+    ln.Close() // already closed here; anonymous goroutine races this
+    c.wg.Wait()
+}
+
+// Good — context cancellation unblocks Accept; the explicit Close() is sufficient.
+func (c *Channel) Close() {
+    c.cancel()
+    _ = c.ln.Close() // unblocks Accept in the accept goroutine
+    c.wg.Wait()
+}
+```
+
+If context cancellation alone does not unblock a blocking call (e.g., `Accept`), close the resource explicitly in `Close()` — not via an anonymous goroutine.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -530,3 +608,5 @@ Without the guard, a cancellation that races with a timer expiry can cause one e
 - `src/cmd/pr9k/cmux_signal.go` — `runCmuxSignalHandler` as the canonical two-goroutine watchdog+cleanup example (issue #223)
 - `src/internal/cmuxctl/runphase1.go` — `RunPhase1` as the canonical `sync.Once` + named-return teardown error injection example (issue #221/224)
 - `src/internal/cmuxctl/dismissal.go` — `DismissalObserver.run` as the canonical ctx.Err() guard after timer.C fire example (issue #222)
+- `src/internal/interactionchannel/channel.go` — `startConn` as the canonical write-goroutine-closes-conn pattern; absence of anonymous listener-close goroutine as the canonical redundant-goroutine avoidance example (cmux-p2 review F1/F2)
+- `src/internal/cmuxctl/real.go` — `run` method `<-ioDone` drain in the `<-c.done` case as the canonical Stop()-must-join-all-goroutines example (cmux-p2 review F3)
