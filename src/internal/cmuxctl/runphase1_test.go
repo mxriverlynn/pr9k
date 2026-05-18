@@ -877,3 +877,75 @@ func TestRunPhase1_SpawnEnvHasSocket(t *testing.T) {
 		}
 	}
 }
+
+// TP-001: socket-path format is the U4+ contract.
+// Asserts that PR9K_CMUX_SOCKET follows <projectDir>/.pr9k/cmux-pane-<name>.sock.
+func TestRunPhase1_SpawnEnv_SocketPathFormat(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	projectDir := t.TempDir()
+	var buf bytes.Buffer
+	if err := cmuxctl.RunPhase1(context.Background(), fake, projectDir, &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	if len(spawns) == 0 {
+		t.Fatal("no SurfaceSpawn calls recorded")
+	}
+
+	socketPath := spawns[0].Env["PR9K_CMUX_SOCKET"]
+	prefix := projectDir + "/.pr9k/cmux-pane-"
+	if !strings.HasPrefix(socketPath, prefix) {
+		t.Errorf("socket path %q does not start with %q", socketPath, prefix)
+	}
+	if !strings.HasSuffix(socketPath, ".sock") {
+		t.Errorf("socket path %q does not end with .sock", socketPath)
+	}
+	// Extract the middle segment (workspace name portion after "cmux-pane-" and before ".sock")
+	middle := strings.TrimSuffix(strings.TrimPrefix(socketPath, prefix), ".sock")
+	if middle == "" {
+		t.Errorf("socket path %q has empty workspace-name segment between %q and .sock", socketPath, prefix)
+	}
+}
+
+// TP-002: all four panes share one socket.
+// Pins the invariant that spawnEnv is built once, not per-role.
+func TestRunPhase1_SpawnEnv_AllPanesShareSocket(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := cmuxctl.RunPhase1(context.Background(), fake, t.TempDir(), &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+	if len(spawns) != 4 {
+		t.Fatalf("expected 4 SurfaceSpawn calls, got %d", len(spawns))
+	}
+
+	first := spawns[0].Env["PR9K_CMUX_SOCKET"]
+	if first == "" {
+		t.Fatal("spawn 0: PR9K_CMUX_SOCKET is empty")
+	}
+	for i, sp := range spawns[1:] {
+		got := sp.Env["PR9K_CMUX_SOCKET"]
+		if got != first {
+			t.Errorf("spawn %d PR9K_CMUX_SOCKET = %q, want %q (all panes must share one socket)", i+1, got, first)
+		}
+	}
+}
