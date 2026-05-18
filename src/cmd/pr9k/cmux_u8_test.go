@@ -188,3 +188,53 @@ func TestCmuxOrchestratorPaneRender_AtThreshold_NoAdvisory(t *testing.T) {
 		t.Errorf("orchestrator pane must NOT show advisory at threshold; got: %q", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Behavior gap tests (recommended additions from test-plan.md)
+// ---------------------------------------------------------------------------
+
+// TestCmuxFooterRenderer_Render_NormalMode_IncludesStatusLine verifies that
+// Render includes the statusLine text and version label in normal (non-expanded) mode.
+func TestCmuxFooterRenderer_Render_NormalMode_IncludesStatusLine(t *testing.T) {
+	r := newCmuxFooterRenderer()
+	r.SetSize(80, 24)
+	got := r.Render("[15:04] step 3/8")
+	if !strings.Contains(got, "[15:04] step 3/8") {
+		t.Errorf("expected render to contain statusLine text; got: %q", got)
+	}
+	if !strings.Contains(got, "pr9k v"+version.Version) {
+		t.Errorf("expected render to contain version label; got: %q", got)
+	}
+}
+
+// TestCmuxFooterRenderer_HelpExpanded_SuppressesStatusLine verifies that when
+// help is expanded, the statusLine content is suppressed and help text is shown.
+func TestCmuxFooterRenderer_HelpExpanded_SuppressesStatusLine(t *testing.T) {
+	r := newCmuxFooterRenderer()
+	r.SetSize(80, 24)
+	r.HandleKey("?")
+	got := r.Render("step 3/8")
+	if !strings.Contains(got, "quit") {
+		t.Errorf("expected help content (quit) while expanded; got: %q", got)
+	}
+	if strings.Contains(got, "step 3/8") {
+		t.Errorf("statusLine must be suppressed while help is expanded; got: %q", got)
+	}
+	if !strings.Contains(got, "pr9k v"+version.Version) {
+		t.Errorf("expected version label while help is expanded; got: %q", got)
+	}
+}
+
+// TestCmuxFooterRenderer_MinSizeAdvisory_NoVersionLabel verifies that below
+// the minimum-size threshold, the advisory is the sole output — no version label.
+func TestCmuxFooterRenderer_MinSizeAdvisory_NoVersionLabel(t *testing.T) {
+	r := newCmuxFooterRenderer()
+	r.SetSize(uichrome.MinTerminalWidth-1, uichrome.MinTerminalHeight)
+	got := r.Render("anything")
+	if strings.Contains(got, "pr9k v") {
+		t.Errorf("version label must not appear in advisory mode; got: %q", got)
+	}
+	if got != cmuxMinSizeAdvisory() {
+		t.Errorf("expected advisory-only output; got: %q", got)
+	}
+}
