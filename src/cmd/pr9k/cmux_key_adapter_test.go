@@ -131,6 +131,110 @@ func TestFooterMachine_NormalMode_NextConfirmEsc_ProducesNoIntent(t *testing.T) 
 	}
 }
 
+// T1: q in ModeError enters ModeQuitConfirm — not auto-quit.
+func TestFooterMachine_ErrorMode_QEntersModeQuitConfirm(t *testing.T) {
+	src := interactionchannel.NewFakeFooterKeySource()
+	src.Press("q")
+	m := newFooterStateMachine(src, src)
+	m.SetMode(ui.ModeError)
+	m.Step()
+
+	if got := src.Mode(); got != int(ui.ModeQuitConfirm) {
+		t.Errorf("expected ModeQuitConfirm (%d), got %d", int(ui.ModeQuitConfirm), got)
+	}
+	_, ok := src.LastForwardedIntent()
+	if ok {
+		t.Error("expected no intent after q in ModeError, but one was forwarded")
+	}
+}
+
+// T2: q then esc from ModeError restores ModeError (not Normal).
+func TestFooterMachine_ErrorMode_QEscRestoresModeError(t *testing.T) {
+	src := interactionchannel.NewFakeFooterKeySource()
+	src.Press("q")
+	src.Press("esc")
+	m := newFooterStateMachine(src, src)
+	m.SetMode(ui.ModeError)
+	m.Step() // q → ModeQuitConfirm
+	m.Step() // esc → restoreMode() → back to ModeError
+
+	if got := src.Mode(); got != int(ui.ModeError) {
+		t.Errorf("expected ModeError (%d) after q+esc, got %d", int(ui.ModeError), got)
+	}
+	_, ok := src.LastForwardedIntent()
+	if ok {
+		t.Error("expected no intent after q+esc from ModeError, but one was forwarded")
+	}
+}
+
+// T3: ModeQuitting swallows all keys — no new intent and mode stays Quitting.
+func TestFooterMachine_ModeQuitting_SwallowsAllKeys(t *testing.T) {
+	src := interactionchannel.NewFakeFooterKeySource()
+	// First drive q+y to enter Quitting and produce one IntentQuit.
+	src.Press("q")
+	src.Press("y")
+	// Then fire every possible key that could produce another intent.
+	for _, k := range []string{"q", "y", "r", "c", "n"} {
+		src.Press(k)
+	}
+	m := newFooterStateMachine(src, src)
+	m.Step() // q → ModeQuitConfirm
+	m.Step() // y → IntentQuit + ModeQuitting
+	// Drain remaining keys; none should produce an intent or mode change.
+	for m.Step() {
+	}
+
+	if got := src.Mode(); got != int(ui.ModeQuitting) {
+		t.Errorf("expected ModeQuitting (%d), got %d", int(ui.ModeQuitting), got)
+	}
+	// Exactly one intent (the original IntentQuit) must have been forwarded.
+	intent, ok := src.LastForwardedIntent()
+	if !ok {
+		t.Fatal("expected exactly one IntentQuit, got none")
+	}
+	if intent != interactionchannel.IntentQuit {
+		t.Errorf("expected IntentQuit, got %q", intent)
+	}
+}
+
+// T4: ModeDone accepts only q (r/c/n are no-ops; q+y emits IntentQuit).
+func TestFooterMachine_ModeDone_OnlyQAccepted(t *testing.T) {
+	src := interactionchannel.NewFakeFooterKeySource()
+	src.Press("r")
+	src.Press("c")
+	src.Press("n")
+	m := newFooterStateMachine(src, src)
+	m.SetMode(ui.ModeDone)
+	m.Step() // r — no-op
+	m.Step() // c — no-op
+	m.Step() // n — no-op
+
+	if got := src.Mode(); got != int(ui.ModeDone) {
+		t.Errorf("after r/c/n: expected ModeDone (%d), got %d", int(ui.ModeDone), got)
+	}
+	_, ok := src.LastForwardedIntent()
+	if ok {
+		t.Error("expected no intent after r/c/n in ModeDone, but one was forwarded")
+	}
+
+	// Now press q → ModeQuitConfirm, then y → IntentQuit.
+	src.Press("q")
+	src.Press("y")
+	m.Step() // q → ModeQuitConfirm
+	m.Step() // y → IntentQuit
+
+	if got := src.Mode(); got != int(ui.ModeQuitting) {
+		t.Errorf("after q+y: expected ModeQuitting (%d), got %d", int(ui.ModeQuitting), got)
+	}
+	intent, ok := src.LastForwardedIntent()
+	if !ok {
+		t.Fatal("expected IntentQuit after q+y from ModeDone, got none")
+	}
+	if intent != interactionchannel.IntentQuit {
+		t.Errorf("expected IntentQuit, got %q", intent)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Key handler adapter tests (AC: intent round-trips, mode push, race window)
 // ---------------------------------------------------------------------------
