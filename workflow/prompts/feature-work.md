@@ -6,7 +6,7 @@ Issue #{{ISSUE_ID}}: {{ISSUE_BODY}}
 Project card:
 {{PROJECT_CARD}}
 
-Implement github issue #{{ISSUE_ID}} in the current branch (do not switch branches) using strict TDD self-healing. ONLY WORK ON A SINGLE TASK.
+Implement github issue #{{ISSUE_ID}} in the current branch (do not switch branches) using the `/han:tdd` skill. ONLY WORK ON A SINGLE TASK.
 
 ## UI Design References
 
@@ -21,7 +21,7 @@ Scan the issue body and `gh issue view {{ISSUE_ID}}` output for image URLs. Trea
 - Inline markdown image links to `raw.githubusercontent.com/OWNER/REPO/REF/PATH`
 - Other direct image URLs in the body
 
-If there are zero candidates, skip to the TDD self-healing loop.
+If there are zero candidates, skip to the TDD implementation step.
 
 ### 2. Fetch each candidate with auth
 
@@ -54,24 +54,24 @@ For each image that passed steps 2 and 3, write a processed copy under `.pr9k/ar
 
 Append one line per candidate to `.pr9k/artifacts/ui-designs/fetch-log.txt` with the URL, the outcome (`fetched` / `http-<code>` / `not-an-image:<mime>` / `decode-failed` / `processed`), and the reason. This is the audit trail when the user asks why an image was missing.
 
-Reference only the files under `.pr9k/artifacts/ui-designs/processed/` as visual references. If that directory is empty after step 4, proceed to the TDD loop without any UI references and note in `.pr9k/artifacts/progress.txt` that no design images could be loaded for this issue (with the URLs and reasons from the fetch log).
+Reference only the files under `.pr9k/artifacts/ui-designs/processed/` as visual references. If that directory is empty after step 4, proceed to the TDD implementation step without any UI references and note in `.pr9k/artifacts/progress.txt` that no design images could be loaded for this issue (with the URLs and reasons from the fetch log).
 
-## TDD self-healing loop
+## TDD implementation
 
-1. Write acceptance tests derived from the issue's acceptance criteria. Run the test suite and confirm the new tests FAIL for the right reason. If a new test passes before any production code is written, rewrite it so it actually exercises the new behavior.
+Use the `/han:tdd` skill to implement the acceptance criteria for this issue. The skill drives behavior-by-behavior red-green-refactor with an enforced observed-failure gate.
 
-2. Enter the loop. MAXIMUM 20 iterations. Each iteration:
-   - Run the project's full verification command (tests + lint + vet / type-check). For this repo's Go code that is `make ci`; for other stacks use the equivalent (e.g. `npm run check`, `pytest && ruff check`).
-   - Parse the output, pick ONE failing test, and make the smallest production-code edit that advances it.
-   - Rerun verification.
-   - If a previously-passing test regresses, REVERT the last edit and try a different approach.
-   - Append one JSON line per iteration to `.pr9k/artifacts/tdd-log.txt` in the target repo's working directory: `{"n": N, "duration_s": S, "outcome": "red|green|reverted", "note": "..."}`. Do NOT write to `iteration.jsonl` — that file is owned by pr9k itself and writing to it will corrupt the run.
+When invoking the skill, pass it:
+- The acceptance criteria from issue #{{ISSUE_ID}} as the behavior list to drive from
+- The processed UI design references (if any) under `.pr9k/artifacts/ui-designs/processed/`
+- A 20-behavior cap — if the skill has not reached green on all behaviors by then, stop and record the blocked state
 
-3. Exit only when all tests pass AND lint/vet/type-check are clean. If the 20-iteration cap is hit first, stop, record the blocked state, and continue with the obligations below — do not keep looping past the cap.
+While the skill runs, append one JSON line per behavior cycle to `.pr9k/artifacts/tdd-log.txt` in the target repo's working directory: `{"n": N, "duration_s": S, "outcome": "red|green|reverted", "note": "..."}`. Do NOT write to `iteration.jsonl` — that file is owned by pr9k itself and writing to it will corrupt the run.
 
-4. Write a short summary after the loop: total iterations used, time-to-green (or time-to-blocked), and any abandoned approaches. Include this summary in the github issue comment and the .pr9k/artifacts/progress.txt entry.
+After the skill returns, run the project's full verification command (tests + lint + vet / type-check) one more time and confirm it is clean. For this repo's Go code that is `make ci`; for other stacks use the equivalent (e.g. `npm run check`, `pytest && ruff check`). If verification fails, fix the failure before continuing.
 
-## After the loop
+Write a short summary after the skill returns: total behaviors completed, time-to-green (or time-to-blocked), and any abandoned approaches. Include this summary in the github issue comment and the .pr9k/artifacts/progress.txt entry.
+
+## After the TDD skill returns
 
 5. Check off each completed Acceptance Criterion in github issue #{{ISSUE_ID}}.
 6. Add a comment to github issue {{ISSUE_ID}} with your progress and the TDD summary.
