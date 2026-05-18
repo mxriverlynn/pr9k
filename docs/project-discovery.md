@@ -27,7 +27,7 @@
 - Package manager: Go modules
 - Dependency manifest: `src/go.mod`
 - Module: `github.com/mxriverlynn/pr9k/src`
-- Current version: `0.10.0` (single source of truth: `src/internal/version/version.go`)
+- Current version: `0.11.0` (single source of truth: `src/internal/version/version.go`)
 - Direct external dependencies: `github.com/atotto/clipboard` v0.1.4, `github.com/charmbracelet/bubbletea` v1.3.10 (TUI framework), `github.com/charmbracelet/bubbles` v1.0.0 (viewport widget), `github.com/charmbracelet/lipgloss` v1.1.0 (styling), `github.com/charmbracelet/x/ansi` v0.11.6, `github.com/mattn/go-runewidth` v0.0.19, `github.com/muesli/termenv` v0.16.0, `github.com/rivo/uniseg` v0.4.7, `github.com/spf13/cobra` v1.10.2, `github.com/spf13/pflag` v1.0.9, `golang.org/x/sys` v0.43.0, `golang.org/x/term` v0.42.0
 
 ### Frameworks and Tooling
