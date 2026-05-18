@@ -403,9 +403,12 @@ When a long-running goroutine (e.g., a workspace teardown that may block on RPCs
 
 The started gate channel prevents a race where both goroutines consume signals from the same channel: the watchdog only begins listening after the cleanup goroutine has confirmed it received the first signal.
 
+Pass a `done` channel that the caller closes when the monitored operation returns normally. Both goroutines select on `done` so they exit cleanly when no signal was received, rather than leaking blocked goroutines if the caller returns without terminating the process.
+
 ```go
 func runCmuxSignalHandler(
     sigCh <-chan os.Signal,
+    done <-chan struct{},
     teardownOnce *sync.Once,
     teardownFn func(),
     setShuttingDown func(),
@@ -415,22 +418,32 @@ func runCmuxSignalHandler(
 
     // Cleanup: first signal → set flag → close gate → run teardown (may block).
     go func() {
-        <-sigCh
-        setShuttingDown()
-        close(started)
-        teardownOnce.Do(teardownFn)
+        select {
+        case <-sigCh:
+            setShuttingDown()
+            close(started)
+            teardownOnce.Do(teardownFn)
+        case <-done:
+        }
     }()
 
     // Watchdog: wait for cleanup to start, then force exit on second signal.
     go func() {
-        <-started
-        <-sigCh
-        exitFn(1)
+        select {
+        case <-started:
+        case <-done:
+            return
+        }
+        select {
+        case <-sigCh:
+            exitFn(1)
+        case <-done:
+        }
     }()
 }
 ```
 
-Inject `exitFn` rather than calling `os.Exit` directly so the handler is testable without spawning a subprocess. Inject `setShuttingDown` as a separate argument so tests can verify flag transitions independently from `teardownFn` execution.
+The caller closes `done` after `signal.Stop(sigCh)` so no new signals can arrive after `done` is closed. Inject `exitFn` rather than calling `os.Exit` directly so the handler is testable without spawning a subprocess. Inject `setShuttingDown` as a separate argument so tests can verify flag transitions independently from `teardownFn` execution.
 
 ## sync.Once teardown with named-return error injection
 

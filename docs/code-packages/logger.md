@@ -16,6 +16,7 @@ A concurrent-safe file logger that writes timestamped, context-prefixed lines to
 
 Key files:
 - `src/internal/logger/logger.go` — Logger struct, NewLogger, SetContext, Log, Close
+- `src/internal/logger/equivalence.go` — CompareRunDirs, for test use only
 - `src/internal/logger/logger_test.go` — Unit tests for logging behavior
 
 ## Architecture
@@ -50,6 +51,7 @@ Key files:
 | File | Purpose |
 |------|---------|
 | `src/internal/logger/logger.go` | Logger struct and all methods |
+| `src/internal/logger/equivalence.go` | `CompareRunDirs` — test-only artifact equivalence comparator |
 | `src/internal/logger/logger_test.go` | Unit tests for logging |
 
 ## Core Types
@@ -183,6 +185,26 @@ func (l *Logger) Close() error {
 }
 ```
 
+## Log Artifact Equivalence
+
+`CompareRunDirs` compares two per-run artifact directories for content equivalence modulo run-specifics. It is intended for cmux-mode integration tests that verify the orchestrator produces log artifacts equivalent to a standard-mode run (D-13).
+
+```go
+// CompareRunDirs is intended for test use only. Production code must not call it.
+func CompareRunDirs(refDir, candDir string) (ok bool, diffs []string)
+```
+
+`refDir` and `candDir` are paths to two run-stamp directories (e.g. `<projectDir>/.pr9k/logs/<run-stamp>/`). Returns `(true, nil)` on equivalence; `(false, diffs)` where each diff entry is a string of the form `"diverged at file <name> line <N>: ref=<...> cand=<...>"`.
+
+**Equivalence rules:**
+
+- For each `.jsonl` or `.log` file in `refDir`, a file with the same base name must exist in `candDir`.
+- Per-file comparison is line-by-line after stripping embedded wall-clock timestamps (matched by `\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]`).
+- Lines that consist entirely of repeated separator characters (`[-=]{4,}`) are skipped as width-dependent renders.
+- The run-stamp directory names themselves are not compared (only the file contents inside).
+
+The scanner buffer is set to 256 KiB per `go-patterns.md`, since JSONL lines from `claudestream` can exceed the default 64 KiB limit.
+
 ## Error Handling
 
 | Scenario | Error Message | Behavior |
@@ -195,6 +217,7 @@ func (l *Logger) Close() error {
 ## Testing
 
 - `src/internal/logger/logger_test.go` — Tests for NewLogger, Log with/without context, Close idempotency, write-after-close error
+- `src/internal/logger/equivalence_test.go` — Tests for CompareRunDirs: matching dirs, mismatched content, missing candidate file, wall-clock normalization, width-dependent line filtering
 
 ## Additional Information
 
@@ -202,6 +225,7 @@ func (l *Logger) Close() error {
 - [Subprocess Execution & Streaming](../features/subprocess-execution.md) — How scanner goroutines write to the logger
 - [CLI & Configuration](../features/cli-configuration.md) — How the working directory is captured at startup and governs the log file location
 - [Workflow Orchestration](../features/workflow-orchestration.md) — Where log context (iteration number) is set during the run loop
+- [cmux Mode](../features/cmux-mode.md) — Log artifacts section and D-13 equivalence definition that `CompareRunDirs` implements
 - [Concurrency](../coding-standards/concurrency.md) — Coding standards for mutex-protected shared writers
 - [Error Handling](../coding-standards/error-handling.md) — Coding standards for bufio.Writer error surfacing and package-prefixed errors
 - [Testing](../coding-standards/testing.md) — Coding standard for testing closeable types for idempotency (applies to Logger.Close)
