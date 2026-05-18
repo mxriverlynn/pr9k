@@ -73,12 +73,13 @@ func TestAwaitDoneAcks_ClosedChannel_ReturnsEarly(t *testing.T) {
 // runCmuxOrchestratorWith sends WorkspaceDone after the readiness handshake.
 func TestWorkspaceDone_OrchestratorBroadcastsWorkspaceDone(t *testing.T) {
 	fake := interactionchannel.NewFakeInteractionChannel()
-	// Pre-inject DoneAcks so the orchestrator can complete.
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "header"})
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "log"})
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "footer"})
-
 	projectDir := t.TempDir()
+	setupWorkflowInProjectDir(t, projectDir)
+
+	// Inject DoneAcks after WorkspaceDone is broadcast (matching real-world
+	// timing: panes respond to WorkspaceDone, not pre-loaded at startup).
+	injectAcksAfterWorkspaceDone(fake, 5*time.Second)
+
 	ctx := context.Background()
 
 	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake); err != nil {
@@ -102,11 +103,10 @@ func TestWorkspaceDone_OrchestratorBroadcastsWorkspaceDone(t *testing.T) {
 // DoneAck from all three display roles.
 func TestWorkspaceDone_OrchestratorClosesChannelAfterAllAcks(t *testing.T) {
 	fake := interactionchannel.NewFakeInteractionChannel()
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "header"})
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "log"})
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "footer"})
-
 	projectDir := t.TempDir()
+	setupWorkflowInProjectDir(t, projectDir)
+	injectAcksAfterWorkspaceDone(fake, 5*time.Second)
+
 	ctx := context.Background()
 
 	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake); err != nil {
@@ -123,11 +123,11 @@ func TestWorkspaceDone_OrchestratorClosesChannelAfterAllAcks(t *testing.T) {
 // have sent DoneAck.
 func TestWorkspaceDone_OrchestratorClosesChannelAfterTimeout(t *testing.T) {
 	fake := interactionchannel.NewFakeInteractionChannel()
-	// Only 2 of 3 acks arrive — footer never acks.
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "header"})
-	fake.InjectMessage(interactionchannel.DoneAck{Role: "log"})
-
 	projectDir := t.TempDir()
+	setupWorkflowInProjectDir(t, projectDir)
+	// Only 2 of 3 acks arrive — footer never acks. The orchestrator must time out.
+	injectTwoAcksAfterWorkspaceDone(fake, 5*time.Second)
+
 	ctx := context.Background()
 	timeout := 100 * time.Millisecond
 
@@ -154,6 +154,7 @@ func TestWorkspaceDone_OrchestratorClosesChannelAfterTimeout(t *testing.T) {
 func TestWorkspaceDone_OrchestratorUnlinksSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "test.sock")
 	projectDir := t.TempDir()
+	setupWorkflowInProjectDir(t, projectDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

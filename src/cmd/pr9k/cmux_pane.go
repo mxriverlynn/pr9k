@@ -116,8 +116,17 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 		return fmt.Errorf("cmux-pane: orchestrator: handshake: %w", err)
 	}
 
-	// Workflow runs here — real implementation ships in a later work unit.
-	exitCode := 0
+	// Resolve the workflow bundle directory and load the step configuration.
+	workflowDir, err := cli.ResolveWorkflowDir(projectDir)
+	if err != nil {
+		return fmt.Errorf("cmux-pane: orchestrator: resolve workflow dir: %w", err)
+	}
+	sf, err := steps.LoadSteps(workflowDir)
+	if err != nil {
+		return fmt.Errorf("cmux-pane: orchestrator: load steps: %w", err)
+	}
+
+	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf)
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})
