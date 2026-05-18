@@ -163,20 +163,27 @@ func awaitDoneAcks(recv <-chan interactionchannel.Message, timeout time.Duration
 // to final-state render and sending DoneAck, then keeps running until killed
 // (context cancel or process exit by the workspace teardown).
 func runCmuxHeaderPane(ctx context.Context, socketPath string) error {
-	return runCmuxDisplayPane(ctx, socketPath, "header")
+	return runCmuxDisplayPaneWith(ctx, socketPath, "header", os.Stdout)
 }
 
 // runCmuxLogPane is the entry point for the log pane process. Symmetric to
 // runCmuxHeaderPane.
 func runCmuxLogPane(ctx context.Context, socketPath string) error {
-	return runCmuxDisplayPane(ctx, socketPath, "log")
+	return runCmuxDisplayPaneWith(ctx, socketPath, "log", os.Stdout)
 }
 
-// runCmuxDisplayPane implements the shared interaction-channel lifecycle for a
-// non-footer display pane. It dials socketPath, sends Ready{role}, and loops
-// reading messages. On WorkspaceDone it sends DoneAck and transitions to a
-// final-state hold, looping on context or EOF until the workspace is dismissed.
-func runCmuxDisplayPane(ctx context.Context, socketPath, role string) error {
+// runCmuxDisplayPaneWith is the testable core of runCmuxHeaderPane /
+// runCmuxLogPane. out
+// receives rendered content; in production os.Stdout is passed.
+//
+// It dials socketPath, sends Ready{role}, and loops reading messages:
+//   - StateHeader (header role): renders the step-checkbox grid to out.
+//   - StateLog (log role): appends each line to out in arrival order.
+//   - WorkspaceDone: sends DoneAck and then loops until context cancel or EOF.
+//
+// Both the header and log panes are display-only: this function never
+// forwards Intent messages, ensuring no key path exists on these panes.
+func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io.Writer) error {
 	ch, err := interactionchannel.Dial(ctx, socketPath, role)
 	if err != nil {
 		// Graceful degradation: no interaction channel, run until ctx cancel.
@@ -198,7 +205,18 @@ func runCmuxDisplayPane(ctx context.Context, socketPath, role string) error {
 				<-ctx.Done()
 				return nil
 			}
-			if _, ok := msg.(interactionchannel.WorkspaceDone); ok {
+			switch m := msg.(type) {
+			case interactionchannel.StateHeader:
+				if role == "header" {
+					_, _ = fmt.Fprint(out, renderCmuxStateHeader(m))
+				}
+			case interactionchannel.StateLog:
+				if role == "log" {
+					for _, line := range m.Lines {
+						_, _ = fmt.Fprintf(out, "%s\n", line)
+					}
+				}
+			case interactionchannel.WorkspaceDone:
 				_ = ch.Send(interactionchannel.DoneAck{Role: role})
 			}
 		case <-ctx.Done():
