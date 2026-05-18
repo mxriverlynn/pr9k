@@ -139,6 +139,14 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 	return cmd
 }
 
+// ResolveWorkflowDir finds the workflow bundle directory for the given
+// projectDir using the two-candidate resolution rule. It is exported so
+// subcommands that read configuration from environment variables (e.g.
+// cmux-pane processes) can locate the bundle without parsing CLI flags.
+func ResolveWorkflowDir(projectDir string) (string, error) {
+	return resolveWorkflowDir(projectDir)
+}
+
 // NewCommand returns a configured cobra.Command that parses CLI flags into cfg.
 // RunE populates cfg when the command executes successfully.
 func NewCommand(cfg *Config) *cobra.Command {

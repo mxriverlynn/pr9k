@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/mxriverlynn/pr9k/src/internal/cli"
 	"github.com/mxriverlynn/pr9k/src/internal/logger"
+	"github.com/mxriverlynn/pr9k/src/internal/statusline"
+	"github.com/mxriverlynn/pr9k/src/internal/steps"
 	"github.com/spf13/cobra"
 )
 
@@ -88,8 +92,54 @@ func runCmuxLogPane(_ context.Context, _ string) error {
 	return nil
 }
 
-// runCmuxFooterPane is the entry point for the footer pane process.
-// Real implementation ships in a later work unit.
-func runCmuxFooterPane(_ context.Context, _ string) error {
+// runCmuxFooterPane is the entry point for the footer pane process. It reads
+// the workflow config via PR9K_PROJECT_DIR, constructs a statusline.Runner
+// with a nil logger (D-9), and renders the runner output to the pane's stdout.
+func runCmuxFooterPane(ctx context.Context, socketPath string) error {
+	return runCmuxFooterPaneWith(ctx, socketPath, os.Stdout)
+}
+
+// runCmuxFooterPaneWith is the testable core of runCmuxFooterPane. out receives
+// the status-line output lines; in production os.Stdout is passed.
+func runCmuxFooterPaneWith(ctx context.Context, _ string, out io.Writer) error {
+	projectDir := os.Getenv("PR9K_PROJECT_DIR")
+
+	// Resolve workflowDir so relative script paths in statusLine.command work.
+	// Gracefully degrade: if neither candidate exists the runner is no-op.
+	var workflowDir string
+	if projectDir != "" {
+		if dir, err := cli.ResolveWorkflowDir(projectDir); err == nil {
+			workflowDir = dir
+		}
+	}
+
+	// Load the statusLine config. Gracefully degrade if config.json is absent.
+	var slCfg *statusline.Config
+	if workflowDir != "" {
+		if sf, err := steps.LoadSteps(workflowDir); err == nil {
+			slCfg = buildStatusLineConfig(sf.StatusLine)
+		}
+	}
+
+	// Construct runner with nil logger per D-9: only on-disk log persistence is
+	// dropped; script stderr is handled gracefully (logLine is a no-op when nil).
+	runner := statusline.New(slCfg, workflowDir, projectDir, nil)
+	if !runner.Enabled() {
+		return nil
+	}
+
+	runner.SetSender(func(_ interface{}) {
+		if output := runner.LastOutput(); output != "" {
+			_, _ = fmt.Fprintln(out, output)
+		}
+	})
+
+	runner.Start(ctx)
+	defer runner.Shutdown()
+
+	// Trigger the first run immediately so the pane is not blank on startup.
+	runner.Trigger()
+
+	<-ctx.Done()
 	return nil
 }
