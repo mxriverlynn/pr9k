@@ -37,11 +37,13 @@ func TestActionSkip_IsDistinctStepAction(t *testing.T) {
 // ---- cmux-pane subcommand tests ----------------------------------------------
 
 // TestCmuxPaneCmd_ValidRoles verifies that each of the four valid role values
-// parses successfully and dispatches without error when PR9K_CMUX_SOCKET is set.
+// parses successfully and dispatches without error when PR9K_CMUX_SOCKET and
+// PR9K_PROJECT_DIR are set.
 func TestCmuxPaneCmd_ValidRoles(t *testing.T) {
 	for _, role := range []string{"orchestrator", "header", "log", "footer"} {
 		t.Run(role, func(t *testing.T) {
 			t.Setenv("PR9K_CMUX_SOCKET", "/tmp/test.sock")
+			t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 			cmd := newCmuxPaneCmd()
 			suppressCobra(cmd)
 			cmd.SetArgs([]string{"--role=" + role})
@@ -102,6 +104,7 @@ func TestCmuxPaneCmd_MissingSocket(t *testing.T) {
 func TestCmuxPaneCmd_SocketPathPassedToRunner(t *testing.T) {
 	const socketPath = "/tmp/pr9k-cmux-test.sock"
 	t.Setenv("PR9K_CMUX_SOCKET", socketPath)
+	t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 	cmd := newCmuxPaneCmd()
 	suppressCobra(cmd)
 	cmd.SetArgs([]string{"--role=footer"})

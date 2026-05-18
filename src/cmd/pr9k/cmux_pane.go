@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/mxriverlynn/pr9k/src/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +34,8 @@ func newCmuxPaneCmd() *cobra.Command {
 			ctx := cmd.Context()
 			switch role {
 			case "orchestrator":
-				return runCmuxOrchestrator(ctx, socketPath)
+				projectDir := os.Getenv("PR9K_PROJECT_DIR")
+				return runCmuxOrchestrator(ctx, socketPath, projectDir)
 			case "header":
 				return runCmuxHeaderPane(ctx, socketPath)
 			case "log":
@@ -49,8 +52,27 @@ func newCmuxPaneCmd() *cobra.Command {
 }
 
 // runCmuxOrchestrator is the entry point for the orchestrator pane process.
-// Real implementation ships in a later work unit.
-func runCmuxOrchestrator(_ context.Context, _ string) error {
+// It creates the per-run logger and artifact directory mirroring the standard
+// mode's startup() shape (D-7). projectDir is the target repository directory
+// passed via PR9K_PROJECT_DIR by RunPhase1.
+func runCmuxOrchestrator(_ context.Context, _ string, projectDir string) error {
+	if projectDir == "" {
+		return errors.New("cmux-pane: PR9K_PROJECT_DIR is not set; this command is launched internally by pr9k cmux mode")
+	}
+
+	log, err := logger.NewLogger(projectDir)
+	if err != nil {
+		return fmt.Errorf("cmux-pane: orchestrator: create logger: %w", err)
+	}
+	defer func() { _ = log.Close() }()
+
+	// Create the per-run artifact directory eagerly, mirroring startup() in main.go.
+	artifactDir := filepath.Join(projectDir, ".pr9k", "logs", log.RunStamp())
+	if err := os.MkdirAll(artifactDir, 0o700); err != nil {
+		return fmt.Errorf("cmux-pane: orchestrator: create artifact dir: %w", err)
+	}
+
+	// Real orchestration (readiness handshake, workflow.Run) ships in later work units.
 	return nil
 }
 

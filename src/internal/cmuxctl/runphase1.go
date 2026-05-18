@@ -191,7 +191,10 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 
 	// Compute the interaction-channel socket path: <projectDir>/.pr9k/cmux-pane-<workspaceName>.sock
 	socketPath := filepath.Join(projectDir, ".pr9k", "cmux-pane-"+workspaceName+".sock")
-	spawnEnv := map[string]string{"PR9K_CMUX_SOCKET": socketPath}
+	spawnEnv := map[string]string{
+		"PR9K_CMUX_SOCKET": socketPath,
+		"PR9K_PROJECT_DIR": projectDir,
+	}
 
 	// Step 5a: spawn orchestrator pane (D-3, D-4).
 	orchPaneID, err := client.SurfaceSplit(ctx, SplitOpts{})
