@@ -916,6 +916,53 @@ func TestRunPhase1_SpawnEnv_SocketPathFormat(t *testing.T) {
 	}
 }
 
+// TestRunPhase1_SpawnEnvHasProjectDir verifies that the orchestrator pane's
+// spawnEnv contains PR9K_PROJECT_DIR equal to the projectDir argument passed to
+// RunPhase1 (G2: producer-side env wiring).
+func TestRunPhase1_SpawnEnvHasProjectDir(t *testing.T) {
+	var spawns []cmuxctl.SpawnCall
+	fake := &cmuxctl.FakeClient{
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+			return "pane-x", nil
+		},
+		SurfaceSpawnFunc: func(_ context.Context, paneID string, argv []string, env map[string]string) error {
+			spawns = append(spawns, cmuxctl.SpawnCall{PaneID: paneID, Argv: argv, Env: env})
+			return nil
+		},
+	}
+
+	projectDir := t.TempDir()
+	var buf bytes.Buffer
+	if err := cmuxctl.RunPhase1(context.Background(), fake, projectDir, &buf, fastDismissal()); err != nil {
+		t.Fatalf("RunPhase1: %v", err)
+	}
+
+	// Find the orchestrator spawn (first spawn; argv contains "--role=orchestrator").
+	var orchSpawn *cmuxctl.SpawnCall
+	for i := range spawns {
+		for _, arg := range spawns[i].Argv {
+			if arg == "--role=orchestrator" {
+				orchSpawn = &spawns[i]
+				break
+			}
+		}
+		if orchSpawn != nil {
+			break
+		}
+	}
+	if orchSpawn == nil {
+		t.Fatal("no SurfaceSpawn call with --role=orchestrator found")
+	}
+
+	got, ok := orchSpawn.Env["PR9K_PROJECT_DIR"]
+	if !ok {
+		t.Fatalf("orchestrator spawn env missing PR9K_PROJECT_DIR; env = %v", orchSpawn.Env)
+	}
+	if got != projectDir {
+		t.Errorf("orchestrator PR9K_PROJECT_DIR = %q, want %q", got, projectDir)
+	}
+}
+
 // TP-002: all four panes share one socket.
 // Pins the invariant that spawnEnv is built once, not per-role.
 func TestRunPhase1_SpawnEnv_AllPanesShareSocket(t *testing.T) {

@@ -68,6 +68,20 @@ func TestRunCmuxOrchestrator_LogFileExists(t *testing.T) {
 	}
 }
 
+// TestRunCmuxOrchestrator_EmptyProjectDir_ReturnsError verifies that
+// runCmuxOrchestrator returns a non-nil error mentioning PR9K_PROJECT_DIR when
+// projectDir is empty (cmux_pane.go:59-61).
+func TestRunCmuxOrchestrator_EmptyProjectDir_ReturnsError(t *testing.T) {
+	ctx := context.Background()
+	err := runCmuxOrchestrator(ctx, "/tmp/unused.sock", "")
+	if err == nil {
+		t.Fatal("expected error for empty projectDir, got nil")
+	}
+	if !strings.Contains(err.Error(), "PR9K_PROJECT_DIR") {
+		t.Errorf("error %q should mention PR9K_PROJECT_DIR", err.Error())
+	}
+}
+
 // TestCmuxPaneCmd_OrchestratorRole_RequiresProjectDir verifies that the
 // cmux-pane cobra command dispatches the orchestrator role correctly when
 // PR9K_PROJECT_DIR is set to a valid temp directory.
