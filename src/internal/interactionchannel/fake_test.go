@@ -285,6 +285,65 @@ func TestFakeDisplayPane_PrematureExit(t *testing.T) {
 	pane.Disconnect()
 }
 
+// TestFakeDisplayPane_PrematureExit_ClosesWire verifies that after
+// SetPrematureExit(true), the pane's underlying connection is actually closed
+// so server.Send eventually returns an error. This tests the docstring claim
+// ("simulates a pane process that exits before WorkspaceDone") that the
+// existing idempotency test does not exercise.
+func TestFakeDisplayPane_PrematureExit_ClosesWire(t *testing.T) {
+	t.Parallel()
+	sock := sockPath(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server, err := interactionchannel.Serve(ctx, sock)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer server.Close()
+
+	pane := interactionchannel.NewFakeDisplayPane("log")
+	if err := pane.Connect(ctx, sock); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Establish the connection fully so the server has a live peer.
+	if err := pane.SendReady(); err != nil {
+		t.Fatalf("SendReady: %v", err)
+	}
+	select {
+	case <-server.Recv():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for Ready from pane")
+	}
+
+	// Trigger premature exit — pane closes its connection on next read iteration.
+	pane.SetPrematureExit(true)
+
+	// Wake the pane's read loop so it sees the earlyExit flag.
+	_ = server.Send(interactionchannel.StateHeader{IterationLine: "wake"})
+
+	// Poll server.Send until it returns an error (broken pipe / closed conn).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := server.Send(interactionchannel.StateHeader{IterationLine: "probe"}); err != nil {
+			return // wire is closed — test passes
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timeout: server.Send never returned an error after pane SetPrematureExit")
+}
+
+// TestFakeDisplayPane_SendReadyBeforeConnect verifies that SendReady returns a
+// non-nil error when called before Connect.
+func TestFakeDisplayPane_SendReadyBeforeConnect(t *testing.T) {
+	t.Parallel()
+	pane := interactionchannel.NewFakeDisplayPane("header")
+	if err := pane.SendReady(); err == nil {
+		t.Error("SendReady before Connect: expected non-nil error, got nil")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FakeFooterKeySource tests
 // ---------------------------------------------------------------------------
@@ -369,5 +428,50 @@ func TestFakeFooterKeySource_KeystrokeSequence(t *testing.T) {
 	_, ok := f.Next()
 	if ok {
 		t.Error("Next: expected empty queue")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FakeInteractionChannel snapshot tests
+// ---------------------------------------------------------------------------
+
+// TestFakeInteractionChannel_SentMessages_IndependentSnapshot verifies that
+// SentMessages returns a defensive copy: mutating the returned slice does not
+// affect a subsequent call.
+func TestFakeInteractionChannel_SentMessages_IndependentSnapshot(t *testing.T) {
+	t.Parallel()
+	f := interactionchannel.NewFakeInteractionChannel()
+	defer f.Close()
+
+	m1 := interactionchannel.StateHeader{IterationLine: "Iteration 1/3"}
+	m2 := interactionchannel.StateFooter{Mode: 0, ShortcutLine: "q quit"}
+
+	if err := f.Send(m1); err != nil {
+		t.Fatalf("Send m1: %v", err)
+	}
+	if err := f.Send(m2); err != nil {
+		t.Fatalf("Send m2: %v", err)
+	}
+
+	// Capture a snapshot and mutate it.
+	snap1 := f.SentMessages()
+	if len(snap1) != 2 {
+		t.Fatalf("SentMessages: got %d messages, want 2", len(snap1))
+	}
+	snap1[0] = nil // mutate the returned slice
+
+	// A fresh snapshot must still contain the original messages.
+	snap2 := f.SentMessages()
+	if len(snap2) != 2 {
+		t.Fatalf("SentMessages after mutation: got %d messages, want 2", len(snap2))
+	}
+	if snap2[0] == nil {
+		t.Error("SentMessages: second snapshot reflects mutation of first — not an independent copy")
+	}
+	if snap2[0].WireType() != m1.WireType() {
+		t.Errorf("SentMessages[0]: got %q, want %q", snap2[0].WireType(), m1.WireType())
+	}
+	if snap2[1].WireType() != m2.WireType() {
+		t.Errorf("SentMessages[1]: got %q, want %q", snap2[1].WireType(), m2.WireType())
 	}
 }
