@@ -6,8 +6,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
+	"strings"
 	"sync"
+	"time"
 )
+
+// ReadyHandshakeTimeout is the hard-coded deadline for the readiness
+// handshake. Pass it to AwaitReady to use the standard 10-second limit.
+// A configurable variant was considered and deferred (YAGNI-4).
+const ReadyHandshakeTimeout = 10 * time.Second
 
 // recvBufSize is the capacity of the per-Channel inbound message channel.
 const recvBufSize = 64
@@ -37,6 +45,13 @@ type Channel struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// Readiness handshake state (Serve side). readyNewCh receives one
+	// struct{} for each newly-ready role (capacity 3 — one per distinct role).
+	// notifyReady is idempotent: duplicate Ready from the same role is a no-op.
+	readyMu    sync.Mutex
+	readyRoles map[string]bool
+	readyNewCh chan struct{}
 }
 
 // Recv returns the receive channel. Incoming messages from all connections
@@ -135,12 +150,88 @@ func (c *Channel) readLoop(nc net.Conn, _ *conn) {
 		if err != nil {
 			return // EOF, closed, or context cancelled
 		}
+		if r, ok := msg.(Ready); ok {
+			c.notifyReady(r.Role)
+		}
 		select {
 		case c.recv <- msg:
 		case <-c.ctx.Done():
 			return
 		}
 	}
+}
+
+// notifyReady marks role as ready. If the role was not previously ready it
+// sends a signal to readyNewCh. Duplicate calls for the same role are no-ops.
+// Safe to call from any goroutine.
+func (c *Channel) notifyReady(role string) {
+	c.readyMu.Lock()
+	if c.readyRoles == nil || c.readyRoles[role] {
+		c.readyMu.Unlock()
+		return
+	}
+	c.readyRoles[role] = true
+	c.readyMu.Unlock()
+	select {
+	case c.readyNewCh <- struct{}{}:
+	default:
+		// readyNewCh capacity is 3; this branch is unreachable in normal operation.
+	}
+}
+
+// AwaitReady blocks until all three display roles ("header", "log", "footer")
+// have sent a Ready message, the timeout elapses, or ctx is cancelled.
+//
+// Returns nil when all roles are ready.
+// Returns a structured error naming the missing roles on timeout.
+// Returns ctx.Err() on cancellation.
+//
+// The hard-coded 10-second deadline is exposed as readyHandshakeTimeout.
+// A configurable variant was deferred (YAGNI-4).
+func (c *Channel) AwaitReady(ctx context.Context, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	// Fast path: all roles already ready before we start waiting.
+	c.readyMu.Lock()
+	done := len(c.readyRoles) >= 3
+	c.readyMu.Unlock()
+	if done {
+		return nil
+	}
+
+	for {
+		select {
+		case <-c.readyNewCh:
+			c.readyMu.Lock()
+			n := len(c.readyRoles)
+			c.readyMu.Unlock()
+			if n >= 3 {
+				return nil
+			}
+		case <-deadline.C:
+			c.readyMu.Lock()
+			missing := missingReadyRoles(c.readyRoles)
+			c.readyMu.Unlock()
+			return fmt.Errorf("interactionchannel: handshake timeout — roles not ready: [%s]",
+				strings.Join(missing, " "))
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// missingReadyRoles returns the sorted list of roles not present in ready.
+func missingReadyRoles(ready map[string]bool) []string {
+	all := []string{"footer", "header", "log"}
+	var missing []string
+	for _, r := range all {
+		if !ready[r] {
+			missing = append(missing, r)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func (c *Channel) writeLoop(nc net.Conn, co *conn) {
@@ -187,11 +278,13 @@ func Serve(ctx context.Context, socketPath string) (*Channel, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	ch := &Channel{
-		recv:   make(chan Message, recvBufSize),
-		ln:     ln,
-		socket: socketPath,
-		ctx:    ctx,
-		cancel: cancel,
+		recv:       make(chan Message, recvBufSize),
+		ln:         ln,
+		socket:     socketPath,
+		ctx:        ctx,
+		cancel:     cancel,
+		readyRoles: make(map[string]bool),
+		readyNewCh: make(chan struct{}, 3),
 	}
 
 	ch.wg.Add(1)
