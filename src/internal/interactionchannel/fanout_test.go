@@ -448,6 +448,42 @@ func TestFanout_NoHeartbeatSuffix(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// TP-001: SendState* is a no-op before any role binds
+// ---------------------------------------------------------------------------
+
+// TestFanout_SendState_NoopBeforeBind verifies that calling SendStateHeader,
+// SendStateLog, and SendStateFooter before any pane has connected and sent
+// Ready neither panics nor blocks. This pins the nil-conn guard in connForRole
+// (channel.go:117,139,165) against regressions that would remove or invert it.
+func TestFanout_SendState_NoopBeforeBind(t *testing.T) {
+	t.Parallel()
+	sock := sockPath(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server, err := interactionchannel.Serve(ctx, sock)
+	if err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+	defer server.Close()
+
+	// No clients connected — all three calls must return immediately with no panic.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		server.SendStateHeader(interactionchannel.StateHeader{IterationLine: "pre-bind"})
+		server.SendStateLog(interactionchannel.StateLog{Lines: [][]byte{[]byte("pre-bind")}})
+		server.SendStateFooter(interactionchannel.StateFooter{Mode: 1, ShortcutLine: "pre-bind"})
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SendState* blocked before any role bound — nil-conn guard may be missing")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Race detector coverage
 // ---------------------------------------------------------------------------
 
