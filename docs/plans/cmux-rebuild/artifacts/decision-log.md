@@ -434,3 +434,19 @@ These supersede earlier decisions where they conflict with the verified cmux v2 
 - **Decision:** pr9k speaks the verified cmux v2 socket protocol: newline-delimited JSON; request `{id,method,params}`; success `{id,ok:true,result}`; error `{id,ok:false,error:{code:<string>,message}}`; pre-request plaintext `ERROR: …` for `cmuxOnly` rejection. Workspaces/surfaces are opaque UUID+ref handles, not names. Capability = a successful `system.identify` carrying `socket_path` (cmux v2 has no product name/version). Preflight classifies access-denied / auth-required distinctly instead of a catch-all "version incompatible".
 - **Rationale:** The original client was built against an assumed protocol that matched nothing in cmux; every dimension diverged.
 - **Evidence:** investigation E1–E10, validation V1–V6, verified at `2f96c15c2`.
+
+### D-R3: Pane initial_command uses `/usr/bin/env` (cmux tokenizes argv; shell-only forms silently fail)
+
+- **Question:** How should pr9k pass per-pane environment variables (`PR9K_CMUX_SOCKET`, `PR9K_PROJECT_DIR`) given `surface.split` has no `initial_env` param?
+- **Decision:** Use `/usr/bin/env K=V K2=V2 <abs-exe> cmux-pane --role=<role>` (unquoted; pr9k paths contain no whitespace). Do **not** use `VAR=val exec '<exe>' …` shell-only syntax.
+- **Rationale:** R3 in-pane verification proved cmux v2 does **not** shell-interpret `initial_command` — it tokenizes the string and execs `argv[0]`. A shell-only `VAR=val exec …` form makes `argv[0]` the literal string `PR9K_CMUX_SOCKET='…'`, fork/exec fails, the surface process never starts, and cmux discards the empty workspace within ~500ms (handshake then fails with `context canceled`). `/usr/bin/env` is a real binary that accepts `K=V` arguments and execs the next program — it works whether cmux uses a shell or simple argv tokenization.
+- **Evidence:** R3 trace (Serve+create+splits OK, then workspace removed within ~500ms; `pane-probe.log` absent before the fix, three running PIDs after); `cmuxctl/runphase1_test.go` regression assertion on `/usr/bin/env` prefix.
+- **Rejected alternatives:**
+  - Rely on `initial_env` map for the workspace.create surface only and somehow on shell for the splits — rejected; inconsistent and surface.split has no `initial_env`.
+  - `sh -c "<shell form>"` — would work IF cmux shell-interprets, but R3 proved it doesn't, and `sh -c` adds quoting fragility for no benefit over `env`.
+
+### D-R4: cmux v2 verified end to end (R3 gate satisfied)
+
+- **Decision:** R3 is closed. `pr9k --cmux` launched from inside a cmux 0.64.6 pane successfully creates the workspace, spawns the three display surfaces, all three pane processes connect, AwaitReady proceeds, and the dismissal observer reports `healthy — ws present, surfaces=3` continuously. Operator-initiated `^C` terminates cleanly.
+- **Evidence:** R3 verification session, debug trace + `pane-probe.log` showing all three roles started with running PIDs and no early exit.
+- **Note:** `PR9K_CMUX_DEBUG=1` remains a supported diagnostic flag — it gates verbose `[pr9k-cmux-debug]` stderr lines and the `<projectDir>/.pr9k/pane-probe.log` markers. Useful if cmux behaviour changes in a future release.

@@ -158,6 +158,21 @@ pr9k also prints an advisory to stderr when `WorkspaceClose` fails during normal
 pr9k: orphan workspace "pr9k-myrepo-..." could not be closed; dismiss it manually via cmux's controls
 ```
 
+## Diagnostics: `PR9K_CMUX_DEBUG`
+
+Set `PR9K_CMUX_DEBUG=1` to enable verbose cmux-integration diagnostics:
+
+- The orchestrator prints `[pr9k-cmux-debug]` lines to stderr covering the
+  `Serve` → `workspace.create` → `surface.split` → `hooks.Run` timeline and the
+  dismissal observer's per-poll verdict (healthy / which arm fired / what cmux
+  returned).
+- Each display pane (`pr9k cmux-pane --role=…`) appends entry- and exit-event
+  markers to `<projectDir>/.pr9k/pane-probe.log` (with timestamp, role, pid,
+  socket path, args). The file outlives the cmux pane so it survives a pane
+  that disappears unexpectedly.
+
+Both are gated on the env var; with it unset the runtime is silent.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |

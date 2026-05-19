@@ -123,6 +123,14 @@ func TestRunCmuxFooterPane_StatusLineScript_Runs(t *testing.T) {
 // TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender verifies that the
 // script's stdout reaches the footer pane's output writer (acceptance criterion AC-4).
 func TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender(t *testing.T) {
+	if raceDetectorEnabled {
+		// Same class as TestRunCmuxFooterPane_StatusLineScript_Runs: a real
+		// /bin/sh subprocess + interaction-channel send under a wall-clock
+		// budget is environment-flaky under -race full-suite contention. The
+		// status-line runner's send behaviour is unit-tested in
+		// internal/statusline.
+		t.Skip("subprocess-timing acceptance test skipped under -race (flaky under full-suite contention; covered by internal/statusline unit tests)")
+	}
 	projectDir := t.TempDir()
 	workflowDir := filepath.Join(projectDir, ".pr9k", "workflow")
 	if err := os.MkdirAll(workflowDir, 0o755); err != nil {

@@ -64,6 +64,13 @@ func TestRunPhase1_WorkspaceCreateOpts(t *testing.T) {
 	if !strings.Contains(c.InitialCommand, "PR9K_CMUX_SOCKET=") || !strings.Contains(c.InitialCommand, "PR9K_PROJECT_DIR=") {
 		t.Errorf("pane env must be embedded in initial_command: %q", c.InitialCommand)
 	}
+	// Regression guard (R3): cmux tokenizes initial_command as argv rather
+	// than shell-interpreting it, so the command MUST start with a real
+	// binary (/usr/bin/env). A shell-only form like `VAR=val exec prog` would
+	// silently fail — cmux would discard the workspace within ms.
+	if !strings.HasPrefix(c.InitialCommand, "/usr/bin/env ") {
+		t.Errorf("initial_command must start with /usr/bin/env to survive cmux's argv tokenization: %q", c.InitialCommand)
+	}
 }
 
 func TestRunPhase1_SplitsHeaderAndFooter(t *testing.T) {
