@@ -81,11 +81,11 @@ func TestRunCmuxMode_SkipsLoggerAndBubbleTea(t *testing.T) {
 	splitN := 0
 	fake := &cmuxctl.FakeClient{
 		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{Name: "cmux", Version: "0.64.6"}, nil
+			return cmuxctl.Identity{SocketPath: "/run/cmux.sock"}, nil
 		},
-		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (cmuxctl.Surface, error) {
 			splitN++
-			return "pane-" + string(rune('0'+splitN)), nil
+			return cmuxctl.Surface{SurfaceID: "s" + string(rune('0'+splitN))}, nil
 		},
 	}
 
@@ -142,11 +142,11 @@ func TestRunCmuxMode_SuccessPath(t *testing.T) {
 	splitN := 0
 	fake := &cmuxctl.FakeClient{
 		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{Name: "cmux", Version: "0.64.6"}, nil
+			return cmuxctl.Identity{SocketPath: "/run/cmux.sock"}, nil
 		},
-		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
+		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (cmuxctl.Surface, error) {
 			splitN++
-			return "pane-" + string(rune('0'+splitN)), nil
+			return cmuxctl.Surface{SurfaceID: "s" + string(rune('0'+splitN))}, nil
 		},
 	}
 
@@ -160,9 +160,13 @@ func TestRunCmuxMode_SuccessPath(t *testing.T) {
 		t.Fatalf("runCmuxMode returned false; errOut: %s", errOut.String())
 	}
 
-	// RunPhase1 must have spawned panes.
-	if len(fake.SpawnCalls) == 0 {
-		t.Error("RunPhase1 did not spawn any panes (SpawnCalls is empty)")
+	// RunPhase1 (architecture A) must have created the workspace and split in
+	// the header + footer panes.
+	if len(fake.CreateCalls) != 1 {
+		t.Errorf("want 1 workspace.create, got %d", len(fake.CreateCalls))
+	}
+	if len(fake.SplitCalls) != 2 {
+		t.Errorf("want 2 surface.split (header, footer), got %d", len(fake.SplitCalls))
 	}
 
 	// Workspace confirmation must appear in out (sanitized name only, per D-23).

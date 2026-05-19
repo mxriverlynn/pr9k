@@ -32,7 +32,8 @@ func TestFakeClient_HangChannels_FunctionalHangRelease(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- f.WorkspaceCreate(context.Background(), "ws")
+		_, err := f.WorkspaceCreate(context.Background(), cmuxctl.WorkspaceCreateOpts{Title: "ws"})
+		done <- err
 	}()
 
 	// The call must not return within a short window.
@@ -68,7 +69,7 @@ func TestFakeClient_HangChannels_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = f.WorkspaceCreate(context.Background(), "ws")
+			_, _ = f.WorkspaceCreate(context.Background(), cmuxctl.WorkspaceCreateOpts{Title: "ws"})
 		}()
 	}
 

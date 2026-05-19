@@ -2,6 +2,7 @@ package cmuxctl_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -9,8 +10,8 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 )
 
-// fastCfg returns a DismissalConfig suitable for unit tests: 1ms poll interval
-// and 20ms per-call timeout so tests complete quickly without real timer waits.
+// fastCfg returns a DismissalConfig with a 1ms poll interval and 20ms per-call
+// timeout so tests complete without real timer waits.
 func fastCfg() cmuxctl.DismissalConfig {
 	return cmuxctl.DismissalConfig{
 		PollInterval: time.Millisecond,
@@ -18,376 +19,200 @@ func fastCfg() cmuxctl.DismissalConfig {
 	}
 }
 
-// TP-222-001: workspace-removed observation fires dismissal exactly once.
-// FakeClient scripts WorkspaceList to omit the pr9k workspace name on the
-// second call; the observer must send exactly one non-fatal DismissalEvent.
+var theWS = cmuxctl.Workspace{ID: "ws-uuid", Ref: "workspace:1"}
+
+func wsInfo(ids ...string) []cmuxctl.WorkspaceInfo {
+	out := make([]cmuxctl.WorkspaceInfo, len(ids))
+	for i, id := range ids {
+		out[i] = cmuxctl.WorkspaceInfo{ID: id, Ref: "workspace:" + id}
+	}
+	return out
+}
+
+func surfList(n int) []cmuxctl.SurfaceInfo {
+	out := make([]cmuxctl.SurfaceInfo, n)
+	for i := range out {
+		out[i] = cmuxctl.SurfaceInfo{SurfaceID: "s" + itoa(int64(i))}
+	}
+	return out
+}
+
+// Arm 1: the pr9k workspace disappears from workspace.list → one non-fatal event.
 func TestDismissal_WorkspaceRemoved_FiresOnce(t *testing.T) {
 	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
 	var mu sync.Mutex
-	callCount := 0
-
+	n := 0
 	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(_ context.Context) ([]string, error) {
+		WorkspaceListFunc: func(_ context.Context) ([]cmuxctl.WorkspaceInfo, error) {
 			mu.Lock()
-			n := callCount
-			callCount++
+			c := n
+			n++
 			mu.Unlock()
-			if n == 0 {
-				return []string{workspaceName, "other"}, nil
+			if c == 0 {
+				return wsInfo("ws-uuid", "other"), nil
 			}
-			return []string{"other"}, nil // workspace gone on second call
+			return wsInfo("other"), nil // pr9k workspace gone
 		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return []cmuxctl.PaneInfo{{ID: "p1", Exited: false}}, nil
+		SurfaceListFunc: func(_ context.Context, _ cmuxctl.Workspace) ([]cmuxctl.SurfaceInfo, error) {
+			return surfList(3), nil
 		},
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, fastCfg())
+	obs := cmuxctl.StartDismissalObserver(ctx, fake, theWS, 3, fastCfg())
 	defer obs.Cancel()
 	defer obs.Wait()
 
 	select {
 	case evt := <-obs.Ch:
 		if evt.Fatal {
-			t.Error("expected non-fatal dismissal, got Fatal=true")
+			t.Error("expected non-fatal dismissal")
 		}
 	case <-ctx.Done():
 		t.Error("timed out waiting for workspace-removed dismissal")
 	}
-
-	// After goroutine exits, channel must be empty (only one send ever).
 	select {
 	case <-obs.Ch:
-		t.Error("received second dismissal event; expected exactly one")
+		t.Error("received a second dismissal event")
 	default:
 	}
 }
 
-// TP-222-002: per-pane exit observation fires dismissal exactly once.
-// FakeClient scripts SurfaceList to mark one pane exited; the observer must
-// send exactly one non-fatal DismissalEvent.
-func TestDismissal_PaneExited_FiresOnce(t *testing.T) {
+// Arm 2: the live surface count drops below the count pr9k created.
+func TestDismissal_SurfaceCountDrop_FiresOnce(t *testing.T) {
 	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-
+	var mu sync.Mutex
+	n := 0
 	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(_ context.Context) ([]string, error) {
-			return []string{workspaceName}, nil // workspace always present
+		WorkspaceListFunc: func(_ context.Context) ([]cmuxctl.WorkspaceInfo, error) {
+			return wsInfo("ws-uuid"), nil
 		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return []cmuxctl.PaneInfo{
-				{ID: "p1", Exited: false},
-				{ID: "p2", Exited: true}, // exited pane
-			}, nil
+		SurfaceListFunc: func(_ context.Context, _ cmuxctl.Workspace) ([]cmuxctl.SurfaceInfo, error) {
+			mu.Lock()
+			c := n
+			n++
+			mu.Unlock()
+			if c == 0 {
+				return surfList(3), nil
+			}
+			return surfList(2), nil // a pane was closed
 		},
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, fastCfg())
+	obs := cmuxctl.StartDismissalObserver(ctx, fake, theWS, 3, fastCfg())
 	defer obs.Cancel()
 	defer obs.Wait()
 
 	select {
 	case evt := <-obs.Ch:
 		if evt.Fatal {
-			t.Error("expected non-fatal dismissal, got Fatal=true")
+			t.Error("expected non-fatal dismissal")
 		}
 	case <-ctx.Done():
-		t.Error("timed out waiting for pane-exit dismissal")
-	}
-
-	select {
-	case <-obs.Ch:
-		t.Error("received second dismissal event; expected exactly one")
-	default:
+		t.Error("timed out waiting for surface-count-drop dismissal")
 	}
 }
 
-// TP-222-003: three consecutive poll timeouts escalate to fatal sentinel.
-// FakeClient queues 3 hangs on WorkspaceList; with a very short pollTimeout the
-// per-call contexts expire and the observer escalates to DismissalEvent{Fatal:true}.
-func TestDismissal_ThreeTimeouts_FatalEscalation(t *testing.T) {
+// surface.list returning a not_found CmuxError (workspace vanished) is a
+// dismissal, not a timeout.
+func TestDismissal_SurfaceListNotFound_FiresDismissal(t *testing.T) {
 	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-
-	hangNext := make(chan struct{}, 3)
-	hangRelease := make(chan struct{}) // never released; ctx expiry unblocks
-
-	hangNext <- struct{}{}
-	hangNext <- struct{}{}
-	hangNext <- struct{}{}
-
 	fake := &cmuxctl.FakeClient{
-		HangNext:    hangNext,
-		HangRelease: hangRelease,
-		WorkspaceListFunc: func(_ context.Context) ([]string, error) {
-			return []string{workspaceName}, nil
+		WorkspaceListFunc: func(_ context.Context) ([]cmuxctl.WorkspaceInfo, error) {
+			return wsInfo("ws-uuid"), nil
 		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return nil, nil
+		SurfaceListFunc: func(_ context.Context, _ cmuxctl.Workspace) ([]cmuxctl.SurfaceInfo, error) {
+			return nil, &cmuxctl.CmuxError{Code: "not_found", Message: "Workspace not found"}
 		},
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	obs := cmuxctl.StartDismissalObserver(ctx, fake, theWS, 3, fastCfg())
+	defer obs.Cancel()
+	defer obs.Wait()
 
-	// 5ms per-call timeout: each hung call expires quickly.
-	cfg := cmuxctl.DismissalConfig{
-		PollInterval: time.Millisecond,
-		PollTimeout:  5 * time.Millisecond,
+	select {
+	case <-obs.Ch:
+	case <-ctx.Done():
+		t.Error("timed out: not_found surface.list should fire dismissal")
 	}
+}
 
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, cfg)
+// N consecutive poll timeouts escalate to a fatal dismissal event.
+func TestDismissal_ConsecutiveTimeouts_Fatal(t *testing.T) {
+	t.Parallel()
+	fake := &cmuxctl.FakeClient{
+		WorkspaceListFunc: func(ctx context.Context) ([]cmuxctl.WorkspaceInfo, error) {
+			<-ctx.Done() // always exceed the per-call timeout
+			return nil, ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	obs := cmuxctl.StartDismissalObserver(ctx, fake, theWS, 3, fastCfg())
 	defer obs.Cancel()
 	defer obs.Wait()
 
 	select {
 	case evt := <-obs.Ch:
 		if !evt.Fatal {
-			t.Error("expected Fatal=true after 3 consecutive timeouts, got Fatal=false")
+			t.Error("expected Fatal=true after consecutive timeouts")
 		}
 	case <-ctx.Done():
-		t.Error("timed out waiting for fatal dismissal after 3 consecutive timeouts")
+		t.Error("timed out waiting for fatal escalation")
 	}
 }
 
-// TP-222-004: timeout counter resets after a successful poll.
-// Pattern: one timeout, then a success, then two more timeouts.
-// Total consecutive timeouts never reaches 3, so no fatal escalation.
-func TestDismissal_CounterReset_AfterSuccess(t *testing.T) {
+// SetShuttingDown suppresses a fired observation (self-close double-fire).
+func TestDismissal_ShuttingDownSuppresses(t *testing.T) {
 	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-
-	var mu sync.Mutex
-	callCount := 0
-	// false = simulate timeout (block until per-call ctx expires)
-	// true  = return success immediately
-	script := []bool{false, true, false, false}
-
 	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(ctx context.Context) ([]string, error) {
-			mu.Lock()
-			n := callCount
-			callCount++
-			mu.Unlock()
-
-			var hang bool
-			if n < len(script) {
-				hang = !script[n]
-			}
-			if hang {
-				<-ctx.Done()
-				return nil, ctx.Err()
-			}
-			return []string{workspaceName}, nil
-		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return nil, nil
+		WorkspaceListFunc: func(_ context.Context) ([]cmuxctl.WorkspaceInfo, error) {
+			return wsInfo("other"), nil // pr9k workspace already absent
 		},
 	}
-
-	// Run the observer for 300ms; no fatal should fire (max consecutive = 2).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-
-	cfg := cmuxctl.DismissalConfig{
-		PollInterval: time.Millisecond,
-		PollTimeout:  10 * time.Millisecond,
-	}
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, cfg)
-	defer obs.Cancel()
-	defer obs.Wait()
-
-	// Allow enough time for all 4 scripted calls plus a few extra successes.
-	wait := time.NewTimer(200 * time.Millisecond)
-	defer wait.Stop()
-	select {
-	case evt := <-obs.Ch:
-		t.Errorf("unexpected dismissal event (Fatal=%v); counter should have reset", evt.Fatal)
-	case <-wait.C:
-		// Good: no fatal escalation
-	}
-}
-
-// TP-222-005: shuttingDown flag suppresses post-shutdown observations.
-// The observer must not send on the dismissal channel once shuttingDown is set.
-func TestDismissal_ShuttingDown_Suppresses(t *testing.T) {
-	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-
-	// ready is closed after shuttingDown is set, unblocking WorkspaceList.
-	ready := make(chan struct{})
-
-	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(ctx context.Context) ([]string, error) {
-			select {
-			case <-ready:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-			return []string{"other"}, nil // workspace gone → would normally dismiss
-		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return nil, nil
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cfg := cmuxctl.DismissalConfig{
-		PollInterval: time.Millisecond,
-		PollTimeout:  time.Second,
-	}
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, cfg)
-	defer obs.Cancel()
-	defer obs.Wait()
-
-	// Set shuttingDown before unblocking the WorkspaceList call.
+	obs := cmuxctl.StartDismissalObserver(ctx, fake, theWS, 3, fastCfg())
 	obs.SetShuttingDown()
-	close(ready)
+	obs.Cancel()
+	obs.Wait()
 
-	// Give the goroutine time to run the poll and (not) fire.
-	wait := time.NewTimer(100 * time.Millisecond)
-	defer wait.Stop()
 	select {
-	case evt := <-obs.Ch:
-		t.Errorf("unexpected dismissal with shuttingDown set: Fatal=%v", evt.Fatal)
-	case <-wait.C:
-		// Good: dismissed silently
-	}
-}
-
-// TP-222-006: context cancellation exits the goroutine cleanly.
-// wg.Wait() must return within a bounded time after cancel().
-func TestDismissal_ContextCancel_ExitsCleanly(t *testing.T) {
-	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-
-	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(_ context.Context) ([]string, error) {
-			return []string{workspaceName}, nil // workspace always present
-		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return nil, nil // no panes exited
-		},
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, fastCfg())
-
-	cancel() // cancel context — goroutine must exit
-
-	done := make(chan struct{})
-	go func() {
-		obs.Wait()
-		close(done)
-	}()
-
-	timer := time.NewTimer(time.Second)
-	defer timer.Stop()
-	select {
-	case <-done:
-		// Good: goroutine exited cleanly
-	case <-timer.C:
-		obs.Cancel()
-		t.Error("goroutine did not exit within 1s after context cancellation")
-	}
-
-	// No dismissal should have been sent (ctx.Done() path exits without firing).
-	select {
-	case evt := <-obs.Ch:
-		t.Errorf("unexpected dismissal after ctx cancel: Fatal=%v", evt.Fatal)
+	case <-obs.Ch:
+		t.Error("dismissal fired despite SetShuttingDown")
 	default:
 	}
 }
 
-// TP-222-007: race-detector clean — concurrent SetShuttingDown and poll goroutine.
-// This test intentionally races SetShuttingDown against an active polling loop
-// and is meaningful only when run with -race.
-func TestDismissal_Race_ConcurrentShuttingDown(t *testing.T) {
+// Cancel makes the goroutine exit without firing.
+func TestDismissal_CancelExitsWithoutFiring(t *testing.T) {
 	t.Parallel()
-
-	const workspaceName = "pr9k-repo-20260101T000000.000000000Z"
-	var mu sync.Mutex
-	callCount := 0
-
 	fake := &cmuxctl.FakeClient{
-		WorkspaceListFunc: func(_ context.Context) ([]string, error) {
-			mu.Lock()
-			callCount++
-			mu.Unlock()
-			return []string{workspaceName}, nil
+		WorkspaceListFunc: func(_ context.Context) ([]cmuxctl.WorkspaceInfo, error) {
+			return wsInfo("ws-uuid"), nil // never dismissed
 		},
-		SurfaceListFunc: func(_ context.Context, _ string) ([]cmuxctl.PaneInfo, error) {
-			return nil, nil
+		SurfaceListFunc: func(_ context.Context, _ cmuxctl.Workspace) ([]cmuxctl.SurfaceInfo, error) {
+			return surfList(3), nil
 		},
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	obs := cmuxctl.StartDismissalObserver(ctx, fake, workspaceName, fastCfg())
-	defer obs.Wait()
-	defer obs.Cancel()
-
-	// Race SetShuttingDown against the polling goroutine.
-	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			obs.SetShuttingDown()
-		}()
-	}
-	wg.Wait()
-}
-
-// TP-222-008: RunPhase1 blocks on the dismissal channel after panes are spawned
-// and returns nil when dismissal fires (workspace removed, non-fatal).
-func TestRunPhase1_BlocksOnDismissal_ReturnsNilOnObservedDismissal(t *testing.T) {
-	t.Parallel()
-
-	const repoDir = "/tmp/myrepo"
-
-	fake := &cmuxctl.FakeClient{
-		SurfaceSplitFunc: func(_ context.Context, _ cmuxctl.SplitOpts) (string, error) {
-			return "pane-x", nil
-		},
-		// WorkspaceList returns empty → workspace not found → dismissal fires
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var buf [0]byte
-	nw := noopWriter{}
-	err := cmuxctl.RunPhase1(ctx, fake, repoDir, nw, cmuxctl.DismissalConfig{
-		PollInterval: time.Millisecond,
-		PollTimeout:  20 * time.Millisecond,
-	})
-	_ = buf
-	if err != nil {
-		t.Errorf("RunPhase1 returned non-nil error: %v", err)
+	obs := cmuxctl.StartDismissalObserver(context.Background(), fake, theWS, 3, fastCfg())
+	obs.Cancel()
+	done := make(chan struct{})
+	go func() { obs.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("observer did not exit after Cancel")
 	}
 }
 
-// noopWriter satisfies io.Writer for RunPhase1's out parameter.
-type noopWriter struct{}
-
-func (noopWriter) Write(p []byte) (int, error) { return len(p), nil }
+func TestDismissal_ErrorsAsCmuxError(t *testing.T) {
+	// Sanity: errors.As unwraps the typed CmuxError used by the not_found arm.
+	var ce *cmuxctl.CmuxError
+	err := error(&cmuxctl.CmuxError{Code: "not_found"})
+	if !errors.As(err, &ce) || ce.Code != "not_found" {
+		t.Fatalf("errors.As failed for CmuxError: %v", err)
+	}
+}

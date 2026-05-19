@@ -2,7 +2,6 @@ package cmuxctl_test
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,7 +30,7 @@ func notInstalledProber() cmuxctl.CmuxProber { return &fakeProber{available: fal
 func cmuxClient() *cmuxctl.FakeClient {
 	return &cmuxctl.FakeClient{
 		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{Name: "cmux", Version: "0.64.6"}, nil
+			return cmuxctl.Identity{SocketPath: "/run/cmux.sock"}, nil
 		},
 	}
 }
@@ -153,55 +152,54 @@ func TestPreflight_SocketDisabled(t *testing.T) {
 	}
 }
 
-// ---- Condition 5: capability mismatch / wrong identity ---------------------
+// ---- Condition 5: capability check + accurate classification ---------------
 
-func TestPreflight_CapabilityMismatch_ErrorFromIdentify(t *testing.T) {
+// preflightWithIdentify wires a socket so the dial passes, then drives
+// condition 5 with the supplied SystemIdentify behaviour.
+func preflightWithIdentify(t *testing.T, fn func(context.Context) (cmuxctl.Identity, error)) []error {
+	t.Helper()
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
+	return cmuxctl.Preflight(context.Background(), installedProber(),
+		&cmuxctl.FakeClient{SystemIdentifyFunc: fn})
+}
 
-	client := &cmuxctl.FakeClient{
-		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{}, errors.New("method not found")
-		},
-	}
-
-	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+func TestPreflight_AccessDenied_AccurateMessage(t *testing.T) {
+	errs := preflightWithIdentify(t, func(_ context.Context) (cmuxctl.Identity, error) {
+		return cmuxctl.Identity{}, &cmuxctl.PlaintextError{Raw: "ERROR: Access denied — only processes started inside cmux can connect"}
+	})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
 	msg := errs[0].Error()
-	if !hasSubstr(msg, "cmuxctl:") {
-		t.Errorf("error missing package prefix: %q", msg)
+	if !hasSubstr(msg, "cmuxctl:") || !hasSubstr(msg, "inside the cmux session") || !hasSubstr(msg, "allow-all") {
+		t.Errorf("access-denied message not actionable: %q", msg)
 	}
-	if !hasSubstr(msg, "incompatible") {
-		t.Errorf("error missing 'incompatible' fragment: %q", msg)
+	if hasSubstr(msg, "version is incompatible") {
+		t.Errorf("must not misreport access denial as a version problem: %q", msg)
 	}
 }
 
-func TestPreflight_NonCmuxIdentity(t *testing.T) {
-	dir := socketTempDir(t)
-	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { _ = ln.Close() })
-	t.Setenv("CMUX_SOCKET_PATH", socketPath)
-
-	client := &cmuxctl.FakeClient{
-		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{Name: "other-tool", Version: "1.0"}, nil
-		},
-	}
-
-	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+func TestPreflight_AuthRequired_DistinctMessage(t *testing.T) {
+	errs := preflightWithIdentify(t, func(_ context.Context) (cmuxctl.Identity, error) {
+		return cmuxctl.Identity{}, &cmuxctl.CmuxError{Code: "auth_required", Message: "Authentication required"}
+	})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	msg := errs[0].Error()
-	if !hasSubstr(msg, "cmuxctl:") {
-		t.Errorf("error missing package prefix: %q", msg)
+	if msg := errs[0].Error(); !hasSubstr(msg, "authentication") || !hasSubstr(msg, "CMUX_SOCKET_PASSWORD") {
+		t.Errorf("auth-required message not actionable: %q", msg)
 	}
-	if !hasSubstr(msg, "incompatible") {
-		t.Errorf("error missing 'incompatible' fragment: %q", msg)
+}
+
+func TestPreflight_IdentifyMissingSocketPath_Rejected(t *testing.T) {
+	errs := preflightWithIdentify(t, func(_ context.Context) (cmuxctl.Identity, error) {
+		return cmuxctl.Identity{}, nil // success, but no socket_path
+	})
+	if len(errs) != 1 || !hasSubstr(errs[0].Error(), "unexpected cmux identify response") {
+		t.Fatalf("want unexpected-identify error, got %v", errs)
 	}
 }
 
@@ -324,58 +322,26 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 
 // ---- TP-220-001: ANSI escape sequences in cmux-supplied text are stripped ---
 
-func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
-	dir := socketTempDir(t)
-	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { _ = ln.Close() })
-	t.Setenv("CMUX_SOCKET_PATH", socketPath)
-
-	client := &cmuxctl.FakeClient{
-		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{Name: "evil\x1b[31m\x1b]0;pwn\x07", Version: "1.0"}, nil
-		},
-	}
-
-	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+func TestPreflight_AnsiStrippedFromPlaintextError(t *testing.T) {
+	errs := preflightWithIdentify(t, func(_ context.Context) (cmuxctl.Identity, error) {
+		return cmuxctl.Identity{}, &cmuxctl.PlaintextError{Raw: "ERROR: Access denied\x1b[31m\x1b]0;pwn\x07"}
+	})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	msg := errs[0].Error()
-	if !hasSubstr(msg, "cmuxctl:") {
-		t.Errorf("error missing package prefix: %q", msg)
-	}
-	if !hasSubstr(msg, "incompatible") {
-		t.Errorf("error missing 'incompatible' fragment: %q", msg)
-	}
-	if strings.Contains(msg, "\x1b") {
+	if msg := errs[0].Error(); strings.Contains(msg, "\x1b") {
 		t.Errorf("error message contains raw ANSI escape byte: %q", msg)
 	}
 }
 
-func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
-	dir := socketTempDir(t)
-	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { _ = ln.Close() })
-	t.Setenv("CMUX_SOCKET_PATH", socketPath)
-
-	client := &cmuxctl.FakeClient{
-		SystemIdentifyFunc: func(_ context.Context) (cmuxctl.Identity, error) {
-			return cmuxctl.Identity{}, errors.New("boom\x1b[2J clear screen injection")
-		},
-	}
-
-	errs := cmuxctl.Preflight(context.Background(), installedProber(), client)
+func TestPreflight_AnsiStrippedFromCmuxError(t *testing.T) {
+	errs := preflightWithIdentify(t, func(_ context.Context) (cmuxctl.Identity, error) {
+		return cmuxctl.Identity{}, &cmuxctl.CmuxError{Code: "internal", Message: "boom\x1b[2J clear screen injection"}
+	})
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)
 	}
-	msg := errs[0].Error()
-	if !hasSubstr(msg, "cmuxctl:") {
-		t.Errorf("error missing package prefix: %q", msg)
-	}
-	if !hasSubstr(msg, "incompatible") {
-		t.Errorf("error missing 'incompatible' fragment: %q", msg)
-	}
-	if strings.Contains(msg, "\x1b") {
+	if msg := errs[0].Error(); strings.Contains(msg, "\x1b") {
 		t.Errorf("error message contains raw ANSI escape byte: %q", msg)
 	}
 }
