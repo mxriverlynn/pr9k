@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +45,7 @@ func sendStateLogAndWait(t *testing.T, server *interactionchannel.Channel, msg i
 // pane receives a StateHeader with a StepFailed state at position 0, the
 // rendered output contains "[✗]".
 func TestDisplayPane_StateHeader_StepFailed_RendersX(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -76,7 +75,7 @@ func TestDisplayPane_StateHeader_StepFailed_RendersX(t *testing.T) {
 // as the final state and verifies [✓] appears, which is the observable outcome
 // the operator sees once a retry succeeds.
 func TestDisplayPane_StateHeader_RetrySuccess_RendersCheck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -102,7 +101,7 @@ func TestDisplayPane_StateHeader_RetrySuccess_RendersCheck(t *testing.T) {
 // TestDisplayPane_StateHeader_IterationLine_IsRendered verifies that the
 // iteration line from a StateHeader message appears in the output.
 func TestDisplayPane_StateHeader_IterationLine_IsRendered(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -132,7 +131,7 @@ func TestDisplayPane_StateHeader_IterationLine_IsRendered(t *testing.T) {
 // TestDisplayPane_StateLog_LinesInDeliveryOrder verifies that StateLog lines
 // appear in the output in delivery order.
 func TestDisplayPane_StateLog_LinesInDeliveryOrder(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -161,7 +160,7 @@ func TestDisplayPane_StateLog_LinesInDeliveryOrder(t *testing.T) {
 		t.Errorf("not all lines found in log output: %q", out)
 		return
 	}
-	if !(firstIdx < secondIdx && secondIdx < thirdIdx) {
+	if firstIdx >= secondIdx || secondIdx >= thirdIdx {
 		t.Errorf("lines not in delivery order in log output: %q", out)
 	}
 }
@@ -170,7 +169,7 @@ func TestDisplayPane_StateLog_LinesInDeliveryOrder(t *testing.T) {
 // sent before output lines appears before those output lines in the rendered
 // log (preserving the W-2 synchronous adapter ordering guarantee).
 func TestDisplayPane_StateLog_SeparatorBeforeOutput(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -214,7 +213,7 @@ func TestDisplayPane_StateLog_SeparatorBeforeOutput(t *testing.T) {
 // the pane sends DoneAck and holds (does not return) even after receiving state
 // messages followed by WorkspaceDone.
 func TestDisplayPane_WorkspaceDone_AfterStateMessages_SendsDoneAck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -257,7 +256,7 @@ func TestDisplayPane_WorkspaceDone_AfterStateMessages_SendsDoneAck(t *testing.T)
 // by confirming that runCmuxDisplayPaneWith sends only DoneAck (no Intent) to
 // the server.
 func TestDisplayPane_HeaderPane_HasNoKeyPath(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -367,7 +366,7 @@ func TestRenderCmuxStateHeader_MultipleSteps_GridLayout(t *testing.T) {
 // render header content when it receives a StateHeader message. The role guard in
 // the dispatch loop must prevent header rendering in the log pane.
 func TestDisplayPane_LogPane_IgnoresStateHeader(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -402,7 +401,7 @@ func TestDisplayPane_LogPane_IgnoresStateHeader(t *testing.T) {
 // display-only: it produces no Intent even when it receives a StateLog message.
 // Spec D4 requires both display panes to be display-only.
 func TestDisplayPane_LogPane_HasNoKeyPath(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

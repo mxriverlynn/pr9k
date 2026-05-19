@@ -1,10 +1,12 @@
 // Polling helpers in this file (waitConditionFP) use poll-with-condition loops
-// with bounded timeouts, not blind sleeps. Standard timeout budget: 3s for
-// subprocess execution, 2s for goroutine-exit, with 20ms poll interval.
+// with bounded timeouts, not blind sleeps. The poll returns as soon as the
+// condition holds (≈1s in practice), so the budget is sized for worst-case CI
+// scheduler jitter under the full `make ci -race` load rather than the happy
+// path: 15s for subprocess execution inside a 20s context, with a 20ms poll
+// interval.
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -83,7 +85,7 @@ func TestRunCmuxFooterPane_StatusLineScript_Runs(t *testing.T) {
 
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -92,7 +94,7 @@ func TestRunCmuxFooterPane_StatusLineScript_Runs(t *testing.T) {
 	}()
 
 	// Wait for the script to run (marker file appears).
-	if !waitConditionFP(3*time.Second, 20*time.Millisecond, func() bool {
+	if !waitConditionFP(15*time.Second, 20*time.Millisecond, func() bool {
 		_, err := os.Stat(markerFile)
 		return err == nil
 	}) {
@@ -129,8 +131,8 @@ func TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender(t *testing.T) {
 
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 
-	var out bytes.Buffer
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	var out syncBuffer
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -139,7 +141,7 @@ func TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender(t *testing.T) {
 	}()
 
 	// Wait for the output to appear in the writer.
-	if !waitConditionFP(3*time.Second, 20*time.Millisecond, func() bool {
+	if !waitConditionFP(15*time.Second, 20*time.Millisecond, func() bool {
 		return strings.Contains(out.String(), expectedOutput)
 	}) {
 		t.Errorf("expected %q in footer output; got: %q", expectedOutput, out.String())

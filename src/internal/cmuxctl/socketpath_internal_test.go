@@ -185,11 +185,11 @@ func TestResolveCmuxSocketPath_UserConfigDirErrorFallsBackToLegacy(t *testing.T)
 
 func TestFirstLine(t *testing.T) {
 	cases := map[string]string{
-		"/a/b.sock":            "/a/b.sock",
-		"/a/b.sock\n":          "/a/b.sock",
-		"/a/b.sock\nextra\n":   "/a/b.sock",
-		"\n/leading":           "",
-		"/only-cr\r":           "/only-cr\r", // CR is not a line terminator here
+		"/a/b.sock":          "/a/b.sock",
+		"/a/b.sock\n":        "/a/b.sock",
+		"/a/b.sock\nextra\n": "/a/b.sock",
+		"\n/leading":         "",
+		"/only-cr\r":         "/only-cr\r", // CR is not a line terminator here
 	}
 	for in, want := range cases {
 		if got := firstLine(in); got != want {

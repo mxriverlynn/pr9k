@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,7 +47,7 @@ func TestActionSkip_IsDistinctStepAction(t *testing.T) {
 func TestCmuxPaneCmd_ValidRoles(t *testing.T) {
 	for _, role := range []string{"orchestrator", "header", "log", "footer"} {
 		t.Run(role, func(t *testing.T) {
-			socketPath := filepath.Join(t.TempDir(), "test.sock")
+			socketPath := shortSockPath(t)
 			t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 			t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 			cmd := newCmuxPaneCmd()
@@ -119,7 +118,7 @@ func TestCmuxPaneCmd_MissingSocket(t *testing.T) {
 // read and passed to the dispatched runner. We do this by checking that the
 // command succeeds when a socket path is provided (the runner stub accepts it).
 func TestCmuxPaneCmd_SocketPathPassedToRunner(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 	t.Setenv("PR9K_PROJECT_DIR", t.TempDir())
 	cmd := newCmuxPaneCmd()

@@ -52,7 +52,7 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 	if dialErr != nil {
 		return []error{classifyDialError(dialErr, socketPath)}
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	// Condition 5: capability check via system.identify.
 	id, err := client.SystemIdentify(ctx)

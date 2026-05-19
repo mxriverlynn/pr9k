@@ -266,7 +266,7 @@ func hangingServer(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -288,7 +288,7 @@ func respondingServer(t *testing.T, result json.RawMessage) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -296,7 +296,7 @@ func respondingServer(t *testing.T, result json.RawMessage) string {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				dec := json.NewDecoder(c)
 				enc := json.NewEncoder(c)
 				for {
@@ -431,7 +431,7 @@ func TestRealClient_SerializesRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Single-connection serial server: one request, one response, in order.
 	go func() {
@@ -439,7 +439,7 @@ func TestRealClient_SerializesRequests(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		dec := json.NewDecoder(conn)
 		enc := json.NewEncoder(conn)
 		for {
@@ -526,7 +526,7 @@ func TestRealClient_RPCErrorSurfacedAsGoError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	// Server: first request → JSON-RPC error; subsequent requests → result.
 	go func() {
@@ -534,7 +534,7 @@ func TestRealClient_RPCErrorSurfacedAsGoError(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		dec := json.NewDecoder(conn)
 		enc := json.NewEncoder(conn)
 		first := true
@@ -623,7 +623,7 @@ func TestRealClient_WireMethodAndParams(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	captured := make(chan rpcMsg, 1)
 	go func() {
@@ -631,7 +631,7 @@ func TestRealClient_WireMethodAndParams(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		dec := json.NewDecoder(conn)
 		enc := json.NewEncoder(conn)
 		var req rpcMsg

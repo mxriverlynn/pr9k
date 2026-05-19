@@ -14,9 +14,22 @@ import (
 )
 
 // sockPath returns a unique temp socket path for the given test.
+//
+// The socket is bound under a short /tmp directory rather than t.TempDir():
+// macOS caps a Unix socket address (sun_path) at 104 bytes, and the
+// /var/folders/<...>/T/<TestName>/NNN paths t.TempDir() returns exceed that
+// once "/test.sock" is appended, so net.Listen("unix", ...) fails with
+// "bind: invalid argument" (EINVAL) on the primary development platform.
+// /tmp is present and short on both macOS and Linux; the 0700 mode keeps the
+// directory non-world-writable.
 func sockPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "test.sock")
+	dir, err := os.MkdirTemp("/tmp", "p9k")
+	if err != nil {
+		t.Fatalf("sockPath: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, "test.sock")
 }
 
 // TestServeDialRoundTrip verifies that a Serve-listener accepts a Dial-client

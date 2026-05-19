@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -152,7 +151,7 @@ func TestWorkspaceDone_OrchestratorClosesChannelAfterTimeout(t *testing.T) {
 // verifies the orchestrator unlinks the real socket file after completing the
 // WorkspaceDone protocol. Three goroutine panes respond automatically.
 func TestWorkspaceDone_OrchestratorUnlinksSocket(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	projectDir := t.TempDir()
 	setupWorkflowInProjectDir(t, projectDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -283,7 +282,7 @@ func waitForDoneAck(t *testing.T, server *interactionchannel.Channel, role strin
 // TestWorkspaceDone_HeaderPaneSendsDoneAck verifies that runCmuxHeaderPane
 // sends DoneAck{Role:"header"} when it receives WorkspaceDone.
 func TestWorkspaceDone_HeaderPaneSendsDoneAck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -303,7 +302,7 @@ func TestWorkspaceDone_HeaderPaneSendsDoneAck(t *testing.T) {
 // TestWorkspaceDone_LogPaneSendsDoneAck verifies that runCmuxLogPane
 // sends DoneAck{Role:"log"} when it receives WorkspaceDone.
 func TestWorkspaceDone_LogPaneSendsDoneAck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -322,7 +321,7 @@ func TestWorkspaceDone_LogPaneSendsDoneAck(t *testing.T) {
 // TestWorkspaceDone_FooterPaneSendsDoneAck verifies that runCmuxFooterPane
 // sends DoneAck{Role:"footer"} when it receives WorkspaceDone.
 func TestWorkspaceDone_FooterPaneSendsDoneAck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -342,7 +341,7 @@ func TestWorkspaceDone_FooterPaneSendsDoneAck(t *testing.T) {
 // does not panic when the server closes the socket (io.EOF). The pane should
 // continue rendering its final state until the context is cancelled.
 func TestWorkspaceDone_PaneContinuesAfterSocketClose(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -415,7 +414,7 @@ func TestWorkspaceDone_OrchestratorHandshakeErrorPropagates(t *testing.T) {
 // TestWorkspaceDone_PaneExactlyOneDoneAck verifies that each display role sends
 // exactly one DoneAck — not zero, not two — in response to WorkspaceDone.
 func TestWorkspaceDone_PaneExactlyOneDoneAck(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

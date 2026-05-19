@@ -107,7 +107,7 @@ func TestPreflight_NotDescendant(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	// Keep listener alive so the socket file persists; restrict permissions.
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 
 	if err := os.Chmod(socketPath, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
@@ -137,7 +137,7 @@ func TestPreflight_SocketDisabled(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	// Close the listener — socket file stays but connect returns ECONNREFUSED.
-	ln.Close()
+	_ = ln.Close()
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	errs := cmuxctl.Preflight(context.Background(), installedProber(), cmuxClient())
@@ -158,7 +158,7 @@ func TestPreflight_SocketDisabled(t *testing.T) {
 func TestPreflight_CapabilityMismatch_ErrorFromIdentify(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	client := &cmuxctl.FakeClient{
@@ -183,7 +183,7 @@ func TestPreflight_CapabilityMismatch_ErrorFromIdentify(t *testing.T) {
 func TestPreflight_NonCmuxIdentity(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	client := &cmuxctl.FakeClient{
@@ -300,7 +300,7 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 	}
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	ln.Close()
+	_ = ln.Close()
 
 	// Make the parent directory world-writable.
 	if err := os.Chmod(dir, 0o777); err != nil {
@@ -327,7 +327,7 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	client := &cmuxctl.FakeClient{
@@ -355,7 +355,7 @@ func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
 func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	client := &cmuxctl.FakeClient{
@@ -385,7 +385,7 @@ func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
 func TestPreflight_HappyPath(t *testing.T) {
 	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	errs := cmuxctl.Preflight(context.Background(), installedProber(), cmuxClient())

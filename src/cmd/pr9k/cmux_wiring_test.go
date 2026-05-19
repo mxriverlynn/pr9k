@@ -125,15 +125,18 @@ func TestRunCmuxMode_SuccessPath(t *testing.T) {
 	profileDir := t.TempDir()
 	writeMinimalStepFile(t, workflowDir)
 
-	// Create a real Unix socket so Preflight's dial check (condition 2/3/4) passes.
-	socketDir := t.TempDir()
-	socketPath := filepath.Join(socketDir, "cmux.sock")
+	// Create a real Unix socket so Preflight's dial check (condition 2/3/4)
+	// passes. Bind under a short /tmp path: Preflight dials the
+	// EvalSymlinks-resolved path, and on macOS t.TempDir() under /var/folders
+	// (which resolves to /private/var/folders) exceeds the 104-byte sun_path
+	// limit, making net.DialUnix fail with EINVAL.
+	socketPath := shortSockPath(t)
 	uln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if err != nil {
 		t.Fatalf("create socket: %v", err)
 	}
 	uln.SetUnlinkOnClose(false)
-	defer uln.Close()
+	defer func() { _ = uln.Close() }()
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
 
 	splitN := 0

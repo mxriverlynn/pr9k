@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,8 +17,28 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/ui"
 )
 
+// syncBuffer is a concurrency-safe bytes.Buffer. The footer machine runs in a
+// goroutine that writes to the shared output buffer while the test's polling
+// helpers read it; an unsynchronised bytes.Buffer is a data race under -race.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 // waitForOutputFW polls out.String() until pred is true or timeout elapses.
-func waitForOutputFW(timeout, interval time.Duration, out *bytes.Buffer, pred func(s string) bool) bool {
+func waitForOutputFW(timeout, interval time.Duration, out *syncBuffer, pred func(s string) bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if pred(out.String()) {
@@ -45,7 +66,7 @@ func runMachineFixture(
 	t *testing.T,
 	src FooterKeySource,
 	ch footerPaneCh,
-	out *bytes.Buffer,
+	out *syncBuffer,
 ) (cancel context.CancelFunc, done <-chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +95,7 @@ func waitDone(t *testing.T, done <-chan struct{}) {
 func TestFooterMachineWith_StateFooterNormal_RendersNormalHints(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()
@@ -101,7 +122,7 @@ func TestFooterMachineWith_StateFooterNormal_RendersNormalHints(t *testing.T) {
 func TestFooterMachineWith_StateFooterError_RendersErrorHints(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()
@@ -128,7 +149,7 @@ func TestFooterMachineWith_StateFooterError_RendersErrorHints(t *testing.T) {
 func TestFooterMachineWith_QY_ForwardsIntentQuit(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	src.Press("q")
 	src.Press("y")
@@ -167,7 +188,7 @@ func TestFooterMachineWith_QY_ForwardsIntentQuit(t *testing.T) {
 func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()
@@ -216,7 +237,7 @@ func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
 func TestFooterMachineWith_QXEsc_NonConfirmKeyIgnoredNotBuffered(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()
@@ -267,7 +288,7 @@ func TestFooterMachineWith_QXEsc_NonConfirmKeyIgnoredNotBuffered(t *testing.T) {
 func TestFooterMachineWith_ContextCancel_GoRoutineExits(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	cancel()
@@ -281,7 +302,7 @@ func TestFooterMachineWith_ContextCancel_GoRoutineExits(t *testing.T) {
 func TestFooterMachineWith_WorkspaceDone_SendsDoneAck(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
-	var out bytes.Buffer
+	var out syncBuffer
 
 	cancel, done := runMachineFixture(t, src, fch, &out)
 	defer cancel()

@@ -113,7 +113,7 @@ func (c *RealClient) run() {
 
 	disconnect := func() {
 		if conn != nil {
-			conn.Close()
+			_ = conn.Close()
 			conn = nil
 			enc = nil
 			dec = nil

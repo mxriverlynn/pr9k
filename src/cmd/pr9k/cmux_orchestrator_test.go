@@ -87,7 +87,7 @@ func TestRunCmuxOrchestrator_EmptyProjectDir_ReturnsError(t *testing.T) {
 // PR9K_PROJECT_DIR is set to a valid temp directory.
 func TestCmuxPaneCmd_OrchestratorRole_RequiresProjectDir(t *testing.T) {
 	projectDir := t.TempDir()
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := shortSockPath(t)
 	t.Setenv("PR9K_CMUX_SOCKET", socketPath)
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 

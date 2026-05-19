@@ -161,7 +161,7 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 			// ctx may already be cancelled on the signal-driven path.
 			closeCtx := context.Background()
 			if err := client.WorkspaceClose(closeCtx, workspaceName); err != nil {
-				fmt.Fprintf(stderr, "pr9k: orphan workspace %q could not be closed; dismiss it manually via cmux's controls\n", workspaceName)
+				_, _ = fmt.Fprintf(stderr, "pr9k: orphan workspace %q could not be closed; dismiss it manually via cmux's controls\n", workspaceName)
 				teardownErr = err
 			}
 			// Silent focus-restore (spec D10): skip when no prior workspace was
