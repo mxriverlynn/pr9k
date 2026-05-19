@@ -6,42 +6,50 @@ Source files: `src/internal/cmuxctl/`
 
 ## CmuxClient interface
 
+> **Reworked against real cmux v2 (Rework R / Architecture A).** Verified at cmux 0.64.6, commit `2f96c15c2`. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md), [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md), and decision-log **D-R1/D-R2**. cmux v2 has no `surface.spawn`/`surface.hide`; workspaces/surfaces are opaque UUID+ref handles, not names.
+
 ```go
 type CmuxClient interface {
     SystemIdentify(ctx context.Context) (Identity, error)
-    WorkspaceCurrent(ctx context.Context) (string, error)
-    WorkspaceList(ctx context.Context) ([]string, error)
-    WorkspaceCreate(ctx context.Context, name string) error
-    WorkspaceClose(ctx context.Context, name string) error
-    WorkspaceSelect(ctx context.Context, name string) error
-    SurfaceSplit(ctx context.Context, opts SplitOpts) (string, error)
-    SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error
-    SurfaceHide(ctx context.Context, paneID string) error
-    SurfaceList(ctx context.Context, workspaceName string) ([]PaneInfo, error)
+    WorkspaceCurrent(ctx context.Context) (Workspace, error)
+    WorkspaceList(ctx context.Context) ([]WorkspaceInfo, error)
+    WorkspaceCreate(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error)
+    WorkspaceClose(ctx context.Context, ws Workspace) error
+    WorkspaceSelect(ctx context.Context, ws Workspace) error
+    SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface, error)
+    SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
 }
 ```
 
-All methods accept a context for cancellation and deadline propagation. The interface wraps the ten JSON-RPC 2.0 methods that Phase 1 requires: `system.identify`, `workspace.current`, `workspace.list`, `workspace.create`, `workspace.close`, `workspace.select`, `surface.split`, `surface.spawn`, `surface.hide`, `surface.list`.
+All methods accept a context. The wire protocol is newline-delimited JSON: request `{id,method,params}`; success `{id,ok:true,result}`; error `{id,ok:false,error:{code:<string>,message}}`. A `cmuxOnly` cmux writes a bare `ERROR: …` line to non-descendant clients before any request.
 
 **Key types:**
 
 ```go
-type Identity struct {
-    Name    string `json:"name"`
-    Version string `json:"version"`
-}
+type Identity struct { SocketPath string `json:"socket_path"` } // cmux v2 has no name/version
 
+type Workspace struct { ID, Ref string }  // UUID + "workspace:N"
+type Surface   struct { SurfaceID, SurfaceRef, PaneID, PaneRef string }
+
+type WorkspaceCreateOpts struct {
+    Title, WorkingDirectory, InitialCommand string
+    InitialEnv map[string]string
+}
 type SplitOpts struct {
-    PaneID string `json:"pane_id,omitempty"` // empty means the current pane
+    Workspace        Workspace
+    SurfaceID        string
+    Direction        SplitDirection // "left"|"right"|"up"|"down" — REQUIRED by cmux
+    WorkingDirectory string
+    InitialCommand   string
 }
+type WorkspaceInfo struct { ID, Ref string }
+type SurfaceInfo   struct { SurfaceID string; Exited bool }
 
-type PaneInfo struct {
-    ID     string `json:"id"`
-    Exited bool   `json:"exited"`
-}
+// CmuxError{Code,Message} (string code) and PlaintextError{Raw} are the two
+// typed errors preflight classifies.
 ```
 
-D-13 notes: method-presence capability check is accepted; JSON schema validation for individual responses is deferred.
+Capability check (D-R2): a successful `system.identify` carrying a non-empty `socket_path`. cmux v2 returns no product name/version, so the old `name=="cmux"` check is gone.
 
 ## RealClient
 
@@ -68,22 +76,18 @@ func (c *RealClient) Stop()                    // shuts down queue goroutine; wa
 ```go
 type FakeClient struct {
     SystemIdentifyFunc   func(ctx context.Context) (Identity, error)
-    WorkspaceCurrentFunc func(ctx context.Context) (string, error)
-    WorkspaceListFunc    func(ctx context.Context) ([]string, error)
-    WorkspaceCreateFunc  func(ctx context.Context, name string) error
-    WorkspaceCloseFunc   func(ctx context.Context, name string) error
-    WorkspaceSelectFunc  func(ctx context.Context, name string) error
-    SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (string, error)
-    SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string, env map[string]string) error
-    SurfaceHideFunc      func(ctx context.Context, paneID string) error
-    SurfaceListFunc      func(ctx context.Context, workspaceName string) ([]PaneInfo, error)
+    WorkspaceCurrentFunc func(ctx context.Context) (Workspace, error)
+    WorkspaceListFunc    func(ctx context.Context) ([]WorkspaceInfo, error)
+    WorkspaceCreateFunc  func(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error)
+    WorkspaceCloseFunc   func(ctx context.Context, ws Workspace) error
+    WorkspaceSelectFunc  func(ctx context.Context, ws Workspace) error
+    SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (Surface, error)
+    SurfaceListFunc      func(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
 
     // Call recorders — appended under mu; read after all goroutines have joined.
-    CreateCalls []string
-    CloseCalls  []string
-    SelectCalls []string
-    SpawnCalls  []SpawnCall
-    HideCalls   []string
+    CreateCalls []WorkspaceCreateOpts
+    CloseCalls  []Workspace
+    SelectCalls []Workspace
     SplitCalls  []SplitOpts
 
     // Hang inject seams — both channels must be initialised by the caller.
@@ -119,7 +123,7 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 | 2 | Resolved socket path does not exist | `cmuxctl: cmux socket not found at <path> (looked in: <locations>); start cmux, then launch pr9k from inside a cmux pane, or set CMUX_SOCKET_PATH` |
 | 3 | Caller is not a cmux descendant (EACCES on dial) | `cmuxctl: cmux mode must be launched from inside a cmux session (socket: <path>)` |
 | 4 | Socket disabled in cmux config (ECONNREFUSED) | `cmuxctl: cmux socket is disabled in cmux configuration; re-enable it and try again` |
-| 5 | `system.identify` error or unexpected name | `cmuxctl: cmux version is incompatible with pr9k cmux mode: <detail>` |
+| 5 | `system.identify` failed or returned no `socket_path` | classified by `classifyIdentifyError`: a plaintext access-denied → "run pr9k from a terminal pane inside the cmux session … or set allow-all"; a `CmuxError{auth_*}` → "cmux socket requires authentication …"; otherwise a generic capability-check error (no longer a blanket "version incompatible") |
 
 **Socket resolution (`resolveCmuxSocketPath`, `socketpath.go`):** pr9k mirrors cmux's stable-variant discovery contract so `pr9k --cmux` finds the same socket cmux's own CLI would, on every platform, without manual configuration. Resolution order: (1) `CMUX_SOCKET_PATH` canonical override; (2) `CMUX_SOCKET` deprecated alias; (3) cmux's `last-socket-path` marker file (`os.UserConfigDir()/cmux/last-socket-path`, then the `/tmp/cmux-last-socket-path` mirror — contents are the live socket path); (4) stable default `os.UserConfigDir()/cmux/cmux.sock` (`~/Library/Application Support/cmux/cmux.sock` on macOS, `~/.config/cmux/cmux.sock` on Linux); (5) legacy `/tmp/cmux.sock`. It never errors — when nothing resolves it returns the stable default so the diagnostics name the cmux-correct path. Nightly/staging/dev cmux variants are out of scope and reachable via `CMUX_SOCKET_PATH`. The dependency surface (`getenv`, `userConfigDir`, `pathExists`, `readFile`) is injectable for hermetic, cross-platform tests.
 
@@ -148,18 +152,16 @@ Implements the complete Phase 1 workspace lifecycle.
 
 **Setup sequence:**
 
-1. `WorkspaceCurrent` — captures the prior workspace name for focus restore; an error is silently recorded as "no prior workspace" (D-10).
-2. `SanitizeBasename(filepath.Base(projectDir))` — produces the sanitized basename; the raw basename is never printed (D-23).
-3. `composeWorkspaceName(sanitized)` — forms `pr9k-<sanitized>-<timestamp>`.
-4. `WorkspaceCreate` — on `ErrWorkspaceExists`, retries once with a fresh timestamp (D-12). A second collision is a fatal error.
-5. Prints `pr9k workspace: <name>\n` to `out`.
-6. Resolves the pr9k executable once (`resolveExecutable`) and computes the interaction-channel socket path `<projectDir>/.pr9k/cmux-pane-<workspaceName>.sock`, carried to every pane via `spawnEnv` (`PR9K_CMUX_SOCKET`, `PR9K_PROJECT_DIR`).
-7. Spawns four panes orchestrator-first (D-3, D-4):
-   - `SurfaceSplit` → `orchPaneID`; `SurfaceSpawn(orchPaneID, [exe, "cmux-pane", "--role=orchestrator"], spawnEnv)`; `SurfaceHide(orchPaneID)`.
-   - Three visible panes — `header`, `log`, `footer` — each via `SurfaceSplit` + `SurfaceSpawn(paneID, [exe, "cmux-pane", "--role=<role>"], spawnEnv)`.
-8. Starts `StartDismissalObserver`; blocks on `obs.Ch` or `ctx.Done()`.
+_(Rework R / Architecture A — D-R1. The pr9k process the operator launched inside a cmux pane **is** the orchestrator; there is no hidden 4th pane. cmux v2 has no `surface.spawn`/`surface.hide`.)_
 
-Each spawned pane re-execs the pr9k binary as `pr9k cmux-pane --role=<role>` so the display panes are descendants of the cmux session (descendants-only mode) and connect back to the orchestrator over the interaction-channel socket.
+1. `WorkspaceCurrent` — captures the prior workspace **handle** for focus restore; an error is recorded as "no prior workspace" (D-10).
+2. `SanitizeBasename(filepath.Base(projectDir))` then `composeWorkspaceLabel` → display label `pr9k-<sanitized>-<ts>` (D-23: raw basename never printed). The label is a title, not an identity — cmux returns an opaque handle.
+3. `WorkspaceCreate(WorkspaceCreateOpts{Title, WorkingDirectory: projectDir, InitialCommand: <log pane>, InitialEnv})` → `Workspace` handle. The workspace's first surface is the **log** pane. cmux v2 has no name uniqueness, so there is no collision retry.
+4. Prints `pr9k workspace: <label>\n` to `out`.
+5. Two `SurfaceSplit` calls against the workspace handle: `Direction: up`, `InitialCommand: <header pane>`; then `Direction: down`, `InitialCommand: <footer pane>`. Each pane's command is `PR9K_CMUX_SOCKET=… PR9K_PROJECT_DIR=… exec <exe> cmux-pane --role=<role>` — env is embedded because cmux v2 `surface.split` has no `initial_env`.
+6. Starts `StartDismissalObserver(ctx, client, ws, 3, cfg)`; blocks on `obs.Ch` or `ctx.Done()`.
+
+Each surface runs `pr9k cmux-pane --role=<role>`; because cmux spawns them they are descendants of the cmux session and connect back to this orchestrator process over the interaction-channel socket.
 
 **Teardown sequence (wrapped in `sync.Once` — runs exactly once regardless of exit path):**
 
@@ -197,11 +199,11 @@ func (o *DismissalObserver) Cancel()
 func (o *DismissalObserver) Wait()
 ```
 
-`StartDismissalObserver` launches a goroutine that polls `WorkspaceList` and `SurfaceList` on `cfg.PollInterval` cadence (D-6 single-flight). It fires `obs.Ch` (buffered cap 1) on:
+`StartDismissalObserver(ctx, client, ws, expectedSurfaces, cfg)` launches a goroutine that polls `WorkspaceList` and `SurfaceList` on `cfg.PollInterval` cadence (D-6 single-flight). It fires `obs.Ch` (buffered cap 1) on (D-R1: re-expressed for cmux v2, which has no per-surface liveness flag):
 
-- **Workspace removed** — workspace name absent from `WorkspaceList` result (D-9 arm 1).
-- **Any pane exited** — any `PaneInfo.Exited == true` in `SurfaceList` result (D-9 arm 2).
-- **N=3 consecutive poll timeouts** — three successive calls that each exceed `cfg.PollTimeout`; fires `DismissalEvent{Fatal: true}` (D-7).
+- **Workspace removed** — the pr9k `Workspace` handle (matched by UUID or ref) absent from `WorkspaceList` (D-9 arm 1).
+- **Surface count dropped** — `len(SurfaceList) < expectedSurfaces` (the 3 pr9k created), or `SurfaceList` returns a `CmuxError{not_found}` (workspace vanished) (D-9 arm 2).
+- **N=3 consecutive poll timeouts** — fires `DismissalEvent{Fatal: true}` (D-7).
 
 `SetShuttingDown` sets a flag that suppresses a post-shutdown fire (D-8 self-close double-fire mitigation). Callers must call `SetShuttingDown` then `Cancel` before `Wait` to ensure a clean join.
 

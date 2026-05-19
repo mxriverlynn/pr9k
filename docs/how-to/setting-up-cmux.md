@@ -72,13 +72,13 @@ From inside your cmux session, in the terminal pane where you want pr9k to run:
 pr9k --cmux --project-dir /path/to/your/repo
 ```
 
-pr9k runs its standard preflight checks (Docker, Claude profile) and then its cmux-specific preflight (binary, socket, descendant, capability). On success it prints the workspace name and the four-pane scaffold appears in cmux:
+pr9k runs its standard preflight checks (Docker, Claude profile) and then its cmux-specific preflight (binary, socket, descendant, capability). On success it prints the workspace label and a three-pane scaffold appears in cmux:
 
 ```
 pr9k workspace: pr9k-myrepo-20260515T123456.000000000Z
 ```
 
-The four panes start immediately. The three visible panes each connect back to the (hidden) orchestrator over a Unix-socket interaction channel. Once all three have completed the readiness handshake (up to 10 seconds), the workflow begins.
+The three panes (log, header, footer) start immediately and connect back to the orchestrator — the pr9k process you launched in this pane; there is no separate hidden orchestrator pane (Rework R / Architecture A) — over a Unix-socket interaction channel. Once all three have completed the readiness handshake (up to 10 seconds), the workflow begins.
 
 ### What each pane shows
 
@@ -166,7 +166,9 @@ pr9k: orphan workspace "pr9k-myrepo-..." could not be closed; dismiss it manuall
 | `cmux socket not found at <path> (looked in: ...)` | No cmux socket at any resolved location — cmux is not running, or you are not in a cmux pane so `CMUX_SOCKET_PATH` is unset and no marker/default socket exists | Start `cmux` (Step 2), then run `pr9k --cmux` **from inside a cmux pane**; or set `CMUX_SOCKET_PATH` |
 | `must be launched from inside a cmux session` | cmux is running but the launching terminal is not a cmux descendant (default descendants-only mode) | Open a terminal pane inside cmux and run pr9k there (Step 2) |
 | `cmux socket is disabled` | cmux config has socket disabled | Re-enable the socket in cmux's settings |
-| `cmux version is incompatible` | `system.identify` returned an unexpected name or error | Update cmux to v0.64.6 or later |
+| `cmux denied access — run pr9k from a terminal pane inside the cmux session` | cmux is in its default `cmuxOnly` mode and pr9k is not a cmux descendant | Launch pr9k from a terminal pane *inside* cmux, or set cmux's socket control mode to allow-all |
+| `cmux socket requires authentication` | cmux socket password mode is enabled | Set `CMUX_SOCKET_PASSWORD` or configure the socket password in cmux Settings |
+| `unexpected cmux identify response (no socket_path)` | cmux is an unsupported version | Use the pinned cmux v0.64.6 |
 | `cmux socket parent directory ... is world-writable` | Socket parent dir is writable by all users (e.g. a socket placed directly in `/tmp`) | Correct the directory permissions, or point `CMUX_SOCKET_PATH` at a socket whose parent is not world-writable |
 | `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
 | Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |

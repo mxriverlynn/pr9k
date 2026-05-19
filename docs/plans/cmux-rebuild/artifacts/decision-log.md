@@ -414,3 +414,23 @@ _(none — every decision settled so far has either rejected alternatives or loa
 - **Driven by findings:** —
 - **Dependent decisions:** —
 - **Referenced in spec:** Primary Flow
+
+## Rework R decisions (post-implementation, against real cmux v2)
+
+These supersede earlier decisions where they conflict with the verified cmux v2 API (cmux 0.64.6, commit `2f96c15c2`). Context: [../access-denied-misclassification-investigation.md](../access-denied-misclassification-investigation.md), [../v2-rework-plan.md](../v2-rework-plan.md).
+
+### D-R1: Orchestrator is the in-pane pr9k process; no hidden orchestrator pane (supersedes D13/D-3/D-4 hidden-pane parts)
+
+- **Question:** D13/D-3/D-4 put the orchestrator in a *hidden* cmux pane and spawned 4 panes via `surface.spawn`/`surface.hide`. cmux v2 has neither method. How is the orchestrator/pane layout expressed?
+- **Decision:** **Architecture A** (operator-approved). The pr9k process the operator launches inside a cmux pane *is* the orchestrator — there is no separate or hidden orchestrator pane. RunPhase1 calls `workspace.create` (whose first surface is the `log` pane) then `surface.split` twice (`up` → `header`, `down` → `footer`). Each surface runs `pr9k cmux-pane --role=<role>`; the pane environment (`PR9K_CMUX_SOCKET`, `PR9K_PROJECT_DIR`) is embedded in the surface's `initial_command` because cmux v2 `surface.split` has no `initial_env` param. The orchestrator streams state to the three panes over the unchanged interaction-channel Unix socket.
+- **Rationale:** cmux v2 exposes no `surface.hide` and no `surface.spawn` (verified at `2f96c15c2`); the hidden-4th-pane design is unimplementable. Architecture A removes the need for both primitives, reduces the surface count from 4 to 3, and matches cmux v2's create-with-`initial_command` model. The orchestrator never needed to be a cmux surface — it is already the process that runs the workflow.
+- **Evidence:** [../access-denied-misclassification-investigation.md](../access-denied-misclassification-investigation.md) E9, E10; cmux `TerminalController.swift@2f96c15c2` (`v2SurfaceSplit`/`v2SurfaceCreate`/`v2Identify`); operator approval of Architecture A.
+- **Rejected alternatives:**
+  - Keep 4 surfaces and fake-hide the orchestrator via layout/divider tricks or immediate `surface.close` — rejected; fights the cmux v2 API, fragile, no benefit.
+- **Supersedes:** the hidden-orchestrator-pane and `surface.spawn`/`surface.hide` aspects of [D13](#d13...), D-3, D-4. The dismissal-observation contract (D9) is preserved but re-expressed: cmux v2 `surface.list` has no per-surface liveness flag, so dismissal fires on the pr9k workspace leaving `workspace.list`, or the live surface count dropping below the 3 created (or `surface.list` returning `not_found`).
+
+### D-R2: cmux v2 protocol is the contract of record
+
+- **Decision:** pr9k speaks the verified cmux v2 socket protocol: newline-delimited JSON; request `{id,method,params}`; success `{id,ok:true,result}`; error `{id,ok:false,error:{code:<string>,message}}`; pre-request plaintext `ERROR: …` for `cmuxOnly` rejection. Workspaces/surfaces are opaque UUID+ref handles, not names. Capability = a successful `system.identify` carrying `socket_path` (cmux v2 has no product name/version). Preflight classifies access-denied / auth-required distinctly instead of a catch-all "version incompatible".
+- **Rationale:** The original client was built against an assumed protocol that matched nothing in cmux; every dimension diverged.
+- **Evidence:** investigation E1–E10, validation V1–V6, verified at `2f96c15c2`.

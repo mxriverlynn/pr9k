@@ -10,20 +10,21 @@ Pass `--cmux` on pr9k's run invocation:
 pr9k --cmux [--project-dir <path>]
 ```
 
-The flag is visible and experimental. When set, pr9k runs `cmuxctl.Preflight` then `cmuxctl.RunPhase1`, which creates the workspace, spawns the four pane sub-processes, and hands control to `runCmuxOrchestrator` for the workflow run.
+> **Reworked against real cmux v2 (Rework R / Architecture A — decision-log D-R1/D-R2).** Verified at cmux 0.64.6 / commit `2f96c15c2`. cmux v2 has no `surface.spawn`/`surface.hide`; there is **no hidden orchestrator pane**. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md) and [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md). Sections below describing a hidden 4th pane / `surface.spawn` / `name=="cmux"` describe the superseded design.
+
+The flag is visible and experimental. When set, pr9k runs `cmuxctl.Preflight` then `cmuxctl.RunPhase1`. The pr9k process the operator launched inside a cmux pane **is** the orchestrator; it creates the workspace and its three display surfaces, then runs the workflow, streaming state to the panes over the interaction channel.
 
 ## Workspace scaffold
 
-Phase 2 creates one cmux workspace with four panes:
+The orchestrator (the in-pane pr9k process) creates one cmux workspace with **three** surfaces — there is no hidden orchestrator pane:
 
-| Pane | Visible? | Content (Phase 2) |
+| Surface | Created by | Content |
 |---|---|---|
-| orchestrator | No (hidden) | `pr9k cmux-pane --role=orchestrator` |
-| header | Yes | `pr9k cmux-pane --role=header` — live step checkboxes + iteration counter |
-| log | Yes | `pr9k cmux-pane --role=log` — streaming subprocess output |
-| footer | Yes | `pr9k cmux-pane --role=footer` — status-line output + shortcut hints + version label |
+| log | `workspace.create` (first surface) | `pr9k cmux-pane --role=log` — streaming subprocess output |
+| header | `surface.split` (`up`) | `pr9k cmux-pane --role=header` — live step checkboxes + iteration counter |
+| footer | `surface.split` (`down`) | `pr9k cmux-pane --role=footer` — status-line output + shortcut hints + version label |
 
-The orchestrator pane is spawned first (D-3) and immediately hidden via `surface.hide`. The three visible panes connect to the orchestrator over the interaction channel; once all three have sent a `Ready` message (readiness handshake), the workflow begins.
+Each surface's process command embeds `PR9K_CMUX_SOCKET`/`PR9K_PROJECT_DIR` (cmux v2 `surface.split` has no `initial_env`). The three panes connect back to the orchestrator over the interaction channel; once all three send `Ready`, the workflow begins.
 
 ## Workspace name
 
@@ -49,7 +50,7 @@ pr9k workspace: pr9k-myrepo-20260515T123456.000000000Z
 
 ```
 launch → preflight → capture prior workspace → create workspace
-       → spawn four panes → readiness handshake → workflow run
+       → workspace.create (log) + 2 surface.split (header, footer) → readiness handshake → workflow run
        → WorkspaceDone broadcast → DoneAck wait → socket teardown
        → wait for operator dismissal
        → WorkspaceClose + focus restore → exit
@@ -61,7 +62,7 @@ launch → preflight → capture prior workspace → create workspace
 2. Socket path resolves and is a Unix socket (cmux's discovery contract: `CMUX_SOCKET_PATH` → `CMUX_SOCKET` → `last-socket-path` marker file → `os.UserConfigDir()/cmux/cmux.sock` → `/tmp/cmux.sock`)
 3. Socket is reachable from the launching terminal (descendants-only check)
 4. Socket connection is not refused (socket-enabled check)
-5. `system.identify` returns `name="cmux"` (capability check)
+5. `system.identify` succeeds and returns a non-empty `socket_path` (capability check; cmux v2 has no name/version — D-R2)
 
 **Readiness handshake** — before the first workflow step runs, `Channel.AwaitReady` blocks until all three display roles (`header`, `log`, `footer`) have sent a `Ready` message. The deadline is 10 seconds (`ReadyHandshakeTimeout`). On success, the orchestrator pre-populates the initial header state (D-8) and begins step execution. On timeout, a named-roles error identifies which roles did not check in (e.g., `"ready timeout: missing roles: log, footer"`), and the orchestrator exits non-zero.
 
@@ -88,7 +89,9 @@ All five conditions produce operator-readable error messages:
 | Socket not found | `cmuxctl: cmux socket not found at <path> (looked in: <locations>); start cmux, then launch pr9k from inside a cmux pane, or set CMUX_SOCKET_PATH` |
 | Not a descendant | `cmuxctl: cmux mode must be launched from inside a cmux session (socket: <path>)` |
 | Socket disabled | `cmuxctl: cmux socket is disabled in cmux configuration; re-enable it and try again` |
-| Version incompatible | `cmuxctl: cmux version is incompatible with pr9k cmux mode: ...` |
+| Access denied (cmuxOnly) | `cmuxctl: cmux denied access — run pr9k from a terminal pane inside the cmux session … or set cmux's socket control mode to allow-all` |
+| Auth required | `cmuxctl: cmux socket requires authentication (auth_required) — set CMUX_SOCKET_PASSWORD …` |
+| Unexpected identify | `cmuxctl: unexpected cmux identify response (no socket_path) …` |
 
 ## Per-pane rendering
 
