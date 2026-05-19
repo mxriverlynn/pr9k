@@ -74,9 +74,17 @@ type SplitOpts struct {
 }
 
 // WorkspaceInfo is one entry of workspace.list (dismissal observation).
+//
+// NOTE: cmux's workspace.list summary objects use "id"/"ref" — NOT the
+// "workspace_id"/"workspace_ref" keys used by workspace.create /
+// workspace.current top-level handle echoes (verified at cmux 2f96c15c2,
+// v2WorkspaceSummaryPayload). Getting these tags wrong makes every entry
+// empty, so the dismissal observer never matches the pr9k workspace and
+// false-fires "workspace removed" on its first poll, cancelling the
+// readiness handshake.
 type WorkspaceInfo struct {
-	ID  string `json:"workspace_id"`
-	Ref string `json:"workspace_ref"`
+	ID  string `json:"id"`
+	Ref string `json:"ref"`
 }
 
 // SurfaceInfo is one entry of surface.list (dismissal observation). cmux

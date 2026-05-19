@@ -236,8 +236,10 @@ func TestRealClient_WorkspaceCreate_ReturnsHandle(t *testing.T) {
 }
 
 func TestRealClient_WorkspaceList_V2Shape(t *testing.T) {
+	// cmux's workspace.list summary objects use "id"/"ref" (verified at
+	// 2f96c15c2, v2WorkspaceSummaryPayload) — not workspace_id/workspace_ref.
 	sock := v2Server(t, func(req rpcMsg) string {
-		return okResp(req.ID, `{"workspaces":[{"workspace_id":"a","workspace_ref":"workspace:1"},{"workspace_id":"b","workspace_ref":"workspace:2"}]}`)
+		return okResp(req.ID, `{"workspaces":[{"id":"a","ref":"workspace:1"},{"id":"b","ref":"workspace:2"}]}`)
 	})
 	c := cmuxctl.NewRealClient(sock, testTimeout)
 	defer c.Stop()

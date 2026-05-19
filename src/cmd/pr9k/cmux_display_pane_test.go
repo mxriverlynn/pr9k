@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -14,7 +13,7 @@ import (
 // sendStateHeaderAndWait is a helper that sends a StateHeader to the pane via
 // the server, then sends WorkspaceDone and waits for DoneAck to ensure the
 // message was processed before the test reads the output buffer.
-func sendStateHeaderAndWait(t *testing.T, server *interactionchannel.Channel, hdr interactionchannel.StateHeader, buf *bytes.Buffer) {
+func sendStateHeaderAndWait(t *testing.T, server *interactionchannel.Channel, hdr interactionchannel.StateHeader, buf *syncBuffer) {
 	t.Helper()
 	server.SendStateHeader(hdr)
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
@@ -27,7 +26,7 @@ func sendStateHeaderAndWait(t *testing.T, server *interactionchannel.Channel, hd
 
 // sendStateLogAndWait sends a StateLog to the log pane, then WorkspaceDone,
 // and waits for DoneAck to ensure the lines were written to the output buffer.
-func sendStateLogAndWait(t *testing.T, server *interactionchannel.Channel, msg interactionchannel.StateLog, buf *bytes.Buffer) {
+func sendStateLogAndWait(t *testing.T, server *interactionchannel.Channel, msg interactionchannel.StateLog, buf *syncBuffer) {
 	t.Helper()
 	server.SendStateLog(msg)
 	_ = server.Send(interactionchannel.WorkspaceDone{ExitCode: 0})
@@ -49,7 +48,7 @@ func TestDisplayPane_StateHeader_StepFailed_RendersX(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "header", &buf)
@@ -79,7 +78,7 @@ func TestDisplayPane_StateHeader_RetrySuccess_RendersCheck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "header", &buf)
@@ -105,7 +104,7 @@ func TestDisplayPane_StateHeader_IterationLine_IsRendered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "header", &buf)
@@ -135,7 +134,7 @@ func TestDisplayPane_StateLog_LinesInDeliveryOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
@@ -173,7 +172,7 @@ func TestDisplayPane_StateLog_SeparatorBeforeOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
@@ -217,7 +216,7 @@ func TestDisplayPane_WorkspaceDone_AfterStateMessages_SendsDoneAck(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	paneErr := make(chan error, 1)
 	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
 		go func() {
@@ -260,7 +259,7 @@ func TestDisplayPane_HeaderPane_HasNoKeyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "header", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "header", &buf)
@@ -370,7 +369,7 @@ func TestDisplayPane_LogPane_IgnoresStateHeader(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
@@ -405,7 +404,7 @@ func TestDisplayPane_LogPane_HasNoKeyPath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
+	var buf syncBuffer
 	server := startServerAndWaitForRole(t, ctx, socketPath, "log", func() {
 		go func() {
 			_ = runCmuxDisplayPaneWith(ctx, socketPath, "log", &buf)
