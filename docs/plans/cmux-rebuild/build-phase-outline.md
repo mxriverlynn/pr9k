@@ -395,6 +395,7 @@ cmux is a graphical application that draws into its own OS window. The standard 
 - **Option B — Run a live cmux process in CI on a platform that supports it (e.g., a macOS CI runner) for a smoke-test subset.** Slower, more brittle, but exercises the real surface.
 - **Option C — Both — mock at the unit level and a live smoke test gated to a macOS CI runner.** Highest coverage, highest cost.
 - **Recommendation: Option A for Phase 1 through 5, then revisit for Phase 6.** Mocked tests cover most of the multi-process logic. Phase 6 (failure handling) is the phase where mocked cmux is least convincing because the failures are timing-sensitive. The team should commit to a manual test plan for Phase 6 demos and revisit whether a live CI smoke test is worth adding when Phase 6 is ready to start.
+- **PARTIALLY RESOLVED post Phases 1–3.** Phases 1–3 shipped on Option A (in-package mocks via `cmuxctl.FakeClient` + the `interactionchannel` test doubles) with the in-pane end-to-end run as a manual gate (R3 / D-R4). Rework R proved that gate was load-bearing: the in-package mocks correctly modelled pr9k's assumed protocol, but pr9k's assumed protocol did not match real cmux v2 at several points; only running `pr9k --cmux` against a live cmux 0.64.6 pane surfaced the divergence. Carry forward: continue mocked tests through Phase 5, **and treat the manual in-pane gate as mandatory** for any change that touches `internal/cmuxctl` or `RunPhase1`. Phase 6 still revisits whether a live macOS-runner CI smoke test is worth the cost.
 
 ### OQ-3. What is the mechanism for the local interaction channel between orchestrator and display panes? {#oq-3}
 
@@ -406,6 +407,7 @@ The spec calls this the "local interaction channel" and commits to its behaviora
 - **Option B — Stdin / stdout pipes between orchestrator and each display pane.** Simpler initially but every pane must be launched by the orchestrator process, which complicates the spawn flow given that cmux is the one creating the panes.
 - **Option C — A shared file system surface (named pipes or files) that each process polls.** Avoids socket setup but introduces a polling cadence and is hostile to the stall-threshold semantic.
 - **Recommendation: Option A.** A Unix socket fits the multi-process topology cleanly: each display pane process is spawned by cmux but knows where to find the orchestrator's socket via an environment variable or command-line argument; loss detection is the socket's broken-connection signal; the same socket carries the readiness handshake. Option B's lifecycle coupling is wrong-shaped for cmux-spawned processes, and Option C's polling is the wrong loss model.
+- **RESOLVED.** Adopted Option A. Implemented as `internal/interactionchannel` (Unix domain socket per workspace, length-prefixed JSON, per-role binding, `AwaitReady` handshake, broken-connection loss detection). The socket path is computed by `RunPhase1` and the in-pane orchestrator process (D-R1) calls `interactionchannel.Serve` **before** workspace/pane creation via the `Phase1Hooks.BeforePanes` seam so the panes have something to dial when cmux spawns them; the path is propagated to each pane through `PR9K_CMUX_SOCKET` embedded in the surface's `initial_command` (D-R3 form). Verified end-to-end by D-R4.
 
 ### OQ-4. What is the stall threshold for the local interaction channel? {#oq-4}
 
@@ -417,6 +419,18 @@ The spec commits to "the channel has a stall threshold" but does not name the va
 - **Option B — Substantially longer (30–60 seconds).** More forgiving, but a stalled channel that takes that long to detect means the operator stares at a frozen display for that long before seeing any error.
 - **Option C — Configurable.** Adds operator-facing surface area without evidence that any operator wants to change it; matches the rationale the spec used to keep the cmux timeout fixed.
 - **Recommendation: Option A.** Same reasoning the spec applied to the cmux timeout: a healthy local channel should never take more than a few hundred milliseconds; aligning the two thresholds gives operators one mental model and one number to remember. Revisit only if operators report false-positive aborts in normal use.
+
+### OQ-5. Which cmux v2 method realizes Phase 4's two sidebar entries? {#oq-5}
+
+**Blocks phase(s).** Phase 4.
+
+The original Phase 4 framing referred to "the cmux sidebar API" as if a single, named method existed. Rework R verified every other cmux v2 method pr9k uses against the pinned source at commit `2f96c15c2` (D-R2); the same standard now applies to sidebar mirroring before Phase 4 starts, so we are not building against another assumed surface. The verified cmux v2 dispatch exposes `workspace.rename`, `workspace.action`, `feed.push` / `feed.list` / `feed.jump`, and the `notification.*` family — none of which is obviously and exclusively "the sidebar API."
+
+- **Option A — `workspace.rename` + free-form text in the workspace title/description.** Simplest; the workspace summary fields are already visible in cmux's workspace list. Cost: pr9k overwrites the operator-visible workspace label on every step change, which fights cmux's stable naming and may break Phase 7's `pr9k-` prefix filter.
+- **Option B — `feed.push` (cmux's workstream / feed surface).** May be the intended "live status from a workspace" surface; needs verification that the cmux UI actually renders feed items in the sidebar.
+- **Option C — A notification with workspace targeting (`notification.create_for_target`) on each change.** Re-uses Phase 5's surface; risks notification fatigue and is the wrong concept (this is passive status, not an interrupt).
+- **Option D — There is no dedicated sidebar API in cmux v2 and Phase 4 must be re-scoped or deferred.** The honest possibility that Rework R must consider on every cmux integration assumption.
+- **Recommendation: defer until Phase 4 is about to start, then verify against the pinned cmux source the same way Rework R verified every other method.** Pick A, B, or D based on what the source actually supports; do not start implementation against another assumption. If D wins, re-scope Phase 4 to the operator-visible signal that is achievable (e.g., workspace title prefix and Phase 5's completion/error notifications) and document the deferral in [feature-specification.md Deferred (YAGNI)](feature-specification.md#deferred-yagni).
 
 ---
 
