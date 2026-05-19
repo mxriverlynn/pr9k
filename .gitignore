@@ -27,6 +27,7 @@ go.work.sum
 .go-cache/
 .go-path/
 .golangci-cache/
+.gomodcache/
 
 # env file
 .env
