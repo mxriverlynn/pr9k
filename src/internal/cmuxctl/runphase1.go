@@ -184,6 +184,8 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		return fmt.Errorf("cmuxctl: workspace create: %w", err)
 	}
 
+	dbg("RunPhase1: workspace.create OK — handle id=%q ref=%q socket=%q", ws.ID, ws.Ref, socketPath)
+
 	// Step 3: print the workspace-label confirmation (spec D2, D-23).
 	_, _ = fmt.Fprintf(out, "pr9k workspace: %s\n", label)
 
@@ -234,6 +236,7 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		}); err != nil {
 			return fmt.Errorf("cmuxctl: split %s pane: %w", sp.role, err)
 		}
+		dbg("RunPhase1: surface.split %s OK", sp.role)
 	}
 
 	// Step 5: observe for dismissal. One watcher goroutine forwards the single
@@ -276,7 +279,9 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 
 	// Architecture A: this process is the orchestrator. Run the workflow;
 	// runCtx is cancelled if the operator dismisses the workspace mid-run.
+	dbg("RunPhase1: entering hooks.Run (orchestrator); observer poll=%s", dismissalCfg.PollInterval)
 	runErr := hooks.Run(runCtx, ws)
+	dbg("RunPhase1: hooks.Run returned err=%v (runCtx.Err=%v ctx.Err=%v)", runErr, runCtx.Err(), ctx.Err())
 
 	// If the operator dismissed (cancelling Run), tear down now.
 	select {

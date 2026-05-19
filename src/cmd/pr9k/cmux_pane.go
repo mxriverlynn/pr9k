@@ -38,11 +38,17 @@ func cmuxOrchestratorHooks(ctx context.Context, projectDir string) cmuxctl.Phase
 				return err
 			}
 			ch = c
+			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "[pr9k-cmux-debug] BeforePanes: Serve OK on %s\n", socketPath)
+			}
 			return nil
 		},
 		Run: func(rctx context.Context, _ cmuxctl.Workspace) error {
 			// ch was Served by BeforePanes; runCmuxOrchestratorWith skips its
 			// own Serve when ch != nil and owns ch.Close().
+			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
+				_, _ = fmt.Fprintln(os.Stderr, "[pr9k-cmux-debug] Run: starting orchestrator (AwaitReady up to 10s for header/log/footer)")
+			}
 			return runCmuxOrchestratorWith(rctx, "", projectDir, workspaceDoneAckTimeout, ch)
 		},
 	}

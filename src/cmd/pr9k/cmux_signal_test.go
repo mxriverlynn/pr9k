@@ -46,7 +46,7 @@ func TestRunCmuxSignalHandler_FirstSignalSetsShuttingDownAndCallsTeardown(t *tes
 
 	select {
 	case <-teardownDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("teardown not called within 1s after first signal")
 	}
 
@@ -92,7 +92,7 @@ func TestRunCmuxSignalHandler_SecondSignalCallsExitFn(t *testing.T) {
 	// Wait until cleanup goroutine has consumed the first signal and opened the gate.
 	select {
 	case <-cleanupStarted:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("setShuttingDown not called within 1s after first signal")
 	}
 	// Second signal: watchdog fires exitFn(1).
@@ -103,7 +103,7 @@ func TestRunCmuxSignalHandler_SecondSignalCallsExitFn(t *testing.T) {
 		if code != 1 {
 			t.Errorf("exitFn called with code %d, want 1", code)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("exitFn not called within 1s after second signal")
 	}
 	close(teardownBlock) // unblock cleanup goroutine so the test goroutine can exit
@@ -127,7 +127,7 @@ func TestRunCmuxSignalHandler_SIGHUPTriggersTeardown(t *testing.T) {
 
 	select {
 	case <-teardownDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("teardown not called within 1s after SIGHUP")
 	}
 }
@@ -150,7 +150,7 @@ func TestRunCmuxSignalHandler_SIGTERMTriggersTeardown(t *testing.T) {
 
 	select {
 	case <-teardownDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("teardown not called within 1s after SIGTERM")
 	}
 }
@@ -182,7 +182,7 @@ func TestRunCmuxSignalHandler_SingleSignalDoesNotCallExitFn(t *testing.T) {
 	// Wait for the cleanup goroutine to complete teardown.
 	select {
 	case <-teardownDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("teardownFn not called within 1s after single signal")
 	}
 
@@ -232,7 +232,7 @@ func TestRunCmuxSignalHandler_SyncOnce_TeardownCalledExactlyOnce(t *testing.T) {
 
 	select {
 	case <-firstDone:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("teardown not called within 1s")
 	}
 

@@ -152,6 +152,7 @@ func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, ws W
 		if ctx.Err() != nil {
 			return false, false, false // parent cancelled; exit path handles it
 		}
+		dbg("observe: workspace.list error: %v", err)
 		return false, false, true // per-call timeout
 	}
 
@@ -165,6 +166,8 @@ func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, ws W
 		}
 	}
 	if !workspaceFound {
+		dbg("observe: ARM1 FIRED — ours=%q|%q not in workspace.list (%d): %s",
+			ws.ID, ws.Ref, len(workspaces), workspaceIDs(workspaces))
 		return true, false, false
 	}
 
@@ -179,14 +182,18 @@ func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, ws W
 		}
 		var ce *CmuxError
 		if errors.As(err, &ce) && ce.Code == "not_found" {
+			dbg("observe: ARM2 FIRED — surface.list not_found for ws=%q|%q", ws.ID, ws.Ref)
 			return true, false, false
 		}
+		dbg("observe: surface.list error (treated as timeout): %v", err)
 		return false, false, true
 	}
 	if expectedSurfaces > 0 && len(surfaces) < expectedSurfaces {
+		dbg("observe: ARM2 FIRED — surface count %d < expected %d", len(surfaces), expectedSurfaces)
 		return true, false, false
 	}
 
+	dbg("observe: healthy — ws present, surfaces=%d", len(surfaces))
 	return false, false, false
 }
 
