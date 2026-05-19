@@ -223,12 +223,14 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 
 **What we build.** While a workflow runs in pr9k's cmux workspace, cmux's persistent sidebar shows two live entries for that workspace: the current step name as a status line, and the iteration counter as a progress indicator in `N / M` form. Both entries update on the same cadence as the header pane, so an operator who is viewing a different cmux workspace can still see at a glance what pr9k is doing.
 
-- The orchestrator pushes the current step name to the cmux sidebar as a status entry whenever the step changes.
-- The orchestrator pushes the iteration counter as a sidebar progress entry whenever the counter advances.
+- The in-pane orchestrator process (post Rework R / D-R1, the pr9k binary running inside the cmux pane the operator launched from) pushes the current step name to the cmux sidebar as a status entry whenever the step changes, addressing the pr9k workspace by its handle (`workspace_id` or `workspace_ref`) per D-R2.
+- The orchestrator pushes the iteration counter as a sidebar progress entry whenever the counter advances, scoped to the same workspace handle.
 - Both entries are scoped to the pr9k workspace — switching to another cmux workspace still shows them in the sidebar against the pr9k workspace's row.
-- When the run completes (success, failure, or operator quit), both sidebar entries are cleared.
+- When the run completes (success, failure, or operator quit), both sidebar entries are cleared via the same workspace-targeted cmux v2 call.
 
-**Why this is Phase 4.** This is the smallest slice that delivers cmux's signature "monitor a workspace from elsewhere" benefit. It lands after Phase 3 because error recovery is more load-bearing than out-of-workspace visibility — an operator who cannot recover from a step failure inside the workspace will not benefit from sidebar visibility from outside it. The work itself is bounded: the data already exists in the orchestrator (step name, iteration counter), and the sidebar is a small, idiomatic part of cmux's API. The decision to include sidebar mirroring was made at the feature-specification level on platform-design grounds rather than on a named operator request; if scope needs to be cut, Phase 4 is the phase to defer, since it can be added later without changing any other phase.
+**Why this is Phase 4.** This is the smallest slice that delivers cmux's signature "monitor a workspace from elsewhere" benefit. It lands after Phase 3 because error recovery is more load-bearing than out-of-workspace visibility — an operator who cannot recover from a step failure inside the workspace will not benefit from sidebar visibility from outside it. The work itself is bounded: the data already exists in the orchestrator (step name, iteration counter), and pushing it over an already-established cmux v2 RPC is small. The decision to include sidebar mirroring was made at the feature-specification level on platform-design grounds rather than on a named operator request; if scope needs to be cut, Phase 4 is the phase to defer, since it can be added later without changing any other phase.
+
+**Rework-R note.** The original Phase 4 framing assumed a known "cmux sidebar API" pr9k would call from the (then-planned) hidden orchestrator pane. Under Architecture A there is no such pane — the call site is the in-pane orchestrator process, which is already the cmux v2 socket client. Which **specific cmux v2 method** realizes the two sidebar entries (`workspace.rename` / `workspace.action` / `feed.push` / a notification surface / something else verified against the pinned cmux build) is unresolved and tracked in [OQ-5](#oq-5).
 
 **Outcome to demonstrate.**
 
@@ -241,13 +243,14 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 - [Outcome](feature-specification.md#outcome) — sidebar mirroring is a named outcome.
 - [Primary Flow](feature-specification.md#primary-flow) — step 10.
 - [User Interactions](feature-specification.md#user-interactions) — the cmux sidebar affordance.
-- [Decision Log entries D5, D26](artifacts/decision-log.md) — mirror step and iteration only, status-line script stays in footer.
+- [Decision Log entries D5, D26, D-R1, D-R2](artifacts/decision-log.md) — mirror step and iteration only, status-line script stays in footer, Architecture A (orchestrator = in-pane process), cmux v2 protocol of record.
 
 **Connects to.**
 - [Phase 6](#phase-6) — when the run aborts, the failure-mode handling in Phase 6 is responsible for clearing the sidebar entries as part of cleanup.
 
 **Preconditions to verify before starting.**
 - Confirm that the team agrees the full status-line script should not also be mirrored into the sidebar — the spec defers this and it is worth one explicit acknowledgement before the work starts so the deferral is not silently revisited.
+- Resolve [OQ-5](#oq-5) — pin the cmux v2 method(s) that realize the two sidebar entries against the pinned cmux build before implementation starts, the same way Phases 1–3 pinned every other v2 method via reading the source at commit `2f96c15c2`.
 
 ---
 
@@ -263,6 +266,7 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 - A "run aborted" notification fires once when the run ends unsuccessfully (including operator-initiated quit, when the operator dismisses the run via the footer pane's quit shortcut).
 - An error-mode notification fires when a step has failed and is awaiting the operator's continue / retry / quit decision. This notification includes the text "Focus the pr9k control pane to respond" and re-fires on a regular cadence until the operator answers the prompt, so a dismissed notification does not silently strand the orchestrator.
 - No per-step and no per-iteration notifications fire — those would be noise.
+- All three notifications are fired by the in-pane orchestrator process (D-R1) via cmux v2's notification methods (the dispatch we verified at commit `2f96c15c2` exposes `notification.create`, `notification.create_for_caller`, `notification.create_for_surface`, `notification.create_for_target`, `notification.dismiss`, and `notification.list`). The exact targeting method per notification is implementation-time work, but every call goes through the same already-built cmux v2 client (`internal/cmuxctl`).
 
 **Why this is Phase 5.** Notifications are the smallest piece of work that completes the "monitor from outside" story Phase 4 started — sidebar entries tell the operator passive state, notifications interrupt them when their attention is required. Phase 5 lands here because both of its trigger surfaces (completion-state detection in Phase 2 and error-mode prompt in Phase 3) are already built. The persistent re-firing behavior is what makes the multi-pane architecture safe in the failure case where the operator wandered away from the workspace.
 
@@ -278,7 +282,7 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 - [Primary Flow](feature-specification.md#primary-flow) — step 11.
 - [Alternate Flows and States](feature-specification.md#alternate-flows-and-states) — "Step fails and prompts for operator decision".
 - [User Interactions](feature-specification.md#user-interactions) — cmux notifications affordance.
-- [Decision Log entries D6, D19](artifacts/decision-log.md) — notification lifecycle moments, error-mode notification directs to control pane.
+- [Decision Log entries D6, D19, D-R1, D-R2](artifacts/decision-log.md) — notification lifecycle moments, error-mode notification directs to control pane, Architecture A (orchestrator = in-pane process is the caller of `notification.create*`), cmux v2 protocol of record.
 
 **Connects to.**
 - [Phase 6](#phase-6) — the "run aborted" notification path is what Phase 6 reuses for every failure-mode abort (display loss, orchestrator loss, hung cmux call, pane close).
@@ -294,11 +298,13 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 
 **Builds on.** [Phase 2](#phase-2) — the running workflow and the channel between orchestrator and display panes are what this phase hardens. [Phase 4](#phase-4) — the sidebar entries this phase clears during failure handling are the entries Phase 4 pushes. [Phase 5](#phase-5) — the "run aborted" notification path is reused for every failure here.
 
-**What we build.** Every way the multi-process architecture can fail — a visible pane dies, the orchestrator pane dies, the channel between them stalls, a cmux API call hangs, or the operator accidentally closes a pane with cmux's own close-pane gesture — produces the same clean outcome: the run aborts, a "run aborted" notification fires, the workspace transitions to a failed state, sidebar entries are cleared, and the workspace stays open so the operator can inspect what happened.
+**What we build.** Every way the multi-process architecture can fail — a display pane (header/log/footer) dies, the in-pane orchestrator process dies, the channel between them stalls, a cmux API call hangs, or the operator accidentally closes a pane with cmux's own close-pane gesture — produces the same clean outcome: the run aborts, a "run aborted" notification fires, the workspace transitions to a failed state, sidebar entries are cleared, and the workspace stays open so the operator can inspect what happened.
 
-- A visible display pane dying mid-run aborts the run cleanly: the orchestrator finishes any cmux call already in flight (so cmux is left consistent), then aborts, fires the "run aborted" notification, clears sidebar entries, and exits with a non-zero status.
-- The orchestrator pane dying while display panes are still alive: each display pane detects the lost channel within a stall threshold, renders a "run aborted" line on its own pane, and exits. The workspace stays open and the orchestrator pane (visible to the operator via cmux's pane-show controls) shows the exit status and last lines of orchestrator output.
-- Every cmux API call has a fixed per-call timeout in the 5–10 second range, not operator-configurable in this release. A timeout is treated as fatal and triggers the same abort path as display loss.
+_(Post Rework R / D-R1: failure modes are framed against Architecture A — the orchestrator is the in-pane pr9k process the operator launched inside cmux. There is no separate hidden orchestrator pane; the only cmux-spawned processes are the three display panes (header, log, footer). The orchestrator's stderr and final error message land in the operator's launching terminal — the same terminal `pr9k --cmux` was invoked from — and the full orchestrator output is preserved on disk in the per-run log file under `<projectDir>/.pr9k/logs/<stamp>/`.)_
+
+- A display pane (header/log/footer) dying mid-run aborts the run cleanly: the orchestrator finishes any cmux call already in flight (so cmux is left consistent), then aborts, fires the "run aborted" notification, clears sidebar entries, and exits with a non-zero status.
+- The in-pane **orchestrator process** dying while display panes are still alive: each display pane detects the lost channel within a stall threshold, renders a "run aborted" line on its own pane, and exits. The workspace stays open showing the final state; the orchestrator's last output and exit status are in the launching terminal's scrollback and in the per-run log file (under `<projectDir>/.pr9k/logs/<stamp>/`).
+- Every cmux API call has a fixed per-call timeout in the 5–10 second range, not operator-configurable in this release. A timeout is treated as fatal and triggers the same abort path as display loss. cmux v2 errors (`{ok:false,error:{code,message}}`, D-R2) and the pre-request plaintext `ERROR:` (cmuxOnly access denial) are classified to accurate operator guidance rather than the catch-all "version incompatible".
 - The same stall threshold is applied to the local interaction channel between orchestrator and display panes: a pane that has not received an expected message within the threshold treats the channel as lost.
 - The operator using cmux's own close-pane gesture on any pr9k pane is treated identically to a process crash on that pane. This is called out explicitly in the in-run help modal and the cmux mode setup how-to as a known constraint of cmux mode.
 - A forced kill of the orchestrator (one that bypasses normal shutdown) leaves the workspace as an orphan with no cleanup; the operator dismisses it manually. The per-run log file may be truncated short of the moment the forced kill happened, but prior content is intact.
@@ -309,13 +315,13 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 
 1. The operator launches pr9k cmux mode and starts a long-running workflow.
 2. While the workflow is running, the operator closes the log pane using cmux's own pane-close gesture. Within the stall threshold, a "run aborted" notification fires, sidebar entries clear, and pr9k exits with a non-zero status. The workspace remains open; the operator dismisses it and is returned to their prior workspace.
-3. The operator repeats the run and, this time, kills the orchestrator process directly. The display panes detect the loss, each renders a "run aborted" line, and exits. The workspace stays open; the operator reveals the orchestrator pane via cmux's pane-show controls and reads the orchestrator's final output.
+3. The operator repeats the run and, this time, kills the in-pane orchestrator process directly. The display panes detect the loss, each renders a "run aborted" line, and exits. The workspace stays open; the operator reads the orchestrator's final output from the launching terminal's scrollback and from the per-run log file under `<projectDir>/.pr9k/logs/<stamp>/`.
 4. The operator repeats the run with cmux deliberately wedged (a debug hook simulating a hung response). Within the per-call timeout, the same clean abort path fires.
 
 **Source citations.**
 - [Edge Cases and Failure Modes](feature-specification.md#edge-cases-and-failure-modes) — every row covering display loss, orchestrator loss, channel stall, API timeout, pane close, and forced-kill behavior.
 - [Coordinations](feature-specification.md#coordinations) — the time-bounded contract on the local interaction channel.
-- [Decision Log entries D10, D13, D15, D17, D22, D24, D27](artifacts/decision-log.md) — display loss aborts the run, hidden orchestrator pane, cmux timeout fatal, log artifacts unchanged, prior workspace restored, pane close treated as display loss, timeout value committed to 5–10 second range.
+- [Decision Log entries D10, D15, D17, D22, D24, D27, D-R1, D-R2](artifacts/decision-log.md) — display loss aborts the run, cmux timeout fatal, log artifacts unchanged, prior workspace restored, pane close treated as display loss, timeout value committed to 5–10 second range, Architecture A (orchestrator is the in-pane process; the originally-cited D13 hidden-orchestrator-pane parts are superseded by D-R1), cmux v2 error envelope and accurate access-denied/auth classification.
 - [Feature Technical Notes T1, T4, T5](artifacts/feature-technical-notes.md) — cmux interface shape (calls can hang silently), display processes update independently, cmux workspace persists after pane exit.
 
 **Connects to.**
@@ -333,10 +339,10 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 
 **Builds on.** [Phase 1](#phase-1) — the workspace naming pattern that lets pr9k recognize its own orphans. [Phase 6](#phase-6) — the failure modes that produce orphans.
 
-**What we build.** At the start of every cmux-mode launch, pr9k counts how many existing cmux workspaces still carry pr9k's naming prefix from prior runs. If any exist, it prints a one-line advisory listing the orphan workspace names and continues the run without waiting for acknowledgement. The advisory is informational only — it does not interactively prompt and does not auto-clean.
+**What we build.** At the start of every cmux-mode launch, pr9k counts how many existing cmux workspaces still carry pr9k's naming prefix from prior runs. If any exist, it prints a one-line advisory listing the orphan workspace titles and continues the run without waiting for acknowledgement. The advisory is informational only — it does not interactively prompt and does not auto-clean.
 
-- Just after the preflight checks succeed and before pr9k creates its own workspace, pr9k asks cmux for the list of existing workspaces and filters for those whose names match the pr9k prefix.
-- If at least one orphan exists, pr9k prints a single line to the launching terminal listing the orphan workspace names. The new run starts immediately afterwards.
+- Just after the preflight checks succeed and before pr9k creates its own workspace, pr9k calls `workspace.list` and filters the returned entries by the `title` field's `pr9k-` prefix (cmux v2 workspaces have an opaque UUID handle plus a non-unique `title`, per D-R2 — the human-readable label pr9k composes lives in `title`, not in any unique-name field).
+- If at least one orphan exists, pr9k prints a single line to the launching terminal listing the orphan workspace titles. The new run starts immediately afterwards.
 - If no orphans exist, the advisory is silent.
 
 **Why this is Phase 7.** Orphan workspaces are a known consequence of the failure modes Phase 6 tolerates: any crash that bypasses cleanup leaves a workspace behind. The advisory bridges that gap with the smallest possible amount of work — operators get visibility into accumulation without pr9k taking on the risk of auto-cleaning workspaces the operator may want to inspect. It lands last because every prior phase can ship without it and because the value of the advisory is proportional to how often crashes happen, which the team will only know after the system runs in real use.
@@ -352,7 +358,7 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 - [Primary Flow](feature-specification.md#primary-flow) — step 4.
 - [Edge Cases and Failure Modes](feature-specification.md#edge-cases-and-failure-modes) — the row covering pr9k cmux launch with an existing orphan.
 - [Out of Scope](feature-specification.md#out-of-scope) — automatic cleanup is explicitly deferred.
-- [Decision Log entries D11, D23, D28](artifacts/decision-log.md) — orphans are not auto-cleaned, startup advisory exists, advisory fires when any orphan exists.
+- [Decision Log entries D11, D23, D28, D-R2](artifacts/decision-log.md) — orphans are not auto-cleaned, startup advisory exists, advisory fires when any orphan exists, cmux v2 protocol of record (orphan filter operates on `workspace.list`'s `title` field).
 
 **Connects to.**
 - Nothing — this is the final phase.
