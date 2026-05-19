@@ -58,30 +58,32 @@ func composeWorkspaceLabel(sanitized string) string {
 	return "pr9k-" + sanitized + "-" + ts
 }
 
-// shellQuote single-quote-escapes s for safe inclusion in a /bin/sh command
-// line (cmux runs a surface's initial_command through the user's shell).
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
 // paneCommand builds the initial_command for a display pane. cmux v2
 // surface.split has no initial_env param, so the pane environment is embedded
 // in the command itself; workspace.create's first surface gets the same form
-// for uniformity. `exec` replaces the shell so the pane process is the
-// cmux-pane subprocess directly.
+// for uniformity.
+//
+// The command uses /usr/bin/env (a real binary) rather than shell-only
+// `VAR=val exec prog` syntax — that way it works whether cmux runs
+// initial_command through a shell or simply tokenizes it into argv and execs
+// argv[0]. (R3 evidence: cmux silently dropped the shell form, so the surface
+// process never started and cmux discarded the empty workspace within ~500ms.)
+// Values are inserted unquoted; this is acceptable for the well-known pr9k
+// paths (project dir, socket path, exe path — none contain whitespace).
 func paneCommand(exe, role string, env map[string]string) string {
 	var b strings.Builder
+	b.WriteString("/usr/bin/env")
 	// Deterministic order keeps the command stable and testable.
-	for _, k := range []string{"PR9K_CMUX_SOCKET", "PR9K_PROJECT_DIR"} {
-		if v, ok := env[k]; ok {
+	for _, k := range []string{"PR9K_CMUX_SOCKET", "PR9K_PROJECT_DIR", "PR9K_CMUX_DEBUG"} {
+		if v, ok := env[k]; ok && v != "" {
+			b.WriteByte(' ')
 			b.WriteString(k)
 			b.WriteByte('=')
-			b.WriteString(shellQuote(v))
-			b.WriteByte(' ')
+			b.WriteString(v)
 		}
 	}
-	b.WriteString("exec ")
-	b.WriteString(shellQuote(exe))
+	b.WriteByte(' ')
+	b.WriteString(exe)
 	b.WriteString(" cmux-pane --role=")
 	b.WriteString(role)
 	return b.String()
@@ -162,6 +164,12 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	paneEnv := map[string]string{
 		"PR9K_CMUX_SOCKET": socketPath,
 		"PR9K_PROJECT_DIR": projectDir,
+	}
+	// Forward PR9K_CMUX_DEBUG into the panes so the pane-probe.log diagnostic
+	// fires inside the cmux-spawned pane processes (they inherit cmux's env,
+	// not this orchestrator's, so the var has to ride along).
+	if v := os.Getenv("PR9K_CMUX_DEBUG"); v != "" {
+		paneEnv["PR9K_CMUX_DEBUG"] = v
 	}
 
 	// Step 2a (Architecture A, D-R1): the orchestrator must Serve the socket
