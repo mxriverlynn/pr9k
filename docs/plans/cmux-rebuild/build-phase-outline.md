@@ -12,6 +12,8 @@ This document describes the order in which **pr9k cmux mode** will be built. The
 
 This document is the companion to [feature-specification.md](feature-specification.md). The source artifact describes *the behavior pr9k cmux mode commits to delivering*. This document describes *the order in which the work will be built to ship that behavior*. Every phase below cites the source-artifact sections it covers, so anyone can trace a phase back to source.
 
+> **Rework-R amendment (Phases 1–3 shipped against cmux v2 reality).** While shipping Phases 1–3, the team verified pr9k against the pinned cmux build (v0.64.6, commit `2f96c15c2`) and discovered the original integration was modelled on an *assumed* cmux API that did not match cmux v2 at several load-bearing points. The fix landed in three decisions in [artifacts/decision-log.md](artifacts/decision-log.md): **D-R1** (Architecture A: the in-pane pr9k process **is** the orchestrator — there is no hidden orchestrator pane; the workspace has **three** display surfaces, not four; cmux v2 has no `surface.spawn`/`surface.hide`); **D-R2** (cmux v2 protocol is the contract of record — newline-delimited JSON, `{ok,result,error}` envelope, string error codes, opaque `Workspace`/`Surface` handles by UUID+ref, capability check via `system.identify`'s `socket_path`, plaintext `ERROR:` lines classified for accurate access-denied / auth messages); **D-R3** (pane `initial_command` uses `/usr/bin/env K=V <abs-exe> cmux-pane --role=X` — cmux tokenizes argv rather than shell-interpreting `initial_command`, so shell-only forms silently fail). **D-R4** records that the in-pane end-to-end gate closed: workspace + three panes + orchestrator handshake + dismissal verified working from inside a cmux pane. The supporting investigation is in [access-denied-misclassification-investigation.md](access-denied-misclassification-investigation.md) and [v2-rework-plan.md](v2-rework-plan.md). The Phase 1–3 write-ups below describe the originally-intended design; **the live system implements the Architecture-A revision**, and Phases 4–7 below have been updated to match.
+
 ## Table of Contents
 
 - [Executive Summary](#executive-summary)
@@ -31,15 +33,15 @@ This document is the companion to [feature-specification.md](feature-specificati
 
 ## Executive Summary {#executive-summary}
 
-**The goal:** Ship `pr9k --cmux` as a real, opt-in launch mode that drives cmux to render the workflow run as a four-pane workspace (header, log, footer, and a hidden orchestrator pane) with sidebar status and notifications. The same workflows run, against the same target repositories, producing the same on-disk log artifacts — only the presentation surface changes.
+**The goal:** Ship `pr9k --cmux` as a real, opt-in launch mode that drives cmux to render the workflow run as a multi-pane workspace with sidebar status and notifications. The same workflows run, against the same target repositories, producing the same on-disk log artifacts — only the presentation surface changes. _(Post Rework R / D-R1: the workspace has **three** display surfaces — header, log, footer. The orchestrator is the in-pane pr9k process the operator launched inside cmux; there is no separate hidden orchestrator pane, because cmux v2 has no `surface.hide`.)_
 
 **The shape of the build (5 bullets, plain language):**
 
-- **Phase 1 lays the foundation:** the operator can launch cmux mode, watch a fresh, recognizably-named workspace appear with the four-pane scaffold in place, and dismiss it cleanly with their prior workspace restored — before any workflow content runs inside.
+- **Phase 1 lays the foundation:** the operator can launch cmux mode, watch a fresh, recognizably-named workspace appear with the three-pane scaffold in place (header / log / footer; the orchestrator is the in-pane pr9k process, per D-R1), and dismiss it cleanly with their prior workspace restored — before any workflow content runs inside.
 - **Phase 2 ships the first real run:** the same workflow that runs in the standard terminal display now runs inside the cmux workspace, with the header reflecting step progress, the log streaming live output, and the footer surfacing the status line, shortcut hints, and quit shortcut. The same on-disk log artifacts are produced.
 - **Phase 3 makes the cmux run interactively recoverable** by surfacing pr9k's existing continue / retry / quit error-mode prompt inside the footer pane.
 - **Phases 4 and 5 connect the workspace to cmux's broader chrome:** the sidebar shows live step and iteration progress from any workspace, and cmux notifications fire at completion, failure, and when an error-mode prompt is awaiting the operator's decision.
-- **Phases 6 and 7 harden the experience:** display loss, orchestrator loss, hung cmux calls, and operator pane-close gestures all abort the run cleanly with a notification; a startup advisory tells the operator when orphan workspaces from prior crashed runs are still around.
+- **Phases 6 and 7 harden the experience:** display-pane loss, orchestrator-process loss, hung cmux calls, and operator pane-close gestures all abort the run cleanly with a notification; a startup advisory tells the operator when orphan workspaces from prior crashed runs are still around.
 
 **Sequencing rationale, in plain language:**
 
@@ -64,7 +66,7 @@ Four items the source artifact already names as deferred remain deferred here: r
 | 3 | [Interactive Error Recovery](#phase-3) | Feature slice | A failing step prompts the operator to continue, retry, or quit from inside the footer pane. |
 | 4 | [Sidebar Mirroring](#phase-4) | Feature slice | The current step and iteration progress are visible in cmux's sidebar from any other workspace. |
 | 5 | [Lifecycle Notifications](#phase-5) | Feature slice | The operator receives cmux notifications at completion, failure, and when an error-mode prompt is waiting. |
-| 6 | [Robust Failure Handling](#phase-6) | Polish | Pane loss, hung cmux calls, and accidental pane closures all abort the run cleanly with diagnostics intact. |
+| 6 | [Robust Failure Handling](#phase-6) | Polish | Display-pane loss, orchestrator-process loss, hung cmux calls, and accidental pane closures all abort the run cleanly with diagnostics intact. |
 | 7 | [Orphan Workspace Startup Advisory](#phase-7) | Polish | A startup line tells the operator how many crashed-run workspaces are still around. |
 
 > Numbers are assigned in build order and are stable for the life of this outline. Cite them as `Phase N` in tickets, comments, and follow-up reports.
