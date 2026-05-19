@@ -7,7 +7,7 @@ Decisions specific to [Phase 4 — Sidebar Mirroring](../feature-specification.m
 ### D1: Sidebar entries map to cmux's status-pill and progress-bar surfaces
 
 - **Question:** [OQ-5 in the build outline](../../build-phase-outline.md#oq-5) — which cmux surfaces realize the two sidebar entries the parent spec commits to?
-- **Decision:** the **step name** entry is pushed to cmux's sidebar status-entry surface (CLI verb `set-status` / `clear-status` in cmux v0.64.7, the corresponding RPC under the hood). The **iteration counter** entry is pushed to cmux's sidebar progress surface (CLI verb `set-progress` / `clear-progress`). Both calls target the pr9k workspace by its workspace handle ([parent D-R2](../../artifacts/decision-log.md#d-r2-cmux-v2-protocol-is-the-contract-of-record)). The caller is the in-pane orchestrator process ([parent D-R1](../../artifacts/decision-log.md#d-r1-orchestrator-is-the-in-pane-pr9k-process-no-hidden-orchestrator-pane-supersedes-d13d-3d-4-hidden-pane-parts)) — there is no hidden orchestrator pane.
+- **Decision:** the **step name** entry is pushed to cmux's sidebar status-entry surface. The **iteration counter** entry is pushed to cmux's sidebar progress surface. Both calls target the pr9k workspace by its workspace handle ([parent D-R2](../../artifacts/decision-log.md#d-r2-cmux-v2-protocol-is-the-contract-of-record)). The caller is the in-pane orchestrator process ([parent D-R1](../../artifacts/decision-log.md#d-r1-orchestrator-is-the-in-pane-pr9k-process-no-hidden-orchestrator-pane-supersedes-d13d-3d-4-hidden-pane-parts)) — there is no hidden orchestrator pane.
 - **Rationale:** Rework R's standard was to verify every cmux integration claim against the pinned cmux source rather than against an assumed surface. cmux v0.64.7 actually exposes two distinct sidebar surfaces — status entries (pills, keyed) and a single progress bar (fraction + label) per workspace. The parent spec's two outcomes (step name as a status entry, iteration counter as a progress entry) map one-to-one onto these surfaces. Verified against `cmux --help`, `cmux set-status --help`, `cmux set-progress --help`, and [docs/cli-contract.md](https://raw.githubusercontent.com/manaflow-ai/cmux/main/docs/cli-contract.md) for cmux 0.64.7.
 - **Evidence:**
   - User confirmation on 2026-05-19 that cmux 0.64.7 is the pinned version.
@@ -87,7 +87,7 @@ Decisions specific to [Phase 4 — Sidebar Mirroring](../feature-specification.m
 - **Linked technical notes:** —
 - **Driven by findings:** —
 - **Dependent decisions:** D6
-- **Referenced in spec:** Edge Cases and Failure Modes, Coordinations, User Interactions
+- **Referenced in spec:** Actors and Triggers, Primary Flow, Edge Cases and Failure Modes, Coordinations, User Interactions
 
 ### D6: Sidebar entries are cleared on every graceful run-end path
 

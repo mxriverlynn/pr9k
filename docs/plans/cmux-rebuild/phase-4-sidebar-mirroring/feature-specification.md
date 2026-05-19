@@ -129,7 +129,7 @@ Phase 4 introduces no new on-disk artifacts and no change to the header, log, or
 
 ## Open Items
 
-None — every Phase 4 decision is settled by evidence (cmux v0.64.7's sidebar surface, parent decisions D5 / D-R1 / D-R2 / D15 / D17, and the existing `cmuxHeader` adapter) or by user judgment captured in [the decision log](artifacts/decision-log.md). The Phase 4 preconditions in the build outline that mentioned OQ-5 (the sidebar method) are resolved by [D1](artifacts/decision-log.md#d1-sidebar-entries-map-to-cmuxs-status-pill-and-progress-bar-surfaces) and [T1](artifacts/feature-technical-notes.md#t1-cmux-sidebar-surface-shape).
+None — every Phase 4 decision is settled by evidence (cmux v0.64.7's sidebar surface, parent decisions D5 / D-R1 / D-R2 / D15 / D17) or by user judgment captured in [the decision log](artifacts/decision-log.md). The Phase 4 preconditions in the build outline that mentioned OQ-5 (the sidebar method) are resolved by [D1](artifacts/decision-log.md#d1-sidebar-entries-map-to-cmuxs-status-pill-and-progress-bar-surfaces) and [T1](artifacts/feature-technical-notes.md#t1-cmux-sidebar-surface-shape).
 
 ## Summary
 
