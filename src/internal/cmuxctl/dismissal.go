@@ -2,6 +2,7 @@ package cmuxctl
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -69,9 +70,11 @@ func (o *DismissalObserver) Wait() {
 }
 
 // StartDismissalObserver starts the dismissal-observation goroutine and returns
-// the observer. workspaceName is the pr9k workspace name to watch.
-// cfg controls polling cadence and per-call timeout; zero values use defaults.
-func StartDismissalObserver(ctx context.Context, client CmuxClient, workspaceName string, cfg DismissalConfig) *DismissalObserver {
+// the observer. ws is the pr9k workspace handle to watch; expectedSurfaces is
+// the number of display surfaces pr9k created (the observer fires if the count
+// drops below this, since cmux v2 surface.list carries no per-surface liveness
+// flag). cfg controls polling cadence and per-call timeout.
+func StartDismissalObserver(ctx context.Context, client CmuxClient, ws Workspace, expectedSurfaces int, cfg DismissalConfig) *DismissalObserver {
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = defaultPollInterval
 	}
@@ -85,13 +88,13 @@ func StartDismissalObserver(ctx context.Context, client CmuxClient, workspaceNam
 		cancel: cancel,
 	}
 	obs.wg.Add(1)
-	go obs.run(childCtx, client, workspaceName, cfg.PollInterval, cfg.PollTimeout)
+	go obs.run(childCtx, client, ws, expectedSurfaces, cfg.PollInterval, cfg.PollTimeout)
 	return obs
 }
 
 // run is the goroutine body. It selects on ctx.Done() and the poll timer;
 // on ctx.Done() it exits immediately without firing dismissal (D22).
-func (o *DismissalObserver) run(ctx context.Context, client CmuxClient, workspaceName string, interval, callTimeout time.Duration) {
+func (o *DismissalObserver) run(ctx context.Context, client CmuxClient, ws Workspace, expectedSurfaces int, interval, callTimeout time.Duration) {
 	defer o.wg.Done()
 
 	consecutiveTimeouts := 0
@@ -111,7 +114,7 @@ func (o *DismissalObserver) run(ctx context.Context, client CmuxClient, workspac
 			return
 		}
 
-		dismissed, fatal, timedOut := o.observe(ctx, client, workspaceName, callTimeout)
+		dismissed, fatal, timedOut := o.observe(ctx, client, ws, expectedSurfaces, callTimeout)
 
 		// If the parent context was cancelled during the RPC, exit cleanly.
 		if ctx.Err() != nil {
@@ -140,7 +143,7 @@ func (o *DismissalObserver) run(ctx context.Context, client CmuxClient, workspac
 // Returns (dismissed, fatal, timedOut). fatal is always false for normal
 // dismissal events; timedOut is true when the per-call context expires before
 // the parent context.
-func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, workspaceName string, callTimeout time.Duration) (dismissed, fatal, timedOut bool) {
+func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, ws Workspace, expectedSurfaces int, callTimeout time.Duration) (dismissed, fatal, timedOut bool) {
 	pollCtx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 
@@ -152,18 +155,11 @@ func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, work
 		return false, false, true // per-call timeout
 	}
 
-	panes, err := client.SurfaceList(pollCtx, workspaceName)
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, false, false
-		}
-		return false, false, true
-	}
-
-	// Check: workspace removed from cmux list? (D9 arm 1)
+	// Arm 1: the pr9k workspace is gone from cmux's list (workspace-close
+	// gesture). Match by UUID or short ref.
 	workspaceFound := false
 	for _, w := range workspaces {
-		if w == workspaceName {
+		if (ws.ID != "" && w.ID == ws.ID) || (ws.Ref != "" && w.Ref == ws.Ref) {
 			workspaceFound = true
 			break
 		}
@@ -172,11 +168,23 @@ func (o *DismissalObserver) observe(ctx context.Context, client CmuxClient, work
 		return true, false, false
 	}
 
-	// Check: any pane in exited state? (D9 arm 2, D19)
-	for _, p := range panes {
-		if p.Exited {
+	// Arm 2: a display surface was closed. cmux v2 surface.list has no
+	// per-surface liveness flag, so a drop below the count pr9k created is the
+	// signal. surface.list on a vanished workspace returns not_found — also a
+	// dismissal, not a timeout.
+	surfaces, err := client.SurfaceList(pollCtx, ws)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, false, false
+		}
+		var ce *CmuxError
+		if errors.As(err, &ce) && ce.Code == "not_found" {
 			return true, false, false
 		}
+		return false, false, true
+	}
+	if expectedSurfaces > 0 && len(surfaces) < expectedSurfaces {
+		return true, false, false
 	}
 
 	return false, false, false

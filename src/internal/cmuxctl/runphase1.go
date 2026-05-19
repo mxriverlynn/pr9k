@@ -2,7 +2,6 @@ package cmuxctl
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +12,7 @@ import (
 )
 
 // resolveExecutable returns the path to the current binary, resolved through
-// any symlinks. Used to construct the per-pane spawn argv (Assumption A5).
+// any symlinks. Used to construct the per-pane command (Assumption A5).
 func resolveExecutable() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -22,17 +21,13 @@ func resolveExecutable() (string, error) {
 	return filepath.EvalSymlinks(exe)
 }
 
-// ErrWorkspaceExists is returned (or wrapped) when a workspace name is already
-// in use. RunPhase1 uses it as the retry trigger for spec D12 collision retry.
-var ErrWorkspaceExists = errors.New("cmuxctl: workspace already exists")
-
 // SanitizeBasename applies the D11 sanitization rules to a directory basename:
 //   - Accepted characters: [a-zA-Z0-9._-]; everything else becomes "-".
 //   - Consecutive hyphens are collapsed to one.
 //   - Leading and trailing hyphens are trimmed.
 //   - Empty result after trimming falls back to the literal string "repo".
 //
-// The caller must never print the input to operator-visible output (D-23).
+// The caller must never print the raw input to operator-visible output (D-23).
 func SanitizeBasename(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -44,108 +39,120 @@ func SanitizeBasename(s string) string {
 		}
 	}
 	result := b.String()
-
-	// Collapse consecutive hyphens.
 	for strings.Contains(result, "--") {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
 	result = strings.Trim(result, "-")
-
 	if result == "" {
 		return "repo"
 	}
 	return result
 }
 
-// composeWorkspaceName composes the workspace name from an already-sanitized
-// basename and a fresh UTC nanosecond timestamp per parent spec D29.
-// The result is always of the form pr9k-<sanitized>-<timestamp>.
-func composeWorkspaceName(sanitized string) string {
+// composeWorkspaceLabel composes the human-facing workspace title from an
+// already-sanitized basename and a fresh UTC nanosecond timestamp (parent spec
+// D29). In cmux v2 a workspace is identified by an opaque handle, not this
+// string; the label is only a display title and a unique socket-file component.
+func composeWorkspaceLabel(sanitized string) string {
 	ts := time.Now().UTC().Format("20060102T150405.000000000Z")
 	return "pr9k-" + sanitized + "-" + ts
 }
 
-// RunPhase1 implements the workspace lifecycle setup and teardown for cmux Phase 1.
+// shellQuote single-quote-escapes s for safe inclusion in a /bin/sh command
+// line (cmux runs a surface's initial_command through the user's shell).
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// paneCommand builds the initial_command for a display pane. cmux v2
+// surface.split has no initial_env param, so the pane environment is embedded
+// in the command itself; workspace.create's first surface gets the same form
+// for uniformity. `exec` replaces the shell so the pane process is the
+// cmux-pane subprocess directly.
+func paneCommand(exe, role string, env map[string]string) string {
+	var b strings.Builder
+	// Deterministic order keeps the command stable and testable.
+	for _, k := range []string{"PR9K_CMUX_SOCKET", "PR9K_PROJECT_DIR"} {
+		if v, ok := env[k]; ok {
+			b.WriteString(k)
+			b.WriteByte('=')
+			b.WriteString(shellQuote(v))
+			b.WriteByte(' ')
+		}
+	}
+	b.WriteString("exec ")
+	b.WriteString(shellQuote(exe))
+	b.WriteString(" cmux-pane --role=")
+	b.WriteString(role)
+	return b.String()
+}
+
+// expectedDisplaySurfaces is the number of display panes RunPhase1 creates
+// (log + header + footer). The dismissal observer fires if the live surface
+// count drops below this.
+const expectedDisplaySurfaces = 3
+
+// RunPhase1 implements the cmux-mode workspace lifecycle against the cmux v2
+// API (rework R, architecture A).
 //
-// Setup sequence:
-//  1. Capture the current workspace via WorkspaceCurrent (spec D10; empty result
-//     is recorded as "no prior workspace" without error).
-//  2. Sanitize filepath.Base(projectDir) per D11 (SanitizeBasename), compose the
-//     workspace name pr9k-<sanitized>-<timestamp>.
-//  3. WorkspaceCreate; on duplicate-name error retry once with a new timestamp
-//     (spec D12). Second collision returns an error.
-//  4. Print the workspace-name confirmation to out per spec D2.
-//  5. Spawn four panes orchestrator-first (D-3):
-//     a. SurfaceSplit → orchPaneID; SurfaceSpawn orchestrator (sh -c 'tail -f /dev/null').
-//     b. SurfaceHide orchestrator.
-//     c. SurfaceSplit + SurfaceSpawn for header, log, footer (shell one-liners per D-4).
-//  6. Start the dismissal-observation goroutine (D6, D9, D22) and block until
-//     either a dismissal event is received or ctx is cancelled.
+// Architecture A: the pr9k process the operator launched inside a cmux pane IS
+// the orchestrator. There is no separate/hidden orchestrator pane (cmux v2 has
+// no surface.hide). RunPhase1 creates a workspace whose first surface is the
+// "log" pane, then splits in "header" and "footer". Each surface runs
+// `pr9k cmux-pane --role=<role>` and talks back to this process over the
+// interaction-channel Unix socket (unchanged).
 //
-// Teardown sequence (D-11, D-12, spec D10):
-//  1. Set shuttingDown on the observer; cancel its context.
-//  2. Best-effort WorkspaceClose: on failure print an orphan diagnostic to stderr
-//     and return a non-nil error.
-//  3. Silent focus-restore: if a prior workspace was captured, call WorkspaceSelect;
-//     any error is silently ignored (D10).
-//  4. Join the dismissal-observer goroutine via WaitGroup.
+// Setup:
+//  1. Capture the current workspace handle (best-effort focus restore).
+//  2. workspace.create (title pr9k-<sanitized>-<ts>, working_directory
+//     projectDir, initial_command = log pane) → workspace handle.
+//  3. surface.split up → header pane; surface.split down → footer pane.
+//  4. Start the dismissal observer (workspace gone, or surface count < 3) and
+//     block until dismissal or ctx cancellation.
 //
-// Teardown is wrapped in sync.Once so it runs exactly once regardless of how
-// many code paths invoke it (dismissal, signal-driven context cancel, partial-setup
-// failure). A partial-setup failure (any error after WorkspaceCreate) also triggers
-// teardown via the deferred cleanup.
-//
-// Exit-code policy (D-12): every normal dismissal observation returns nil (exit 0).
-// Non-zero exits are reserved for: WorkspaceClose failure, partial-setup failure,
-// signal-driven context cancellation, and fatal dismissal (N=3 poll timeouts).
-//
-// out receives only the sanitized workspace name (D-23: the pre-sanitized
-// filepath.Base(projectDir) must never appear in operator-visible output).
+// Teardown (sync.Once; runs once from any path): close the pr9k workspace,
+// best-effort re-select the prior workspace, join the observer.
 func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig) (returnErr error) {
-	// Resolve stderr for teardown diagnostics; nil means os.Stderr.
 	stderr := dismissalCfg.Stderr
 	if stderr == nil {
 		stderr = os.Stderr
 	}
 
-	// Step 1: capture current workspace (spec D10).
-	priorWorkspace, err := client.WorkspaceCurrent(ctx)
+	// Step 1: capture current workspace for focus restore (best-effort).
+	prior, err := client.WorkspaceCurrent(ctx)
 	if err != nil {
-		priorWorkspace = "" // record as "no prior workspace" on error
+		prior = Workspace{}
 	}
 
-	// Step 2: compose workspace name.
-	// D-23: SanitizeBasename consumes filepath.Base(projectDir); the result
-	// (sanitized) is the only form that may appear in operator output.
+	// Step 2: compose the display label (D-23: only the sanitized form is ever
+	// printed; the raw basename is not referenced after this point).
 	sanitized := SanitizeBasename(filepath.Base(projectDir))
-	workspaceName := composeWorkspaceName(sanitized)
+	label := composeWorkspaceLabel(sanitized)
 
-	// Step 3: create workspace with one collision retry (spec D12).
-	// In practice collisions are essentially impossible because composeWorkspaceName
-	// embeds a UTC nanosecond timestamp; the retry branch is defensive and is only
-	// exercised by FakeClient in tests (RealClient never wraps ErrWorkspaceExists —
-	// see handleIOResult). If a real duplicate-name error ever reaches this path it
-	// will be returned as a fatal workspace-create error rather than triggering the
-	// retry.
-	if err := client.WorkspaceCreate(ctx, workspaceName); err != nil {
-		if !errors.Is(err, ErrWorkspaceExists) {
-			return fmt.Errorf("cmuxctl: workspace create: %w", err)
-		}
-		// Retry with a new timestamp.
-		workspaceName = composeWorkspaceName(sanitized)
-		if err := client.WorkspaceCreate(ctx, workspaceName); err != nil {
-			return fmt.Errorf("cmuxctl: workspace create (retry): %w", err)
-		}
+	exe, err := resolveExecutable()
+	if err != nil {
+		return fmt.Errorf("cmuxctl: resolve binary path: %w", err)
+	}
+	socketPath := filepath.Join(projectDir, ".pr9k", "cmux-pane-"+label+".sock")
+	paneEnv := map[string]string{
+		"PR9K_CMUX_SOCKET": socketPath,
+		"PR9K_PROJECT_DIR": projectDir,
 	}
 
-	// Step 4: print workspace-name confirmation per spec D2.
-	// D-23: only the composed workspaceName (which contains only the sanitized form)
-	// is printed; the pre-sanitized basename is never referenced after this point.
-	_, _ = fmt.Fprintf(out, "pr9k workspace: %s\n", workspaceName)
+	// Step 2b: create the workspace; first surface is the log pane.
+	ws, err := client.WorkspaceCreate(ctx, WorkspaceCreateOpts{
+		Title:            label,
+		WorkingDirectory: projectDir,
+		InitialCommand:   paneCommand(exe, "log", paneEnv),
+		InitialEnv:       paneEnv,
+	})
+	if err != nil {
+		return fmt.Errorf("cmuxctl: workspace create: %w", err)
+	}
 
-	// Teardown is wrapped in sync.Once so it runs exactly once from any path:
-	// the deferred cleanup below (partial-setup failure, normal/fatal dismissal,
-	// context cancellation) and any concurrent signal-handler path.
+	// Step 3: print the workspace-label confirmation (spec D2, D-23).
+	_, _ = fmt.Fprintf(out, "pr9k workspace: %s\n", label)
+
 	var (
 		teardownOnce sync.Once
 		teardownErr  error
@@ -157,25 +164,19 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 				obs.SetShuttingDown()
 				obs.Cancel()
 			}
-			// Best-effort WorkspaceClose with a fresh context (D-11): the parent
-			// ctx may already be cancelled on the signal-driven path.
 			closeCtx := context.Background()
-			if err := client.WorkspaceClose(closeCtx, workspaceName); err != nil {
-				_, _ = fmt.Fprintf(stderr, "pr9k: orphan workspace %q could not be closed; dismiss it manually via cmux's controls\n", workspaceName)
+			if err := client.WorkspaceClose(closeCtx, ws); err != nil {
+				_, _ = fmt.Fprintf(stderr, "pr9k: orphan workspace %q could not be closed; dismiss it manually via cmux's controls\n", label)
 				teardownErr = err
 			}
-			// Silent focus-restore (spec D10): skip when no prior workspace was
-			// recorded; ignore any error when the prior workspace is stale.
-			if priorWorkspace != "" {
-				_ = client.WorkspaceSelect(closeCtx, priorWorkspace)
+			if !prior.Empty() {
+				_ = client.WorkspaceSelect(closeCtx, prior)
 			}
 			if obs != nil {
 				obs.Wait()
 			}
 		})
 	}
-	// Always run teardown on return; the named return value lets the deferred
-	// func inject teardownErr when the primary return would otherwise be nil.
 	defer func() {
 		runTeardown()
 		if returnErr == nil && teardownErr != nil {
@@ -183,55 +184,33 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		}
 	}()
 
-	// Resolve the pr9k binary path (Assumption A5) once and reuse across all spawns.
-	exe, err := resolveExecutable()
-	if err != nil {
-		return fmt.Errorf("cmuxctl: resolve binary path: %w", err)
-	}
-
-	// Compute the interaction-channel socket path: <projectDir>/.pr9k/cmux-pane-<workspaceName>.sock
-	socketPath := filepath.Join(projectDir, ".pr9k", "cmux-pane-"+workspaceName+".sock")
-	spawnEnv := map[string]string{
-		"PR9K_CMUX_SOCKET": socketPath,
-		"PR9K_PROJECT_DIR": projectDir,
-	}
-
-	// Step 5a: spawn orchestrator pane (D-3, D-4).
-	orchPaneID, err := client.SurfaceSplit(ctx, SplitOpts{})
-	if err != nil {
-		return fmt.Errorf("cmuxctl: split orchestrator pane: %w", err)
-	}
-	if err := client.SurfaceSpawn(ctx, orchPaneID, []string{exe, "cmux-pane", "--role=orchestrator"}, spawnEnv); err != nil {
-		return fmt.Errorf("cmuxctl: spawn orchestrator: %w", err)
-	}
-
-	// Step 5b: hide orchestrator pane.
-	if err := client.SurfaceHide(ctx, orchPaneID); err != nil {
-		return fmt.Errorf("cmuxctl: hide orchestrator pane: %w", err)
-	}
-
-	// Step 5c-5e: spawn header, log, footer panes (D-3, D-4).
-	visibleRoles := []string{"header", "log", "footer"}
-	for _, role := range visibleRoles {
-		paneID, err := client.SurfaceSplit(ctx, SplitOpts{})
-		if err != nil {
-			return fmt.Errorf("cmuxctl: split %s pane: %w", role, err)
-		}
-		if err := client.SurfaceSpawn(ctx, paneID, []string{exe, "cmux-pane", "--role=" + role}, spawnEnv); err != nil {
-			return fmt.Errorf("cmuxctl: spawn %s pane: %w", role, err)
+	// Step 4: split in the header and footer panes.
+	for _, sp := range []struct {
+		role string
+		dir  SplitDirection
+	}{
+		{"header", SplitUp},
+		{"footer", SplitDown},
+	} {
+		if _, err := client.SurfaceSplit(ctx, SplitOpts{
+			Workspace:        ws,
+			Direction:        sp.dir,
+			WorkingDirectory: projectDir,
+			InitialCommand:   paneCommand(exe, sp.role, paneEnv),
+		}); err != nil {
+			return fmt.Errorf("cmuxctl: split %s pane: %w", sp.role, err)
 		}
 	}
 
-	// Step 6: start dismissal-observation goroutine and block until dismissal or
-	// context cancellation (spec D9, D22).
-	obs = StartDismissalObserver(ctx, client, workspaceName, dismissalCfg)
+	// Step 5: observe for dismissal and block.
+	obs = StartDismissalObserver(ctx, client, ws, expectedDisplaySurfaces, dismissalCfg)
 
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case evt := <-obs.Ch:
 		if evt.Fatal {
-			return fmt.Errorf("cmuxctl: dismissal poll fatal: %d consecutive timeouts; workspace %s may need manual cleanup", maxConsecutiveTimeouts, workspaceName)
+			return fmt.Errorf("cmuxctl: dismissal poll fatal: %d consecutive timeouts; workspace %s may need manual cleanup", maxConsecutiveTimeouts, label)
 		}
 		return nil
 	}

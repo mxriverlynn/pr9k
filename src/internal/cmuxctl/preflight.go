@@ -54,20 +54,46 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 	}
 	_ = conn.Close()
 
-	// Condition 5: capability check via system.identify.
+	// Condition 5: capability check via system.identify. cmux v2 returns no
+	// product name/version (verified at 2f96c15c2); a successful identify with
+	// a non-empty socket_path is the capability proof.
 	id, err := client.SystemIdentify(ctx)
 	if err != nil {
-		// TODO(#225): replace ansi.StripAll with ansi.StripForTerminalOutput once #225 lands.
-		safe := string(ansi.StripAll([]byte(err.Error())))
-		return []error{fmt.Errorf("cmuxctl: cmux version is incompatible with pr9k cmux mode: %s", safe)}
+		return []error{classifyIdentifyError(err)}
 	}
-	if id.Name != "cmux" {
-		// TODO(OI-1): verify the expected identity name against the pinned cmux version.
-		safe := string(ansi.StripAll([]byte(id.Name)))
-		return []error{fmt.Errorf("cmuxctl: cmux version is incompatible with pr9k cmux mode: system.identify returned name=%q", safe)}
+	if id.SocketPath == "" {
+		return []error{errors.New("cmuxctl: unexpected cmux identify response (no socket_path); cmux may be an unsupported version — pinned support is cmux v0.64.6")}
 	}
 
 	return nil
+}
+
+// classifyIdentifyError turns a SystemIdentify failure into accurate,
+// actionable operator guidance instead of a catch-all "version incompatible".
+func classifyIdentifyError(err error) error {
+	// cmux's default cmuxOnly mode writes a bare "ERROR: …" line to clients
+	// that are not descendants of the cmux session, before reading the request.
+	var pt *PlaintextError
+	if errors.As(err, &pt) {
+		safe := string(ansi.StripAll([]byte(pt.Raw)))
+		if pt.IsAccessDenied() {
+			return fmt.Errorf("cmuxctl: cmux denied access — run pr9k from a terminal pane inside the cmux session (cmux defaults to cmuxOnly mode), or set cmux's socket control mode to allow-all. cmux said: %s", safe)
+		}
+		return fmt.Errorf("cmuxctl: cmux rejected the connection: %s", safe)
+	}
+	// Structured cmux v2 error.
+	var ce *CmuxError
+	if errors.As(err, &ce) {
+		safe := string(ansi.StripAll([]byte(ce.Message)))
+		switch ce.Code {
+		case "auth_required", "auth_failed", "auth_unconfigured":
+			return fmt.Errorf("cmuxctl: cmux socket requires authentication (%s) — set CMUX_SOCKET_PASSWORD or configure the socket password in cmux Settings. cmux said: %s", ce.Code, safe)
+		default:
+			return fmt.Errorf("cmuxctl: cmux rejected system.identify (%s): %s", ce.Code, safe)
+		}
+	}
+	safe := string(ansi.StripAll([]byte(err.Error())))
+	return fmt.Errorf("cmuxctl: could not complete the cmux capability check: %s", safe)
 }
 
 // resolveSocketPath resolves the cmux socket path via cmux's discovery

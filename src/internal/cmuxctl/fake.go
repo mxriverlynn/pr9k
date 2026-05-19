@@ -5,53 +5,37 @@ import (
 	"sync"
 )
 
-// SpawnCall records the arguments passed to SurfaceSpawn.
-type SpawnCall struct {
-	PaneID string
-	Argv   []string
-	Env    map[string]string
-}
-
-// FakeClient is a test double for CmuxClient. Every method is scriptable via
-// its corresponding Func field. All mutable state is protected by mu.
+// FakeClient is a test double for the cmux v2 CmuxClient. Every method is
+// scriptable via its Func field; unset Funcs return sensible defaults so a
+// zero FakeClient drives RunPhase1 to completion. All mutable state is mu-guarded.
 //
-// The HangNext and HangRelease channels let tests simulate a hanging RPC call:
-// send a value to HangNext before the call, and the call will block until a
-// value is sent to HangRelease (or the context is cancelled).
+// HangNext/HangRelease let tests simulate a hanging RPC: send to HangNext
+// before the call, and the call blocks until HangRelease (or ctx cancel).
 type FakeClient struct {
 	mu sync.Mutex
 
-	// Scripted responses. If nil, the method returns its zero value and nil error.
 	SystemIdentifyFunc   func(ctx context.Context) (Identity, error)
-	WorkspaceCurrentFunc func(ctx context.Context) (string, error)
-	WorkspaceListFunc    func(ctx context.Context) ([]string, error)
-	WorkspaceCreateFunc  func(ctx context.Context, name string) error
-	WorkspaceCloseFunc   func(ctx context.Context, name string) error
-	WorkspaceSelectFunc  func(ctx context.Context, name string) error
-	SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (string, error)
-	SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string, env map[string]string) error
-	SurfaceHideFunc      func(ctx context.Context, paneID string) error
-	SurfaceListFunc      func(ctx context.Context, workspaceName string) ([]PaneInfo, error)
+	WorkspaceCurrentFunc func(ctx context.Context) (Workspace, error)
+	WorkspaceListFunc    func(ctx context.Context) ([]WorkspaceInfo, error)
+	WorkspaceCreateFunc  func(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error)
+	WorkspaceCloseFunc   func(ctx context.Context, ws Workspace) error
+	WorkspaceSelectFunc  func(ctx context.Context, ws Workspace) error
+	SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (Surface, error)
+	SurfaceListFunc      func(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
 
 	// Recorders — appended under mu; read after all goroutines have joined.
-	CreateCalls []string
-	CloseCalls  []string
-	SelectCalls []string
-	SpawnCalls  []SpawnCall
-	HideCalls   []string
+	CreateCalls []WorkspaceCreateOpts
+	CloseCalls  []Workspace
+	SelectCalls []Workspace
 	SplitCalls  []SplitOpts
 
-	// Hang inject seams. Both channels must be initialized by the caller before use.
-	HangNext    chan struct{} // send to this to make the next call block
-	HangRelease chan struct{} // send to this to release the blocked call
+	HangNext    chan struct{}
+	HangRelease chan struct{}
 }
 
-// Compile-time interface assertion — must stay in the production file.
 var _ CmuxClient = (*FakeClient)(nil)
 
-// SetHangChannels sets HangNext and HangRelease under f.mu so callers can
-// update them safely while methods may be running concurrently on other
-// goroutines.
+// SetHangChannels sets HangNext and HangRelease under f.mu.
 func (f *FakeClient) SetHangChannels(next, release chan struct{}) {
 	f.mu.Lock()
 	f.HangNext = next
@@ -59,10 +43,6 @@ func (f *FakeClient) SetHangChannels(next, release chan struct{}) {
 	f.mu.Unlock()
 }
 
-// maybehang blocks the current call if HangNext has a pending value.
-// It waits on HangRelease or ctx cancellation. Snapshots HangNext and
-// HangRelease under f.mu (snapshot-then-unlock) so concurrent writes via
-// SetHangChannels do not race with the channel reads below.
 func (f *FakeClient) maybehang(ctx context.Context) error {
 	f.mu.Lock()
 	hangNext := f.HangNext
@@ -95,12 +75,12 @@ func (f *FakeClient) SystemIdentify(ctx context.Context) (Identity, error) {
 	if fn != nil {
 		return fn(ctx)
 	}
-	return Identity{}, nil
+	return Identity{SocketPath: "/fake/cmux.sock"}, nil
 }
 
-func (f *FakeClient) WorkspaceCurrent(ctx context.Context) (string, error) {
+func (f *FakeClient) WorkspaceCurrent(ctx context.Context) (Workspace, error) {
 	if err := f.maybehang(ctx); err != nil {
-		return "", err
+		return Workspace{}, err
 	}
 	f.mu.Lock()
 	fn := f.WorkspaceCurrentFunc
@@ -108,10 +88,10 @@ func (f *FakeClient) WorkspaceCurrent(ctx context.Context) (string, error) {
 	if fn != nil {
 		return fn(ctx)
 	}
-	return "", nil
+	return Workspace{}, nil
 }
 
-func (f *FakeClient) WorkspaceList(ctx context.Context) ([]string, error) {
+func (f *FakeClient) WorkspaceList(ctx context.Context) ([]WorkspaceInfo, error) {
 	if err := f.maybehang(ctx); err != nil {
 		return nil, err
 	}
@@ -124,51 +104,51 @@ func (f *FakeClient) WorkspaceList(ctx context.Context) ([]string, error) {
 	return nil, nil
 }
 
-func (f *FakeClient) WorkspaceCreate(ctx context.Context, name string) error {
+func (f *FakeClient) WorkspaceCreate(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error) {
 	if err := f.maybehang(ctx); err != nil {
-		return err
+		return Workspace{}, err
 	}
 	f.mu.Lock()
-	f.CreateCalls = append(f.CreateCalls, name)
+	f.CreateCalls = append(f.CreateCalls, opts)
 	fn := f.WorkspaceCreateFunc
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, name)
+		return fn(ctx, opts)
 	}
-	return nil
+	return Workspace{ID: "fake-ws", Ref: "workspace:fake"}, nil
 }
 
-func (f *FakeClient) WorkspaceClose(ctx context.Context, name string) error {
+func (f *FakeClient) WorkspaceClose(ctx context.Context, ws Workspace) error {
 	if err := f.maybehang(ctx); err != nil {
 		return err
 	}
 	f.mu.Lock()
-	f.CloseCalls = append(f.CloseCalls, name)
+	f.CloseCalls = append(f.CloseCalls, ws)
 	fn := f.WorkspaceCloseFunc
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, name)
+		return fn(ctx, ws)
 	}
 	return nil
 }
 
-func (f *FakeClient) WorkspaceSelect(ctx context.Context, name string) error {
+func (f *FakeClient) WorkspaceSelect(ctx context.Context, ws Workspace) error {
 	if err := f.maybehang(ctx); err != nil {
 		return err
 	}
 	f.mu.Lock()
-	f.SelectCalls = append(f.SelectCalls, name)
+	f.SelectCalls = append(f.SelectCalls, ws)
 	fn := f.WorkspaceSelectFunc
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, name)
+		return fn(ctx, ws)
 	}
 	return nil
 }
 
-func (f *FakeClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (string, error) {
+func (f *FakeClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface, error) {
 	if err := f.maybehang(ctx); err != nil {
-		return "", err
+		return Surface{}, err
 	}
 	f.mu.Lock()
 	f.SplitCalls = append(f.SplitCalls, opts)
@@ -177,38 +157,10 @@ func (f *FakeClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (string, 
 	if fn != nil {
 		return fn(ctx, opts)
 	}
-	return "", nil
+	return Surface{SurfaceID: "fake-surface", SurfaceRef: "surface:fake"}, nil
 }
 
-func (f *FakeClient) SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error {
-	if err := f.maybehang(ctx); err != nil {
-		return err
-	}
-	f.mu.Lock()
-	f.SpawnCalls = append(f.SpawnCalls, SpawnCall{PaneID: paneID, Argv: argv, Env: env})
-	fn := f.SurfaceSpawnFunc
-	f.mu.Unlock()
-	if fn != nil {
-		return fn(ctx, paneID, argv, env)
-	}
-	return nil
-}
-
-func (f *FakeClient) SurfaceHide(ctx context.Context, paneID string) error {
-	if err := f.maybehang(ctx); err != nil {
-		return err
-	}
-	f.mu.Lock()
-	f.HideCalls = append(f.HideCalls, paneID)
-	fn := f.SurfaceHideFunc
-	f.mu.Unlock()
-	if fn != nil {
-		return fn(ctx, paneID)
-	}
-	return nil
-}
-
-func (f *FakeClient) SurfaceList(ctx context.Context, workspaceName string) ([]PaneInfo, error) {
+func (f *FakeClient) SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error) {
 	if err := f.maybehang(ctx); err != nil {
 		return nil, err
 	}
@@ -216,7 +168,7 @@ func (f *FakeClient) SurfaceList(ctx context.Context, workspaceName string) ([]P
 	fn := f.SurfaceListFunc
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(ctx, workspaceName)
+		return fn(ctx, ws)
 	}
 	return nil, nil
 }
