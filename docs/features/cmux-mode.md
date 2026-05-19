@@ -58,7 +58,7 @@ launch → preflight → capture prior workspace → create workspace
 **Preflight** (five checks, run sequentially; first failure short-circuits):
 
 1. cmux binary present on PATH
-2. Socket path resolves and is a Unix socket (`CMUX_SOCKET_PATH` or `/run/cmux.sock`)
+2. Socket path resolves and is a Unix socket (cmux's discovery contract: `CMUX_SOCKET_PATH` → `CMUX_SOCKET` → `last-socket-path` marker file → `os.UserConfigDir()/cmux/cmux.sock` → `/tmp/cmux.sock`)
 3. Socket is reachable from the launching terminal (descendants-only check)
 4. Socket connection is not refused (socket-enabled check)
 5. `system.identify` returns `name="cmux"` (capability check)
@@ -85,7 +85,7 @@ All five conditions produce operator-readable error messages:
 | Condition | Message |
 |---|---|
 | Binary not installed | `cmuxctl: cmux is not installed; see the cmux setup how-to` |
-| Not running | `cmuxctl: cmux is installed but not running; start cmux and try again` |
+| Socket not found | `cmuxctl: cmux socket not found at <path> (looked in: <locations>); start cmux, then launch pr9k from inside a cmux pane, or set CMUX_SOCKET_PATH` |
 | Not a descendant | `cmuxctl: cmux mode must be launched from inside a cmux session (socket: <path>)` |
 | Socket disabled | `cmuxctl: cmux socket is disabled in cmux configuration; re-enable it and try again` |
 | Version incompatible | `cmuxctl: cmux version is incompatible with pr9k cmux mode: ...` |

@@ -34,10 +34,12 @@ cmux must be running before you invoke pr9k with `--cmux`. Start it normally:
 cmux
 ```
 
-Open a terminal pane inside the cmux session. pr9k's `--cmux` flag requires that the launching terminal is a **descendant** of the cmux session (the default access mode). Launching from outside a cmux session produces:
+Open a terminal pane inside the cmux session and run `pr9k --cmux` **from that pane**. pr9k's `--cmux` flag requires that the launching terminal is a **descendant** of the cmux session (the default access mode); a pane inside cmux satisfies this and cmux exports `CMUX_SOCKET_PATH` into that pane's environment so pr9k connects automatically. pr9k does **not** start cmux for you — cmux is an interactive terminal multiplexer, and a pr9k-launched cmux would not be pr9k's ancestor, so the descendants-only check would still reject it.
+
+Launching from outside a cmux session produces (the socket path shown is whichever path pr9k resolved — see Step 3):
 
 ```
-cmuxctl: cmux mode must be launched from inside a cmux session (socket: /run/cmux.sock)
+cmuxctl: cmux mode must be launched from inside a cmux session (socket: ~/Library/Application Support/cmux/cmux.sock)
 ```
 
 ## Step 3: Verify cmux's access mode
@@ -52,7 +54,15 @@ You can check which socket path cmux is using:
 echo $CMUX_SOCKET_PATH
 ```
 
-If `CMUX_SOCKET_PATH` is unset, pr9k uses the platform default `/run/cmux.sock`. Override it by setting `CMUX_SOCKET_PATH` in your shell environment before running pr9k.
+pr9k resolves the cmux socket exactly the way cmux's own CLI does, in this order:
+
+1. `CMUX_SOCKET_PATH` (cmux's canonical override) — used verbatim if set.
+2. `CMUX_SOCKET` (cmux's deprecated alias) — used verbatim if set.
+3. cmux's `last-socket-path` marker file — `~/Library/Application Support/cmux/last-socket-path` on macOS (`~/.config/cmux/last-socket-path` on Linux), then the `/tmp/cmux-last-socket-path` mirror. Its contents are the live socket path.
+4. The stable default: `~/Library/Application Support/cmux/cmux.sock` on macOS, `~/.config/cmux/cmux.sock` on Linux.
+5. The legacy default `/tmp/cmux.sock` (note: rejected on macOS by the world-writable-parent check, since `/tmp` is `0777` — set `CMUX_SOCKET_PATH` if you genuinely need a socket there).
+
+When you run `pr9k --cmux` from inside a cmux pane (the supported flow), cmux has already exported `CMUX_SOCKET_PATH`, so step 1 resolves it. The remaining steps are why pr9k works without any manual configuration. Earlier pr9k builds hardcoded `/run/cmux.sock` (a Linux-only path that does not exist on macOS); if you saw `cmux ... not running` on every run, upgrade.
 
 ## Step 4: Run pr9k in cmux mode against a real workflow
 
@@ -153,11 +163,11 @@ pr9k: orphan workspace "pr9k-myrepo-..." could not be closed; dismiss it manuall
 | Symptom | Cause | Fix |
 |---|---|---|
 | `cmux is not installed` | `cmux` binary not on PATH | Install cmux (Step 1) |
-| `cmux is installed but not running` | cmux daemon not started | Run `cmux` (Step 2) |
-| `must be launched from inside a cmux session` | Launching terminal is not a cmux descendant | Open a terminal pane inside cmux (Step 2) |
+| `cmux socket not found at <path> (looked in: ...)` | No cmux socket at any resolved location — cmux is not running, or you are not in a cmux pane so `CMUX_SOCKET_PATH` is unset and no marker/default socket exists | Start `cmux` (Step 2), then run `pr9k --cmux` **from inside a cmux pane**; or set `CMUX_SOCKET_PATH` |
+| `must be launched from inside a cmux session` | cmux is running but the launching terminal is not a cmux descendant (default descendants-only mode) | Open a terminal pane inside cmux and run pr9k there (Step 2) |
 | `cmux socket is disabled` | cmux config has socket disabled | Re-enable the socket in cmux's settings |
 | `cmux version is incompatible` | `system.identify` returned an unexpected name or error | Update cmux to v0.64.6 or later |
-| `CMUX_SOCKET_PATH parent directory ... is world-writable` | Socket parent dir is writable by all users | Correct the directory permissions |
+| `cmux socket parent directory ... is world-writable` | Socket parent dir is writable by all users (e.g. a socket placed directly in `/tmp`) | Correct the directory permissions, or point `CMUX_SOCKET_PATH` at a socket whose parent is not world-writable |
 | `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
 | Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |
 

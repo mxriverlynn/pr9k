@@ -15,7 +15,7 @@ type CmuxClient interface {
     WorkspaceClose(ctx context.Context, name string) error
     WorkspaceSelect(ctx context.Context, name string) error
     SurfaceSplit(ctx context.Context, opts SplitOpts) (string, error)
-    SurfaceSpawn(ctx context.Context, paneID string, argv []string) error
+    SurfaceSpawn(ctx context.Context, paneID string, argv []string, env map[string]string) error
     SurfaceHide(ctx context.Context, paneID string) error
     SurfaceList(ctx context.Context, workspaceName string) ([]PaneInfo, error)
 }
@@ -50,7 +50,7 @@ D-13 notes: method-presence capability check is accepted; JSON schema validation
 ```go
 const DefaultTimeout = 8 * time.Second
 
-func NewProductionClient() *RealClient         // uses CMUX_SOCKET_PATH or /run/cmux.sock
+func NewProductionClient() *RealClient         // resolves the socket via resolveCmuxSocketPath (cmux's discovery contract)
 func NewRealClient(socketPath string, timeout time.Duration) *RealClient
 func (c *RealClient) Stop()                    // shuts down queue goroutine; waits for exit
 ```
@@ -74,7 +74,7 @@ type FakeClient struct {
     WorkspaceCloseFunc   func(ctx context.Context, name string) error
     WorkspaceSelectFunc  func(ctx context.Context, name string) error
     SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (string, error)
-    SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string) error
+    SurfaceSpawnFunc     func(ctx context.Context, paneID string, argv []string, env map[string]string) error
     SurfaceHideFunc      func(ctx context.Context, paneID string) error
     SurfaceListFunc      func(ctx context.Context, workspaceName string) ([]PaneInfo, error)
 
@@ -109,24 +109,26 @@ func (RealCmuxProber) CmuxBinaryAvailable() bool
 func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []error
 ```
 
-`Preflight` runs the five distinguishable cmux failure-condition checks and validates `CMUX_SOCKET_PATH` per D-15. Returns a non-empty slice of errors on any failure; returns `nil` on success. Checks run sequentially; the first blocking condition short-circuits the rest.
+`Preflight` runs the five distinguishable cmux failure-condition checks and resolves + validates the cmux socket per D-15. Returns a non-empty slice of errors on any failure; returns `nil` on success. Checks run sequentially; the first blocking condition short-circuits the rest.
 
 **Five failure conditions:**
 
 | # | Condition | Error message |
 |---|---|---|
 | 1 | Binary absent | `cmuxctl: cmux is not installed; see the cmux setup how-to` |
-| 2 | Socket path unresolvable or absent | `cmuxctl: cmux is installed but not running; start cmux and try again` |
+| 2 | Resolved socket path does not exist | `cmuxctl: cmux socket not found at <path> (looked in: <locations>); start cmux, then launch pr9k from inside a cmux pane, or set CMUX_SOCKET_PATH` |
 | 3 | Caller is not a cmux descendant (EACCES on dial) | `cmuxctl: cmux mode must be launched from inside a cmux session (socket: <path>)` |
 | 4 | Socket disabled in cmux config (ECONNREFUSED) | `cmuxctl: cmux socket is disabled in cmux configuration; re-enable it and try again` |
 | 5 | `system.identify` error or unexpected name | `cmuxctl: cmux version is incompatible with pr9k cmux mode: <detail>` |
 
-**`CMUX_SOCKET_PATH` validation (D-15):** Before dialling, `resolveSocketPath` applies three checks:
+**Socket resolution (`resolveCmuxSocketPath`, `socketpath.go`):** pr9k mirrors cmux's stable-variant discovery contract so `pr9k --cmux` finds the same socket cmux's own CLI would, on every platform, without manual configuration. Resolution order: (1) `CMUX_SOCKET_PATH` canonical override; (2) `CMUX_SOCKET` deprecated alias; (3) cmux's `last-socket-path` marker file (`os.UserConfigDir()/cmux/last-socket-path`, then the `/tmp/cmux-last-socket-path` mirror — contents are the live socket path); (4) stable default `os.UserConfigDir()/cmux/cmux.sock` (`~/Library/Application Support/cmux/cmux.sock` on macOS, `~/.config/cmux/cmux.sock` on Linux); (5) legacy `/tmp/cmux.sock`. It never errors — when nothing resolves it returns the stable default so the diagnostics name the cmux-correct path. Nightly/staging/dev cmux variants are out of scope and reachable via `CMUX_SOCKET_PATH`. The dependency surface (`getenv`, `userConfigDir`, `pathExists`, `readFile`) is injectable for hermetic, cross-platform tests.
+
+**D-15 validation:** Before dialling, `resolveSocketPath` applies three checks to the chosen path:
 1. `filepath.EvalSymlinks` — resolves symlinks; `ErrNotExist` maps to condition 2.
 2. Socket-type check — the resolved path must be a Unix socket (`fs.ModeSocket`).
-3. World-writable parent directory check — rejects sockets in directories writable by all users (SEC-003 mitigation).
+3. World-writable parent directory check — rejects sockets in directories writable by all users (SEC-003 mitigation; this is why a `/tmp/cmux.sock` is rejected on macOS, where `/tmp` is `0777`).
 
-**Residual risk — symlink-swap window:** `resolveSocketPath` validates the *resolved* canonical path, but `NewProductionClient` independently re-reads `CMUX_SOCKET_PATH` and dials the *unresolved* value. A symlink swap between preflight completion and the first `net.Dial` could redirect the connection to a different socket, defeating the SEC-003 mitigation. This is accepted as a Phase-1 residual risk: the attack window is very narrow (milliseconds between two reads of the same env var), and the validation still closes the persistent symlink classes. Mitigation (threading the validated canonical path into the client constructor) is deferred to a later phase.
+**Residual risk — symlink-swap window:** `preflight` and `NewProductionClient` now call the *same* `resolveCmuxSocketPath`, so they can no longer disagree on which socket to use. However, `resolveSocketPath` validates the *EvalSymlinks-canonical* path while the client dials the *chosen (pre-EvalSymlinks)* value, so a symlink swap between preflight completion and the first `net.Dial` could still redirect the connection, defeating the SEC-003 mitigation. This is accepted as a residual risk: the window is very narrow and the validation still closes the persistent symlink classes. Threading the validated canonical path into the client constructor is deferred to a later phase.
 
 **Terminal injection defence (D-14):** error text from `system.identify` is passed through `ansi.StripAll` before it is included in operator-visible messages. This prevents a compromised or malicious cmux daemon from injecting ANSI escape sequences into the launching terminal.
 
@@ -151,15 +153,13 @@ Implements the complete Phase 1 workspace lifecycle.
 3. `composeWorkspaceName(sanitized)` — forms `pr9k-<sanitized>-<timestamp>`.
 4. `WorkspaceCreate` — on `ErrWorkspaceExists`, retries once with a fresh timestamp (D-12). A second collision is a fatal error.
 5. Prints `pr9k workspace: <name>\n` to `out`.
-6. Spawns four panes orchestrator-first (D-3, D-4):
-   - `SurfaceSplit` → `orchPaneID`; `SurfaceSpawn(orchPaneID, ["sh", "-c", "tail -f /dev/null"])`; `SurfaceHide(orchPaneID)`.
-   - Three visible panes (header, log, footer) each via `SurfaceSplit` + `SurfaceSpawn` with shell one-liner `printf "<label>\n" && tail -f /dev/null`.
-7. Starts `StartDismissalObserver`; blocks on `obs.Ch` or `ctx.Done()`.
+6. Resolves the pr9k executable once (`resolveExecutable`) and computes the interaction-channel socket path `<projectDir>/.pr9k/cmux-pane-<workspaceName>.sock`, carried to every pane via `spawnEnv` (`PR9K_CMUX_SOCKET`, `PR9K_PROJECT_DIR`).
+7. Spawns four panes orchestrator-first (D-3, D-4):
+   - `SurfaceSplit` → `orchPaneID`; `SurfaceSpawn(orchPaneID, [exe, "cmux-pane", "--role=orchestrator"], spawnEnv)`; `SurfaceHide(orchPaneID)`.
+   - Three visible panes — `header`, `log`, `footer` — each via `SurfaceSplit` + `SurfaceSpawn(paneID, [exe, "cmux-pane", "--role=<role>"], spawnEnv)`.
+8. Starts `StartDismissalObserver`; blocks on `obs.Ch` or `ctx.Done()`.
 
-**Pane labels (Phase 1 placeholders):**
-- `header — Phase 1 placeholder`
-- `log — Phase 1 placeholder`
-- `footer — Phase 1 placeholder`
+Each spawned pane re-execs the pr9k binary as `pr9k cmux-pane --role=<role>` so the display panes are descendants of the cmux session (descendants-only mode) and connect back to the orchestrator over the interaction-channel socket.
 
 **Teardown sequence (wrapped in `sync.Once` — runs exactly once regardless of exit path):**
 
@@ -224,7 +224,8 @@ Tests live alongside production code (`*_test.go`). All tests run with the race 
 | File | Coverage |
 |---|---|
 | `cmuxctl_test.go` | `FakeClient` scripting, `RealClient` JSON-RPC serialisation, timeout and request-serialisation |
-| `preflight_test.go` | All five preflight conditions; `CMUX_SOCKET_PATH` validation; socket-type and world-writable-parent checks |
+| `preflight_test.go` | All five preflight conditions; D-15 validation; socket-type and world-writable-parent checks (sockets bound under a short `socketTempDir` to stay within the macOS 104-byte `sun_path` limit) |
+| `socketpath_internal_test.go` | `resolveCmuxSocketPath` env precedence, marker-file resolution, macOS/Linux stable-default shapes, legacy fallback, config-dir-error fallback, `firstLine` |
 | `dismissal_test.go` | Dismissal observation, consecutive-timeout escalation, `shuttingDown` suppression, race-detector safety |
 | `runphase1_test.go` | D-11 sanitisation, collision retry, spawn ordering, teardown sequence, exit codes, `out` writer content |
 
@@ -242,7 +243,7 @@ Tests live alongside production code (`*_test.go`). All tests run with the race 
 | D-12 | Exit-code distinction dropped; all normal dismissals return nil |
 | D-13 | Method-presence capability check accepted; schema validation deferred |
 | D-14 | `ansi.StripAll` applied to cmux error text on diagnostic path |
-| D-15 | `CMUX_SOCKET_PATH` validated (EvalSymlinks, socket-type, world-writable parent) before `net.Dial` |
+| D-15 | Socket resolved via cmux's discovery contract (`resolveCmuxSocketPath`), then validated (EvalSymlinks, socket-type, world-writable parent) before `net.Dial` |
 | D-18 | Package layout: interface + `RealClient` + `FakeClient` + `Preflight` + `RunPhase1` |
 
 Full decision text: [implementation-decision-log.md](../plans/cmux-rebuild/phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md)
