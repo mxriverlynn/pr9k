@@ -76,7 +76,7 @@ func TestPreflight_CmuxNotInstalled(t *testing.T) {
 // ---- Condition 2: cmux not running ------------------------------------------
 
 func TestPreflight_CmuxNotRunning(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	// Point to a path that does not exist.
 	t.Setenv("CMUX_SOCKET_PATH", filepath.Join(dir, "missing.sock"))
 
@@ -88,8 +88,13 @@ func TestPreflight_CmuxNotRunning(t *testing.T) {
 	if !hasSubstr(msg, "cmuxctl:") {
 		t.Errorf("error missing package prefix: %q", msg)
 	}
-	if !hasSubstr(msg, "not running") {
-		t.Errorf("error missing 'not running' fragment: %q", msg)
+	// The resolver names the missing socket and where it looked, then tells
+	// the operator how to recover.
+	if !hasSubstr(msg, "not found") {
+		t.Errorf("error missing 'not found' fragment: %q", msg)
+	}
+	if !hasSubstr(msg, "looked in:") {
+		t.Errorf("error missing 'looked in:' diagnostics: %q", msg)
 	}
 }
 
@@ -99,7 +104,7 @@ func TestPreflight_NotDescendant(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("chmod 0000 has no effect as root; skipping descendant test")
 	}
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	// Keep listener alive so the socket file persists; restrict permissions.
 	t.Cleanup(func() { ln.Close() })
@@ -129,7 +134,7 @@ func TestPreflight_NotDescendant(t *testing.T) {
 // ---- Condition 4: cmux socket disabled -------------------------------------
 
 func TestPreflight_SocketDisabled(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	// Close the listener — socket file stays but connect returns ECONNREFUSED.
 	ln.Close()
@@ -151,7 +156,7 @@ func TestPreflight_SocketDisabled(t *testing.T) {
 // ---- Condition 5: capability mismatch / wrong identity ---------------------
 
 func TestPreflight_CapabilityMismatch_ErrorFromIdentify(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
@@ -176,7 +181,7 @@ func TestPreflight_CapabilityMismatch_ErrorFromIdentify(t *testing.T) {
 }
 
 func TestPreflight_NonCmuxIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
@@ -203,20 +208,25 @@ func TestPreflight_NonCmuxIdentity(t *testing.T) {
 // ---- CMUX_SOCKET_PATH validation (D-15) ------------------------------------
 
 func TestPreflight_SocketPath_Empty_FallsBackToDefault(t *testing.T) {
-	// With CMUX_SOCKET_PATH unset the function must not panic, and must return
-	// an error rooted in the default-path lookup (not a security-validation error).
+	// With neither override env var set, resolution falls through cmux's
+	// discovery chain to the stable default. No socket exists in CI, so we
+	// expect the "not found" diagnostics error — not a panic, a
+	// security-validation error, or the misleading legacy "not running" text.
 	t.Setenv("CMUX_SOCKET_PATH", "")
+	t.Setenv("CMUX_SOCKET", "")
 
 	errs := cmuxctl.Preflight(context.Background(), installedProber(), cmuxClient())
-	// The default path won't exist in CI, so we expect a "not running" error.
-	// What we're verifying is that the function doesn't crash and that the
-	// error is the "not running" kind rather than an unexpected panic or internal error.
 	if len(errs) == 0 {
-		t.Skip("default socket path unexpectedly exists; skipping fallback test")
+		// A real cmux socket is present on this machine and the fake client
+		// identifies as cmux, so preflight legitimately passes.
+		t.Skip("a live cmux socket is present; fallback path not exercised")
 	}
 	msg := errs[0].Error()
 	if !hasSubstr(msg, "cmuxctl:") {
 		t.Errorf("error missing package prefix: %q", msg)
+	}
+	if !hasSubstr(msg, "not found") || !hasSubstr(msg, "looked in:") {
+		t.Errorf("fallback error not in the expected diagnostics shape: %q", msg)
 	}
 }
 
@@ -231,14 +241,15 @@ func TestPreflight_SocketPath_Nonexistent(t *testing.T) {
 	if !hasSubstr(msg, "cmuxctl:") {
 		t.Errorf("error missing package prefix: %q", msg)
 	}
-	// Rejected: either "not running" (path not found) is acceptable here.
+	// An explicit CMUX_SOCKET_PATH that does not exist resolves verbatim and
+	// fails the existence check with the "not found" diagnostics error.
 	if !hasSubstr(msg, "not running") && !hasSubstr(msg, "not found") && !hasSubstr(msg, "no such file") {
 		t.Errorf("unexpected error for non-existent path: %q", msg)
 	}
 }
 
 func TestPreflight_SocketPath_NotASocket(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	regularFile := filepath.Join(dir, "regular.txt")
 	if err := os.WriteFile(regularFile, []byte("hello"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -259,7 +270,7 @@ func TestPreflight_SocketPath_NotASocket(t *testing.T) {
 }
 
 func TestPreflight_SocketPath_SymlinkToNonSocket(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	regularFile := filepath.Join(dir, "regular.txt")
 	if err := os.WriteFile(regularFile, []byte("hello"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -287,7 +298,7 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("world-writable check is bypassed as root; skipping")
 	}
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	ln.Close()
 
@@ -314,7 +325,7 @@ func TestPreflight_SocketPath_WorldWritableParent(t *testing.T) {
 // ---- TP-220-001: ANSI escape sequences in cmux-supplied text are stripped ---
 
 func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
@@ -342,7 +353,7 @@ func TestPreflight_AnsiStrippedFromIdentityName(t *testing.T) {
 }
 
 func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)
@@ -372,7 +383,7 @@ func TestPreflight_AnsiStrippedFromIdentifyError(t *testing.T) {
 // ---- Happy path -------------------------------------------------------------
 
 func TestPreflight_HappyPath(t *testing.T) {
-	dir := t.TempDir()
+	dir := socketTempDir(t)
 	socketPath, ln := createSocket(t, dir)
 	t.Cleanup(func() { ln.Close() })
 	t.Setenv("CMUX_SOCKET_PATH", socketPath)

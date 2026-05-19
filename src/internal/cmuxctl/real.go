@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -70,13 +68,12 @@ type ioResult struct {
 
 // ---- Constructor and lifecycle ----------------------------------------------
 
-// NewProductionClient creates a RealClient using CMUX_SOCKET_PATH (or the
-// platform default) and DefaultTimeout. Intended for use in main() only.
+// NewProductionClient creates a RealClient using cmux's socket-discovery
+// contract (see resolveCmuxSocketPath) and DefaultTimeout. It shares the exact
+// resolution logic with preflight so the client and preflight can never
+// disagree on which socket to use. Intended for use in main() only.
 func NewProductionClient() *RealClient {
-	socketPath := strings.TrimSpace(os.Getenv("CMUX_SOCKET_PATH"))
-	if socketPath == "" {
-		socketPath = defaultSocketPath
-	}
+	socketPath, _ := resolveCmuxSocketPath(realSocketDeps())
 	return NewRealClient(socketPath, DefaultTimeout)
 }
 

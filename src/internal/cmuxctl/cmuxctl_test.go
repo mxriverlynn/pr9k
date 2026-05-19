@@ -261,7 +261,7 @@ type rpcMsg struct {
 // or writes anything (simulates a cmux that hangs on RPCs).
 func hangingServer(t *testing.T) string {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	socketPath := filepath.Join(socketTempDir(t), "cmux.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -283,7 +283,7 @@ func hangingServer(t *testing.T) string {
 // result for every request. It handles multiple requests per connection.
 func respondingServer(t *testing.T, result json.RawMessage) string {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	socketPath := filepath.Join(socketTempDir(t), "cmux.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -426,7 +426,7 @@ func TestRealClient_SerializesRequests(t *testing.T) {
 	var mu sync.Mutex
 	var order []int64
 
-	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	socketPath := filepath.Join(socketTempDir(t), "cmux.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -521,7 +521,7 @@ func TestRealClient_ContextCancelAfterSend(t *testing.T) {
 // transport errors), so a subsequent successful call on the same connection
 // succeeds.
 func TestRealClient_RPCErrorSurfacedAsGoError(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	socketPath := filepath.Join(socketTempDir(t), "cmux.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -618,7 +618,7 @@ func TestRealClient_StopIdempotent(t *testing.T) {
 // TP-219-003: RealClient encodes the correct method name and params on the wire.
 // WorkspaceCreate → method "workspace.create", params {"name":"my-ws"}.
 func TestRealClient_WireMethodAndParams(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "cmux.sock")
+	socketPath := filepath.Join(socketTempDir(t), "cmux.sock")
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

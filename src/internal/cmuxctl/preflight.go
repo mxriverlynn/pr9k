@@ -15,10 +15,6 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/ansi"
 )
 
-// defaultSocketPath is the cmux Unix socket path used when CMUX_SOCKET_PATH is unset.
-// TODO(OI-1): verify against pinned cmux version; update if the actual default differs.
-const defaultSocketPath = "/run/cmux.sock"
-
 // CmuxProber abstracts cmux binary presence for unit testing.
 type CmuxProber interface {
 	CmuxBinaryAvailable() bool
@@ -74,44 +70,49 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 	return nil
 }
 
-// resolveSocketPath reads CMUX_SOCKET_PATH, falls back to the platform default,
-// and performs the D-15 validation steps (EvalSymlinks, socket-type, world-writable
-// parent directory). Returns the resolved canonical path or a package-prefixed error.
+// resolveSocketPath resolves the cmux socket path via cmux's discovery
+// contract (see resolveCmuxSocketPath) and performs the D-15 validation steps
+// (EvalSymlinks, socket-type, world-writable parent directory). Returns the
+// resolved canonical path or a package-prefixed error. The "not found" error
+// names both the chosen path and every location considered, so the operator
+// can see exactly where pr9k looked.
 func resolveSocketPath() (string, error) {
-	raw := strings.TrimSpace(os.Getenv("CMUX_SOCKET_PATH"))
-	if raw == "" {
-		raw = defaultSocketPath
+	raw, tried := resolveCmuxSocketPath(realSocketDeps())
+	notFound := func() error {
+		return fmt.Errorf(
+			"cmuxctl: cmux socket not found at %s (looked in: %s); start cmux, then launch pr9k from inside a cmux pane, or set CMUX_SOCKET_PATH",
+			raw, strings.Join(tried, ", "))
 	}
 
 	// EvalSymlinks canonicalises the path and detects non-existent targets.
 	resolved, err := filepath.EvalSymlinks(raw)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", errors.New("cmuxctl: cmux is installed but not running; start cmux and try again")
+			return "", notFound()
 		}
-		return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH: %w", err)
+		return "", fmt.Errorf("cmuxctl: cmux socket %s: %w", raw, err)
 	}
 
 	// Require a Unix socket type.
 	info, err := os.Stat(resolved)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", errors.New("cmuxctl: cmux is installed but not running; start cmux and try again")
+			return "", notFound()
 		}
-		return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH stat: %w", err)
+		return "", fmt.Errorf("cmuxctl: cmux socket %s stat: %w", resolved, err)
 	}
 	if info.Mode().Type() != fs.ModeSocket {
-		return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH %s is not a Unix socket", resolved)
+		return "", fmt.Errorf("cmuxctl: %s is not a Unix socket", resolved)
 	}
 
 	// Reject world-writable parent directory (SEC-003 mitigation).
 	parent := filepath.Dir(resolved)
 	parentInfo, err := os.Stat(parent)
 	if err != nil {
-		return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH parent directory: %w", err)
+		return "", fmt.Errorf("cmuxctl: cmux socket parent directory %s: %w", parent, err)
 	}
 	if parentInfo.Mode().Perm()&0o002 != 0 {
-		return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH parent directory %s is world-writable (possible socket-redirection attack)", parent)
+		return "", fmt.Errorf("cmuxctl: cmux socket parent directory %s is world-writable (possible socket-redirection attack)", parent)
 	}
 
 	return resolved, nil
