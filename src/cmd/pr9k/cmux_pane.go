@@ -86,23 +86,60 @@ func newCmuxPaneCmd() *cobra.Command {
 			}
 
 			socketPath := os.Getenv("PR9K_CMUX_SOCKET")
+
+			// R3 probe: the pane process writes a persistent marker BEFORE
+			// anything can fail, so we can tell — after the workspace vanishes
+			// — whether cmux actually launched `pr9k cmux-pane` at all and
+			// with what env. The file outlives the disappearing cmux pane.
+			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
+				pd := os.Getenv("PR9K_PROJECT_DIR")
+				if pd != "" {
+					_ = os.MkdirAll(filepath.Join(pd, ".pr9k"), 0o700)
+					if f, err := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
+						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
+						_, _ = fmt.Fprintf(f, "%s role=%s pid=%d sock=%q projectDir=%q args=%v\n",
+							time.Now().Format(time.RFC3339Nano), role, os.Getpid(), socketPath, pd, os.Args)
+						_ = f.Close()
+					}
+				}
+			}
+
 			if socketPath == "" {
 				return errors.New("cmux-pane: PR9K_CMUX_SOCKET is not set; this command is launched internally by pr9k cmux mode")
 			}
 
 			ctx := cmd.Context()
-			switch role {
-			case "orchestrator":
-				projectDir := os.Getenv("PR9K_PROJECT_DIR")
-				return runCmuxOrchestrator(ctx, socketPath, projectDir)
-			case "header":
-				return runCmuxHeaderPane(ctx, socketPath)
-			case "log":
-				return runCmuxLogPane(ctx, socketPath)
-			case "footer":
-				return runCmuxFooterPane(ctx, socketPath)
+
+			paneStart := time.Now()
+			run := func() error {
+				switch role {
+				case "orchestrator":
+					return runCmuxOrchestrator(ctx, socketPath, os.Getenv("PR9K_PROJECT_DIR"))
+				case "header":
+					return runCmuxHeaderPane(ctx, socketPath)
+				case "log":
+					return runCmuxLogPane(ctx, socketPath)
+				case "footer":
+					return runCmuxFooterPane(ctx, socketPath)
+				}
+				return nil
 			}
-			return nil
+			runErr := run()
+
+			// R3 probe: record that (and when/why) the pane process is exiting.
+			// A pane exiting within ~ms of starting is why cmux destroys the
+			// workspace; the error + elapsed pinpoint the cause.
+			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
+				if pd := os.Getenv("PR9K_PROJECT_DIR"); pd != "" {
+					if f, ferr := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
+						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
+						_, _ = fmt.Fprintf(f, "%s role=%s EXITED after=%s err=%v\n",
+							time.Now().Format(time.RFC3339Nano), role, time.Since(paneStart), runErr)
+						_ = f.Close()
+					}
+				}
+			}
+			return runErr
 		},
 	}
 	cmd.Flags().StringVar(&role, "role", "", "pane role: orchestrator, header, log, or footer (required)")
