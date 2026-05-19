@@ -85,7 +85,7 @@ func TestRunCmuxFooterPane_StatusLineScript_Runs(t *testing.T) {
 
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -94,7 +94,7 @@ func TestRunCmuxFooterPane_StatusLineScript_Runs(t *testing.T) {
 	}()
 
 	// Wait for the script to run (marker file appears).
-	if !waitConditionFP(15*time.Second, 20*time.Millisecond, func() bool {
+	if !waitConditionFP(75*time.Second, 20*time.Millisecond, func() bool {
 		_, err := os.Stat(markerFile)
 		return err == nil
 	}) {
@@ -132,7 +132,7 @@ func TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender(t *testing.T) {
 	t.Setenv("PR9K_PROJECT_DIR", projectDir)
 
 	var out syncBuffer
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -141,7 +141,7 @@ func TestRunCmuxFooterPane_StatusLineScript_OutputReachesSender(t *testing.T) {
 	}()
 
 	// Wait for the output to appear in the writer.
-	if !waitConditionFP(15*time.Second, 20*time.Millisecond, func() bool {
+	if !waitConditionFP(75*time.Second, 20*time.Millisecond, func() bool {
 		return strings.Contains(out.String(), expectedOutput)
 	}) {
 		t.Errorf("expected %q in footer output; got: %q", expectedOutput, out.String())

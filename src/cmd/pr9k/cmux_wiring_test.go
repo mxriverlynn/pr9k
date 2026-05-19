@@ -155,7 +155,7 @@ func TestRunCmuxMode_SuccessPath(t *testing.T) {
 	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir, Cmux: true}
 
 	var out, errOut bytes.Buffer
-	ok := runCmuxMode(context.Background(), cfg, projectDir, profileDir, prober, cmuxProber, fake, &out, &errOut)
+	ok := runCmuxMode(context.Background(), cfg, projectDir, profileDir, prober, cmuxProber, fake, cmuxctl.Phase1Hooks{}, &out, &errOut)
 	if !ok {
 		t.Fatalf("runCmuxMode returned false; errOut: %s", errOut.String())
 	}
@@ -199,7 +199,7 @@ func TestRunCmuxMode_StandardPreflightBeforeCmuxPreflight(t *testing.T) {
 
 	cfg := &cli.Config{WorkflowDir: workflowDir, ProjectDir: projectDir, Cmux: true}
 	var out, errOut bytes.Buffer
-	ok := runCmuxMode(context.Background(), cfg, projectDir, profileDir, prober, cmuxProber, fake, &out, &errOut)
+	ok := runCmuxMode(context.Background(), cfg, projectDir, profileDir, prober, cmuxProber, fake, cmuxctl.Phase1Hooks{}, &out, &errOut)
 	if ok {
 		t.Fatal("runCmuxMode should return false when standard preflight fails")
 	}

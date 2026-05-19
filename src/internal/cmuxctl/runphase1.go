@@ -92,6 +92,31 @@ func paneCommand(exe, role string, env map[string]string) string {
 // count drops below this.
 const expectedDisplaySurfaces = 3
 
+// Phase1Hooks lets the cmd layer inject the orchestrator behaviour without
+// cmuxctl importing the interaction-channel/workflow packages (layering).
+//
+// Under Architecture A (decision-log D-R1) the in-pane pr9k process IS the
+// orchestrator: it must Serve the interaction-channel socket the display panes
+// will Dial, and it must run the workflow. Both responsibilities are supplied
+// here so RunPhase1 can sequence them correctly relative to workspace/pane
+// creation (Serve must happen before the panes are created).
+type Phase1Hooks struct {
+	// BeforePanes runs after the pane socket path is computed but BEFORE the
+	// workspace and panes are created, so the orchestrator can Serve the
+	// socket the panes will Dial. socketPath is the value passed to every pane
+	// via PR9K_CMUX_SOCKET. A non-nil error aborts the run before any cmux
+	// workspace is created.
+	BeforePanes func(socketPath string) error
+
+	// Run executes the orchestrator workflow after the panes are created. When
+	// non-nil, RunPhase1 runs it with a context that is cancelled if the
+	// operator dismisses the workspace; after Run returns of its own accord
+	// the workspace stays open showing the final state until the operator
+	// dismisses it (or a signal cancels ctx). When nil, RunPhase1 just blocks
+	// on the dismissal observer (workspace-lifecycle-only mode, used by tests).
+	Run func(ctx context.Context, ws Workspace) error
+}
+
 // RunPhase1 implements the cmux-mode workspace lifecycle against the cmux v2
 // API (rework R, architecture A).
 //
@@ -112,7 +137,7 @@ const expectedDisplaySurfaces = 3
 //
 // Teardown (sync.Once; runs once from any path): close the pr9k workspace,
 // best-effort re-select the prior workspace, join the observer.
-func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig) (returnErr error) {
+func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io.Writer, dismissalCfg DismissalConfig, hooks Phase1Hooks) (returnErr error) {
 	stderr := dismissalCfg.Stderr
 	if stderr == nil {
 		stderr = os.Stderr
@@ -137,6 +162,15 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 	paneEnv := map[string]string{
 		"PR9K_CMUX_SOCKET": socketPath,
 		"PR9K_PROJECT_DIR": projectDir,
+	}
+
+	// Step 2a (Architecture A, D-R1): the orchestrator must Serve the socket
+	// the panes will Dial BEFORE the panes are created. A failure here aborts
+	// before any cmux workspace exists, so there is nothing to tear down.
+	if hooks.BeforePanes != nil {
+		if err := hooks.BeforePanes(socketPath); err != nil {
+			return fmt.Errorf("cmuxctl: orchestrator serve: %w", err)
+		}
 	}
 
 	// Step 2b: create the workspace; first surface is the log pane.
@@ -202,15 +236,69 @@ func RunPhase1(ctx context.Context, client CmuxClient, projectDir string, out io
 		}
 	}
 
-	// Step 5: observe for dismissal and block.
+	// Step 5: observe for dismissal. One watcher goroutine forwards the single
+	// dismissal event to dismissCh (cap 1, non-blocking) and cancels runCtx so
+	// an operator-initiated workspace close stops the workflow. runCtx is a
+	// child of ctx and is cancelled on return (deferred), so the goroutine
+	// always exits — no leak in either mode.
 	obs = StartDismissalObserver(ctx, client, ws, expectedDisplaySurfaces, dismissalCfg)
+	dismissCh := make(chan DismissalEvent, 1)
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	go func() {
+		select {
+		case <-runCtx.Done():
+		case ev := <-obs.Ch:
+			select {
+			case dismissCh <- ev:
+			default:
+			}
+			runCancel()
+		}
+	}()
 
+	fatalErr := func() error {
+		return fmt.Errorf("cmuxctl: dismissal poll fatal: %d consecutive timeouts; workspace %s may need manual cleanup", maxConsecutiveTimeouts, label)
+	}
+
+	// Workspace-lifecycle-only mode (nil Run): block until dismissal or ctx.
+	if hooks.Run == nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case evt := <-dismissCh:
+			if evt.Fatal {
+				return fatalErr()
+			}
+			return nil
+		}
+	}
+
+	// Architecture A: this process is the orchestrator. Run the workflow;
+	// runCtx is cancelled if the operator dismisses the workspace mid-run.
+	runErr := hooks.Run(runCtx, ws)
+
+	// If the operator dismissed (cancelling Run), tear down now.
+	select {
+	case evt := <-dismissCh:
+		if evt.Fatal {
+			return fatalErr()
+		}
+		return runErr
+	default:
+	}
+	if runErr != nil {
+		return runErr
+	}
+
+	// Workflow finished on its own: keep the workspace open showing the final
+	// state until the operator dismisses it (or a signal cancels ctx).
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case evt := <-obs.Ch:
+	case evt := <-dismissCh:
 		if evt.Fatal {
-			return fmt.Errorf("cmuxctl: dismissal poll fatal: %d consecutive timeouts; workspace %s may need manual cleanup", maxConsecutiveTimeouts, label)
+			return fatalErr()
 		}
 		return nil
 	}

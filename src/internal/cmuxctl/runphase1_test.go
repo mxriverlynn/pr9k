@@ -23,7 +23,7 @@ func runPhase1(t *testing.T, fake *cmuxctl.FakeClient, projectDir string) (strin
 	var out bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err := cmuxctl.RunPhase1(ctx, fake, projectDir, &out, immediateDismiss())
+	err := cmuxctl.RunPhase1(ctx, fake, projectDir, &out, immediateDismiss(), cmuxctl.Phase1Hooks{})
 	return out.String(), err
 }
 
@@ -188,7 +188,7 @@ func TestRunPhase1_FatalDismissal_ReturnsError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	err := cmuxctl.RunPhase1(ctx, fake, "/work/repo", &out,
-		cmuxctl.DismissalConfig{PollInterval: time.Millisecond, PollTimeout: 5 * time.Millisecond})
+		cmuxctl.DismissalConfig{PollInterval: time.Millisecond, PollTimeout: 5 * time.Millisecond}, cmuxctl.Phase1Hooks{})
 	if err == nil || !strings.Contains(err.Error(), "dismissal poll fatal") {
 		t.Fatalf("want fatal dismissal error, got %v", err)
 	}
@@ -206,7 +206,7 @@ func TestRunPhase1_FailedClose_OrphanDiagnostic(t *testing.T) {
 	defer cancel()
 	err := cmuxctl.RunPhase1(ctx, fake, "/work/repo", &out, cmuxctl.DismissalConfig{
 		PollInterval: time.Millisecond, PollTimeout: 20 * time.Millisecond, Stderr: &stderr,
-	})
+	}, cmuxctl.Phase1Hooks{})
 	if err == nil || !strings.Contains(err.Error(), "workspace close failed") {
 		t.Fatalf("want workspace-close-failed error, got %v", err)
 	}
@@ -229,7 +229,7 @@ func TestRunPhase1_ContextCancel_ReturnsCtxErr(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- cmuxctl.RunPhase1(ctx, fake, "/work/repo", &out,
-			cmuxctl.DismissalConfig{PollInterval: 10 * time.Millisecond, PollTimeout: 50 * time.Millisecond})
+			cmuxctl.DismissalConfig{PollInterval: 10 * time.Millisecond, PollTimeout: 50 * time.Millisecond}, cmuxctl.Phase1Hooks{})
 	}()
 	time.Sleep(50 * time.Millisecond)
 	cancel()

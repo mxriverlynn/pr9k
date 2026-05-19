@@ -130,10 +130,11 @@ func startup(cfg *cli.Config, projectDir, profileDir string, prober preflight.Pr
 }
 
 // runCmuxMode is the cmux-path entry point. It runs standard validation +
-// preflight (via startupValidate), then the cmux preflight, then RunPhase1.
-// It does not create a logger or Bubble Tea program (D-16).
-// Returns true on success, false on any error (errors are printed to errOut).
-func runCmuxMode(ctx context.Context, cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, cmuxProber cmuxctl.CmuxProber, client cmuxctl.CmuxClient, out, errOut io.Writer) bool {
+// preflight (via startupValidate), then the cmux preflight, then RunPhase1
+// with the supplied orchestrator hooks (Architecture A: the in-pane process is
+// the orchestrator — it Serves the interaction channel and runs the workflow).
+// It does not create a Bubble Tea program. Returns true on success.
+func runCmuxMode(ctx context.Context, cfg *cli.Config, projectDir, profileDir string, prober preflight.Prober, cmuxProber cmuxctl.CmuxProber, client cmuxctl.CmuxClient, hooks cmuxctl.Phase1Hooks, out, errOut io.Writer) bool {
 	// Standard preflight runs first per spec D8.
 	if _, ok := startupValidate(cfg, projectDir, profileDir, prober, errOut); !ok {
 		return false
@@ -147,7 +148,7 @@ func runCmuxMode(ctx context.Context, cfg *cli.Config, projectDir, profileDir st
 		return false
 	}
 
-	if err := cmuxctl.RunPhase1(ctx, client, projectDir, out, cmuxctl.DismissalConfig{}); err != nil {
+	if err := cmuxctl.RunPhase1(ctx, client, projectDir, out, cmuxctl.DismissalConfig{}, hooks); err != nil {
 		_, _ = fmt.Fprintln(errOut, err)
 		return false
 	}
@@ -202,7 +203,7 @@ func main() {
 		teardownFn := cancel
 		runCmuxSignalHandler(sigChan, done, &teardownOnce, teardownFn, func() {}, os.Exit)
 
-		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, os.Stdout, os.Stderr)
+		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, cmuxOrchestratorHooks(ctx, cfg.ProjectDir), os.Stdout, os.Stderr)
 		signal.Stop(sigChan)
 		close(done)
 		client.Stop()

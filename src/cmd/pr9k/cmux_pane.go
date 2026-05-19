@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
+	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 	"github.com/mxriverlynn/pr9k/src/internal/interactionchannel"
 	"github.com/mxriverlynn/pr9k/src/internal/logger"
 	"github.com/mxriverlynn/pr9k/src/internal/statusline"
@@ -20,6 +21,32 @@ import (
 // workspaceDoneAckTimeout is the maximum time the orchestrator waits for all
 // three display panes to send DoneAck after WorkspaceDone is broadcast.
 const workspaceDoneAckTimeout = 5 * time.Second
+
+// cmuxOrchestratorHooks builds the Architecture A (decision-log D-R1)
+// orchestrator hooks. cmux v2 has no hidden orchestrator pane: the in-pane
+// pr9k process Serves the interaction channel BEFORE the display panes are
+// created (so they can Dial it), then runs the workflow over that channel.
+func cmuxOrchestratorHooks(ctx context.Context, projectDir string) cmuxctl.Phase1Hooks {
+	var ch *interactionchannel.Channel
+	return cmuxctl.Phase1Hooks{
+		BeforePanes: func(socketPath string) error {
+			if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+				return fmt.Errorf("cmux: create socket dir: %w", err)
+			}
+			c, err := interactionchannel.Serve(ctx, socketPath)
+			if err != nil {
+				return err
+			}
+			ch = c
+			return nil
+		},
+		Run: func(rctx context.Context, _ cmuxctl.Workspace) error {
+			// ch was Served by BeforePanes; runCmuxOrchestratorWith skips its
+			// own Serve when ch != nil and owns ch.Close().
+			return runCmuxOrchestratorWith(rctx, "", projectDir, workspaceDoneAckTimeout, ch)
+		},
+	}
+}
 
 // orchChannel is satisfied by *interactionchannel.Channel (Serve side) and by
 // FakeInteractionChannel in tests. It is the minimum surface the orchestrator
