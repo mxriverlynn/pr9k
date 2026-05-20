@@ -296,6 +296,28 @@ func TestSidebarAwareHeader_SetStepState_ActivePushesStep(t *testing.T) {
 	}
 }
 
+// TestCmuxSidebar_NilReceiverSafe verifies that all *cmuxSidebar methods are safe
+// to call on a nil receiver (W-5 nil-guard contract).
+func TestCmuxSidebar_NilReceiverSafe(t *testing.T) {
+	var s *cmuxSidebar
+	ctx := context.Background()
+	if err := s.PushStep(ctx, "x"); err != nil {
+		t.Errorf("PushStep: %v", err)
+	}
+	if err := s.PushProgress(ctx, 1, 3); err != nil {
+		t.Errorf("PushProgress: %v", err)
+	}
+	if err := s.EnterErrorMode(ctx); err != nil {
+		t.Errorf("EnterErrorMode: %v", err)
+	}
+	if err := s.ClearProgress(ctx); err != nil {
+		t.Errorf("ClearProgress: %v", err)
+	}
+	if err := s.ClearAll(ctx); err != nil {
+		t.Errorf("ClearAll: %v", err)
+	}
+}
+
 // TestSidebarAwareHeader_SetStepState_NonActiveSilent verifies that SetStepState
 // with a state other than StepActive does not call the sidebar.
 func TestSidebarAwareHeader_SetStepState_NonActiveSilent(t *testing.T) {
