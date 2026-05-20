@@ -1502,6 +1502,59 @@ func TestSampleScript_DirectExec_StderrSilent(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// U7: nil-logger explicit tests (AC-1 and AC-2)
+// =============================================================================
+
+// U7-G1 — nil-logger logLine is a strict no-op: runner must not panic when
+// the script writes to stderr and the logger is nil.
+func TestRunner_NilLogger_LogLineIsNoOp(t *testing.T) {
+	runner := newRunner(t, "stderr", map[string]string{"HELPER_STDERR": "diag-msg"}, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	// "stderr" helper exits 0 with empty stdout; HasOutput becomes true when done.
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("runner did not complete within timeout")
+	}
+	// If logLine panicked on nil logger, we would not reach this line.
+}
+
+// U7-G2 — nil-logger runner with stderr: sender is still invoked after a run
+// where the script writes to stderr (no logger to receive diagnostics).
+func TestRunner_NilLogger_SenderCalledDespiteStderr(t *testing.T) {
+	runner := newRunner(t, "stderr", map[string]string{"HELPER_STDERR": "diag-msg"}, intPtr(0))
+	t.Cleanup(runner.Shutdown)
+
+	var mu sync.Mutex
+	var calls int
+	runner.SetSender(func(_ interface{}) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner.Start(ctx)
+	runner.Trigger()
+
+	if !waitCondition(2*time.Second, 20*time.Millisecond, runner.HasOutput) {
+		t.Fatal("runner did not complete within timeout")
+	}
+
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got == 0 {
+		t.Error("sender should be called when script writes to stderr but exits 0 (nil-logger runner)")
+	}
+}
+
 // TP-007: scripts/statusline must exit 0.
 // A non-zero exit triggers the Runner's non-zero-exit code path and discards output.
 func TestSampleScript_DirectExec_ExitZero(t *testing.T) {

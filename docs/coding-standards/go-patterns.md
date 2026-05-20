@@ -799,6 +799,109 @@ Choose `type X string` when:
 
 Choose `type X int` with iota when the values are internal, never serialized, and the set may grow frequently (iota automatically assigns the next integer, reducing merge conflicts).
 
+## Use net.DialUnix for Unix domain sockets — never net.Dial
+
+When connecting to a Unix domain socket, use `net.DialUnix` instead of `net.Dial`. `net.Dial` goes through a general address-resolution path that includes `LookupPort` — unnecessary for Unix sockets and the source of vulnerability GO-2026-4971.
+
+```go
+// Good — direct Unix dial, no address-resolution overhead
+conn, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socketPath, Net: "unix"})
+
+// Bad — triggers address-resolution path (GO-2026-4971)
+conn, err := net.Dial("unix", socketPath)
+```
+
+This applies everywhere a Unix socket path is dialed: production client constructors, test helpers, and preflight checks.
+
+## Validate Unix socket paths before dialing
+
+Before calling `net.DialUnix`, validate the socket path with this checklist to prevent socket-redirection and privilege-escalation attacks:
+
+1. **EvalSymlinks** — canonicalize the path and detect non-existent targets. A missing target indicates cmux is not running.
+2. **Stat + socket-type check** — confirm `info.Mode().Type() == fs.ModeSocket`. Any other file type should be rejected with an explicit error.
+3. **World-writable parent rejection** — check `parentInfo.Mode().Perm()&0o002 != 0`. A world-writable directory allows an attacker to replace the socket file (SEC-003).
+
+```go
+func resolveSocketPath() (string, error) {
+    resolved, err := filepath.EvalSymlinks(raw)
+    if err != nil {
+        if errors.Is(err, fs.ErrNotExist) {
+            return "", errors.New("cmuxctl: not running; start cmux and try again")
+        }
+        return "", fmt.Errorf("cmuxctl: CMUX_SOCKET_PATH: %w", err)
+    }
+    info, err := os.Stat(resolved)
+    if err != nil { /* handle */ }
+    if info.Mode().Type() != fs.ModeSocket {
+        return "", fmt.Errorf("cmuxctl: %s is not a Unix socket", resolved)
+    }
+    parent := filepath.Dir(resolved)
+    parentInfo, err := os.Stat(parent)
+    if err != nil { /* handle */ }
+    if parentInfo.Mode().Perm()&0o002 != 0 {
+        return "", fmt.Errorf("cmuxctl: socket parent directory %s is world-writable", parent)
+    }
+    return resolved, nil
+}
+```
+
+Apply this full checklist any time pr9k connects to an external Unix socket. Skip steps only with an explicit justification comment.
+
+## Strip ANSI and C0/C1 controls from external content routed to the terminal
+
+When routing externally-sourced strings (RPC error messages, daemon-supplied names, user-controlled paths) to the terminal, use `ansi.StripForTerminalOutput` — not `ansi.StripAll`. The strict stripper additionally removes C0 cursor-movement bytes (NUL, BEL, BS, VT, FF, CR, DEL) and 8-bit C1 controls (0x80–0x9F), closing:
+
+- **SEC-001**: CR overstrike attack — `"error: create failed\rpr9k: ok"` would hide the failure behind a carriage return.
+- **SEC-004**: 8-bit C1 OSC sequences (0x9D) can set the terminal title or inject other escape behavior via bytes that bypass 7-bit filters.
+
+```go
+// Good — strict stripper for terminal output from untrusted sources
+safe := string(ansi.StripForTerminalOutput([]byte(err.Error())))
+fmt.Fprintf(stderr, "pr9k: %s\n", safe)
+
+// Bad — StripAll only removes 7-bit ESC sequences; C0 bytes pass through
+safe := string(ansi.StripAll([]byte(err.Error())))
+```
+
+`StripForTerminalOutput` is safe-over-fidelity: it may corrupt non-ASCII UTF-8 whose continuation bytes fall in 0x80–0x9F. Treat its output as potentially lossy when the input may contain non-ASCII text.
+
+Also: never route a raw user-supplied identifier (e.g., `filepath.Base(projectDir)`) directly to terminal output. Sanitize it first (e.g., via `cmuxctl.SanitizeBasename`) and only use the sanitized form in any message shown to the operator. Raw identifiers can contain CR, ESC, or other control bytes.
+
+## Extract shared constants for cross-renderer format strings
+
+When two renderers in the same codebase independently format the same display element — a separator, a label prefix, a status symbol — extract the repeated string to a named constant in the shared package and use it in both places. Without a shared constant, the two renderers diverge silently: a one-character typo in one renderer produces output that differs from the other without any compiler signal.
+
+```go
+// Bad — two renderers, same separator, independently specified.
+// A future edit to one won't automatically update the other.
+
+// In ui/header.go:
+func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
+    ...
+    fmt.Fprintf(&b, " — Issue #%s", issueID) // em-dash + space
+}
+
+// In cmd/pr9k/cmux_workflow.go:
+func buildIterationStatus(iter int, issueID string) string {
+    ...
+    fmt.Fprintf(&b, " - Issue #%s", issueID) // ASCII hyphen — not the same!
+}
+
+// Good — shared constant; both renderers are byte-identical for the same input.
+// In ui/constants.go:
+const IterationIssueSep = " — " // em-dash with surrounding spaces
+
+// In ui/header.go:
+fmt.Fprintf(&b, "%sIssue #%s", ui.IterationIssueSep, issueID)
+
+// In cmux_workflow.go:
+fmt.Fprintf(&b, "%sIssue #%s", ui.IterationIssueSep, issueID)
+```
+
+The same principle applies to step marker glyphs, status prefixes, and any other symbol that appears in more than one renderer. If a switch statement mapping a state to a display string is duplicated across two renderers, extract the switch into a shared helper in the common package.
+
+Apply any time a code-review diff shows two renderers producing similar but independently-written format strings for the same concept. The tell is two nearly-identical `fmt.Fprintf` or string-literal lines in different files — find the common constant and name it.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -823,3 +926,6 @@ Choose `type X int` with iota when the values are internal, never serialized, an
 - `src/cmd/pr9k/workflow.go` — `realEditorRunner.Run` as the canonical `strings.Fields` length-guard example (workflow-builder-pt-2 review issue #3)
 - `src/internal/workflowedit/outline.go` — `sortedKeys` as the canonical stdlib-sort example; replaced hand-rolled insertion sort with `sort.Strings` (workflow-builder-pt-2 review issue #8)
 - `src/internal/workflow/exit_reason.go` — `ExitReason` as the canonical typed-string enum example
+- `src/internal/cmuxctl/preflight.go` — `resolveSocketPath` as the canonical Unix socket validation checklist; `classifyDialError` for dial-error classification; `net.DialUnix` usage (issue #220, fix ae6adbe1d)
+- `src/internal/ansi/strip_strict.go` — `StripForTerminalOutput` as the canonical strict terminal-output sanitizer (issue #225)
+- `src/internal/ui/header.go` + `src/cmd/pr9k/cmux_workflow.go` — `ui.IterationIssueSep` and `ui.StepMarkerGlyph` as canonical shared-constant examples (cmux-p3 review)

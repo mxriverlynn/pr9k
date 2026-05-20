@@ -9,6 +9,8 @@ const (
 	ActionRetry StepAction = iota
 	ActionContinue
 	ActionQuit
+	ActionSkip
+	ActionNext // skip the currently running step (cmux: forwarded via interaction channel)
 )
 
 // Mode represents the current keyboard dispatch mode.
@@ -78,9 +80,10 @@ type KeyHandler struct {
 	cancel             func() // cancels the current subprocess (used by n in normal mode)
 	Actions            chan StepAction
 	mu                 sync.Mutex
-	shortcutLine       string // protected by mu; use ShortcutLine() to access
-	selectJustReleased bool   // protected by mu; true after a mouse drag release; cleared on next event
-	statusLineActive   bool   // protected by mu; true when a statusLine command is configured
+	shortcutLine       string             // protected by mu; use ShortcutLine() to access
+	selectJustReleased bool               // protected by mu; true after a mouse drag release; cleared on next event
+	statusLineActive   bool               // protected by mu; true when a statusLine command is configured
+	onModeChange       func(Mode, string) // protected by mu; called after mode/shortcutLine update
 }
 
 // NewKeyHandler creates a KeyHandler in normal mode.
@@ -120,6 +123,17 @@ func (h *KeyHandler) Cancel() func() {
 	return h.cancel
 }
 
+// SetOnModeChange registers a hook that is called synchronously (outside h.mu)
+// whenever the mode changes via SetMode or ForceQuit. The hook receives the new
+// mode and the corresponding shortcut-line text. Intended for the cmux
+// orchestrator to push StateFooter messages to the footer pane; not used in
+// standard (Bubble Tea) mode.
+func (h *KeyHandler) SetOnModeChange(fn func(Mode, string)) {
+	h.mu.Lock()
+	h.onModeChange = fn
+	h.mu.Unlock()
+}
+
 // SetMode switches the handler to the given mode and updates ShortcutLine.
 // Use this when the orchestration goroutine changes workflow state
 // (e.g., a step fails → SetMode(ModeError)).
@@ -133,7 +147,12 @@ func (h *KeyHandler) SetMode(mode Mode) {
 	h.mu.Lock()
 	h.mode = mode
 	h.updateShortcutLineLocked()
+	fn := h.onModeChange
+	line := h.shortcutLine
 	h.mu.Unlock()
+	if fn != nil {
+		fn(mode, line)
+	}
 }
 
 // ForceQuit terminates the current subprocess and injects ActionQuit into the
@@ -145,7 +164,12 @@ func (h *KeyHandler) ForceQuit() {
 	h.mu.Lock()
 	h.mode = ModeQuitting
 	h.updateShortcutLineLocked()
+	fn := h.onModeChange
+	line := h.shortcutLine
 	h.mu.Unlock()
+	if fn != nil {
+		fn(ModeQuitting, line)
+	}
 
 	if h.cancel != nil {
 		h.cancel()

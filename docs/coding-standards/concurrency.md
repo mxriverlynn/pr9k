@@ -394,6 +394,314 @@ func copySelectedText(text string) tea.Cmd {
 
 The same rule applies to `cancel()` context cancellations that trigger blocking waits, and to any channel send that might block. If it can take more than a few microseconds, it belongs in a cmd closure.
 
+## Two-goroutine signal handler: cleanup then forced exit
+
+When a long-running goroutine (e.g., a workspace teardown that may block on RPCs) must be interruptible, use a two-goroutine signal handler:
+
+1. **Cleanup goroutine** — receives the first signal, sets the shuttingDown flag, closes an internal started gate, then invokes `teardownOnce.Do(teardownFn)`. It may block during teardown; that is acceptable.
+2. **Watchdog goroutine** — waits on the started gate (ensuring cleanup has consumed the first signal), then waits for a second signal and calls `exitFn(1)` immediately — without waiting for the cleanup goroutine to finish.
+
+The started gate channel prevents a race where both goroutines consume signals from the same channel: the watchdog only begins listening after the cleanup goroutine has confirmed it received the first signal.
+
+Pass a `done` channel that the caller closes when the monitored operation returns normally. Both goroutines select on `done` so they exit cleanly when no signal was received, rather than leaking blocked goroutines if the caller returns without terminating the process.
+
+```go
+func runCmuxSignalHandler(
+    sigCh <-chan os.Signal,
+    done <-chan struct{},
+    teardownOnce *sync.Once,
+    teardownFn func(),
+    setShuttingDown func(),
+    exitFn func(int),
+) {
+    started := make(chan struct{})
+
+    // Cleanup: first signal → set flag → close gate → run teardown (may block).
+    go func() {
+        select {
+        case <-sigCh:
+            setShuttingDown()
+            close(started)
+            teardownOnce.Do(teardownFn)
+        case <-done:
+        }
+    }()
+
+    // Watchdog: wait for cleanup to start, then force exit on second signal.
+    go func() {
+        select {
+        case <-started:
+        case <-done:
+            return
+        }
+        select {
+        case <-sigCh:
+            exitFn(1)
+        case <-done:
+        }
+    }()
+}
+```
+
+The caller closes `done` after `signal.Stop(sigCh)` so no new signals can arrive after `done` is closed. Inject `exitFn` rather than calling `os.Exit` directly so the handler is testable without spawning a subprocess. Inject `setShuttingDown` as a separate argument so tests can verify flag transitions independently from `teardownFn` execution.
+
+## sync.Once teardown with named-return error injection
+
+When a function can exit via multiple code paths (normal completion, context cancellation, partial-setup failure) and teardown must run exactly once, combine `sync.Once` with a named return value:
+
+- Wrap teardown in a `sync.Once` closure so any code path can call it without double-execution.
+- Use a named return value (`returnErr`) in the function signature.
+- In the deferred func, inject the teardown error into `returnErr` when the primary return would otherwise be nil. This prevents silently swallowing teardown failures on the success path.
+
+```go
+func RunPhase1(ctx context.Context, ...) (returnErr error) {
+    var (
+        teardownOnce sync.Once
+        teardownErr  error
+    )
+    runTeardown := func() {
+        teardownOnce.Do(func() {
+            if err := client.WorkspaceClose(context.Background(), name); err != nil {
+                teardownErr = err
+            }
+        })
+    }
+    defer func() {
+        runTeardown()
+        if returnErr == nil && teardownErr != nil {
+            returnErr = fmt.Errorf("workspace close failed: %w", teardownErr)
+        }
+    }()
+
+    // ... setup steps that may return early on error ...
+
+    // Normal path: blocks until dismissal or cancellation.
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    case evt := <-obs.Ch:
+        return nil // teardown still runs via defer
+    }
+}
+```
+
+The `context.Background()` in the teardown closure is intentional: the parent `ctx` is already cancelled on the signal-driven path, so teardown needs its own fresh context for cleanup RPCs.
+
+## Check ctx.Err() after timer.C fires in a select
+
+When a goroutine selects on both `ctx.Done()` and `timer.C`, the Go runtime chooses randomly when both are ready simultaneously. Add an explicit `ctx.Err() != nil` check immediately after the timer fires before doing any work:
+
+```go
+for {
+    t := time.NewTimer(pollInterval)
+    select {
+    case <-ctx.Done():
+        t.Stop()
+        return
+    case <-t.C:
+    }
+
+    // Guard against ctx cancellation that arrived exactly as the timer fired.
+    if ctx.Err() != nil {
+        return
+    }
+
+    // ... do poll work ...
+}
+```
+
+Without the guard, a cancellation that races with a timer expiry can cause one extra poll iteration to run after the goroutine was supposed to stop — potentially issuing an RPC against a closed connection or reporting a spurious error.
+
+## Write goroutine closes conn on exit to unblock the reader
+
+In a three-goroutine connection model (read + write + watcher), the write goroutine must close `nc` when it exits so the paired read goroutine's blocked `io.ReadFull` unblocks promptly. Without this, a write failure leaves the reader waiting until the watcher eventually cancels the context — adding unnecessary latency to connection teardown.
+
+```go
+// Write goroutine: serializes outbound messages; closes nc on exit.
+go func() {
+    defer c.wg.Done()
+    defer c.removeConn(co)
+    c.writeLoop(nc, co)
+    // Close nc so readLoop's io.ReadFull unblocks promptly on write failure,
+    // rather than waiting for ctx cancellation to reach the watcher goroutine.
+    _ = nc.Close()
+}()
+
+// Watcher goroutine: closes nc when the Channel context is done (normal shutdown).
+go func() {
+    defer c.wg.Done()
+    <-c.ctx.Done()
+    _ = nc.Close()
+}()
+```
+
+`net.Conn.Close()` is idempotent, so the watcher's `nc.Close()` on context cancellation and the write goroutine's `nc.Close()` on write failure do not interfere.
+
+## Stop() must join every goroutine it starts before returning
+
+Any `Stop()`, `Close()`, or `Shutdown()` method that claims to fully stop a component must join — via channel drain or WaitGroup — every goroutine started by that component. A partial stop (one that initiates shutdown without joining) makes callers unsafe: code that runs after `Stop()` returns may race with goroutines still doing network I/O or accessing shared state.
+
+When `Stop()` closes a socket to interrupt an in-flight I/O goroutine, it must drain the goroutine's done channel before returning:
+
+```go
+case <-c.done:
+    // Stop() called while I/O goroutine is in-flight.
+    // disconnect() closes the socket so the goroutine exits promptly;
+    // <-ioDone joins it so Stop() truly completes before returning.
+    timer.Stop()
+    disconnect()
+    call.reply <- rpcResult{err: fmt.Errorf("cmuxctl: %s: client stopped", call.method)}
+    <-ioDone
+    return
+```
+
+The same obligation applies to background goroutines started during construction: if `New()` starts a goroutine, `Stop()` must join it even for goroutines that were never given work.
+
+## Don't spawn goroutines to close resources that Close() already handles
+
+Never spawn an anonymous goroutine whose sole purpose is to close a resource (listener, connection, file) that an explicit `Close()` method already closes. Such goroutines:
+
+- Are not tracked by any WaitGroup, so they can execute after `Close()` has already returned and cleaned up.
+- Create a double-close race — both the anonymous goroutine and `Close()` call `Close()` on the same resource.
+- Add noise without adding any lifecycle guarantee the caller can rely on.
+
+```go
+// Bad — anonymous goroutine races with the explicit ln.Close() in Close().
+func (c *Channel) Serve(socketPath string) error {
+    ln, err := net.Listen("unix", socketPath)
+    // ...
+    go func() { <-c.ctx.Done(); ln.Close() }() // redundant and racy
+    // ...
+}
+
+func (c *Channel) Close() {
+    c.cancel()
+    ln.Close() // already closed here; anonymous goroutine races this
+    c.wg.Wait()
+}
+
+// Good — context cancellation unblocks Accept; the explicit Close() is sufficient.
+func (c *Channel) Close() {
+    c.cancel()
+    _ = c.ln.Close() // unblocks Accept in the accept goroutine
+    c.wg.Wait()
+}
+```
+
+If context cancellation alone does not unblock a blocking call (e.g., `Accept`), close the resource explicitly in `Close()` — not via an anonymous goroutine.
+
+## Prevent busy-spin with a Ready() channel on input interfaces
+
+When a goroutine polls for input in a loop, never use a `default:` branch in the select — it spins at 100% CPU when no input is available.
+
+Instead, add a `Ready() <-chan struct{}` method to the input interface. The goroutine selects on `Ready()` before calling `Next()`:
+
+```go
+type FooterKeySource interface {
+    // Next returns the next available key. Returns ("", false) when empty —
+    // callers must wait for Ready() to fire before calling Next.
+    Next() (string, bool)
+    // Ready returns a channel that fires when at least one key is available.
+    // A nil return blocks forever (used by the noop production implementation).
+    Ready() <-chan struct{}
+}
+
+// Production goroutine — blocks until input or context cancellation.
+go func() {
+    defer wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-src.Ready():
+            machine.Step() // calls src.Next() inside
+        }
+    }
+}()
+```
+
+The two canonical implementations:
+
+```go
+// Noop (production, non-interactive pane): nil channel blocks select forever.
+type noopFooterKeySource struct{}
+func (noopFooterKeySource) Next() (string, bool)   { return "", false }
+func (noopFooterKeySource) Ready() <-chan struct{}  { return nil } // nil blocks forever in select
+
+// Fake (test double): capacity-1 level-trigger channel.
+// Press signals it when the queue transitions from empty to non-empty.
+// Next re-signals it if keys remain after popping.
+type FakeFooterKeySource struct {
+    mu    sync.Mutex
+    keys  []string
+    keyCh chan struct{} // capacity 1; level-triggered
+}
+
+func NewFakeFooterKeySource() *FakeFooterKeySource {
+    return &FakeFooterKeySource{keyCh: make(chan struct{}, 1)}
+}
+
+func (f *FakeFooterKeySource) Press(key string) {
+    f.mu.Lock()
+    f.keys = append(f.keys, key)
+    f.mu.Unlock()
+    select { case f.keyCh <- struct{}{}: default: } // signal without blocking
+}
+
+func (f *FakeFooterKeySource) Next() (string, bool) {
+    f.mu.Lock()
+    if len(f.keys) == 0 { f.mu.Unlock(); return "", false }
+    k := f.keys[0]; f.keys = f.keys[1:]; remaining := len(f.keys)
+    f.mu.Unlock()
+    if remaining > 0 { select { case f.keyCh <- struct{}{}: default: } } // re-signal for next key
+    return k, true
+}
+
+func (f *FakeFooterKeySource) Ready() <-chan struct{} { return f.keyCh }
+```
+
+Apply any time a goroutine needs to poll an interface for availability. A `default:` branch in a select on a polling loop is always a busy-spin — replace it with a `Ready()` signal channel.
+
+## Pass mutable view state as a parameter, not a shared field
+
+When two goroutines both access a struct field — one goroutine writes it, the other reads it during rendering — the race can sometimes be eliminated entirely by removing the field and passing the value as a function parameter.
+
+This approach is preferable to adding a mutex when the value is produced and consumed in the same call chain: one goroutine computes the value and immediately passes it to `Render(value)` without storing it anywhere.
+
+```go
+// Bad — two goroutines race on renderer.shortcutLine:
+// keystroke goroutine writes it via SetShortcutLine;
+// main select loop reads it via Render.
+type cmuxFooterRenderer struct {
+    shortcutLine string // data race: written by goroutine A, read by goroutine B
+}
+
+func (r *cmuxFooterRenderer) SetShortcutLine(line string) { r.shortcutLine = line }
+func (r *cmuxFooterRenderer) Render(sl string) string     { return r.shortcutLine + " " + sl }
+
+// goroutine A:
+r.renderer.SetShortcutLine(line)
+fmt.Fprint(out, r.renderer.Render(sl))
+
+// Good — shortcutLine is never stored; passed directly as a parameter:
+type cmuxFooterRenderer struct{} // no shared mutable state
+
+func (r *cmuxFooterRenderer) Render(sl, shortcutLine string) string {
+    return shortcutLine + " " + sl
+}
+
+// Both goroutines compute and pass shortcutLine locally; no race possible.
+fmt.Fprint(out, r.renderer.Render(sl, line))
+```
+
+Checklist for applying this pattern:
+1. Confirm the field is written immediately before it is read (same goroutine, same call).
+2. Confirm no other goroutine reads the field between writes.
+3. Delete the field; add a parameter to the function that was reading it.
+4. Run `go test -race` to verify the race is gone.
+
+When the value needs to persist across calls from different goroutines, use a mutex instead (see "Protect all shared io.Writer writes" above).
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -409,3 +717,11 @@ The same rule applies to `cancel()` context cancellations that trigger blocking 
 - [Keyboard Input & Error Recovery](../features/keyboard-input.md) — Error-mode blocking receive as the canonical channel-priming example
 - [Workflow Orchestration](../features/workflow-orchestration.md) — `terminated` / `timeoutFired` mutual exclusion and reset-then-record ordering in `stepDispatcher` (issue #130)
 - [Workflow Builder](../code-packages/workflowedit.md) — `deepCopyDoc` as the canonical reference-type deep-copy example; race between validator goroutine and UI goroutine on `doc.Env` / `doc.ContainerEnv` (workflow-builder-pt-2 review issue #1)
+- `src/cmd/pr9k/cmux_signal.go` — `runCmuxSignalHandler` as the canonical two-goroutine watchdog+cleanup example (issue #223)
+- `src/internal/cmuxctl/runphase1.go` — `RunPhase1` as the canonical `sync.Once` + named-return teardown error injection example (issue #221/224)
+- `src/internal/cmuxctl/dismissal.go` — `DismissalObserver.run` as the canonical ctx.Err() guard after timer.C fire example (issue #222)
+- `src/internal/interactionchannel/channel.go` — `startConn` as the canonical write-goroutine-closes-conn pattern; absence of anonymous listener-close goroutine as the canonical redundant-goroutine avoidance example (cmux-p2 review F1/F2)
+- `src/internal/cmuxctl/real.go` — `run` method `<-ioDone` drain in the `<-c.done` case as the canonical Stop()-must-join-all-goroutines example (cmux-p2 review F3)
+- `src/cmd/pr9k/cmux_pane.go` — `noopFooterKeySource` as the canonical nil-Ready() implementation; `runCmuxFooterMachineWith` as the canonical `<-src.Ready()` goroutine pattern (cmux-p3 review)
+- `src/internal/interactionchannel/fake.go` — `FakeFooterKeySource` as the canonical level-trigger Ready() test double (cmux-p3 review)
+- `src/cmd/pr9k/cmux_footer_wiring.go` — `footerPaneSink.SetMode` as the canonical pass-as-parameter (no shared field) race elimination (cmux-p3 review)

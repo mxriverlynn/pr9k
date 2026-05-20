@@ -8,7 +8,7 @@ Parses command-line flags and resolves the two directories that anchor all path 
 
 ## Overview
 
-- pr9k accepts an optional `--iterations` / `-n` flag (default 0 = run until done), an optional `--workflow-dir` flag, an optional `--project-dir` flag, and a `--version` / `-v` flag that prints the version and exits
+- pr9k accepts an optional `--iterations` / `-n` flag (default 0 = run until done), an optional `--workflow-dir` flag, an optional `--project-dir` flag, an optional `--cmux` flag (experimental cmux mode), and a `--version` / `-v` flag that prints the version and exits
 - Built on [spf13/cobra](https://github.com/spf13/cobra), which handles POSIX-style flags in any position — no custom reordering needed
 - When `--workflow-dir` is not provided, the workflow directory is resolved via a two-candidate search: `<projectDir>/.pr9k/workflow/` is checked first (in-repo override), then `<executableDir>/.pr9k/workflow/` (the shipped bundle). The first existing directory wins; if neither exists an error listing both paths is returned
 - When `--project-dir` is not provided, the project directory is resolved from the current working directory via `os.Getwd()` + `filepath.EvalSymlinks`
@@ -95,6 +95,7 @@ type Config struct {
     Iterations  int    // number of workflow iterations to run (0 = run until done)
     WorkflowDir string // install dir: config.json, scripts/, prompts/, ralph-art.txt
     ProjectDir  string // target repository: subprocess cmd.Dir and log file location
+    Cmux        bool   // when true, branches into cmux mode (Preflight + RunPhase1) instead of the normal TUI workflow
 }
 ```
 
@@ -142,9 +143,12 @@ cmd := &cobra.Command{
 cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
 cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
 cmd.Flags().StringVar(&cfg.ProjectDir, "project-dir", "", "path to the target repository (default: current working directory)")
+cmd.Flags().BoolVar(&cfg.Cmux, "cmux", false, "experimental: launches a four-pane placeholder workspace; full workflow rendering ships in a later release")
 ```
 
 Note: neither `--workflow-dir` nor `--project-dir` has a short form. The `-p` short form was removed in 0.3.0 when `--project-dir` changed meaning. Using `-p` now triggers a `SetFlagErrorFunc` guidance message pointing to the migration ADR.
+
+`--cmux` is a boolean flag (no argument). When set, `main()` branches before the normal logger / validator / TUI path and calls `cmuxctl.Preflight` then `cmuxctl.RunPhase1`. No workflow steps are executed. `--workflow-dir` and `--iterations` are parsed but ignored on the cmux path; only `--project-dir` is used (to compose the workspace name).
 
 When `--version` or `-v` is passed, cobra prints `pr9k version <semver>` to stdout and exits **without invoking `RunE`** — the `ranE` sentinel stays `false`, `Execute` returns `(nil, nil)`, and `main` exits cleanly without starting the workflow. This is the contract that the `--version` public-API surface in the [Versioning](../coding-standards/versioning.md) standard commits to.
 
@@ -269,6 +273,7 @@ All errors are written to stderr followed by a `Run 'pr9k --help' for usage.` hi
 | `--iterations` | `-n` | Number of iterations to run (0 = run until done) | `0` |
 | `--workflow-dir` | — | Path to the workflow bundle directory (install dir) | `<projectDir>/.pr9k/workflow/`, then `<executableDir>/.pr9k/workflow/` |
 | `--project-dir` | — | Path to the target repository | Current working directory |
+| `--cmux` | — | Experimental: launch cmux mode (four-pane workspace scaffold) instead of the normal TUI workflow | `false` |
 | `--version` | `-v` | Print `pr9k version <semver>` and exit without running the workflow | — |
 | `--help` | `-h` | Print cobra-generated usage and exit without running the workflow | — |
 
@@ -276,6 +281,7 @@ All errors are written to stderr followed by a `Run 'pr9k --help' for usage.` hi
 
 ```
 pr9k [--iterations <n>] [--workflow-dir <path>] [--project-dir <path>]
+pr9k --cmux [--project-dir <path>]
 pr9k workflow [--workflow-dir <path>] [--project-dir <path>]
 pr9k sandbox create [--force]
 pr9k sandbox --interactive
@@ -399,6 +405,7 @@ The two version tests read the expected string from `version.Version` rather tha
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level view of pr9k with block diagrams and data flow
+- [cmux Mode](cmux-mode.md) — What `--cmux` does: preflight checks, workspace scaffold, lifecycle, and dismissal
 - [ADR: Use Cobra for CLI Argument Parsing](../adr/20260409135303-cobra-cli-framework.md) — Decision rationale for replacing stdlib `flag` with cobra
 - [ADR: workflow-dir / project-dir split](../adr/20260413162428-workflow-project-dir-split.md) — Decision rationale for splitting the single `--project-dir` flag into `--workflow-dir` + `--project-dir`
 - [Versioning](../coding-standards/versioning.md) — Single-source-of-truth rule for `version.Version`, what counts as pr9k's public API (CLI flags, `--version` output format), and how to bump the version

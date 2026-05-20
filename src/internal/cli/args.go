@@ -18,6 +18,7 @@ type Config struct {
 	Iterations  int
 	WorkflowDir string
 	ProjectDir  string
+	Cmux        bool
 }
 
 // resolveWorkflowDirWith is the testable core of the two-candidate resolution
@@ -134,7 +135,16 @@ func newCommandImpl(cfg *Config, ranE *bool) *cobra.Command {
 	cmd.Flags().IntVarP(&cfg.Iterations, "iterations", "n", 0, "number of iterations to run (0 = run until done)")
 	cmd.Flags().StringVar(&cfg.WorkflowDir, "workflow-dir", "", "path to the workflow bundle directory (default: <projectDir>/.pr9k/workflow/, then <executableDir>/.pr9k/workflow/)")
 	cmd.Flags().StringVar(&cfg.ProjectDir, "project-dir", "", "path to the target repository (default: current working directory)")
+	cmd.Flags().BoolVar(&cfg.Cmux, "cmux", false, "experimental: launches a four-pane placeholder workspace; full workflow rendering ships in a later release")
 	return cmd
+}
+
+// ResolveWorkflowDir finds the workflow bundle directory for the given
+// projectDir using the two-candidate resolution rule. It is exported so
+// subcommands that read configuration from environment variables (e.g.
+// cmux-pane processes) can locate the bundle without parsing CLI flags.
+func ResolveWorkflowDir(projectDir string) (string, error) {
+	return resolveWorkflowDir(projectDir)
 }
 
 // NewCommand returns a configured cobra.Command that parses CLI flags into cfg.

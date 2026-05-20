@@ -47,7 +47,11 @@ func StripAll(b []byte) []byte {
 			}
 			i = j
 		default:
-			// Two-byte ESC sequence or unrecognised — drop both bytes
+			// Two-byte ESC sequence or unrecognised — drop both bytes.
+			// SEC-002: this is intentional. A double-ESC (\x1b\x1b[31m) drops
+			// both ESC bytes, leaving "[31m" which is harmless without a leading
+			// ESC. TestStripAll_DoubleEscape pins this contract; do not change it
+			// to "drop only the first ESC" or the bypass is reintroduced.
 			i += 2
 		}
 	}

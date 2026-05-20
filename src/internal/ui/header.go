@@ -56,6 +56,12 @@ const (
 // HeaderCols is the number of checkbox columns per row; constant to fit 80-column terminals.
 const HeaderCols = 4
 
+// IterationIssueSep is the separator inserted between the iteration counter and
+// the issue ID in RenderIterationLine. Shared with cmux_workflow.go so both
+// renderers produce byte-identical strings (aids the log-artifact equivalence
+// comparator at internal/logger/equivalence.go).
+const IterationIssueSep = " — Issue #"
+
 // StatusHeader manages the pointer-mutable string state for the TUI status header.
 // Each checkbox cell is rendered as three adjacent Lip Gloss spans so the
 // marker glyph can be colored independently of the brackets and step
@@ -148,7 +154,8 @@ func (h *StatusHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 		fmt.Fprintf(&b, "Iteration %d", iter)
 	}
 	if issueID != "" {
-		fmt.Fprintf(&b, " — Issue #%s", issueID)
+		b.WriteString(IterationIssueSep)
+		b.WriteString(issueID)
 	}
 	h.IterationLine = b.String()
 }
@@ -235,24 +242,35 @@ func (h *StatusHeader) clearCell(r, c int) {
 	h.Rows[r][c] = ""
 }
 
+// StepMarkerGlyph returns the single-character glyph for a step state. It is
+// the single source of truth for step-state glyphs shared between the standard
+// TUI header (cellStyle) and the cmux header pane (cmuxStepMarker).
+func StepMarkerGlyph(state StepState) string {
+	switch state {
+	case StepActive:
+		return "▸"
+	case StepDone:
+		return "✓"
+	case StepFailed:
+		return "✗"
+	case StepSkipped:
+		return "-"
+	case StepTimedOutContinuing:
+		return "!"
+	default:
+		return " "
+	}
+}
+
 // cellStyle returns the marker glyph and per-cell colors for a given step
 // state. Active steps get white brackets/name with a green marker so the
 // running row pops out of the light-gray chrome; every other state uses
 // LightGray for both marker and name. Unknown states fall through to the
 // pending default (a space marker with light-gray colors).
 func cellStyle(state StepState) (marker string, nameColor, markerColor lipgloss.Color) {
-	switch state {
-	case StepActive:
-		return "▸", ActiveStepFG, ActiveMarkerFG
-	case StepDone:
-		return "✓", LightGray, LightGray
-	case StepFailed:
-		return "✗", LightGray, LightGray
-	case StepSkipped:
-		return "-", LightGray, LightGray
-	case StepTimedOutContinuing:
-		return "!", LightGray, LightGray
-	default:
-		return " ", LightGray, LightGray
+	marker = StepMarkerGlyph(state)
+	if state == StepActive {
+		return marker, ActiveStepFG, ActiveMarkerFG
 	}
+	return marker, LightGray, LightGray
 }
