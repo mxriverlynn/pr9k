@@ -109,4 +109,8 @@ type CmuxClient interface {
 	WorkspaceSelect(ctx context.Context, ws Workspace) error
 	SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface, error)
 	SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
+	WorkspaceSetStatus(ctx context.Context, ws Workspace, key, value string) error
+	WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
+	WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
+	WorkspaceClearProgress(ctx context.Context, ws Workspace) error
 }

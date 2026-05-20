@@ -396,3 +396,202 @@ func TestRealClient_WireMethodAndID(t *testing.T) {
 		t.Fatal("server never received the request")
 	}
 }
+
+// ---- RealClient sidebar round-trip tests (R1: wrong wire names caught) ------
+
+func TestRealClient_WorkspaceSetStatus_WireMethod(t *testing.T) {
+	ws := cmuxctl.Workspace{ID: "ws-uuid-1", Ref: "workspace:1"}
+	got := make(chan rpcMsg, 1)
+	sock := v2Server(t, func(req rpcMsg) string {
+		select {
+		case got <- req:
+		default:
+		}
+		return okResp(req.ID, `{}`)
+	})
+	c := cmuxctl.NewRealClient(sock, testTimeout)
+	defer c.Stop()
+	if err := c.WorkspaceSetStatus(context.Background(), ws, "pr9k.step", "feature work"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case req := <-got:
+		if req.Method != "workspace.set_status" {
+			t.Errorf("method = %q, want workspace.set_status", req.Method)
+		}
+		if !strings.Contains(string(req.Params), `"workspace_id":"ws-uuid-1"`) {
+			t.Errorf("params must include workspace_id: %s", req.Params)
+		}
+		if !strings.Contains(string(req.Params), `"key":"pr9k.step"`) {
+			t.Errorf("params must include key: %s", req.Params)
+		}
+		if !strings.Contains(string(req.Params), `"value":"feature work"`) {
+			t.Errorf("params must include value: %s", req.Params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server never received the request")
+	}
+}
+
+func TestRealClient_WorkspaceClearStatus_WireMethod(t *testing.T) {
+	ws := cmuxctl.Workspace{ID: "ws-uuid-2", Ref: "workspace:2"}
+	got := make(chan rpcMsg, 1)
+	sock := v2Server(t, func(req rpcMsg) string {
+		select {
+		case got <- req:
+		default:
+		}
+		return okResp(req.ID, `{}`)
+	})
+	c := cmuxctl.NewRealClient(sock, testTimeout)
+	defer c.Stop()
+	if err := c.WorkspaceClearStatus(context.Background(), ws, "pr9k.step"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case req := <-got:
+		if req.Method != "workspace.clear_status" {
+			t.Errorf("method = %q, want workspace.clear_status", req.Method)
+		}
+		if !strings.Contains(string(req.Params), `"workspace_id":"ws-uuid-2"`) {
+			t.Errorf("params must include workspace_id: %s", req.Params)
+		}
+		if !strings.Contains(string(req.Params), `"key":"pr9k.step"`) {
+			t.Errorf("params must include key: %s", req.Params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server never received the request")
+	}
+}
+
+func TestRealClient_WorkspaceSetProgress_WireMethod(t *testing.T) {
+	ws := cmuxctl.Workspace{ID: "ws-uuid-3", Ref: "workspace:3"}
+	got := make(chan rpcMsg, 1)
+	sock := v2Server(t, func(req rpcMsg) string {
+		select {
+		case got <- req:
+		default:
+		}
+		return okResp(req.ID, `{}`)
+	})
+	c := cmuxctl.NewRealClient(sock, testTimeout)
+	defer c.Stop()
+	if err := c.WorkspaceSetProgress(context.Background(), ws, 0.5, "2 / 4"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case req := <-got:
+		if req.Method != "workspace.set_progress" {
+			t.Errorf("method = %q, want workspace.set_progress", req.Method)
+		}
+		if !strings.Contains(string(req.Params), `"workspace_id":"ws-uuid-3"`) {
+			t.Errorf("params must include workspace_id: %s", req.Params)
+		}
+		if !strings.Contains(string(req.Params), `"fraction":0.5`) {
+			t.Errorf("params must include fraction: %s", req.Params)
+		}
+		if !strings.Contains(string(req.Params), `"label":"2 / 4"`) {
+			t.Errorf("params must include label: %s", req.Params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server never received the request")
+	}
+}
+
+func TestRealClient_WorkspaceClearProgress_WireMethod(t *testing.T) {
+	ws := cmuxctl.Workspace{ID: "ws-uuid-4", Ref: "workspace:4"}
+	got := make(chan rpcMsg, 1)
+	sock := v2Server(t, func(req rpcMsg) string {
+		select {
+		case got <- req:
+		default:
+		}
+		return okResp(req.ID, `{}`)
+	})
+	c := cmuxctl.NewRealClient(sock, testTimeout)
+	defer c.Stop()
+	if err := c.WorkspaceClearProgress(context.Background(), ws); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	select {
+	case req := <-got:
+		if req.Method != "workspace.clear_progress" {
+			t.Errorf("method = %q, want workspace.clear_progress", req.Method)
+		}
+		if !strings.Contains(string(req.Params), `"workspace_id":"ws-uuid-4"`) {
+			t.Errorf("params must include workspace_id: %s", req.Params)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server never received the request")
+	}
+}
+
+// ---- FakeClient recorder tests (sidebar methods) ----------------------------
+
+func TestFakeClient_WorkspaceSetStatus_Records(t *testing.T) {
+	f := &cmuxctl.FakeClient{}
+	ws := cmuxctl.Workspace{ID: "w1", Ref: "workspace:1"}
+	if err := f.WorkspaceSetStatus(context.Background(), ws, "pr9k.step", "feature work"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := f.WorkspaceSetStatus(context.Background(), ws, "pr9k.step", "test writing"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.SetStatusCalls) != 2 {
+		t.Fatalf("SetStatusCalls len = %d, want 2", len(f.SetStatusCalls))
+	}
+	if f.SetStatusCalls[0].Key != "pr9k.step" || f.SetStatusCalls[0].Value != "feature work" {
+		t.Errorf("SetStatusCalls[0] = %+v", f.SetStatusCalls[0])
+	}
+	if f.SetStatusCalls[1].Value != "test writing" {
+		t.Errorf("SetStatusCalls[1].Value = %q, want test writing", f.SetStatusCalls[1].Value)
+	}
+}
+
+func TestFakeClient_WorkspaceClearStatus_Records(t *testing.T) {
+	f := &cmuxctl.FakeClient{}
+	ws := cmuxctl.Workspace{ID: "w1", Ref: "workspace:1"}
+	if err := f.WorkspaceClearStatus(context.Background(), ws, "pr9k.step"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.ClearStatusCalls) != 1 {
+		t.Fatalf("ClearStatusCalls len = %d, want 1", len(f.ClearStatusCalls))
+	}
+	if f.ClearStatusCalls[0].Key != "pr9k.step" || f.ClearStatusCalls[0].Workspace.ID != "w1" {
+		t.Errorf("ClearStatusCalls[0] = %+v", f.ClearStatusCalls[0])
+	}
+}
+
+func TestFakeClient_WorkspaceSetProgress_Records(t *testing.T) {
+	f := &cmuxctl.FakeClient{}
+	ws := cmuxctl.Workspace{ID: "w2", Ref: "workspace:2"}
+	if err := f.WorkspaceSetProgress(context.Background(), ws, 0.25, "1 / 4"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := f.WorkspaceSetProgress(context.Background(), ws, 0.75, "3 / 4"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.SetProgressCalls) != 2 {
+		t.Fatalf("SetProgressCalls len = %d, want 2", len(f.SetProgressCalls))
+	}
+	if f.SetProgressCalls[0].Fraction != 0.25 || f.SetProgressCalls[0].Label != "1 / 4" {
+		t.Errorf("SetProgressCalls[0] = %+v", f.SetProgressCalls[0])
+	}
+	if f.SetProgressCalls[1].Fraction != 0.75 || f.SetProgressCalls[1].Label != "3 / 4" {
+		t.Errorf("SetProgressCalls[1] = %+v", f.SetProgressCalls[1])
+	}
+}
+
+func TestFakeClient_WorkspaceClearProgress_Records(t *testing.T) {
+	f := &cmuxctl.FakeClient{}
+	ws := cmuxctl.Workspace{ID: "w3", Ref: "workspace:3"}
+	if err := f.WorkspaceClearProgress(context.Background(), ws); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(f.ClearProgressCalls) != 1 {
+		t.Fatalf("ClearProgressCalls len = %d, want 1", len(f.ClearProgressCalls))
+	}
+	if f.ClearProgressCalls[0].ID != "w3" {
+		t.Errorf("ClearProgressCalls[0].ID = %q, want w3", f.ClearProgressCalls[0].ID)
+	}
+}

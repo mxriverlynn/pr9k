@@ -406,6 +406,46 @@ func (c *RealClient) SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface,
 	return s, nil
 }
 
+// setStatusParam is the wire shape for workspace.set_status.
+type setStatusParam struct {
+	workspaceParam
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// clearStatusParam is the wire shape for workspace.clear_status.
+type clearStatusParam struct {
+	workspaceParam
+	Key string `json:"key"`
+}
+
+// setProgressParam is the wire shape for workspace.set_progress.
+type setProgressParam struct {
+	workspaceParam
+	Fraction float64 `json:"fraction"`
+	Label    string  `json:"label,omitempty"`
+}
+
+func (c *RealClient) WorkspaceSetStatus(ctx context.Context, ws Workspace, key, value string) error {
+	_, err := c.do(ctx, "workspace.set_status", setStatusParam{workspaceParam: wsParam(ws), Key: key, Value: value})
+	return err
+}
+
+func (c *RealClient) WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error {
+	_, err := c.do(ctx, "workspace.clear_status", clearStatusParam{workspaceParam: wsParam(ws), Key: key})
+	return err
+}
+
+func (c *RealClient) WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error {
+	_, err := c.do(ctx, "workspace.set_progress", setProgressParam{workspaceParam: wsParam(ws), Fraction: fraction, Label: label})
+	return err
+}
+
+func (c *RealClient) WorkspaceClearProgress(ctx context.Context, ws Workspace) error {
+	_, err := c.do(ctx, "workspace.clear_progress", wsParam(ws))
+	return err
+}
+
 func (c *RealClient) SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error) {
 	raw, err := c.do(ctx, "surface.list", wsParam(ws))
 	if err != nil {
