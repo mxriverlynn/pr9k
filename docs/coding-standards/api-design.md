@@ -528,6 +528,65 @@ Document each seam field with a comment explaining: what the production default 
 
 This pattern differs from the package-level var seam (see `testing.md` — "Document no-parallel constraint for package-level var mutation"): function fields are per-instance, so parallel tests that construct separate model values are safe. Package-level var seams require serial execution and save/restore discipline.
 
+## Nil-receiver guards on optional pointer adapters
+
+When a pointer type can legitimately be `nil` before wiring is complete — for example, an optional sidebar adapter that is constructed before it can be fully connected — add a nil-receiver guard as the first line of every method. This makes `nil` safe to use as a no-op placeholder during incremental assembly and eliminates the need for call-site guards scattered across callers.
+
+```go
+// Every method guards against nil so callers don't need to check.
+func (s *cmuxSidebar) PushStep(ctx context.Context, name string) error {
+    if s == nil {
+        return nil
+    }
+    // ... normal implementation ...
+}
+
+func (s *cmuxSidebar) ClearAll(ctx context.Context) error {
+    if s == nil {
+        return nil
+    }
+    // ...
+}
+```
+
+**Checklist for nil-receiver guard adoption:**
+1. Add `if s == nil { return }` (or `return nil`, `return zero`) as the first line of every exported and unexported method on the type.
+2. Add a test that calls each method on a nil receiver and asserts a no-op, not a panic.
+3. Document the nil-safe contract in the type's godoc comment.
+
+This pattern is distinct from the "Add bounds guards to all state-mutating array indexers" rule — it applies to the receiver itself (the struct pointer), not to index parameters. Use it when a type serves as an optional adapter that may not be wired before some call sites are reached.
+
+## Augment single-slot callbacks in place
+
+When a type exposes a single-slot setter (e.g., `SetOnModeChange`) that installs a callback, each call to the setter overwrites the previous callback. Adding behavior across two development phases requires augmenting the existing closure in place — calling the setter a second time silently discards the first callback.
+
+```go
+// Bad — second SetOnModeChange call overwrites the Phase 3 footer push:
+keyHandler.SetOnModeChange(func(mode ui.Mode, line string) {
+    ch.SendStateFooter(...)
+})
+// ... later, in Phase 4 wiring ...
+keyHandler.SetOnModeChange(func(mode ui.Mode, line string) { // ← overwrites Phase 3!
+    if mode == ui.ModeError {
+        _ = sidebar.EnterErrorMode(ctx)
+    }
+})
+
+// Good — augment the closure in place; both behaviors execute:
+// The closure is augmented in place (D-2): a second SetOnModeChange call would
+// overwrite Phase 3's footer push, so the sidebar branch lives here.
+keyHandler.SetOnModeChange(func(mode ui.Mode, line string) {
+    ch.SendStateFooter(...)
+    if mode == ui.ModeError {
+        _ = sidebar.EnterErrorMode(ctx)
+    }
+})
+```
+
+When you need to add behavior to a single-slot callback during a code review or incremental feature addition, locate the existing setter call site and expand the closure body. Add a comment that identifies why the behavior lives here rather than in a separate call.
+
+If a type genuinely needs multiple independent observers (not a single callback), the API should accept a slice or implement a subscription/observer pattern instead.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -543,3 +602,5 @@ This pattern differs from the package-level var seam (see `testing.md` — "Docu
 - [Stream JSON Pipeline](../code-packages/claudestream.md) — `var _ ui.HeartbeatReader = (*Runner)(nil)` as the canonical compile-time assertion example (issue #94)
 - `src/cmd/pr9k/workflow.go` — `Hidden: true` on the `workflow` cobra command is the canonical incomplete-command example (workflow-builder branch, PR-1 scope)
 - `src/internal/workflowedit/model.go` — `commitDetailEdit` returning `(Model, bool)` is the canonical rejected-mutation feedback example; `DialogError` for deferred paths; `"NEW_KEY":""` placeholder for add-item visibility (workflow-builder-pt-2 review issues #4, #6, #7, #9); `nowFn`/`validateFn` as the canonical function-field injection seam examples
+- `src/cmd/pr9k/cmux_sidebar.go` — `cmuxSidebar` as the canonical nil-receiver guard example: every method opens with `if s == nil { return nil }` (Phase 4 W-5/TP-001)
+- `src/cmd/pr9k/cmux_workflow.go` — `runCmuxWorkflowAdapted` SetOnModeChange closure as the canonical augment-in-place example; comment "(D-2)" identifies the design decision (Phase 4 W-4/W-5)

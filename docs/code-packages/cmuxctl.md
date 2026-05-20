@@ -6,7 +6,7 @@ Source files: `src/internal/cmuxctl/`
 
 ## CmuxClient interface
 
-> **Reworked against real cmux v2 (Rework R / Architecture A).** Verified at cmux 0.64.6, commit `2f96c15c2`. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md), [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md), and decision-log **D-R1/D-R2**. cmux v2 has no `surface.spawn`/`surface.hide`; workspaces/surfaces are opaque UUID+ref handles, not names.
+> **Reworked against real cmux v2 (Rework R / Architecture A).** Verified at cmux 0.64.7, commit `4d04459dd`. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md), [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md), and decision-log **D-R1/D-R2**. cmux v2 has no `surface.spawn`/`surface.hide`; workspaces/surfaces are opaque UUID+ref handles, not names.
 
 ```go
 type CmuxClient interface {
@@ -18,8 +18,52 @@ type CmuxClient interface {
     WorkspaceSelect(ctx context.Context, ws Workspace) error
     SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface, error)
     SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
+    WorkspaceSetStatus(ctx context.Context, ws Workspace, key, value string) error
+    WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
+    WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
+    WorkspaceClearProgress(ctx context.Context, ws Workspace) error
 }
 ```
+
+### WorkspaceSetStatus
+
+```go
+WorkspaceSetStatus(ctx context.Context, ws Workspace, key, value string) error
+```
+
+Sets a named status pill on the cmux workspace row in the workspace list. `key` is an arbitrary string identifier; pr9k uses `"pr9k.step"` (the `sidebarStatusKey` constant in `cmux_sidebar.go`). `value` is the text shown in the pill, e.g. `"feature work"` or `"feature work — awaiting input"`.
+
+Wire method: `workspace.set_status`. Non-timeout errors from `cmuxSidebar` callers are logged and swallowed. `context.DeadlineExceeded` is returned as fatal and propagates.
+
+### WorkspaceClearStatus
+
+```go
+WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
+```
+
+Removes the named status pill from the workspace row. `key` must match the key used in `WorkspaceSetStatus`; pr9k passes `"pr9k.step"`. Called by `cmuxSidebar.ClearAll` at the end of a clean workflow run.
+
+Wire method: `workspace.clear_status`. Error semantics: same as `WorkspaceSetStatus`.
+
+### WorkspaceSetProgress
+
+```go
+WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
+```
+
+Sets a progress bar on the workspace row. `fraction` is in `[0.0, 1.0]`; `label` is an optional display string (pr9k uses `"<iter> / <maxIter>"`). Only called when `maxIter > 0` (bounded iteration mode). Called by `cmuxSidebar.PushProgress` on each `RenderIterationLine` event.
+
+Wire method: `workspace.set_progress`. Error semantics: same as `WorkspaceSetStatus`.
+
+### WorkspaceClearProgress
+
+```go
+WorkspaceClearProgress(ctx context.Context, ws Workspace) error
+```
+
+Removes the progress bar from the workspace row. Called by `cmuxSidebar.ClearProgress` at the start of the finalization phase (first `RenderFinalizeLine` call), and by `cmuxSidebar.ClearAll` at the end of a clean run (only if progress was ever pushed).
+
+Wire method: `workspace.clear_progress`. Error semantics: same as `WorkspaceSetStatus`.
 
 All methods accept a context. The wire protocol is newline-delimited JSON: request `{id,method,params}`; success `{id,ok:true,result}`; error `{id,ok:false,error:{code:<string>,message}}`. A `cmuxOnly` cmux writes a bare `ERROR: …` line to non-descendant clients before any request.
 
@@ -75,25 +119,38 @@ func (c *RealClient) Stop()                    // shuts down queue goroutine; wa
 
 ```go
 type FakeClient struct {
-    SystemIdentifyFunc   func(ctx context.Context) (Identity, error)
-    WorkspaceCurrentFunc func(ctx context.Context) (Workspace, error)
-    WorkspaceListFunc    func(ctx context.Context) ([]WorkspaceInfo, error)
-    WorkspaceCreateFunc  func(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error)
-    WorkspaceCloseFunc   func(ctx context.Context, ws Workspace) error
-    WorkspaceSelectFunc  func(ctx context.Context, ws Workspace) error
-    SurfaceSplitFunc     func(ctx context.Context, opts SplitOpts) (Surface, error)
-    SurfaceListFunc      func(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
+    SystemIdentifyFunc         func(ctx context.Context) (Identity, error)
+    WorkspaceCurrentFunc       func(ctx context.Context) (Workspace, error)
+    WorkspaceListFunc          func(ctx context.Context) ([]WorkspaceInfo, error)
+    WorkspaceCreateFunc        func(ctx context.Context, opts WorkspaceCreateOpts) (Workspace, error)
+    WorkspaceCloseFunc         func(ctx context.Context, ws Workspace) error
+    WorkspaceSelectFunc        func(ctx context.Context, ws Workspace) error
+    SurfaceSplitFunc           func(ctx context.Context, opts SplitOpts) (Surface, error)
+    SurfaceListFunc            func(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
+    WorkspaceSetStatusFunc     func(ctx context.Context, ws Workspace, key, value string) error
+    WorkspaceClearStatusFunc   func(ctx context.Context, ws Workspace, key string) error
+    WorkspaceSetProgressFunc   func(ctx context.Context, ws Workspace, fraction float64, label string) error
+    WorkspaceClearProgressFunc func(ctx context.Context, ws Workspace) error
 
     // Call recorders — appended under mu; read after all goroutines have joined.
-    CreateCalls []WorkspaceCreateOpts
-    CloseCalls  []Workspace
-    SelectCalls []Workspace
-    SplitCalls  []SplitOpts
+    CreateCalls        []WorkspaceCreateOpts
+    CloseCalls         []Workspace
+    SelectCalls        []Workspace
+    SplitCalls         []SplitOpts
+    SetStatusCalls     []SetStatusCall     // records of WorkspaceSetStatus calls
+    ClearStatusCalls   []ClearStatusCall   // records of WorkspaceClearStatus calls
+    SetProgressCalls   []SetProgressCall   // records of WorkspaceSetProgress calls
+    ClearProgressCalls []Workspace         // workspace handles from WorkspaceClearProgress calls
 
     // Hang inject seams — both channels must be initialised by the caller.
     HangNext    chan struct{} // send to block the next call
     HangRelease chan struct{} // send to release a blocked call
 }
+
+// Record types for the sidebar RPC call recorders:
+type SetStatusCall  struct { Workspace Workspace; Key, Value string }
+type ClearStatusCall struct { Workspace Workspace; Key string }
+type SetProgressCall struct { Workspace Workspace; Fraction float64; Label string }
 ```
 
 All mutable state is protected by an internal `sync.Mutex`. Read recorders only after all goroutines that may call the fake have joined.

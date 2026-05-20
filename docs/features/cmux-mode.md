@@ -1,6 +1,6 @@
 # cmux Mode
 
-An opt-in launch mode (`--cmux`) that runs a real pr9k workflow inside a recognisably-named cmux workspace, streaming live state to three visible panes (header, log, footer) over a Unix-socket interaction channel. Phase 1 introduced the four-pane workspace scaffold; Phase 2 added the real workflow execution path; Phase 3 added interactive error recovery — a failing step is now recoverable from inside the footer pane with the same continue / retry / quit semantics as the standard display.
+An opt-in launch mode (`--cmux`) that runs a real pr9k workflow inside a recognisably-named cmux workspace, streaming live state to three visible panes (header, log, footer) over a Unix-socket interaction channel. Phase 1 introduced the four-pane workspace scaffold; Phase 2 added the real workflow execution path; Phase 3 added interactive error recovery — a failing step is now recoverable from inside the footer pane with the same continue / retry / quit semantics as the standard display. Phase 4 adds sidebar mirroring — the cmux workspace row in the workspace list shows a live status pill (current step name) and, for bounded-iteration runs, a progress bar.
 
 ## Activation
 
@@ -10,7 +10,7 @@ Pass `--cmux` on pr9k's run invocation:
 pr9k --cmux [--project-dir <path>]
 ```
 
-> **Reworked against real cmux v2 (Rework R / Architecture A — decision-log D-R1/D-R2).** Verified at cmux 0.64.6 / commit `2f96c15c2`. cmux v2 has no `surface.spawn`/`surface.hide`; there is **no hidden orchestrator pane**. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md) and [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md). Sections below describing a hidden 4th pane / `surface.spawn` / `name=="cmux"` describe the superseded design.
+> **Reworked against real cmux v2 (Rework R / Architecture A — decision-log D-R1/D-R2).** Verified at cmux 0.64.7 / commit `4d04459dd`. cmux v2 has no `surface.spawn`/`surface.hide`; there is **no hidden orchestrator pane**. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md) and [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md). Sections below describing a hidden 4th pane / `surface.spawn` / `name=="cmux"` describe the superseded design.
 
 The flag is visible and experimental. When set, pr9k runs `cmuxctl.Preflight` then `cmuxctl.RunPhase1`. The pr9k process the operator launched inside a cmux pane **is** the orchestrator; it creates the workspace and its three display surfaces, then runs the workflow, streaming state to the panes over the interaction channel.
 
@@ -181,11 +181,43 @@ Either gesture reaches the same teardown path and results in exit code 0 on succ
 
 If the dismissal observer sees N=3 consecutive poll timeouts (each call exceeding the 5 s per-call deadline), it fires a fatal dismissal event. pr9k attempts teardown and exits non-zero with a message identifying the workspace name for manual cleanup.
 
+## Sidebar mirroring (Phase 4)
+
+When a pr9k workflow runs in cmux mode, the pr9k workspace row in cmux's workspace list shows a live status pill and, for bounded-iteration runs, a progress bar. This is the sidebar mirroring feature.
+
+### Status pill
+
+The status pill uses the status key `pr9k.step`. Its value is updated by the `cmuxSidebar` adapter on every step transition:
+
+- **Normal running** — the value is the current step name, e.g. `feature work`.
+- **Error mode** — when a step fails and pr9k enters error mode, the value is `<step name> — awaiting input` (U+2014 em-dash). The literal suffix is the `errorModeSuffix` constant defined in `cmux_sidebar.go`.
+
+The status pill is updated via `WorkspaceSetStatus` with key `"pr9k.step"`.
+
+### Progress bar
+
+The progress bar is shown only when the run was launched with a bounded `-n M` iteration count (`maxIter > 0`). It is not shown for unbounded runs.
+
+The bar is updated via `WorkspaceSetProgress` with `fraction = iter / maxIter` and a label of `"<iter> / <maxIter>"`. It is set on every iteration line (`RenderIterationLine`) and cleared at the start of the finalization phase (`RenderFinalizeLine` first call).
+
+### Graceful-path clear
+
+When the workflow finishes cleanly, `ClearAll` is called by the orchestrator, which:
+1. Clears the status pill via `WorkspaceClearStatus` for key `"pr9k.step"`.
+2. Clears the progress bar via `WorkspaceClearProgress` (only if progress was ever pushed).
+
+### Error semantics
+
+Non-timeout sidebar RPC errors are logged and swallowed — a sidebar failure never aborts the workflow. A `context.DeadlineExceeded` error is returned as fatal and propagates to the caller.
+
+### Out of scope (Phase 4 sidebar)
+
+- No log surface mirroring — log lines are not forwarded to any cmux sidebar pane.
+- No failure-specific decoration beyond the `" — awaiting input"` suffix on the status pill — there is no badge, color change, or notification in the sidebar.
+
 ## Out of scope (Phase 3)
 
 - No cmux notification on step failure directing the operator to the footer pane (planned for Phase 5)
-- No sidebar failure label on step failure (planned for Phase 4)
-- No sidebar entries or notifications in the cmux workspace (planned for Phase 4)
 - No completion notification to the launching terminal (planned for a later phase)
 - No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6; behavior is unchanged from Phase 2)
 - No automatic orphan cleanup after crash (orphan workspaces have the `pr9k-` prefix and must be dismissed manually via cmux)

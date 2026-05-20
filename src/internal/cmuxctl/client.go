@@ -1,7 +1,7 @@
 // Package cmuxctl provides the cmux v2 socket client and the workspace
 // lifecycle pr9k's cmux mode uses.
 //
-// Wire protocol (verified against cmux 0.64.6, commit 2f96c15c2): newline-
+// Wire protocol (verified against cmux 0.64.7, commit 4d04459dd): newline-
 // delimited JSON. Request {"id","method","params"}; success
 // {"id","ok":true,"result":{…}}; error {"id","ok":false,"error":{"code":
 // "<string>","message":"…"}}. Before the first request, a cmux in its default
@@ -109,4 +109,8 @@ type CmuxClient interface {
 	WorkspaceSelect(ctx context.Context, ws Workspace) error
 	SurfaceSplit(ctx context.Context, opts SplitOpts) (Surface, error)
 	SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error)
+	WorkspaceSetStatus(ctx context.Context, ws Workspace, key, value string) error
+	WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
+	WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
+	WorkspaceClearProgress(ctx context.Context, ws Workspace) error
 }

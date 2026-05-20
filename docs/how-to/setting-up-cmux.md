@@ -2,7 +2,7 @@
 
 This guide covers installing cmux, verifying that pr9k can reach it, running a real workflow in cmux mode, and understanding the dismissal gestures you will use to end a cmux-mode session.
 
-> **Tested against:** cmux v0.64.6 (rolling-update policy: newer patch releases of the same minor are expected to work; breaking API changes are tracked under OI-1 in the implementation plan).
+> **Tested against:** cmux v0.64.7 (rolling-update policy: newer patch releases of the same minor are expected to work; breaking API changes are tracked under OI-1 in the implementation plan).
 
 ## Step 1: Install cmux
 
@@ -120,11 +120,28 @@ Focus the footer pane and choose one of three actions:
 
 Control keys pressed while the header or log pane is focused are absorbed silently — those panes are read-only. If you are focused on a different pane or workspace when a step fails, the orchestrator blocks indefinitely and the footer shows the error prompt; switch to the footer pane when you are ready to respond. (A directing notification that surfaces the error elsewhere ships in Phase 5.)
 
+### Monitoring from another workspace
+
+You can switch to a different cmux workspace while pr9k is running and still track progress. In cmux's workspace list, the pr9k workspace row shows:
+
+- **Status pill** — the current step name (e.g. `feature work`), updated on every step transition. The pill uses the key `pr9k.step`.
+- **Progress bar** — if the run was launched with `-n M` (a bounded iteration count), the bar shows `<completed> / <total>` and updates on each iteration. The bar is not shown for unbounded runs.
+
+When a step fails and pr9k enters error mode, the status pill changes to:
+
+```
+<step name> — awaiting input
+```
+
+(U+2014 em-dash). This signals that the run is paused and waiting for input in the footer pane.
+
+When the workflow finishes cleanly, pr9k clears the status pill and progress bar from the workspace row.
+
 ## Step 5: Dismiss the workspace
 
 When you are done inspecting the workspace, dismiss it using cmux's own controls. Two gestures both work:
 
-**Workspace-close gesture** — closes the pr9k workspace directly. In cmux v0.64.6 this is typically the workspace-level close action in the command palette or the workspace tab's close control. The workspace disappears from cmux's workspace list; pr9k detects this and begins teardown.
+**Workspace-close gesture** — closes the pr9k workspace directly. In cmux v0.64.7 this is typically the workspace-level close action in the command palette or the workspace tab's close control. The workspace disappears from cmux's workspace list; pr9k detects this and begins teardown.
 
 **Close-each-pane gesture** — close each visible pane individually (header, log, footer) by exiting the shell in each one (e.g. press `Ctrl+D` in the pane or type `exit`). When any pane transitions to an exited state, pr9k detects this and begins teardown.
 
@@ -183,7 +200,7 @@ Both are gated on the env var; with it unset the runtime is silent.
 | `cmux socket is disabled` | cmux config has socket disabled | Re-enable the socket in cmux's settings |
 | `cmux denied access — run pr9k from a terminal pane inside the cmux session` | cmux is in its default `cmuxOnly` mode and pr9k is not a cmux descendant | Launch pr9k from a terminal pane *inside* cmux, or set cmux's socket control mode to allow-all |
 | `cmux socket requires authentication` | cmux socket password mode is enabled | Set `CMUX_SOCKET_PASSWORD` or configure the socket password in cmux Settings |
-| `unexpected cmux identify response (no socket_path)` | cmux is an unsupported version | Use the pinned cmux v0.64.6 |
+| `unexpected cmux identify response (no socket_path)` | cmux is an unsupported version | Use the pinned cmux v0.64.7 |
 | `cmux socket parent directory ... is world-writable` | Socket parent dir is writable by all users (e.g. a socket placed directly in `/tmp`) | Correct the directory permissions, or point `CMUX_SOCKET_PATH` at a socket whose parent is not world-writable |
 | `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
 | Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |

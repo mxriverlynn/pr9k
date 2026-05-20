@@ -89,6 +89,16 @@ func (h *cmuxHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 	h.ch.SendStateHeader(snap)
 }
 
+// nameAt returns the step name at index idx, or "" if idx is out of bounds.
+func (h *cmuxHeader) nameAt(idx int) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if idx < 0 || idx >= len(h.names) {
+		return ""
+	}
+	return h.names[idx]
+}
+
 func (h *cmuxHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.mu.Lock()
 	h.iterLine = fmt.Sprintf("Finalizing %d/%d: %s", stepNum, stepCount, stepName)
@@ -121,7 +131,7 @@ func newCmuxKeyHandler(runner *workflow.Runner, actions chan ui.StepAction) *ui.
 // The key-adapter goroutine is drained via sync.WaitGroup after workflow.Run
 // returns. keyCtx (derived from ctx) is cancelled explicitly after workflow.Run
 // so the goroutine exits promptly; the defer is a safety net for early returns.
-func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile) int {
+func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar) int {
 	runner := workflow.NewRunner(log, projectDir)
 
 	// Wire the log adapter synchronously (D-5): every WriteToLog / subprocess
@@ -132,17 +142,23 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	})
 
 	header := newCmuxHeader(ch)
+	wrappedHeader := &sidebarAwareHeader{inner: header, sidebar: sidebar, ctx: ctx}
 
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := newCmuxKeyHandler(runner, actions)
 
 	// Register the mode-change hook BEFORE workflow.Run (D-6). Called
 	// synchronously inside SetMode/ForceQuit outside h.mu, so it never deadlocks.
+	// The closure is augmented in place (D-2): a second SetOnModeChange call would
+	// overwrite Phase 3's footer push, so the sidebar branch lives here.
 	keyHandler.SetOnModeChange(func(mode ui.Mode, line string) {
 		ch.SendStateFooter(interactionchannel.StateFooter{
 			Mode:         int(mode),
 			ShortcutLine: line,
 		})
+		if mode == ui.ModeError {
+			_ = sidebar.EnterErrorMode(ctx)
+		}
 	})
 
 	// Prime the footer with ModeNormal before any step runs (D-6 "prime the
@@ -178,8 +194,9 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 		Runner:          nil, // no statusline runner in cmux orchestrator (D-9)
 	}
 
-	result := workflow.Run(runner, header, keyHandler, runCfg)
+	result := workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
 	keyHandler.SetMode(ui.ModeDone)
+	_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)
 
 	keyCancel()
 	wg.Wait()

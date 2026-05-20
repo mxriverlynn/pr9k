@@ -26,7 +26,7 @@ const workspaceDoneAckTimeout = 5 * time.Second
 // orchestrator hooks. cmux v2 has no hidden orchestrator pane: the in-pane
 // pr9k process Serves the interaction channel BEFORE the display panes are
 // created (so they can Dial it), then runs the workflow over that channel.
-func cmuxOrchestratorHooks(ctx context.Context, projectDir string) cmuxctl.Phase1Hooks {
+func cmuxOrchestratorHooks(ctx context.Context, projectDir string, client cmuxctl.CmuxClient) cmuxctl.Phase1Hooks {
 	var ch *interactionchannel.Channel
 	return cmuxctl.Phase1Hooks{
 		BeforePanes: func(socketPath string) error {
@@ -43,13 +43,13 @@ func cmuxOrchestratorHooks(ctx context.Context, projectDir string) cmuxctl.Phase
 			}
 			return nil
 		},
-		Run: func(rctx context.Context, _ cmuxctl.Workspace) error {
+		Run: func(rctx context.Context, ws cmuxctl.Workspace) error {
 			// ch was Served by BeforePanes; runCmuxOrchestratorWith skips its
 			// own Serve when ch != nil and owns ch.Close().
 			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
 				_, _ = fmt.Fprintln(os.Stderr, "[pr9k-cmux-debug] Run: starting orchestrator (AwaitReady up to 10s for header/log/footer)")
 			}
-			return runCmuxOrchestratorWith(rctx, "", projectDir, workspaceDoneAckTimeout, ch)
+			return runCmuxOrchestratorWith(rctx, "", projectDir, workspaceDoneAckTimeout, ch, client, ws)
 		},
 	}
 }
@@ -149,14 +149,14 @@ func newCmuxPaneCmd() *cobra.Command {
 
 // runCmuxOrchestrator is the entry point for the orchestrator pane process.
 func runCmuxOrchestrator(ctx context.Context, socketPath string, projectDir string) error {
-	return runCmuxOrchestratorWith(ctx, socketPath, projectDir, workspaceDoneAckTimeout, nil)
+	return runCmuxOrchestratorWith(ctx, socketPath, projectDir, workspaceDoneAckTimeout, nil, nil, cmuxctl.Workspace{})
 }
 
 // runCmuxOrchestratorWith is the testable core of runCmuxOrchestrator. ch is
 // the interaction channel; when nil, a real Serve channel is created on
 // socketPath. ackTimeout controls how long the orchestrator waits for DoneAcks
 // before proceeding (injectable for tests).
-func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string, ackTimeout time.Duration, ch orchChannel) error {
+func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string, ackTimeout time.Duration, ch orchChannel, client cmuxctl.CmuxClient, ws cmuxctl.Workspace) error {
 	if projectDir == "" {
 		return errors.New("cmux-pane: PR9K_PROJECT_DIR is not set; this command is launched internally by pr9k cmux mode")
 	}
@@ -196,7 +196,11 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 		return fmt.Errorf("cmux-pane: orchestrator: load steps: %w", err)
 	}
 
-	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf)
+	sidebar := newCmuxSidebar(client, ws, log)
+	defer func() { _ = sidebar.ClearAll(context.Background()) }()
+	// D-7: safety-net clear for panic/abort paths; inner ClearAll in runCmuxWorkflowAdapted covers the graceful path.
+
+	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar)
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})

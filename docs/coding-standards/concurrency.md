@@ -702,6 +702,40 @@ Checklist for applying this pattern:
 
 When the value needs to persist across calls from different goroutines, use a mutex instead (see "Protect all shared io.Writer writes" above).
 
+## Two-layer cleanup: explicit graceful path + deferred safety net
+
+When a component performs cleanup at the end of its lifecycle (e.g., clearing a sidebar status, closing a connection), register the cleanup in two layers:
+
+1. **Explicit call on the graceful path** — after the main operation completes normally, call cleanup directly so it runs in the correct context before any downstream teardown.
+2. **Outer `defer` as safety net** — at the construction site (the outer scope that owns the component), register a `defer` that calls the same cleanup function. This ensures cleanup runs even on abort and panic paths that never reach the graceful call.
+
+```go
+// Outer scope: construction + safety-net defer.
+sidebar := newCmuxSidebar(client, ws, log)
+defer func() { _ = sidebar.ClearAll(context.Background()) }()
+// D-7: safety-net clear for panic/abort paths; inner ClearAll in
+// runCmuxWorkflowAdapted covers the graceful path.
+
+exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar)
+```
+
+```go
+// Inner function: explicit graceful-path cleanup before returning.
+result := workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
+keyHandler.SetMode(ui.ModeDone)
+_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)
+```
+
+The two calls are intentional and not redundant: the inner call happens while the function context is still valid (the `ctx` derived from the main context, with its deadline and cancellation). The outer deferred call uses `context.Background()` because at that point the primary context is already cancelled. On the graceful path the cleanup runs twice — which is acceptable when the cleanup is idempotent.
+
+**Checklist for applying this pattern:**
+1. Ensure the cleanup function is idempotent (safe to call twice).
+2. Label the outer `defer` with a comment that names the abort/panic path it covers and the inner call it complements.
+3. Label the inner explicit call with a comment that names the design decision it satisfies.
+4. If the cleanup returns an error, log or capture it rather than silently discarding it on the graceful path.
+
+Apply any time a component writes observable external state (UI display, file locks, database records) that must be cleared on normal exit AND abnormal exit.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -725,3 +759,4 @@ When the value needs to persist across calls from different goroutines, use a mu
 - `src/cmd/pr9k/cmux_pane.go` — `noopFooterKeySource` as the canonical nil-Ready() implementation; `runCmuxFooterMachineWith` as the canonical `<-src.Ready()` goroutine pattern (cmux-p3 review)
 - `src/internal/interactionchannel/fake.go` — `FakeFooterKeySource` as the canonical level-trigger Ready() test double (cmux-p3 review)
 - `src/cmd/pr9k/cmux_footer_wiring.go` — `footerPaneSink.SetMode` as the canonical pass-as-parameter (no shared field) race elimination (cmux-p3 review)
+- `src/cmd/pr9k/cmux_pane.go` line 199–201 — `defer sidebar.ClearAll(context.Background())` as the canonical outer safety-net defer; `cmux_workflow.go` line 199 — explicit graceful-path `sidebar.ClearAll(ctx)` as the inner counterpart (Phase 4 W-6, D-6/D-7)
