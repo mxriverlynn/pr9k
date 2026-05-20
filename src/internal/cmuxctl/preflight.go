@@ -62,7 +62,7 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 		return []error{classifyIdentifyError(err)}
 	}
 	if id.SocketPath == "" {
-		return []error{errors.New("cmuxctl: unexpected cmux identify response (no socket_path); cmux may be an unsupported version — pinned support is cmux v0.64.6")}
+		return []error{errors.New("cmuxctl: unexpected cmux identify response (no socket_path); cmux may be an unsupported version — pinned support is cmux v0.64.7")}
 	}
 
 	return nil

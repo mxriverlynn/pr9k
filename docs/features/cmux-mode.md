@@ -10,7 +10,7 @@ Pass `--cmux` on pr9k's run invocation:
 pr9k --cmux [--project-dir <path>]
 ```
 
-> **Reworked against real cmux v2 (Rework R / Architecture A — decision-log D-R1/D-R2).** Verified at cmux 0.64.6 / commit `2f96c15c2`. cmux v2 has no `surface.spawn`/`surface.hide`; there is **no hidden orchestrator pane**. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md) and [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md). Sections below describing a hidden 4th pane / `surface.spawn` / `name=="cmux"` describe the superseded design.
+> **Reworked against real cmux v2 (Rework R / Architecture A — decision-log D-R1/D-R2).** Verified at cmux 0.64.7 / commit `4d04459dd`. cmux v2 has no `surface.spawn`/`surface.hide`; there is **no hidden orchestrator pane**. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md) and [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md). Sections below describing a hidden 4th pane / `surface.spawn` / `name=="cmux"` describe the superseded design.
 
 The flag is visible and experimental. When set, pr9k runs `cmuxctl.Preflight` then `cmuxctl.RunPhase1`. The pr9k process the operator launched inside a cmux pane **is** the orchestrator; it creates the workspace and its three display surfaces, then runs the workflow, streaming state to the panes over the interaction channel.
 

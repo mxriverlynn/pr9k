@@ -1,7 +1,7 @@
 // Package cmuxctl provides the cmux v2 socket client and the workspace
 // lifecycle pr9k's cmux mode uses.
 //
-// Wire protocol (verified against cmux 0.64.6, commit 2f96c15c2): newline-
+// Wire protocol (verified against cmux 0.64.7, commit 4d04459dd): newline-
 // delimited JSON. Request {"id","method","params"}; success
 // {"id","ok":true,"result":{…}}; error {"id","ok":false,"error":{"code":
 // "<string>","message":"…"}}. Before the first request, a cmux in its default

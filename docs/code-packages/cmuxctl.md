@@ -6,7 +6,7 @@ Source files: `src/internal/cmuxctl/`
 
 ## CmuxClient interface
 
-> **Reworked against real cmux v2 (Rework R / Architecture A).** Verified at cmux 0.64.6, commit `2f96c15c2`. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md), [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md), and decision-log **D-R1/D-R2**. cmux v2 has no `surface.spawn`/`surface.hide`; workspaces/surfaces are opaque UUID+ref handles, not names.
+> **Reworked against real cmux v2 (Rework R / Architecture A).** Verified at cmux 0.64.7, commit `4d04459dd`. See [../plans/cmux-rebuild/access-denied-misclassification-investigation.md](../plans/cmux-rebuild/access-denied-misclassification-investigation.md), [../plans/cmux-rebuild/v2-rework-plan.md](../plans/cmux-rebuild/v2-rework-plan.md), and decision-log **D-R1/D-R2**. cmux v2 has no `surface.spawn`/`surface.hide`; workspaces/surfaces are opaque UUID+ref handles, not names.
 
 ```go
 type CmuxClient interface {
