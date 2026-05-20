@@ -89,6 +89,16 @@ func (h *cmuxHeader) RenderIterationLine(iter, maxIter int, issueID string) {
 	h.ch.SendStateHeader(snap)
 }
 
+// nameAt returns the step name at index idx, or "" if idx is out of bounds.
+func (h *cmuxHeader) nameAt(idx int) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if idx < 0 || idx >= len(h.names) {
+		return ""
+	}
+	return h.names[idx]
+}
+
 func (h *cmuxHeader) RenderFinalizeLine(stepNum, stepCount int, stepName string) {
 	h.mu.Lock()
 	h.iterLine = fmt.Sprintf("Finalizing %d/%d: %s", stepNum, stepCount, stepName)
