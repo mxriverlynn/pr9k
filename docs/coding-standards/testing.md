@@ -950,6 +950,61 @@ require.True(t, strings.Contains(result, dimPrefix), "expected dim styling in re
 
 This decouples the test from the library's internal escape encoding.
 
+## Call the underlying function directly when an adapter hardens parameters
+
+When a production adapter function hardens certain parameters (e.g., always passes `Iterations: 0` to prevent bounded-run exit), integration tests that need those parameters must call the underlying function directly — not through the adapter. Calling the adapter in the test inherits the hardened value and cannot exercise the bounded-run code path.
+
+```go
+// Production adapter: hardens Iterations=0 (unlimited); PushProgress is a no-op.
+func runCmuxWorkflowAdapted(..., sidebar *cmuxSidebar) int {
+    runCfg := workflow.RunConfig{
+        Iterations: 0, // unlimited; breakLoopIfEmpty governs loop exit
+        // ...
+    }
+    return workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
+}
+
+// Bad — calls adapter; Iterations is hardened to 0; bounded progress can't be tested.
+func TestSidebarProgress_BoundedMode(t *testing.T) {
+    runCmuxWorkflowAdapted(ctx, ch, log, ..., sidebar) // Iterations always 0
+}
+
+// Good — calls workflow.Run directly with Iterations=2; tests bounded progress path.
+func TestSidebarCallSequence_FullWorkflow(t *testing.T) {
+    runCfg := workflow.RunConfig{
+        Iterations: 2, // bounded — enables PushProgress assertions
+        // ... other fields ...
+    }
+    workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
+    // assert SetProgressCalls entries: fraction 0.5 then 1.0
+}
+```
+
+When writing an integration test for an adapter, identify which parameters the adapter hardens and decide whether your test needs to vary them. If yes, bypass the adapter and call the underlying function directly with the parameter set you need. Document in the test why it calls the underlying function rather than the adapter.
+
+## Test wire names for every new RPC method
+
+When adding methods to an RPC client interface, add at least one test that exercises the full serialization path for each new method — including the wire name (the string sent over the connection). Unit tests against fake clients do not verify that the method name matches what the server expects; only a round-trip through the framing layer catches "wrong wire name" bugs.
+
+```go
+// Verifies that WorkspaceSetStatus sends the correct wire name "workspace.status.set"
+// and that the response is correctly deserialized. Protects against the "R1" risk:
+// a renamed method constant on the client side that diverges from the server's
+// expected method string.
+func TestRealClient_WorkspaceSetStatus_RoundTrip(t *testing.T) {
+    // Start a local test server that records incoming method names.
+    srv := startTestRPCServer(t)
+    client := NewRealClient(srv.SocketPath())
+    defer client.Stop()
+
+    err := client.WorkspaceSetStatus(context.Background(), ws, "pr9k.step", "running")
+    require.NoError(t, err)
+    require.Equal(t, "workspace.status.set", srv.LastReceivedMethod())
+}
+```
+
+Apply this pattern whenever you add new methods to an RPC client. Even if the method name is a string constant defined in one place, a rename or typo in that constant will be caught only by a test that exercises the serialization path end to end.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and interface-driven testability design principle; assembly-only wiring in main.go (issues #49, #50)
@@ -972,3 +1027,5 @@ This decouples the test from the library's internal escape encoding.
 - [Workflow IO](../code-packages/workflowio.md) — `TestSave_PreservesPhaseBoundaries` as the canonical round-trip phase-boundary test; the missing test allowed all steps to silently collapse into the iteration phase on marshal (workflow-builder branch)
 - [TUI Rendering](tui-rendering.md) — generation counter pattern for stale async banner rejection; `render_helpers_test.go` as the canonical shared strip-helper convention; runtime-derived styling assertions
 - `src/internal/cmuxctl/fake.go` — `FakeClient` with `HangNext`/`HangRelease` as the canonical channel-based hang injection example (issue #219/221)
+- `src/cmd/pr9k/cmux_sidebar_integration_test.go` — `TestSidebarCallSequence_FullWorkflow` as the canonical "call underlying function directly to bypass hardened adapter parameters" example (Phase 4 W-7)
+- `src/internal/cmuxctl/cmuxctl_test.go` — wire-name round-trip tests for the four new Phase 4 RPC methods (`WorkspaceSetStatus`, `WorkspaceClearStatus`, `WorkspaceSetProgress`, `WorkspaceClearProgress`) as the canonical per-method wire-name verification example (Phase 4 W-2)
