@@ -203,7 +203,7 @@ func main() {
 		teardownFn := cancel
 		runCmuxSignalHandler(sigChan, done, &teardownOnce, teardownFn, func() {}, os.Exit)
 
-		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, cmuxOrchestratorHooks(ctx, cfg.ProjectDir), os.Stdout, os.Stderr)
+		ok := runCmuxMode(ctx, cfg, cfg.ProjectDir, profileDir, preflight.RealProber{}, cmuxctl.RealCmuxProber{}, client, cmuxOrchestratorHooks(ctx, cfg.ProjectDir, client), os.Stdout, os.Stderr)
 		signal.Stop(sigChan)
 		close(done)
 		client.Stop()

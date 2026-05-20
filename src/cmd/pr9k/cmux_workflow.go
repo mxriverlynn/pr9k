@@ -121,7 +121,7 @@ func newCmuxKeyHandler(runner *workflow.Runner, actions chan ui.StepAction) *ui.
 // The key-adapter goroutine is drained via sync.WaitGroup after workflow.Run
 // returns. keyCtx (derived from ctx) is cancelled explicitly after workflow.Run
 // so the goroutine exits promptly; the defer is a safety net for early returns.
-func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile) int {
+func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar) int {
 	runner := workflow.NewRunner(log, projectDir)
 
 	// Wire the log adapter synchronously (D-5): every WriteToLog / subprocess

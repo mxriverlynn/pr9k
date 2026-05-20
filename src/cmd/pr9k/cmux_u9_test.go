@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 	"github.com/mxriverlynn/pr9k/src/internal/interactionchannel"
 )
 
@@ -81,7 +82,7 @@ func TestWorkspaceDone_OrchestratorBroadcastsWorkspaceDone(t *testing.T) {
 
 	ctx := context.Background()
 
-	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake); err != nil {
+	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake, &cmuxctl.FakeClient{}, cmuxctl.Workspace{ID: "ws:test"}); err != nil {
 		t.Fatalf("runCmuxOrchestratorWith: %v", err)
 	}
 
@@ -108,7 +109,7 @@ func TestWorkspaceDone_OrchestratorClosesChannelAfterAllAcks(t *testing.T) {
 
 	ctx := context.Background()
 
-	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake); err != nil {
+	if err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake, &cmuxctl.FakeClient{}, cmuxctl.Workspace{ID: "ws:test"}); err != nil {
 		t.Fatalf("runCmuxOrchestratorWith: %v", err)
 	}
 
@@ -131,7 +132,7 @@ func TestWorkspaceDone_OrchestratorClosesChannelAfterTimeout(t *testing.T) {
 	timeout := 100 * time.Millisecond
 
 	start := time.Now()
-	if err := runCmuxOrchestratorWith(ctx, "", projectDir, timeout, fake); err != nil {
+	if err := runCmuxOrchestratorWith(ctx, "", projectDir, timeout, fake, &cmuxctl.FakeClient{}, cmuxctl.Workspace{ID: "ws:test"}); err != nil {
 		t.Fatalf("runCmuxOrchestratorWith: %v", err)
 	}
 	elapsed := time.Since(start)
@@ -199,7 +200,7 @@ func TestWorkspaceDone_OrchestratorUnlinksSocket(t *testing.T) {
 		}()
 	}
 
-	if err := runCmuxOrchestratorWith(ctx, socketPath, projectDir, 5*time.Second, nil); err != nil {
+	if err := runCmuxOrchestratorWith(ctx, socketPath, projectDir, 5*time.Second, nil, nil, cmuxctl.Workspace{}); err != nil {
 		t.Fatalf("runCmuxOrchestratorWith error: %v", err)
 	}
 
@@ -395,7 +396,7 @@ func TestWorkspaceDone_OrchestratorHandshakeErrorPropagates(t *testing.T) {
 
 	projectDir := t.TempDir()
 
-	err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake)
+	err := runCmuxOrchestratorWith(ctx, "", projectDir, 5*time.Second, fake, &cmuxctl.FakeClient{}, cmuxctl.Workspace{ID: "ws:test"})
 	if err == nil {
 		t.Fatal("expected an error from runCmuxOrchestratorWith but got nil")
 	}
