@@ -196,7 +196,11 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 		return fmt.Errorf("cmux-pane: orchestrator: load steps: %w", err)
 	}
 
-	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, nil)
+	sidebar := newCmuxSidebar(client, ws, log)
+	defer func() { _ = sidebar.ClearAll(context.Background()) }()
+	// D-7: safety-net clear for panic/abort paths; inner ClearAll in runCmuxWorkflowAdapted covers the graceful path.
+
+	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar)
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})
