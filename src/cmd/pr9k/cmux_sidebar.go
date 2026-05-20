@@ -48,6 +48,9 @@ func newCmuxSidebar(client cmuxctl.CmuxClient, ws cmuxctl.Workspace, log *logger
 
 // pushStatus calls WorkspaceSetStatus with sidebarStatusKey and the given value.
 func (s *cmuxSidebar) pushStatus(ctx context.Context, value string) error {
+	if s == nil {
+		return nil
+	}
 	return s.client.WorkspaceSetStatus(ctx, s.ws, sidebarStatusKey, value)
 }
 
@@ -55,6 +58,9 @@ func (s *cmuxSidebar) pushStatus(ctx context.Context, value string) error {
 // context.DeadlineExceeded propagates as fatal; any other error is logged and
 // swallowed so sidebar failures never abort the workflow.
 func (s *cmuxSidebar) PushStep(ctx context.Context, name string) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	disabled := s.disabled
 	s.lastStepName = name
@@ -77,6 +83,9 @@ func (s *cmuxSidebar) PushStep(ctx context.Context, name string) error {
 // PushProgress pushes a bounded progress fraction to the cmux workspace.
 // When maxIter <= 0 the call is a no-op (unbounded iteration mode).
 func (s *cmuxSidebar) PushProgress(ctx context.Context, iter, maxIter int) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	disabled := s.disabled
 	s.mu.Unlock()
@@ -105,6 +114,9 @@ func (s *cmuxSidebar) PushProgress(ctx context.Context, iter, maxIter int) error
 // EnterErrorMode appends errorModeSuffix to the last step name and pushes the
 // combined string to the cmux workspace status.
 func (s *cmuxSidebar) EnterErrorMode(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	disabled := s.disabled
 	value := s.lastStepName + errorModeSuffix
@@ -126,6 +138,9 @@ func (s *cmuxSidebar) EnterErrorMode(ctx context.Context) error {
 
 // ClearProgress clears the cmux workspace progress indicator.
 func (s *cmuxSidebar) ClearProgress(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	disabled := s.disabled
 	s.mu.Unlock()
@@ -147,6 +162,9 @@ func (s *cmuxSidebar) ClearProgress(ctx context.Context) error {
 // ClearAll clears the cmux workspace status key and, when progress was
 // previously pushed, clears the progress indicator too.
 func (s *cmuxSidebar) ClearAll(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
 	s.mu.Lock()
 	disabled := s.disabled
 	pushed := s.progressPushed

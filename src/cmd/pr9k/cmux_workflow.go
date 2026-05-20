@@ -142,17 +142,23 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	})
 
 	header := newCmuxHeader(ch)
+	wrappedHeader := &sidebarAwareHeader{inner: header, sidebar: sidebar, ctx: ctx}
 
 	actions := make(chan ui.StepAction, 10)
 	keyHandler := newCmuxKeyHandler(runner, actions)
 
 	// Register the mode-change hook BEFORE workflow.Run (D-6). Called
 	// synchronously inside SetMode/ForceQuit outside h.mu, so it never deadlocks.
+	// The closure is augmented in place (D-2): a second SetOnModeChange call would
+	// overwrite Phase 3's footer push, so the sidebar branch lives here.
 	keyHandler.SetOnModeChange(func(mode ui.Mode, line string) {
 		ch.SendStateFooter(interactionchannel.StateFooter{
 			Mode:         int(mode),
 			ShortcutLine: line,
 		})
+		if mode == ui.ModeError {
+			_ = sidebar.EnterErrorMode(ctx)
+		}
 	})
 
 	// Prime the footer with ModeNormal before any step runs (D-6 "prime the
@@ -188,8 +194,9 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 		Runner:          nil, // no statusline runner in cmux orchestrator (D-9)
 	}
 
-	result := workflow.Run(runner, header, keyHandler, runCfg)
+	result := workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
 	keyHandler.SetMode(ui.ModeDone)
+	_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)
 
 	keyCancel()
 	wg.Wait()
