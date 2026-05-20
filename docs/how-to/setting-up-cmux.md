@@ -120,6 +120,23 @@ Focus the footer pane and choose one of three actions:
 
 Control keys pressed while the header or log pane is focused are absorbed silently — those panes are read-only. If you are focused on a different pane or workspace when a step fails, the orchestrator blocks indefinitely and the footer shows the error prompt; switch to the footer pane when you are ready to respond. (A directing notification that surfaces the error elsewhere ships in Phase 5.)
 
+### Monitoring from another workspace
+
+You can switch to a different cmux workspace while pr9k is running and still track progress. In cmux's workspace list, the pr9k workspace row shows:
+
+- **Status pill** — the current step name (e.g. `feature work`), updated on every step transition. The pill uses the key `pr9k.step`.
+- **Progress bar** — if the run was launched with `-n M` (a bounded iteration count), the bar shows `<completed> / <total>` and updates on each iteration. The bar is not shown for unbounded runs.
+
+When a step fails and pr9k enters error mode, the status pill changes to:
+
+```
+<step name> — awaiting input
+```
+
+(U+2014 em-dash). This signals that the run is paused and waiting for input in the footer pane.
+
+When the workflow finishes cleanly, pr9k clears the status pill and progress bar from the workspace row.
+
 ## Step 5: Dismiss the workspace
 
 When you are done inspecting the workspace, dismiss it using cmux's own controls. Two gestures both work:
