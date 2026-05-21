@@ -213,6 +213,61 @@ if validator.FatalErrorCount(errs) > 0 {
 
 Apply to any validator that collects findings rather than returning on the first error. The pattern prevents a class of "validator blocks everything" regressions when a new warning rule is added.
 
+## Create a typed error struct when callers must classify by structured data
+
+When an error carries data callers need to inspect (method name, duration, code), define a concrete struct type rather than using `fmt.Errorf`. A string error cannot be inspected without fragile string matching; a typed struct enables `errors.As` traversal through any wrapping chain.
+
+```go
+// Good — callers classify with errors.As; Method and Duration are inspectable
+type TimeoutError struct {
+    Method   string
+    Duration time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+    return fmt.Sprintf("cmuxctl: %s timed out after %s", e.Method, e.Duration)
+}
+
+// Caller:
+var te *TimeoutError
+if errors.As(err, &te) {
+    log.Printf("method %s timed out after %s", te.Method, te.Duration)
+}
+
+// Bad — callers must parse the string; breaks on any message change
+return fmt.Errorf("cmuxctl: %s timed out after %s", method, duration)
+```
+
+Apply whenever an error type represents a distinct failure class (not just a message) and callers need to branch on it or extract its fields. Name the type after the condition, not the package — `TimeoutError` not `CmuxTimeoutError`. The `errors.As` standard elsewhere in this file applies to both consuming typed errors and defining them.
+
+## Probe server capability via error-code classification, not success/failure
+
+When a client must verify that a server exposes a specific RPC method, send a deliberately invalid request and inspect the error code. Any error code except "method_not_found" / "unknown_method" proves the method exists — even request-level rejections (invalid workspace, missing fields) confirm the server dispatched to the right handler.
+
+```go
+// isMethodNotFound checks both codes because different server versions use
+// different names for the same condition.
+func isMethodNotFound(err error) bool {
+    var ce *CmuxError
+    if !errors.As(err, &ce) {
+        return false
+    }
+    return ce.Code == "method_not_found" || ce.Code == "unknown_method"
+}
+
+// Capability probe: any error except method_not_found means the method exists.
+if probeErr := client.WorkspaceNotify(ctx, Workspace{}, NotificationCompletion, ""); isMethodNotFound(probeErr) {
+    return []error{errors.New("cmux build does not expose required method; upgrade cmux")}
+}
+// Reaching here: method exists (nil success or a domain error — both acceptable).
+```
+
+Checklist when writing a capability probe:
+1. Use an empty or zero-value request — you want a method-dispatch error, not a valid response.
+2. Check for all known "method absent" codes (different server versions may use different names).
+3. Treat **all other errors as pass** — a domain error (bad argument, wrong workspace) proves the server found the method.
+4. Embed the method's wire name and the upgrade guidance in the failure message so operators know exactly what is missing.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -228,3 +283,5 @@ Apply to any validator that collects findings rather than returning on the first
 - [Docker Sandbox](../features/docker-sandbox.md) — `errors.As` for `*exec.ExitError` in bash-subprocess test helpers (issues #127, #128)
 - [Config Validation](../code-packages/validator.md) — `IsFatal` / `FatalErrorCount` / `Severity` model as the canonical non-fatal severity tier implementation (issue #122)
 - [Workflow IO](../code-packages/workflowio.md) — `pathContainedIn` as the canonical EvalSymlinks-on-both-sides containment check; `DetectExternalWorkflow` as the canonical prefix-check with symlink resolution on both sides
+- `src/internal/cmuxctl/errors.go` — `TimeoutError` as the canonical typed-error-struct example; replaces a string `fmt.Errorf` to enable `errors.As` classification (Phase 5 W-1, issue #264)
+- `src/internal/cmuxctl/preflight.go` — `isMethodNotFound` + preflight notify probe as the canonical inverse-capability-probe example: any error except method_not_found proves the method exists (Phase 5 W-2, issue #266)

@@ -702,6 +702,84 @@ Checklist for applying this pattern:
 
 When the value needs to persist across calls from different goroutines, use a mutex instead (see "Protect all shared io.Writer writes" above).
 
+## Capture goroutine-private values into locals before spawning
+
+When a goroutine needs a value from a mutex-protected struct field — and that field can be replaced under the mutex after the goroutine starts — capture the current value into a local variable **inside the lock, before spawning the goroutine**. The goroutine then holds the local, not a reference into the struct field, so a subsequent mutation of the field under the mutex cannot race with the goroutine.
+
+```go
+// Good — resolved and snapshot are captured under the lock before spawn.
+// ExitErrorMode can set n.resolved = nil under the mutex without racing
+// the goroutine, because the goroutine holds its own local copy.
+n.mu.Lock()
+n.resolved = make(chan struct{})
+resolved := n.resolved  // local capture — goroutine holds this, not n.resolved
+snapshot := stepName    // same for string fields
+n.mu.Unlock()
+
+go func() {
+    n.firePersistent(ctx, tickC, stopTicker, resolved, snapshot)
+}()
+
+// Bad — goroutine captures n.resolved through the pointer receiver.
+// If ExitErrorMode sets n.resolved = nil while the goroutine is running,
+// a data race results.
+go func() {
+    for range tickC {
+        select {
+        case <-n.resolved: // races with n.resolved = nil in ExitErrorMode
+            return
+        default:
+        }
+        n.client.WorkspaceNotify(ctx, n.ws, class, body)
+    }
+}()
+```
+
+**Checklist:**
+1. Identify every struct field the goroutine reads that can be written by any other goroutine under a mutex.
+2. For each such field, capture its value into a local inside the lock, before the goroutine is spawned.
+3. Pass the local as a parameter to the goroutine's inner function — do not let the goroutine close over the struct field.
+4. Run `go test -race` to confirm the race is eliminated.
+
+This is a specific application of "snapshot-then-unlock": rather than snapshotting for use on the current goroutine, you snapshot to hand off to a new goroutine before releasing the lock.
+
+## Handle post-resolution errors as non-fatal
+
+When a goroutine fires a long-latency call (e.g., an RPC) and the session is resolved (cancelled, answered, closed) while the call is in flight, the call may return an error after it is no longer meaningful. Check for session resolution with a non-blocking channel select immediately after the call returns and treat the error as non-fatal if the session has already ended.
+
+```go
+// firePersistent re-fires notifications until the session is resolved.
+func (n *cmuxNotifier) firePersistent(ctx context.Context, tickC <-chan time.Time, stopTicker func(), resolved chan struct{}, snapshot string) {
+    defer stopTicker()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-tickC:
+            err := n.client.WorkspaceNotify(ctx, n.ws, class, body)
+
+            // Session may have been resolved while the call was in flight.
+            // Post-resolution errors are non-fatal regardless of type.
+            select {
+            case <-resolved:
+                if err != nil {
+                    _ = n.log.Log("cmuxNotifier", fmt.Sprintf("post-resolution (non-fatal): %v", err))
+                }
+                return
+            default:
+            }
+
+            // Normal error handling for in-session errors.
+            if err != nil {
+                _ = n.log.Log("cmuxNotifier", err.Error())
+            }
+        }
+    }
+}
+```
+
+Apply this pattern whenever a goroutine issues external calls inside a session (error-mode timer, retry loop, polling cadence) that can be cancelled by the user while a call is already dispatched. The two-step check — call, then check resolution, then handle error — prevents a "phantom error" from a stale call from escalating a completed session into an error state.
+
 ## Two-layer cleanup: explicit graceful path + deferred safety net
 
 When a component performs cleanup at the end of its lifecycle (e.g., clearing a sidebar status, closing a connection), register the cleanup in two layers:
@@ -760,3 +838,5 @@ Apply any time a component writes observable external state (UI display, file lo
 - `src/internal/interactionchannel/fake.go` — `FakeFooterKeySource` as the canonical level-trigger Ready() test double (cmux-p3 review)
 - `src/cmd/pr9k/cmux_footer_wiring.go` — `footerPaneSink.SetMode` as the canonical pass-as-parameter (no shared field) race elimination (cmux-p3 review)
 - `src/cmd/pr9k/cmux_pane.go` line 199–201 — `defer sidebar.ClearAll(context.Background())` as the canonical outer safety-net defer; `cmux_workflow.go` line 199 — explicit graceful-path `sidebar.ClearAll(ctx)` as the inner counterpart (Phase 4 W-6, D-6/D-7)
+- `src/cmd/pr9k/cmux_notifier.go` — `EnterErrorMode` and `RestartErrorModeTimer` as the canonical local-capture-before-spawn examples: `resolved := n.resolved` and `snapshot := stepName` captured inside the lock, passed as parameters to `firePersistent` (Phase 5 W-4, issue #267)
+- `src/cmd/pr9k/cmux_notifier.go` — `firePersistent` post-`<-resolved` non-fatal check as the canonical post-resolution error handling example (Phase 5 W-4, issue #267)
