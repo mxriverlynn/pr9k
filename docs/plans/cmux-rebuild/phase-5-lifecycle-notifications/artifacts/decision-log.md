@@ -23,7 +23,7 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
 
 - **Question:** what does each notification say, and which vocabulary names the pane the operator should focus during error-mode?
 - **Decision:** all three classes include the target repository's sanitized basename in their text. The implementation plan pins the exact strings; the spec-level commitments are:
-  1. The text includes the repo basename (the same `SanitizeBasename`-processed string used in the pr9k workspace title per [parent D29](../../artifacts/decision-log.md#d29-workspace-name-pattern); when the sanitizer falls back to its placeholder ("repo") for an all-special-character directory name, the placeholder is what appears).
+  1. The text includes the repo basename (the same sanitized string the workspace-name pattern uses per [parent D29](../../artifacts/decision-log.md#d29-workspace-name-pattern); when the sanitizer falls back to its placeholder ("repo") for an all-special-character directory name, the placeholder is what appears).
   2. The text includes a lifecycle verb identifying the moment.
   3. The error-mode text additionally includes the directive "Focus the footer pane to respond" verbatim.
 - **Wording supersedes parent D19's "control pane" phrasing.** [Parent D19](../../artifacts/decision-log.md#d19-error-mode-notifications-direct-the-operator-to-the-control-pane) committed to the directive "Focus the pr9k control pane to respond". The shipped operator-facing how-to (`docs/how-to/setting-up-cmux.md`) and every other user-visible surface refer to the three panes as **header / log / footer**; "control pane" is internal architectural shorthand that does not appear in the how-to or in pane labels. Phase 5 supersedes the exact phrasing of parent D19 (still satisfying its behavioral intent: "the directive names the pane to focus") to maintain vocabulary consistency for the operator.
@@ -43,7 +43,7 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
   - **Full workspace title as prefix** — rejected; the workspace title also includes a high-resolution timestamp ([parent D29](../../artifacts/decision-log.md#d29-workspace-name-pattern)) which is operator-visible in the workspace list and would make notification text long and noisy.
   - **Keep parent D19's "control pane" wording verbatim** — rejected; introduces vocabulary that does not appear anywhere else in the operator-facing product. The directive's *intent* (name the pane to focus) is preserved; only the phrasing is updated to match shipped naming.
 - **Linked technical notes:** —
-- **Driven by findings:** F1 (UX), F11 (junior-developer — spec content clarity), F15 (edge-case — sanitizer fallback)
+- **Driven by findings:** F1 (UX), F11 (junior-developer — spec content clarity), F20 (edge-case — sanitizer fallback)
 - **Dependent decisions:** —
 - **Referenced in spec:** Outcome, Primary Flow, Edge Cases and Failure Modes, User Interactions
 
@@ -90,14 +90,14 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
 - **Rationale:** the operator just told pr9k they are paying attention; any further notification call would be noise. The build-outline demo committed to "stops re-firing" the moment the quit shortcut is pressed; pinning the stop to the *first* keystroke rather than the confirmation keystroke preserves the demoable behavior even when the confirmation takes some time. Restarting the timer on a cancelled quit avoids stranding the operator who started to quit, changed their mind, and now has no re-fire because the timer was already stopped.
 - **Evidence:**
   - Build outline Phase 5 demo step 5: "presses the quit shortcut. The error-mode notification stops re-firing, the run aborts, and a 'run aborted' notification appears once." Confirms the synchronous-from-the-operator's-perspective semantics.
-  - Junior-developer finding F1 surfaced the two-step quit ambiguity; resolved here in favor of first-keystroke.
-  - Junior-developer finding F6 (mechanics leaking) requested behavioral rather than mechanical wording; the spec sentence now expresses the operator-observable commitment ("at most one additional notification") rather than the implementation mechanic ("inflight call allowed to complete").
+  - The junior-developer raised the two-step quit ambiguity (which keystroke stops the timer: `q` or `y`); resolved here in favor of first-keystroke.
+  - [F12](team-findings.md#f12-in-flight-call-allowed-to-complete-was-an-implementation-mechanic-in-the-spec) (junior-developer, mechanics leaking into spec) requested behavioral rather than mechanical wording; the spec sentence now expresses the operator-observable commitment ("at most one additional notification") rather than the implementation mechanic ("inflight call allowed to complete").
 - **Rejected alternatives:**
   - **Stop the timer on the confirmation keystroke (`y`)** — rejected; a re-fire could land while the quit-confirm dialog is on screen, producing a confusing notification arriving after the operator already pressed `q`.
   - **Abort any in-flight notification RPC at the stop moment** — rejected; risks half-applied state on cmux's side for no operator-visible benefit.
   - **Leave the timer stopped after a cancelled quit confirmation** — rejected; would strand the operator who began quitting and reconsidered. The timer restart is the simpler-correct behavior.
 - **Linked technical notes:** —
-- **Driven by findings:** F1, F6, F12 (junior-developer); F7 (UX); EC2 (edge-case-explorer — stop-signal contract)
+- **Driven by findings:** F12 (junior-developer — mechanics leaking into spec); F16 (junior-developer — open-items honesty); informal two-step-quit finding from junior-developer review (not assigned an F# — the ambiguity about first-keystroke vs. confirmation-keystroke was raised in review and resolved here)
 - **Dependent decisions:** D6, D12, D16
 - **Referenced in spec:** Outcome, Primary Flow, Alternate Flows and States, Edge Cases and Failure Modes
 
@@ -113,7 +113,7 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
   - **Skip the run-aborted notification when the abort came from an error-mode quit** (the operator just chose this themselves, so they "know") — rejected; the run-aborted notification is the canonical signal that the orchestrator is gone, and operators benefit from consistent at-completion alerts. Skipping it adds branching to the spec for no operator value.
   - **Allow one final error-mode notification after the answer for symmetry** — rejected per [D5](#d5-resolution-of-the-error-prompt-stops-re-fire-immediately).
 - **Linked technical notes:** —
-- **Driven by findings:** F7 (UX), F9 (UX — inflight race documentation completeness)
+- **Driven by findings:** F7 (UX), F19 (UX — inflight race documentation completeness)
 - **Dependent decisions:** D11
 - **Referenced in spec:** Outcome, Primary Flow, Alternate Flows and States
 
@@ -132,7 +132,7 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
   - **Retry failed notification calls in-place** — rejected as YAGNI; the error-mode notification's existing 60-second cadence is already a built-in retry, and no operator has reported missing completion/abort notifications.
   - **Add a threshold of N consecutive non-timeout re-fire failures after which abort fires** — rejected because the sidebar pill is the explicit backstop ([D17](#d17-sustained-non-timeout-notification-failures-are-acceptable-the-sidebar-pill-is-the-backstop)); adding a threshold introduces operator-visible failure of an interrupt surface for no behavior the sidebar does not already provide.
 - **Linked technical notes:** —
-- **Driven by findings:** F4 (junior-developer — every re-fire fails), F7 (junior-developer — abort-path symmetry), EC6 (edge-case-explorer — sustained non-timeout failures), EC8 (edge-case-explorer — completion-call-timeout)
+- **Driven by findings:** F4 (junior-developer — every re-fire fails), F14 (junior-developer — abort-path timeout exception), EC6 (edge-case-explorer — sustained non-timeout failures), EC8 (edge-case-explorer — completion-call-timeout)
 - **Dependent decisions:** D10, D16, D17
 - **Referenced in spec:** Outcome, Primary Flow, Alternate Flows and States, Edge Cases and Failure Modes, User Interactions, Coordinations
 
@@ -180,14 +180,14 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
   - **Recurse on abort-notification timeout** — obvious infinite-loop hazard.
   - **Skip the run-aborted notification when cmux is unhealthy** — rejected; the operator still benefits from the notification even if it sometimes fails, and the failure is logged.
 - **Linked technical notes:** —
-- **Driven by findings:** F7 (junior-developer)
+- **Driven by findings:** F14 (junior-developer — abort-path notification timeout exception was load-bearing but buried in D7 rationale)
 - **Dependent decisions:** —
 - **Referenced in spec:** Outcome, Primary Flow, Alternate Flows and States, Edge Cases and Failure Modes, User Interactions, Coordinations
 
 ### D11: Run-aborted and completion notifications fire before workspace.close, while the workspace handle is still valid
 
 - **Question:** the orchestrator's shutdown sequence includes both firing the terminal notification and closing the workspace (`workspace.close`, which reclaims the handle). In which order?
-- **Decision:** the terminal notification (completion or run-aborted) fires **before** the `workspace.close` call. The workspace handle is still valid at the moment the notification call is issued; cmux can route the notification to the still-active workspace.
+- **Decision:** the terminal notification (completion or run-aborted) fires **before** the workspace-close call. The workspace handle is still valid at the moment the notification call is issued; cmux can route the notification to the still-active workspace.
 - **Rationale:** the edge-case-explorer finding EC1 surfaced that the current `runTeardown` (`src/internal/cmuxctl/runphase1.go:205–228`) calls `WorkspaceClose` near the end of shutdown. If the notification fires after `WorkspaceClose`, the workspace handle is reclaimed and the call returns a non-timeout error — per [D7](#d7-non-timeout-notification-errors-are-logged-and-the-run-continues-timeouts-remain-fatal-per-parent-d15) the error is logged and the run continues to exit, but the operator never receives the notification. The simple ordering rule — fire the notification while the workspace is still alive — eliminates that failure mode without introducing new mechanisms.
 - **Evidence:**
   - Edge-case-explorer finding EC1, with the file/line citation to `runTeardown`.
@@ -240,6 +240,6 @@ Decisions specific to [Phase 5 — Lifecycle Notifications](../feature-specifica
 
 - **D14:** Notifications and sidebar updates are independent side-by-side effects of the same orchestrator lifecycle event — the orchestrator emits both for error-mode entry / exit, and neither blocks or coalesces with the other. — Referenced in spec: Outcome, Coordinations.
 - **D15:** Failure modes that bypass orchestrator shutdown (display loss, channel stall, forced kill, host shutdown) are Phase 6 scope — Phase 5 exposes the run-aborted notification through the orchestrator surface Phase 6 will call. — Referenced in spec: Outcome, Edge Cases and Failure Modes, Coordinations.
-- **D16:** A notification call that was already in flight at the moment the operator answered an error-mode prompt is treated as non-fatal regardless of outcome (success, non-timeout error, or timeout) — the error-mode state is already resolved by the operator's answer, so any subsequent abort would be spurious. Derived from [D5](#d5-resolution-of-the-error-prompt-stops-re-fire-immediately) and the operator-observable commitment "no further notifications after answering, except at most one trailing in-flight instance". — Referenced in spec: Primary Flow, Edge Cases and Failure Modes, Coordinations.
-- **D17:** Sustained non-timeout notification failures are acceptable; the Phase 4 sidebar pill is the backstop — when every notification call fails non-fatally, the workflow remains paused at the error prompt, the per-run log file records each failure, and the operator's persistent signal is the sidebar's "— awaiting input" marker ([Phase 4 D13](../../phase-4-sidebar-mirroring/artifacts/decision-log.md#d13-error-mode-suffixes-a-stable-marker-onto-the-status-entry-value)). No threshold or escalation; the sidebar pill was designed as this backstop. — Referenced in spec: Outcome, Alternate Flows and States, User Interactions.
-- **D18:** Step names are non-empty and control-character-free; this is a workflow-config validator invariant. Phase 5 does not define a fallback for empty step names. — Referenced in spec: Actors and Triggers.
+- **D16:** A notification call that was already in flight at the moment the operator answered an error-mode prompt is treated as non-fatal regardless of outcome (success, non-timeout error, or timeout) — the error-mode state is already resolved by the operator's answer, so any subsequent abort would be spurious. Derived from [D5](#d5-resolution-of-the-error-prompt-stops-re-fire-immediately) and the operator-observable commitment "no further notifications after answering, except at most one trailing in-flight instance". Resolves [F13](team-findings.md#f13-in-flight-call-timeout-after-answer-fatal-vs-non-fatal-was-unresolved). — Referenced in spec: Primary Flow, Edge Cases and Failure Modes, Coordinations.
+- **D17:** Sustained non-timeout notification failures are acceptable; the Phase 4 sidebar pill is the backstop — when every notification call fails non-fatally, the workflow remains paused at the error prompt, the per-run log file records each failure, and the operator's persistent signal is the sidebar's "— awaiting input" marker ([Phase 4 D13](../../phase-4-sidebar-mirroring/artifacts/decision-log.md#d13-error-mode-suffixes-a-stable-marker-onto-the-status-entry-value)). No threshold or escalation; the sidebar pill was designed as this backstop. Resolves [F4](team-findings.md#f4-sustained-non-timeout-re-fire-failures-were-an-undocumented-infinite-loop), [EC6](team-findings.md#f4-sustained-non-timeout-re-fire-failures-were-an-undocumented-infinite-loop). — Referenced in spec: Outcome, Alternate Flows and States, User Interactions.
+- **D18:** Step names are non-empty and control-character-free; this is a workflow-config validator invariant. Phase 5 does not define a fallback for empty step names. Resolves [F21](team-findings.md#f21-emptywhitespace-step-name-invariant-noted-in-preconditions). — Referenced in spec: Actors and Triggers.
