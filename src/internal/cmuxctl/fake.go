@@ -5,6 +5,13 @@ import (
 	"sync"
 )
 
+// NotifyCall records a single WorkspaceNotify call.
+type NotifyCall struct {
+	Workspace Workspace
+	Class     NotificationClass
+	Body      string
+}
+
 // SetStatusCall records a single WorkspaceSetStatus call.
 type SetStatusCall struct {
 	Workspace Workspace
@@ -46,6 +53,7 @@ type FakeClient struct {
 	WorkspaceClearStatusFunc   func(ctx context.Context, ws Workspace, key string) error
 	WorkspaceSetProgressFunc   func(ctx context.Context, ws Workspace, fraction float64, label string) error
 	WorkspaceClearProgressFunc func(ctx context.Context, ws Workspace) error
+	WorkspaceNotifyFunc        func(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 
 	// Recorders — appended under mu; read after all goroutines have joined.
 	CreateCalls        []WorkspaceCreateOpts
@@ -56,6 +64,7 @@ type FakeClient struct {
 	ClearStatusCalls   []ClearStatusCall
 	SetProgressCalls   []SetProgressCall
 	ClearProgressCalls []Workspace
+	NotifyCalls        []NotifyCall
 
 	HangNext    chan struct{}
 	HangRelease chan struct{}
@@ -253,6 +262,20 @@ func (f *FakeClient) WorkspaceClearProgress(ctx context.Context, ws Workspace) e
 	f.mu.Unlock()
 	if fn != nil {
 		return fn(ctx, ws)
+	}
+	return nil
+}
+
+func (f *FakeClient) WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error {
+	if err := f.maybehang(ctx); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.NotifyCalls = append(f.NotifyCalls, NotifyCall{Workspace: ws, Class: class, Body: body})
+	fn := f.WorkspaceNotifyFunc
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, ws, class, body)
 	}
 	return nil
 }

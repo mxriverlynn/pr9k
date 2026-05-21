@@ -446,6 +446,19 @@ func (c *RealClient) WorkspaceClearProgress(ctx context.Context, ws Workspace) e
 	return err
 }
 
+// notifyParam is the wire shape for notification.create_for_target (primary)
+// and notification.create_for_caller (fallback). Verified against cmux
+// 2f96c15c2 at the OI-1 pre-commit gate.
+type notifyParam struct {
+	workspaceParam
+	Body string `json:"body"`
+}
+
+func (c *RealClient) WorkspaceNotify(ctx context.Context, ws Workspace, _ NotificationClass, body string) error {
+	_, err := c.do(ctx, "notification.create_for_target", notifyParam{workspaceParam: wsParam(ws), Body: body})
+	return err
+}
+
 func (c *RealClient) SurfaceList(ctx context.Context, ws Workspace) ([]SurfaceInfo, error) {
 	raw, err := c.do(ctx, "surface.list", wsParam(ws))
 	if err != nil {
