@@ -151,11 +151,42 @@ These are the questions deterministic aggregation cannot settle without evidence
 
 ### Decisions produced (backfilled in Step 8)
 
-—
+- **PD-1** — `cmuxNotifier` is a new struct parallel to `cmuxSidebar`. Driven by `software-architect` A1 + `junior-developer` JD-006 + spec D14 (independent side-by-side effects).
+- **PD-2** — One new `WorkspaceNotify` method covers all three notification classes. Driven by `software-architect` A2; Phase 4 D-3 single-implementation-interface precedent.
+- **PD-3** — `Preflight` is extended with one probe call to `WorkspaceNotify` and `isMethodNotFound` checks both `"method_not_found"` and `"unknown_method"`. Driven by `software-architect` A3 + `behavioral-analyst` B5 (two-specialist convergence).
+- **PD-4** — Typed `*cmuxctl.TimeoutError` replaces the `fmt.Errorf` timeout string and corrects the pre-existing latent defect in `cmuxSidebar`'s `errors.Is(err, context.DeadlineExceeded)` check. Driven by `software-architect` A4 + `concurrency-analyst` C4 + `behavioral-analyst` B3 + `junior-developer` JD-003 (four-specialist convergence — strongest evidence signal in R1).
+- **PD-5** — The re-fire timer lives on `cmuxNotifier`; context cancellation stops it; `defer notifier.ExitErrorMode()` at the construction site is the safety net. Driven by `software-architect` A5 + `concurrency-analyst` C1, C3, C7, C8.
+- **PD-6** — Three-step ordering (footer broadcast → sidebar mutation → notifier mutation) enforced by sequential statements in the `OnModeChange` callback. Driven by `behavioral-analyst` B4 + `software-architect` A6 + `concurrency-analyst` C2.
+- **PD-8** (trivial) — `ExitReason → FireX` mapping table is explicit at the `runCmuxWorkflowAdapted` return site. Driven by `behavioral-analyst` B1.
+- **PD-9** — Terminal notifications fire inside `runCmuxWorkflowAdapted` between `workflow.Run` returning and `sidebar.ClearAll(ctx)`. Driven by `behavioral-analyst` B2 + `software-architect` A6.
+- **PD-10** — The re-fire timer is stopped BEFORE the abort path issues `FireRunAborted`. Driven by `behavioral-analyst` B6.
+- **PD-11** (trivial) — `runCmuxOrchestratorWith` continues to return `nil` on fatal cmux timeout; exit code propagates via `WorkspaceDone{ExitCode}`. Driven by `behavioral-analyst` B10 (negative result).
+- **PD-12** — In-flight call after resolution is treated as non-fatal via a `resolved chan struct{}` closed on resolution. Driven by `behavioral-analyst` B8.
+- **PD-13** — `cmuxSidebar` gains a `LastStepName()` accessor (snapshot-then-unlock under the existing mutex). Driven by `software-architect` A6 + `behavioral-analyst` B9.
+- **PD-14** (trivial) — Documentation work-unit extends `docs/features/cmux-mode.md`, `docs/how-to/setting-up-cmux.md`, `docs/code-packages/cmuxctl.md`. Driven by `junior-developer` JD-007 (standards-required).
+- **PD-15** (trivial) — `FireRunAborted` is a concrete method on `*cmuxNotifier`; no new `NotifierPort` interface. Driven by `software-architect` A7 (YAGNI single-implementation-interface).
+- **PD-16** (trivial) — D10's "abort-path call" reads narrowly as only `FireRunAborted` itself; all other cmux calls keep their normal D7 / D17 routing. Driven by `behavioral-analyst` B7 + `software-architect` A7 commentary.
+- **Disputed claim resolved (no decision number — settled by evidence in-round)** — `concurrency-analyst` C6 (the cmux-mode D5 "first keystroke" semantic is not implementable as written) was correct against `behavioral-analyst` B11; resolved by code reading at `src/cmd/pr9k/cmux_footer_machine.go:94-113`. Escalated to OQ-1 (resolved in R2).
 
 ### Changed in plan (backfilled in Step 8)
 
-—
+- Outcome
+- Context (Driving constraint; Stakeholders; Future-state concern; Out-of-scope boundary)
+- Team Composition and Participation
+- Implementation Approach — Architecture and Integration Points
+- Implementation Approach — Data Model and Persistence
+- Implementation Approach — Runtime Behavior (Launch sequence; Per-event notification firing; Error paths)
+- Implementation Approach — External Interfaces
+- Decomposition and Sequencing (W1, W2, W4, W5)
+- RAID Log — Risks (R1, R3, R4, R5)
+- RAID Log — Assumptions (A1, A3, A5)
+- RAID Log — Dependencies (Dep1, Dep5)
+- Testing Strategy
+- Security Posture
+- Operational Readiness
+- Definition of Done
+- Specialist Handoffs for Implementation
+- Deferred (YAGNI) — five entries (NotifierPort interface; notification.dismiss/list methods; per-surface targeting; hook-list refactor; per-method capability enumeration)
 
 ---
 
@@ -209,8 +240,25 @@ The exact `*CmuxError` code cmux v2 returns for missing methods is not cited in 
 
 ### Decisions produced (backfilled in Step 8)
 
-—
+- **PD-3** (changed in R2) — the `isMethodNotFound` helper checks both `"method_not_found"` and `"unknown_method"` (R2 OQ-3 resolution added the two-candidate strategy; R1 had specified the mechanic, R2 confirmed the dual-code defense).
+- **PD-7** — Two new `IntentType` values (`IntentErrorQuitInitiated`, `IntentErrorQuitCancelled`) make spec D5 implementable in cmux mode. Driven by R2 OQ-1 user resolution (Option 2: extend `interactionchannel` rather than narrow spec D5); informed by R1's disputed-claim resolution that established the gap. PD-7 is the largest single Phase 5 change to existing code and the only PD-N driven primarily by R2.
+- **Open Items recorded** — three pre-commit / verification gates surfaced by R2 evidence resolutions:
+  - OI-1 — verify the `notification.*` wire method and param shape against cmux source at `2f96c15c2` (R2 OQ-2 → pre-commit gate per parent D-R2 precedent).
+  - OI-2 — verify the `*CmuxError.Code` string for missing methods at the manual cmux integration gate (R2 OQ-3 → defensive runtime detection per parent D-R4 precedent).
+  - OI-3 — version-bump magnitude (PATCH by strict standard vs. MINOR by Phase 2/3/4 precedent) — surfaced as RAID assumption A4 and Open Item, not a new full decision.
 
 ### Changed in plan (backfilled in Step 8)
 
-—
+- Outcome (`IntentErrorQuitInitiated` / `IntentErrorQuitCancelled` added; PD-7 callout)
+- Context (Out-of-scope boundary — confirmed boundaries against OQ-2 / OQ-3 resolutions)
+- Implementation Approach — Architecture and Integration Points (new subsection: `Modification: src/internal/interactionchannel/`; new subsection: `Modification: src/cmd/pr9k/cmux_footer_machine.go`; updated subsection: `Modification: src/cmd/pr9k/cmux_workflow.go` with four new `keyAdapterLoop` branches)
+- Implementation Approach — External Interfaces (new "Internal IPC contract change" subsection naming the two new intent types)
+- Implementation Approach — Runtime Behavior (updated "operator presses `q` in error mode" and "operator cancels with `n`/`esc`" flows)
+- Decomposition and Sequencing (W3 — `IntentType` extension; W4 — four new `keyAdapterLoop` branches)
+- RAID Log — Risks (R1 — pre-commit gate; R2 — `*CmuxError` code uncertainty; R6 — `IntentType` test-double cascade)
+- RAID Log — Assumptions (A1 — cmux wire method; A2 — `*CmuxError` code)
+- RAID Log — Issues (I1 — first-keystroke gap closed by PD-7; I2 — pre-commit gates)
+- RAID Log — Dependencies (Dep4 — cmux v0.64.7 at `2f96c15c2`; Dep6 — manual cmux integration gate per parent D-R4)
+- Testing Strategy (W3 unit tests for the new intent emit sites; W4 integration test scenario 3 exercising `IntentErrorQuitInitiated` / `IntentErrorQuitCancelled`)
+- Definition of Done (pre-commit verification gates closed before merge)
+- Open Items (OI-1, OI-2, OI-3 — all three originating from R2 resolutions)
