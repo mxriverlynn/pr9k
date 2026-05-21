@@ -63,6 +63,8 @@ Typed string constant for `Intent.Kind`:
 | `IntentQuit` | `"quit"` |
 | `IntentSkip` | `"skip"` |
 | `IntentNext` | `"next"` |
+| `IntentErrorQuitInitiated` | `"error_quit_initiated"` — emitted when `q` is pressed in error mode (before quit-confirm). Stops the Phase 5 error-mode notification re-fire cadence. |
+| `IntentErrorQuitCancelled` | `"error_quit_cancelled"` — emitted when `n` or `esc` cancels the quit-confirm when prior mode was error mode. Restarts the Phase 5 error-mode notification cadence from 0. |
 
 ## Exported functions
 

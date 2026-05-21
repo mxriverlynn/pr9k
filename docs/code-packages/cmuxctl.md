@@ -22,6 +22,7 @@ type CmuxClient interface {
     WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
     WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
     WorkspaceClearProgress(ctx context.Context, ws Workspace) error
+    WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 }
 ```
 
@@ -131,6 +132,7 @@ type FakeClient struct {
     WorkspaceClearStatusFunc   func(ctx context.Context, ws Workspace, key string) error
     WorkspaceSetProgressFunc   func(ctx context.Context, ws Workspace, fraction float64, label string) error
     WorkspaceClearProgressFunc func(ctx context.Context, ws Workspace) error
+    WorkspaceNotifyFunc        func(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 
     // Call recorders — appended under mu; read after all goroutines have joined.
     CreateCalls        []WorkspaceCreateOpts
@@ -141,11 +143,19 @@ type FakeClient struct {
     ClearStatusCalls   []ClearStatusCall   // records of WorkspaceClearStatus calls
     SetProgressCalls   []SetProgressCall   // records of WorkspaceSetProgress calls
     ClearProgressCalls []Workspace         // workspace handles from WorkspaceClearProgress calls
+    NotifyCalls        []NotifyCall        // records of WorkspaceNotify calls
 
     // Hang inject seams — both channels must be initialised by the caller.
     HangNext    chan struct{} // send to block the next call
     HangRelease chan struct{} // send to release a blocked call
 }
+
+// Record type for the notify RPC call recorder:
+type NotifyCall struct { Workspace Workspace; Class NotificationClass; Body string }
+
+// NotifyCallsSnapshot returns a race-safe copy of the NotifyCalls recorder slice.
+// Use this instead of reading NotifyCalls directly from test goroutines.
+func (f *FakeClient) NotifyCallsSnapshot() []NotifyCall
 
 // Record types for the sidebar RPC call recorders:
 type SetStatusCall  struct { Workspace Workspace; Key, Value string }
