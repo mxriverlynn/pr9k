@@ -182,10 +182,12 @@ func TestFooterMachineWith_QY_ForwardsIntentQuit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// T-4: q→esc produces no intent and restores the error-mode shortcut render
+// T-4: q→esc produces no IntentQuit and restores the error-mode shortcut render.
+// IntentErrorQuitInitiated (on q) and IntentErrorQuitCancelled (on esc) are
+// expected (W3); no quit is committed until 'y' is pressed.
 // ---------------------------------------------------------------------------
 
-func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
+func TestFooterMachineWith_QEsc_ProducesNoIntentQuit(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	fch := interactionchannel.NewFakeInteractionChannel()
 	var out syncBuffer
@@ -212,8 +214,13 @@ func TestFooterMachineWith_QEsc_ProducesNoIntent(t *testing.T) {
 	// Give the machine time to process both keys.
 	time.Sleep(100 * time.Millisecond)
 
-	if _, ok := drainIntentFromSent(fch); ok {
-		t.Error("expected no intent after q+esc, but one was forwarded")
+	// No IntentQuit must be forwarded — quit requires 'y' confirmation.
+	for _, msg := range fch.SentMessages() {
+		if intent, ok := msg.(interactionchannel.Intent); ok {
+			if intent.Kind == interactionchannel.IntentQuit {
+				t.Error("expected no IntentQuit after q+esc (quit requires y confirmation), but one was forwarded")
+			}
+		}
 	}
 
 	// B: cancel must restore the error-mode shortcut render.
@@ -255,16 +262,21 @@ func TestFooterMachineWith_QXEsc_NonConfirmKeyIgnoredNotBuffered(t *testing.T) {
 		t.Fatal("error-mode render did not appear before key presses")
 	}
 
-	src.Press("q")   // enter ModeQuitConfirm
+	src.Press("q")   // enter ModeQuitConfirm; emits IntentErrorQuitInitiated
 	src.Press("x")   // non-confirmation key — must be dropped, not buffered
-	src.Press("esc") // cancel quit, return to ModeError
+	src.Press("esc") // cancel quit, return to ModeError; emits IntentErrorQuitCancelled
 
 	// Give the machine time to process all keys.
 	time.Sleep(100 * time.Millisecond)
 
-	// No intent must have been forwarded.
-	if _, ok := drainIntentFromSent(fch); ok {
-		t.Error("expected no intent after q+x+esc, but one was forwarded")
+	// No IntentQuit must have been forwarded — quit requires 'y' confirmation.
+	// IntentErrorQuitInitiated and IntentErrorQuitCancelled are expected (W3).
+	for _, msg := range fch.SentMessages() {
+		if intent, ok := msg.(interactionchannel.Intent); ok {
+			if intent.Kind == interactionchannel.IntentQuit {
+				t.Error("expected no IntentQuit after q+x+esc (quit requires y confirmation), but one was forwarded")
+			}
+		}
 	}
 
 	// The 'x' key must not have been replayed into ModeError — the last

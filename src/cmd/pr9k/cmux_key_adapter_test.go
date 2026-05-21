@@ -131,7 +131,7 @@ func TestFooterMachine_NormalMode_NextConfirmEsc_ProducesNoIntent(t *testing.T) 
 	}
 }
 
-// T1: q in ModeError enters ModeQuitConfirm — not auto-quit.
+// T1: q in ModeError enters ModeQuitConfirm and emits IntentErrorQuitInitiated — not auto-quit.
 func TestFooterMachine_ErrorMode_QEntersModeQuitConfirm(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	src.Press("q")
@@ -142,28 +142,39 @@ func TestFooterMachine_ErrorMode_QEntersModeQuitConfirm(t *testing.T) {
 	if got := src.Mode(); got != int(ui.ModeQuitConfirm) {
 		t.Errorf("expected ModeQuitConfirm (%d), got %d", int(ui.ModeQuitConfirm), got)
 	}
-	_, ok := src.LastForwardedIntent()
-	if ok {
-		t.Error("expected no intent after q in ModeError, but one was forwarded")
+	// q in ModeError emits IntentErrorQuitInitiated (W3 spec D5: timer stops at first
+	// keystroke). No quit is committed until 'y' is pressed.
+	intent, ok := src.LastForwardedIntent()
+	if !ok {
+		t.Fatal("expected IntentErrorQuitInitiated after q in ModeError, got none")
+	}
+	if intent != interactionchannel.IntentErrorQuitInitiated {
+		t.Errorf("expected IntentErrorQuitInitiated, got %q", intent)
 	}
 }
 
-// T2: q then esc from ModeError restores ModeError (not Normal).
+// T2: q then esc from ModeError restores ModeError and emits both intents (W3).
 func TestFooterMachine_ErrorMode_QEscRestoresModeError(t *testing.T) {
 	src := interactionchannel.NewFakeFooterKeySource()
 	src.Press("q")
 	src.Press("esc")
 	m := newFooterStateMachine(src, src)
 	m.SetMode(ui.ModeError)
-	m.Step() // q → ModeQuitConfirm
-	m.Step() // esc → restoreMode() → back to ModeError
+	m.Step() // q → IntentErrorQuitInitiated + ModeQuitConfirm
+	m.Step() // esc → IntentErrorQuitCancelled + restoreMode() → ModeError
 
 	if got := src.Mode(); got != int(ui.ModeError) {
 		t.Errorf("expected ModeError (%d) after q+esc, got %d", int(ui.ModeError), got)
 	}
-	_, ok := src.LastForwardedIntent()
-	if ok {
-		t.Error("expected no intent after q+esc from ModeError, but one was forwarded")
+	all := src.ForwardedIntents()
+	if len(all) != 2 {
+		t.Fatalf("expected 2 intents (Initiated + Cancelled), got %d: %v", len(all), all)
+	}
+	if all[0] != interactionchannel.IntentErrorQuitInitiated {
+		t.Errorf("[0]: want IntentErrorQuitInitiated, got %q", all[0])
+	}
+	if all[1] != interactionchannel.IntentErrorQuitCancelled {
+		t.Errorf("[1]: want IntentErrorQuitCancelled, got %q", all[1])
 	}
 }
 

@@ -280,6 +280,7 @@ type FakeFooterKeySource struct {
 	mode          int
 	lastIntent    IntentType
 	lastIntentSet bool
+	intents       []IntentType
 }
 
 // NewFakeFooterKeySource returns an initialized FakeFooterKeySource with an
@@ -349,6 +350,17 @@ func (f *FakeFooterKeySource) RecordIntent(kind IntentType) {
 	defer f.mu.Unlock()
 	f.lastIntent = kind
 	f.lastIntentSet = true
+	f.intents = append(f.intents, kind)
+}
+
+// ForwardedIntents returns a snapshot of all intents forwarded via RecordIntent,
+// in arrival order.
+func (f *FakeFooterKeySource) ForwardedIntents() []IntentType {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]IntentType, len(f.intents))
+	copy(out, f.intents)
+	return out
 }
 
 // LastForwardedIntent returns the most recently forwarded intent and true, or
