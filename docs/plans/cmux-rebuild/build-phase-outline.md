@@ -264,7 +264,7 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 
 - A completion notification fires once when the full run finishes successfully.
 - A "run aborted" notification fires once when the run ends unsuccessfully (including operator-initiated quit, when the operator dismisses the run via the footer pane's quit shortcut).
-- An error-mode notification fires when a step has failed and is awaiting the operator's continue / retry / quit decision. This notification includes the text "Focus the pr9k control pane to respond" and re-fires on a regular cadence until the operator answers the prompt, so a dismissed notification does not silently strand the orchestrator.
+- An error-mode notification fires when a step has failed and is awaiting the operator's continue / retry / quit decision. This notification includes the text "Focus the footer pane to respond" and re-fires on a regular cadence until the operator answers the prompt, so a dismissed notification does not silently strand the orchestrator. (Phase 5's [D2](phase-5-lifecycle-notifications/artifacts/decision-log.md#d2-notification-text-is-repo-name-plus-lifecycle-verb-error-text-incorporates-the-footer-pane-directive) supersedes parent [D19](artifacts/decision-log.md#d19-error-mode-notifications-direct-the-operator-to-the-control-pane)'s "control pane" phrasing in favor of the "footer pane" wording the shipped operator-facing how-to uses.)
 - No per-step and no per-iteration notifications fire — those would be noise.
 - All three notifications are fired by the in-pane orchestrator process (D-R1) via cmux v2's notification methods (the dispatch we verified at commit `2f96c15c2` exposes `notification.create`, `notification.create_for_caller`, `notification.create_for_surface`, `notification.create_for_target`, `notification.dismiss`, and `notification.list`). The exact targeting method per notification is implementation-time work, but every call goes through the same already-built cmux v2 client (`internal/cmuxctl`).
 
@@ -275,7 +275,7 @@ Every phase is tagged with one of four kinds. The taxonomy is used in the Build 
 1. The operator launches pr9k cmux mode against a target repository with a workflow that will complete successfully.
 2. The workflow runs to completion; a completion notification appears in cmux. The operator clicks it and is taken to the pr9k workspace.
 3. The operator launches a second run against a workflow with a step deliberately set to fail. The workflow reaches the failing step.
-4. An error-mode notification appears in cmux with the text "Focus the pr9k control pane to respond." The operator dismisses it; some seconds later the notification re-appears.
+4. An error-mode notification appears in cmux with the text "Focus the footer pane to respond." The operator dismisses it; some seconds later the notification re-appears.
 5. The operator focuses the pr9k workspace's footer pane and presses the quit shortcut. The error-mode notification stops re-firing, the run aborts, and a "run aborted" notification appears once.
 
 **Source citations.**
