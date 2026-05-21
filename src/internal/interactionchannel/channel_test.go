@@ -280,6 +280,8 @@ func TestAllIntentTypes(t *testing.T) {
 		interactionchannel.IntentQuit,
 		interactionchannel.IntentSkip,
 		interactionchannel.IntentNext,
+		interactionchannel.IntentErrorQuitInitiated,
+		interactionchannel.IntentErrorQuitCancelled,
 	}
 	for _, it := range types {
 		if it == "" {
