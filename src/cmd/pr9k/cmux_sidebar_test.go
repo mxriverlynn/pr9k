@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mxriverlynn/pr9k/src/internal/cmuxctl"
 	"github.com/mxriverlynn/pr9k/src/internal/interactionchannel"
@@ -155,9 +156,26 @@ func TestCmuxSidebar_NonTimeoutErrorIsSwallowed(t *testing.T) {
 	}
 }
 
-// TestCmuxSidebar_TimeoutErrorIsFatal verifies that context.DeadlineExceeded
-// propagates from PushStep.
-func TestCmuxSidebar_TimeoutErrorIsFatal(t *testing.T) {
+// TestCmuxSidebar_TypedTimeoutErrorIsFatal verifies that *cmuxctl.TimeoutError
+// (the queue-level timeout from RealClient) propagates from PushStep as fatal.
+func TestCmuxSidebar_TypedTimeoutErrorIsFatal(t *testing.T) {
+	fc := &cmuxctl.FakeClient{}
+	fc.WorkspaceSetStatusFunc = func(_ context.Context, _ cmuxctl.Workspace, _, _ string) error {
+		return &cmuxctl.TimeoutError{Method: "workspace.set_status", Duration: 8 * time.Second}
+	}
+	s := mustNewTestSidebar(t, fc, validWorkspace())
+
+	err := s.PushStep(context.Background(), "step")
+	var te *cmuxctl.TimeoutError
+	if !errors.As(err, &te) {
+		t.Errorf("PushStep should propagate *cmuxctl.TimeoutError, got %v (%T)", err, err)
+	}
+}
+
+// TestCmuxSidebar_ContextDeadlineExceededIsSwallowed verifies that a plain
+// context.DeadlineExceeded (not wrapped in *TimeoutError) is treated as a
+// non-fatal sidebar error and swallowed.
+func TestCmuxSidebar_ContextDeadlineExceededIsSwallowed(t *testing.T) {
 	fc := &cmuxctl.FakeClient{}
 	fc.WorkspaceSetStatusFunc = func(_ context.Context, _ cmuxctl.Workspace, _, _ string) error {
 		return context.DeadlineExceeded
@@ -165,8 +183,8 @@ func TestCmuxSidebar_TimeoutErrorIsFatal(t *testing.T) {
 	s := mustNewTestSidebar(t, fc, validWorkspace())
 
 	err := s.PushStep(context.Background(), "step")
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("PushStep should propagate DeadlineExceeded, got %v", err)
+	if err != nil {
+		t.Errorf("PushStep should swallow non-TypedTimeout errors, got %v", err)
 	}
 }
 

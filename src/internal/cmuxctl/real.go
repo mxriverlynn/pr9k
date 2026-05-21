@@ -217,7 +217,7 @@ func (c *RealClient) run() {
 					c.handleIOResult(call, res, disconnect)
 				default:
 					disconnect()
-					call.reply <- rpcResult{err: fmt.Errorf("cmuxctl: %s timed out after %s", call.method, c.timeout)}
+					call.reply <- rpcResult{err: &TimeoutError{Method: call.method, Duration: c.timeout}}
 				}
 			case <-c.done:
 				timer.Stop()

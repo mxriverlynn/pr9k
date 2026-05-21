@@ -55,7 +55,7 @@ func (s *cmuxSidebar) pushStatus(ctx context.Context, value string) error {
 }
 
 // PushStep records the current step name and pushes it to the cmux sidebar.
-// context.DeadlineExceeded propagates as fatal; any other error is logged and
+// *cmuxctl.TimeoutError propagates as fatal; any other error is logged and
 // swallowed so sidebar failures never abort the workflow.
 func (s *cmuxSidebar) PushStep(ctx context.Context, name string) error {
 	if s == nil {
@@ -71,7 +71,8 @@ func (s *cmuxSidebar) PushStep(ctx context.Context, name string) error {
 	}
 
 	if err := s.pushStatus(ctx, name); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var te *cmuxctl.TimeoutError
+		if errors.As(err, &te) {
 			return err
 		}
 		_ = s.log.Log("cmuxSidebar", fmt.Sprintf("PushStep error: %v", err))
@@ -98,7 +99,8 @@ func (s *cmuxSidebar) PushProgress(ctx context.Context, iter, maxIter int) error
 	label := fmt.Sprintf("%d / %d", iter, maxIter)
 
 	if err := s.client.WorkspaceSetProgress(ctx, s.ws, fraction, label); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var te *cmuxctl.TimeoutError
+		if errors.As(err, &te) {
 			return err
 		}
 		_ = s.log.Log("cmuxSidebar", fmt.Sprintf("PushProgress error: %v", err))
@@ -127,7 +129,8 @@ func (s *cmuxSidebar) EnterErrorMode(ctx context.Context) error {
 	}
 
 	if err := s.pushStatus(ctx, value); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var te *cmuxctl.TimeoutError
+		if errors.As(err, &te) {
 			return err
 		}
 		_ = s.log.Log("cmuxSidebar", fmt.Sprintf("EnterErrorMode error: %v", err))
@@ -150,7 +153,8 @@ func (s *cmuxSidebar) ClearProgress(ctx context.Context) error {
 	}
 
 	if err := s.client.WorkspaceClearProgress(ctx, s.ws); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var te *cmuxctl.TimeoutError
+		if errors.As(err, &te) {
 			return err
 		}
 		_ = s.log.Log("cmuxSidebar", fmt.Sprintf("ClearProgress error: %v", err))
@@ -175,7 +179,8 @@ func (s *cmuxSidebar) ClearAll(ctx context.Context) error {
 	}
 
 	if err := s.client.WorkspaceClearStatus(ctx, s.ws, sidebarStatusKey); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		var te *cmuxctl.TimeoutError
+		if errors.As(err, &te) {
 			return err
 		}
 		_ = s.log.Log("cmuxSidebar", fmt.Sprintf("ClearAll ClearStatus error: %v", err))
@@ -184,7 +189,8 @@ func (s *cmuxSidebar) ClearAll(ctx context.Context) error {
 
 	if pushed {
 		if err := s.client.WorkspaceClearProgress(ctx, s.ws); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
+			var te *cmuxctl.TimeoutError
+			if errors.As(err, &te) {
 				return err
 			}
 			_ = s.log.Log("cmuxSidebar", fmt.Sprintf("ClearAll ClearProgress error: %v", err))
