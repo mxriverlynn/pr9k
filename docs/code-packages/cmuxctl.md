@@ -315,7 +315,7 @@ Full decision text: [implementation-decision-log.md](../plans/cmux-rebuild/phase
 WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 ```
 
-Fires a cmux workspace notification targeting the given workspace handle. The `class` parameter is an internal semantic tag (`NotificationCompletion`, `NotificationRunAborted`, `NotificationErrorMode`); the `body` is the operator-visible text string. The `RealClient` wrapper translates to the `notification.*` wire method.
+Fires a cmux workspace notification targeting the given workspace handle. The `class` parameter is an internal semantic tag (`NotificationCompletion`, `NotificationRunAborted`, `NotificationErrorMode`); the `body` is the operator-visible text string. The `RealClient` wrapper translates to the `notification.create_for_target` wire method (verified at cmux 0.64.7, commit `2f96c15c2`). Wire param shape: `{workspace_id, workspace_ref, body}`.
 
 **`NotificationClass` typed constants:**
 

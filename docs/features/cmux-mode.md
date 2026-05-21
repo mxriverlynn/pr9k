@@ -249,7 +249,7 @@ Non-timeout notification errors are logged to the per-run `.pr9k/logs/` file and
 
 ### Capability check
 
-Phase 5 extends the Phase 1 preflight with one probe call to `WorkspaceNotify`. If cmux returns `method_not_found` or `unknown_method`, the launch aborts with: `cmuxctl: cmux build does not expose required notification method WorkspaceNotify; upgrade cmux`.
+Phase 5 extends the Phase 1 preflight with one probe call to `WorkspaceNotify`. If cmux returns `method_not_found` or `unknown_method`, the launch aborts with: `cmuxctl: cmux build does not expose required notification method WorkspaceNotify (notification.create_for_target); upgrade cmux`.
 
 ### Out of scope (Phase 5 notifications)
 
