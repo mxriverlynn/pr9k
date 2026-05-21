@@ -266,6 +266,15 @@ func (f *FakeClient) WorkspaceClearProgress(ctx context.Context, ws Workspace) e
 	return nil
 }
 
+// NotifyCallsSnapshot returns a race-safe copy of the NotifyCalls recorder slice.
+func (f *FakeClient) NotifyCallsSnapshot() []NotifyCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]NotifyCall, len(f.NotifyCalls))
+	copy(out, f.NotifyCalls)
+	return out
+}
+
 func (f *FakeClient) WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error {
 	if err := f.maybehang(ctx); err != nil {
 		return err

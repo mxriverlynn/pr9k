@@ -205,6 +205,29 @@ Both are gated on the env var; with it unset the runtime is silent.
 | `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
 | Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |
 
+## Lifecycle notifications
+
+When a step fails and pr9k enters error mode, cmux displays a notification:
+
+> `<step name> failed in <repo> — Focus the footer pane to respond`
+
+The notification re-fires every **60 seconds** until you respond, even if you dismiss it. This is intentional — pr9k keeps the interrupt signal active until you act.
+
+**To stop the re-fire cadence**, focus the footer pane and press one of:
+- `c` — continue (ignore the error, proceed to the next step)
+- `r` — retry (re-run the failed step)
+- `q` then `y` — quit the run
+
+Pressing `q` stops the cadence immediately (even before pressing `y`). If you press `q` and then cancel with `n` or `esc`, the cadence restarts from 0.
+
+When the workflow completes normally, a single completion notification appears:
+> `pr9k run completed in <repo>`
+
+If the run is aborted (quit), a single run-aborted notification appears:
+> `pr9k run aborted in <repo>`
+
+Both one-shot notifications fire before the workspace begins its close sequence.
+
 ## References
 
 - [cmux mode feature doc](../features/cmux-mode.md)

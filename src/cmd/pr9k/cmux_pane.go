@@ -200,7 +200,11 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 	defer func() { _ = sidebar.ClearAll(context.Background()) }()
 	// D-7: safety-net clear for panic/abort paths; inner ClearAll in runCmuxWorkflowAdapted covers the graceful path.
 
-	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar)
+	notifier := newCmuxNotifier(client, ws, log, projectDir)
+	defer func() { _ = notifier.ExitErrorMode() }()
+	// Safety-net ExitErrorMode for panic/abort paths; mirrors sidebar.ClearAll above.
+
+	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar, notifier)
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})

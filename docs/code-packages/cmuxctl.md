@@ -306,3 +306,49 @@ Tests live alongside production code (`*_test.go`). All tests run with the race 
 | D-18 | Package layout: interface + `RealClient` + `FakeClient` + `Preflight` + `RunPhase1` |
 
 Full decision text: [implementation-decision-log.md](../plans/cmux-rebuild/phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md)
+
+## Phase 5 additions
+
+### `WorkspaceNotify` (W2)
+
+```go
+WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
+```
+
+Fires a cmux workspace notification targeting the given workspace handle. The `class` parameter is an internal semantic tag (`NotificationCompletion`, `NotificationRunAborted`, `NotificationErrorMode`); the `body` is the operator-visible text string. The `RealClient` wrapper translates to the `notification.*` wire method.
+
+**`NotificationClass` typed constants:**
+
+| Constant | Value | When used |
+|---|---|---|
+| `NotificationCompletion` | `"completion"` | `FireCompletion` |
+| `NotificationRunAborted` | `"run_aborted"` | `FireRunAborted` |
+| `NotificationErrorMode` | `"error_mode"` | `EnterErrorMode` + re-fire cadence |
+
+**`FakeClient` recorder:** `NotifyCalls []NotifyCall` (guarded by `FakeClient.mu`). Use `NotifyCallsSnapshot()` for race-safe reads from tests in other packages.
+
+### `*TimeoutError` (W1)
+
+Exported typed timeout error returned by `RealClient` when a queued RPC exceeds the per-call timeout. Replaces the previous `fmt.Errorf("cmuxctl: %s timed out after %s", ...)` string.
+
+```go
+type TimeoutError struct { Method string; Duration time.Duration }
+func (e *TimeoutError) Error() string
+```
+
+Use `errors.As(err, &te)` to detect; `errors.Is(err, context.DeadlineExceeded)` does **not** match queue-level timeouts.
+
+### `Preflight` probe extension (W2)
+
+After the existing `SystemIdentify` step, `Preflight` issues one probe call to `WorkspaceNotify`. If the response error is `*CmuxError` with `Code == "method_not_found"` or `Code == "unknown_method"`, the launch aborts with a method-named error. Any other error (including zero-workspace rejection) is treated as method-exists and the probe passes.
+
+### New `IntentType` values (W3)
+
+Two new intent values added to `internal/interactionchannel`:
+
+| Constant | Emitted when |
+|---|---|
+| `IntentErrorQuitInitiated` | Footer pane: `q` pressed in `ModeError` (before `ModeQuitConfirm`) |
+| `IntentErrorQuitCancelled` | Footer pane: `n` or `esc` pressed in `ModeQuitConfirm` when prior mode was `ModeError` |
+
+Both are mechanically additive — existing intents and their wire shapes are unchanged.

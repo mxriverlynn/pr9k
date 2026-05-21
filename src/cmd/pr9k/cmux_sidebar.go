@@ -200,6 +200,17 @@ func (s *cmuxSidebar) ClearAll(ctx context.Context) error {
 	return nil
 }
 
+// LastStepName returns the most recently pushed step name. Snapshot-then-unlock
+// per docs/coding-standards/concurrency.md.
+func (s *cmuxSidebar) LastStepName() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastStepName
+}
+
 // sidebarAwareHeader wraps cmuxHeader to additionally mirror workflow progress
 // into the cmux sidebar on every header mutation. It satisfies workflow.RunHeader.
 type sidebarAwareHeader struct {
