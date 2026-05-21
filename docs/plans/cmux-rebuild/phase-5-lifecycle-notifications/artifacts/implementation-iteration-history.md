@@ -159,6 +159,58 @@ These are the questions deterministic aggregation cannot settle without evidence
 
 ---
 
-## R2 — Round 2 (to be written if needed)
+## R2 — Round 2: Step 6 resolution-loop outcomes
 
-The round cap for the Medium classification is 2. R2 will document any additional round needed after Step 6's resolution loop produces new specialist work. If Step 6 closes all open questions by evidence and user input without re-engaging specialists, R2 will be skipped and we proceed directly to Step 7.5 (YAGNI sweep) and Step 8 (PM synthesis).
+**Specialists engaged:** none — Step 6 closed the three R1 open questions through user input (OQ-1) and evidence-based resolution (OQ-2, OQ-3). R1's specialist recommendations stand; R2 records only the resolution outcomes that flow into the YAGNI sweep and synthesis.
+
+**New input provided:** user answer to the OQ-1 escalation; an examination of `src/cmd/pr9k/cmux_footer_machine.go` (lines 94–113) and `src/cmd/pr9k/cmux_workflow.go` (lines 215–253) to confirm the IPC contract Phase 5 will extend; the build-outline note (`docs/plans/cmux-rebuild/build-phase-outline.md` line 269) enumerating the cmux v2 notification methods verified at commit `2f96c15c2`.
+
+### Resolved open questions
+
+#### OQ-1 → resolved (user input, 2026-05-21)
+
+The user selected **Option 2: Add `IntentResolutionStarted` protocol message** (and its cancellation complement). The plan extends the `interactionchannel` IPC contract (Phase 2 surface) so the footer pane forwards two new intents to the orchestrator, preserving spec D5 verbatim rather than narrowing it.
+
+**Mechanic adopted:**
+
+- Two new `IntentType` values are added in `internal/interactionchannel`: one for "an error-mode quit has been initiated" (the operator pressed `q` in `ModeError`, before the `y` confirmation), and one for "the quit confirmation was cancelled" (the operator pressed `n` or Escape from `ModeQuitConfirm` when the previous mode was `ModeError`).
+- The footer state machine (`cmux_footer_machine.go`) emits the first intent in `handleError` when `q` is pressed (before calling `enterMode(ui.ModeQuitConfirm)`), and emits the second intent in `handleQuitConfirm` when `n`/`esc` is processed and the previous mode was `ModeError`.
+- The orchestrator's `keyAdapterLoop` (`cmux_workflow.go:215–253`) gains two new branches that call `notifier.ExitErrorMode()` and `notifier.RestartErrorModeTimer(ctx)` respectively.
+- For `c` and `r` in `ModeError`: D5 says these also stop the timer at their first keystroke. The footer already emits `IntentContinue` / `IntentRetry` at the first keystroke for these (no two-step confirmation), so the orchestrator already gets the timer-stop trigger via the existing intent-handling branches. The `keyAdapterLoop` is augmented to call `notifier.ExitErrorMode()` on `IntentContinue` and `IntentRetry` as well.
+
+**Final naming is at the PM-synthesis stage** — the working names `IntentResolutionStarted` (from the question) and `IntentResolutionCancelled` are placeholders; the PM may pick names like `IntentErrorQuitInitiated` / `IntentErrorQuitCancelled` for narrower scope. Both candidates are recorded for synthesis.
+
+**Spec D5 remains the behavioral commitment** — no spec narrowing. The plan's text states explicitly that two new intents are added to `interactionchannel` to make D5 implementable in cmux mode.
+
+**Touch points the plan must cover:**
+
+- `src/internal/interactionchannel/*.go` — two new `IntentType` constants; JSON `"type"` discriminator values; per-role buffered-channel routing.
+- `src/cmd/pr9k/cmux_footer_machine.go` — two new emit sites (one in `handleError`, one in `handleQuitConfirm`).
+- `src/cmd/pr9k/cmux_workflow.go` `keyAdapterLoop` — two new intent branches plus the augmented `IntentContinue` / `IntentRetry` branches.
+- Tests in `src/cmd/pr9k/cmux_footer_*_test.go` and `cmux_workflow_test.go` — new assertions that the intents are emitted on the right keystrokes and consumed by the right notifier methods.
+
+**Trade-off recorded:** the change touches `interactionchannel` (a Phase 2 IPC contract). Per `docs/coding-standards/versioning.md`, the IPC protocol is **not** part of pr9k's public API surface (it is internal to one process tree), so the contract change is mechanically additive (new intent types, existing intents unchanged) and does not require a CLI / config schema bump.
+
+#### OQ-2 → resolved (evidence-based; pre-commit verification gate)
+
+The cmux v2 notification methods verified at commit `2f96c15c2` are: `notification.create`, `notification.create_for_caller`, `notification.create_for_surface`, `notification.create_for_target`, `notification.dismiss`, `notification.list` (source: `docs/plans/cmux-rebuild/build-phase-outline.md` line 269). Spec D9 commits notifications to "target the workspace handle" — `notification.create_for_target` is the authoritative candidate, with `notification.create_for_caller` as the fallback if `create_for_target`'s target type does not accept a workspace UUID/ref.
+
+**Resolution:** the plan documents `notification.create_for_target` as the primary wire method with `notification.create_for_caller` as fallback, and includes a **pre-commit verification gate** matching parent D-R2's precedent — the team reads cmux source at `2f96c15c2` before committing the wire call, and adjusts the method name + param shape (the working `notifyParam` struct's JSON tags) to match what cmux actually accepts. No further round of plan-stage discussion is required.
+
+#### OQ-3 → resolved (evidence-based; defensive runtime detection)
+
+The exact `*CmuxError` code cmux v2 returns for missing methods is not cited in either the discovery notes or the build outline. Candidates surfaced in R1: `"method_not_found"`, `"unknown_method"`. The existing `classifyIdentifyError` helper in `src/internal/cmuxctl/preflight.go` already demonstrates the code-inspection pattern for known codes (`auth_required`, `auth_failed`, `auth_unconfigured`).
+
+**Resolution:** the plan's `isMethodNotFound` helper checks **both** candidate codes (`"method_not_found"` and `"unknown_method"`). If the manual cmux integration gate (parent D-R4 precedent) reveals cmux returns a different code, the helper is adjusted at that time. This is symmetric to how Phase 4's `WorkspaceList` workaround handled the `"id"/"ref"` vs `"workspace_id"/"workspace_ref"` JSON-tag discrepancy that only surfaced in the manual gate.
+
+### Updated next-step recommendation (deterministic)
+
+**Go to synthesis** (Step 7.5 YAGNI sweep, then Step 8 PM synthesis). All R1 open questions are now resolved. No new specialist findings emerged. The round-1 architecture recommendations stand with one addition flowing from OQ-1: the implementation plan must include the `interactionchannel` extension (two new intents) and the footer-machine and key-adapter changes that drive Phase 5's timer-stop and timer-restart triggers.
+
+### Decisions produced (backfilled in Step 8)
+
+—
+
+### Changed in plan (backfilled in Step 8)
+
+—
