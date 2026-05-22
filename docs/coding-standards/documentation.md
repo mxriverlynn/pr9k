@@ -75,6 +75,6 @@ This is especially important for scripts: unlike Go code that fails to compile, 
 
 - [Architecture Overview](../architecture.md) — Full architecture reference; update when adding packages or changing the block diagram
 - [CLAUDE.md](../../CLAUDE.md) — Index of all doc files; update when adding any new doc
-- [Versioning](versioning.md) — When a version bump is required and how to bump
+- [Versioning](versioning.md) — Version bumps are manual and operator-requested only; never bump `version.Version` as part of a docs or feature change
 - [Testing](testing.md) — Doc integrity tests for embedded version strings
 - [Config Validation](../code-packages/validator.md) — Error categories; update when adding new validation rules

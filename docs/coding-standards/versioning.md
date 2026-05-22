@@ -2,6 +2,22 @@
 
 pr9k follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). The general rules of semver — MAJOR for incompatible changes, MINOR for backwards-compatible additions, PATCH for backwards-compatible fixes, pre-release and build metadata suffixes, precedence, etc. — are not restated here. Read the spec. This standard only records the things that are specific to this repository.
 
+## Version bumps are manual and operator-requested ONLY
+
+**Never bump `version.Version` automatically, proactively, or as part of any other change.** A version bump happens only when the repository operator explicitly asks for one, in that request, naming it as the task. There is no exception.
+
+This rule exists because automated and drive-by version bumps have repeatedly outpaced actual releases — the version constant has moved many times with no release behind it. Bumping the version is not housekeeping and it is not part of "shipping a feature." It is a deliberate, separate, operator-owned act.
+
+Concretely, this means:
+
+- **Do not** bump the version because a PR feels significant, adds a feature, changes a public-API surface, or "ships a phase."
+- **Do not** bump the version as a courtesy, a finishing touch, or a "while I'm here" edit.
+- **Do not** infer that a version bump is needed from the nature of a change. The change being MAJOR/MINOR/PATCH in semver terms tells you *what number* a future bump would use — it does **not** authorize you to perform the bump.
+- A feature PR, a docs PR, a refactor PR, and a bug-fix PR all leave `version.Version` **untouched**. `main` carries the version of the last release between releases.
+- When you finish work that *would* warrant a bump at release time, do not bump and do not offer to. If anything, leave it to the operator; they will request a bump when a release is actually being cut.
+
+The semver classification rules below (what counts as the public API, MAJOR vs. MINOR vs. PATCH, `0.y.z` behavior) describe how to *choose the number* when the operator has requested a bump. They never, on their own, trigger one.
+
 ## The version constant is the single source of truth
 
 The current version lives in exactly one place: `src/internal/version/version.go`, as the exported constant `version.Version`.
@@ -27,11 +43,11 @@ The following are explicitly **NOT** part of the public API and may change in an
 - The persisted log file format in the target repo's working directory. It is a debugging aid, not a data interchange format.
 - The helper scripts in `scripts/` (`get_next_issue`, `close_gh_issue`, etc.) when invoked directly. They are an implementation detail of the default workflow; users who want stable shell entry points should vendor their own.
 
-When you are about to make a change, ask: "does this break one of the four items above for an existing user?" If yes, it's a MAJOR bump. If it only adds to them in a backwards-compatible way, it's MINOR. If it changes nothing user-visible, it's PATCH.
+When the operator requests a bump, classify the accumulated changes since the last release: if any change broke one of the four items above for an existing user, the bump is MAJOR; if changes only added to them in a backwards-compatible way, it's MINOR; if nothing user-visible changed, it's PATCH. This classification chooses the *number* for an operator-requested bump — it does not, by itself, authorize a bump. See "Version bumps are manual and operator-requested ONLY" above.
 
 ## `0.y.z` — initial development
 
-The current release is `0.8.1`. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
+pr9k is in the `0.y.z` initial-development series. Per semver §4, while MAJOR is `0`, **anything may change at any time** and the public API is not considered stable. For this repo, that means:
 
 - Backwards-incompatible changes to the CLI surface or `config.json` schema during `0.y.z` bump the **MINOR** (e.g. `0.6.0` → `0.7.0`), not the major.
 - Backwards-compatible additions and bug fixes both bump the **PATCH** (e.g. `0.6.0` → `0.6.1`).
@@ -39,14 +55,17 @@ The current release is `0.8.1`. Per semver §4, while MAJOR is `0`, **anything m
 
 ## How to bump the version
 
-A version bump is its own commit, not a drive-by edit in a feature PR. **Exception:** when a version bump accompanies a documentation-only change (no Go source changes other than `version.go`), the version bump and the doc changes may be combined into a single commit, provided the commit message clearly identifies the bump (e.g. `docs: ... version bump to <semver>`).
+**Precondition: the operator has explicitly requested a version bump.** If they have not, stop — see "Version bumps are manual and operator-requested ONLY" above. Do not begin these steps on your own initiative, and do not fold them into an unrelated PR.
 
-1. Update `const Version` in `src/internal/version/version.go`.
-2. Run `make ci` — this rebuilds the binary and runs the existing version tests in `src/internal/cli/args_test.go`, which read from `version.Version` and will pass automatically.
-3. Commit with a message of the form `Bump version to <semver>`. This commit should contain only the version constant change (and any generated artifacts that track it, if we add them later). For docs-only exceptions (see above), include the doc changes in the same commit.
-4. Tag the commit `v<semver>` (e.g. `v0.2.0`) on `main`. The tag name **MUST** have a `v` prefix; the constant value **MUST NOT**. `git tag v0.2.0` matches constant `"0.2.0"`.
+Once the operator has requested a bump:
 
-Do not bump the version "just because" a PR feels significant. A release is a deliberate act. Between releases, `main` carries the version of the last release, not an in-progress next-release number.
+1. Confirm the target version with the operator if it was not stated in the request. The semver classification rules in this document tell you which component (MAJOR/MINOR/PATCH) the change history would justify, but the operator owns the final number.
+2. Update `const Version` in `src/internal/version/version.go`.
+3. Run `make ci` — this rebuilds the binary and runs the existing version tests in `src/internal/cli/args_test.go`, which read from `version.Version` and will pass automatically.
+4. Commit the bump as **its own commit**, with a message of the form `Bump version to <semver>`. This commit should contain only the version constant change (and any generated artifacts that track it, if we add them later).
+5. Tag the commit `v<semver>` (e.g. `v0.2.0`) on `main`. The tag name **MUST** have a `v` prefix; the constant value **MUST NOT**. `git tag v0.2.0` matches constant `"0.2.0"`.
+
+A release is a deliberate act, and so is the bump that precedes it. Between releases, `main` carries the version of the last release, not an in-progress next-release number.
 
 ## Pre-release and build metadata
 
