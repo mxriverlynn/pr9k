@@ -79,14 +79,19 @@ func footerShortcutForMode(mode ui.Mode) string {
 // a real stdin reader in production); ch must already be dialed and Ready must
 // have been sent before this call returns.
 //
+// stalledCh is closed when the pane's connection to the orchestrator is lost
+// (stall timer or clean disconnect, W-5). Pass a nil channel in tests that do
+// not exercise the stall path — a nil channel blocks forever in a select arm.
+//
 // Behaviour:
 //   - A WaitGroup-drained goroutine runs footerStateMachine.Step() in a loop
 //     until ctx is cancelled. The WaitGroup is established before the goroutine
 //     starts (docs/coding-standards/concurrency.md).
-//   - The main select loop dispatches StateFooter (→ machine.SetMode, re-render)
-//     and WorkspaceDone (→ DoneAck, block until ctx done) from ch.Recv().
+//   - The main select loop dispatches StateFooter (→ machine.SetMode, re-render),
+//     WorkspaceDone (→ DoneAck; Aborted renders RunAbortedToken and returns),
+//     stalledCh (→ renders RunAbortedToken and returns), and ctx.Done.
 //   - Context cancellation exits both the goroutine and the main loop.
-func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch footerPaneCh, out io.Writer) {
+func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch footerPaneCh, out io.Writer, stalledCh <-chan struct{}) {
 	renderer := newCmuxFooterRenderer()
 	sink := &footerPaneSink{renderer: renderer, ch: ch, out: out}
 	machine := newFooterStateMachine(src, sink)
@@ -113,6 +118,12 @@ func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch foote
 
 	for {
 		select {
+		case <-stalledCh:
+			// Orchestrator-death path (W-5): connection stalled or lost.
+			_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+			kCancel()
+			wg.Wait()
+			return
 		case msg, ok := <-ch.Recv():
 			if !ok {
 				// Channel closed by orchestrator — stay alive for final render.
@@ -126,6 +137,13 @@ func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch foote
 				machine.SetMode(ui.Mode(m.Mode))
 			case interactionchannel.WorkspaceDone:
 				_ = ch.Send(interactionchannel.DoneAck{Role: "footer"})
+				if m.Aborted {
+					// Clean-abort path (W-5): orchestrator broadcast abort.
+					_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+					kCancel()
+					wg.Wait()
+					return
+				}
 				kCancel()
 				wg.Wait()
 				<-ctx.Done()

@@ -318,18 +318,27 @@ func runCmuxLogPane(ctx context.Context, socketPath string) error {
 }
 
 // runCmuxDisplayPaneWith is the testable core of runCmuxHeaderPane /
-// runCmuxLogPane. out
-// receives rendered content; in production os.Stdout is passed.
+// runCmuxLogPane. out receives rendered content; in production os.Stdout is
+// passed.
 //
-// It dials socketPath, sends Ready{role}, and loops reading messages:
+// It dials socketPath with an onLost callback that closes an internal
+// stalledCh when the connection is stalled or cleanly disconnected (W-5
+// orchestrator-death path). It then sends Ready{role} and loops reading
+// messages:
 //   - StateHeader (header role): renders the step-checkbox grid to out.
 //   - StateLog (log role): appends each line to out in arrival order.
-//   - WorkspaceDone: sends DoneAck and then loops until context cancel or EOF.
+//   - WorkspaceDone{Aborted:true}: renders RunAbortedToken and returns.
+//   - WorkspaceDone (non-abort): sends DoneAck, then blocks until ctx cancel.
+//   - stalledCh fire: renders RunAbortedToken and returns immediately.
 //
 // Both the header and log panes are display-only: this function never
 // forwards Intent messages, ensuring no key path exists on these panes.
 func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io.Writer) error {
-	ch, err := interactionchannel.Dial(ctx, socketPath, role)
+	stalledCh := make(chan struct{})
+	var stalledOnce sync.Once
+	onLost := func() { stalledOnce.Do(func() { close(stalledCh) }) }
+
+	ch, err := interactionchannel.DialWith(ctx, socketPath, onLost)
 	if err != nil {
 		// Graceful degradation: no interaction channel, run until ctx cancel.
 		<-ctx.Done()
@@ -341,12 +350,29 @@ func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io
 		return nil
 	}
 
+	// doneSeen tracks whether a non-aborted WorkspaceDone has been received.
+	// When true, a stalledCh fire (e.g. server.Close() after the run) must
+	// not render "run aborted" — the run already completed normally.
+	var doneSeen bool
 	for {
 		select {
+		case <-stalledCh:
+			// Orchestrator-death path (W-5): connection stalled or lost.
+			if !doneSeen {
+				_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+				return nil
+			}
+			// Normal completion already seen: socket close is expected cleanup.
+			// Stay alive for final renders; exit on ctx.Done().
+			<-ctx.Done()
+			return nil
 		case msg, ok := <-ch.Recv():
 			if !ok {
-				// Socket closed by orchestrator after WorkspaceDone cycle — stay
-				// alive so the final-state render is visible until dismissed.
+				// Channel closed without a prior WorkspaceDone.
+				if !doneSeen {
+					_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+					return nil
+				}
 				<-ctx.Done()
 				return nil
 			}
@@ -363,6 +389,16 @@ func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io
 				}
 			case interactionchannel.WorkspaceDone:
 				_ = ch.Send(interactionchannel.DoneAck{Role: role})
+				if m.Aborted {
+					// Clean-abort path (W-5): orchestrator broadcast abort.
+					_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+					return nil
+				}
+				// Normal completion: continue the loop so late-arriving state
+				// messages (e.g. StateHeader arriving after WorkspaceDone due to
+				// write-goroutine scheduling) can still be rendered. The loop
+				// exits when ctx is cancelled.
+				doneSeen = true
 			}
 		case <-ctx.Done():
 			return nil
@@ -403,8 +439,12 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 	// dropped; script stderr is handled gracefully (logLine is a no-op when nil).
 	runner := statusline.New(slCfg, workflowDir, projectDir, nil)
 
-	// Dial the interaction channel.
-	paneCh, dialErr := interactionchannel.Dial(ctx, socketPath, "footer")
+	// Create the stall-signal channel and dial with an onLost callback that
+	// closes it on stall or clean disconnect (W-5 orchestrator-death path).
+	stalledCh := make(chan struct{})
+	var stalledOnce sync.Once
+	onLost := func() { stalledOnce.Do(func() { close(stalledCh) }) }
+	paneCh, dialErr := interactionchannel.DialWith(ctx, socketPath, onLost)
 
 	if !runner.Enabled() && dialErr != nil {
 		// Nothing to do — no statusline runner and no interaction channel.
@@ -438,7 +478,7 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 	// channel, renders mode-appropriate hints, and forwards resolved intents
 	// back to the orchestrator as Intent messages. The keystroke goroutine is
 	// WaitGroup-drained on context cancel.
-	runCmuxFooterMachineWith(ctx, noopFooterKeySource{}, paneCh, out)
+	runCmuxFooterMachineWith(ctx, noopFooterKeySource{}, paneCh, out, stalledCh)
 	return nil
 }
 

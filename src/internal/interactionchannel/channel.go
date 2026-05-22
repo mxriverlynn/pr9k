@@ -567,6 +567,14 @@ func Serve(ctx context.Context, socketPath string) (*Channel, error) {
 // whose read and write goroutines are already running. Sending the Ready
 // message is the caller's responsibility (deferred to U2).
 func Dial(ctx context.Context, socketPath, _ string) (*Channel, error) {
+	return DialWith(ctx, socketPath, nil)
+}
+
+// DialWith is like Dial but fires onLost when the connection is stalled (stall
+// timer expires) or cleanly disconnected. The callback is invoked at most once
+// from a goroutine; callers that require close-once semantics must wrap with
+// sync.Once. Pass nil to get default Dial behavior (stall closes the net.Conn).
+func DialWith(ctx context.Context, socketPath string, onLost func()) (*Channel, error) {
 	nc, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("interactionchannel: dial %s: %w", socketPath, err)
@@ -578,6 +586,10 @@ func Dial(ctx context.Context, socketPath, _ string) (*Channel, error) {
 		ctx:    ctx,
 		cancel: cancel,
 		roles:  make(map[string]*conn),
+	}
+	if onLost != nil {
+		ch.stallOnStall = onLost
+		ch.onDisconnect = onLost
 	}
 	ch.startConn(nc)
 	return ch, nil
