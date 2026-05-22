@@ -77,6 +77,8 @@ When a type starts goroutines (via `Start()`) and also has setter methods (`SetS
 
 Choose synchronization when callers are likely to be wired from different goroutines or after `Start()` is already running. Choose documentation when the precondition is enforced by a clear initialization sequence (e.g., the dependency is injected before the program event loop starts).
 
+**Important:** Documentation alone is not sufficient for race-freedom. Even with a documented "must be called before X" precondition, `go test -race` will flag the access if there is no verifiable happens-before edge. The race detector enforces Go's memory model mechanically — it does not read comments. When a setter writes a field that a goroutine will later read, prefer synchronization (hold `c.mu` in both the setter and the reader) even when the precondition looks unambiguous. The mutex gives the race detector a concrete happens-before edge.
+
 ```go
 // Good — synchronized setters; no ordering requirement on callers
 type Runner struct {
@@ -814,6 +816,188 @@ The two calls are intentional and not redundant: the inner call happens while th
 
 Apply any time a component writes observable external state (UI display, file locks, database records) that must be cleared on normal exit AND abnormal exit.
 
+## One-way latch for first-caller-wins abort with selectable channel
+
+When multiple goroutines can independently trigger an abort, and callers need both a selectable channel (`select` integration) and an atomic poll (non-blocking check), use a one-way latch built from `sync.Once` + `atomic.Bool` + `chan struct{}`. The first caller to trigger wins and sets the cause; all subsequent calls are no-ops.
+
+```go
+type AbortCause string
+
+const (
+    AbortCauseStallDetected   AbortCause = "stall_detected"
+    AbortCauseDisplayPaneExit AbortCause = "display_pane_exit"
+)
+
+type abortGate struct {
+    once      sync.Once
+    aborting  atomic.Bool
+    causeOnce AbortCause
+    triggered chan struct{} // closed by the winning trigger call
+}
+
+func newAbortGate() *abortGate {
+    return &abortGate{triggered: make(chan struct{})}
+}
+
+func (g *abortGate) trigger(cause AbortCause) {
+    g.once.Do(func() {
+        g.causeOnce = cause
+        g.aborting.Store(true)
+        close(g.triggered) // closes exactly once; second close would panic without sync.Once
+    })
+}
+
+// C is safe to use in select — closed when first trigger fires.
+func (g *abortGate) C() <-chan struct{} { return g.triggered }
+
+// IsAborting is a non-blocking atomic poll. Use when a select is not needed.
+func (g *abortGate) IsAborting() bool { return g.aborting.Load() }
+
+// Cause returns the cause from the winning trigger, or "" if not yet triggered.
+func (g *abortGate) Cause() AbortCause {
+    if !g.aborting.Load() {
+        return ""
+    }
+    return g.causeOnce
+}
+```
+
+The zero value is **not valid** (the `triggered` channel is nil and panics in `select`). Always construct via `newAbortGate()`.
+
+Use this pattern instead of the mutex-based first-flag-wins pattern (see above) when:
+- Multiple goroutines race to set the terminal condition concurrently.
+- Consumers need `select`-based waiting, not just polling.
+- The cause must be readable after the fact (audit trail, error message, log).
+
+## Stop-drain-Reset for timer reset in a select loop
+
+When resetting a repeating timer inside a `select` loop (e.g., a stall detector that resets on every received message), use the Stop-drain-Reset idiom. Omitting the drain causes the timer to fire immediately if the channel had already been sent to before `Reset` was called.
+
+```go
+// Correct Stop-drain-Reset sequence:
+if !stall.Stop() {
+    select {
+    case <-stall.C:
+    default:
+    }
+}
+stall.Reset(stallThreshold)
+```
+
+The `!stall.Stop()` branch means "the timer already fired." In that case the channel still has a value in it; draining it prevents the next `select` iteration from seeing a stale expiry immediately after the reset. The `default:` branch in the drain is safe: if the value was already consumed elsewhere, the drain is a no-op.
+
+Apply this pattern any time a `time.Timer` is reset inside an event loop. A plain `stall.Reset(d)` after `stall.Stop()` without the drain is a latent stall-fires-immediately bug.
+
+## sync.Once for idempotent channel close from multi-call callbacks
+
+When a callback might be invoked more than once (e.g., a stall callback and a disconnect callback that both signal the same channel), protect the `close()` with `sync.Once`. Calling `close` on an already-closed channel panics.
+
+```go
+stalledCh := make(chan struct{})
+var stalledOnce sync.Once
+onLost := func() { stalledOnce.Do(func() { close(stalledCh) }) }
+
+// Both callbacks are safe to call concurrently or multiple times:
+server.SetStallConfig(threshold, onLost)
+server.SetDisconnectCallback(onLost)
+```
+
+The pattern is identical to `sync.Once` teardown (see above) but applied to a signaling channel. The channel remains a level-trigger: once closed, every subsequent `<-stalledCh` returns immediately.
+
+## Terminal-state seen flag for post-completion signal suppression
+
+In event loops that receive both "run completed normally" and "connection lost" signals, track a boolean flag (`doneSeen`) to record whether the normal-completion terminal state has already been observed. Subsequent stall or disconnect signals that arrive after normal completion are expected teardown, not errors — do not render an error token or return a failure when `doneSeen` is true.
+
+```go
+var doneSeen bool
+
+for {
+    select {
+    case <-stalledCh:
+        if !doneSeen {
+            _, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+            return nil
+        }
+        // Normal completion already seen: socket close is expected cleanup.
+        <-ctx.Done()
+        return nil
+    case msg, ok := <-ch.Recv():
+        if !ok {
+            if !doneSeen {
+                _, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+                return nil
+            }
+            // Channel closed after WorkspaceDone — normal teardown; wait for ctx.
+            <-ctx.Done()
+            return nil
+        }
+        if wd, isWD := msg.(WorkspaceDone); isWD && !wd.Aborted {
+            doneSeen = true // record normal completion before any further selects
+        }
+    }
+}
+```
+
+The flag must be set **before** any subsequent blocking receive that could see a stall or disconnect — set it on the message-received branch immediately, not deferred to a later step.
+
+## Post-run-window guard: check terminal state before acting on late-arriving gates
+
+When a failure-detector callback (e.g., an abort-watcher goroutine) can fire in the µs gap between "the protected operation returned" and "the terminal-state flag was set," guard the detector's actions with a check of the terminal-state flag before acting.
+
+```go
+// Abort-watcher goroutine started before workflow.Run:
+go func() {
+    defer wg.Done()
+    select {
+    case <-gate.C():
+        // Guard: completed.set() may not have run yet even though workflow.Run
+        // has already returned — the ~µs gap between return and set is real.
+        if completed == nil || !completed.done() {
+            runner.Terminate()
+            select {
+            case actions <- ui.ActionQuit:
+            default:
+            }
+        }
+    case <-keyCtx.Done():
+    }
+}()
+
+// Immediately after workflow.Run returns (happy path):
+result := workflow.Run(...)
+completed.set() // closes the post-run window
+```
+
+Without the guard, a gate trigger that races the `completed.set()` call causes the detector to send a spurious `ActionQuit` after the run has already finished, producing a double-done or incorrect exit code.
+
+## Return immediately on send error in broadcast loops
+
+In heartbeat and liveness emitter loops, check the return value of the broadcast send and return immediately on error. If the send fails, all connected receivers have been lost — continuing to loop wastes CPU and keeps the goroutine alive until context cancellation.
+
+```go
+// Good — return as soon as all connections are gone
+func runLivenessEmitter(ctx context.Context, ch orchChannel, cadence time.Duration) {
+    ticker := time.NewTicker(cadence)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ticker.C:
+            if err := ch.Send(interactionchannel.Liveness{}); err != nil {
+                return // all panes lost; no point continuing
+            }
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+
+// Bad — discards the error and spins until ctx is cancelled
+case <-ticker.C:
+    _ = ch.Send(interactionchannel.Liveness{})
+```
+
+Apply this pattern in any goroutine whose sole purpose is broadcasting to a set of connections. An empty connection set is the expected shutdown signal — treat it as such.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture showing how concurrency patterns fit together
@@ -840,3 +1024,9 @@ Apply any time a component writes observable external state (UI display, file lo
 - `src/cmd/pr9k/cmux_pane.go` line 199–201 — `defer sidebar.ClearAll(context.Background())` as the canonical outer safety-net defer; `cmux_workflow.go` line 199 — explicit graceful-path `sidebar.ClearAll(ctx)` as the inner counterpart (Phase 4 W-6, D-6/D-7)
 - `src/cmd/pr9k/cmux_notifier.go` — `EnterErrorMode` and `RestartErrorModeTimer` as the canonical local-capture-before-spawn examples: `resolved := n.resolved` and `snapshot := stepName` captured inside the lock, passed as parameters to `firePersistent` (Phase 5 W-4, issue #267)
 - `src/cmd/pr9k/cmux_notifier.go` — `firePersistent` post-`<-resolved` non-fatal check as the canonical post-resolution error handling example (Phase 5 W-4, issue #267)
+- `src/cmd/pr9k/abort_gate.go` — `abortGate` as the canonical one-way latch (sync.Once + atomic.Bool + chan struct{}) with selectable channel and first-cause-wins guarantee (Phase 6 W-3)
+- `src/internal/interactionchannel/channel.go` — `readLoop` stall timer as the canonical Stop-drain-Reset pattern for repeating timers in select loops (Phase 6 W-2)
+- `src/cmd/pr9k/cmux_pane.go` — `stalledOnce.Do(func() { close(stalledCh) })` as the canonical sync.Once-for-idempotent-channel-close example; `doneSeen` flag in `runCmuxLogPane` as the terminal-state-seen pattern (Phase 6 W-5)
+- `src/cmd/pr9k/cmux_workflow.go` — `completed.done()` guard in the abort-watcher goroutine as the canonical post-run-window guard; abort-watcher goroutine itself as the detection-before-completion example (Phase 6 W-4, code review finding #4)
+- `src/cmd/pr9k/cmux_pane.go` — `runLivenessEmitter` as the canonical return-on-send-error broadcast loop (Phase 6 W-4, code review finding #6)
+- `src/internal/interactionchannel/channel.go` — `SetStallConfig`/`SetDisconnectCallback`/`startConn` mutex fix as the canonical "documentation alone is not race-free" example: documented precondition was correct but `go test -race` still caught the data race (Phase 6 code review finding #1)

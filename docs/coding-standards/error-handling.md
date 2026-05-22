@@ -268,6 +268,56 @@ Checklist when writing a capability probe:
 3. Treat **all other errors as pass** — a domain error (bad argument, wrong workspace) proves the server found the method.
 4. Embed the method's wire name and the upgrade guidance in the failure message so operators know exactly what is missing.
 
+## Use distinct prefixes for each branch in error classifiers
+
+When writing a function that maps error values to typed string constants or categories, every fallback branch must use a **distinct prefix** so consumers can distinguish failure classes programmatically. A shared prefix between "unrecognized code" and "unexpected error type" makes them indistinguishable and forces consumers to parse the trailing content — defeating the purpose of the classification.
+
+```go
+// Bad — both fallback branches produce a "cmux_error: " prefix;
+// consumers cannot tell whether the error was a CmuxError with an unknown code
+// or a non-CmuxError type entirely.
+func classifyMidRunCmuxError(err error) AbortCause {
+    var ce *cmuxctl.CmuxError
+    if !errors.As(err, &ce) {
+        return AbortCause(fmt.Sprintf("cmux_error: %s", err.Error())) // same prefix as default!
+    }
+    switch ce.Code {
+    // ...
+    default:
+        return AbortCause(fmt.Sprintf("cmux_error: %s", ce.Code))
+    }
+}
+
+// Good — each branch has a unique prefix; consumers can classify by prefix match.
+func classifyMidRunCmuxError(err error) AbortCause {
+    var pt *cmuxctl.PlaintextError
+    if errors.As(err, &pt) {
+        if pt.IsAccessDenied() {
+            return AbortCauseCmuxAccessDenied
+        }
+        return AbortCause(fmt.Sprintf("cmux_rejected: %s", pt.Raw)) // unique prefix
+    }
+    var ce *cmuxctl.CmuxError
+    if !errors.As(err, &ce) {
+        return AbortCause(fmt.Sprintf("cmux_unclassified: %s", err.Error())) // unique prefix
+    }
+    switch ce.Code {
+    case "auth_required", "auth_failed", "auth_unconfigured":
+        return AbortCauseCmuxAuth
+    case "method_not_found", "unknown_method":
+        return AbortCauseCmuxMethodNotFound
+    default:
+        return AbortCause(fmt.Sprintf("cmux_error: %s", ce.Code)) // unique prefix for this class
+    }
+}
+```
+
+Checklist when writing an error classifier:
+1. List all distinct error categories (named constants where possible, fallback strings where not).
+2. For each fallback branch, choose a prefix that cannot appear in any other branch.
+3. Write a test for each prefix to verify it never collides under expected inputs.
+4. Preserve the raw error content (code, message) in the fallback string so log readers can diagnose without rerunning.
+
 ## Additional Information
 
 - [Architecture Overview](../architecture.md) — System-level architecture and design principles
@@ -285,3 +335,4 @@ Checklist when writing a capability probe:
 - [Workflow IO](../code-packages/workflowio.md) — `pathContainedIn` as the canonical EvalSymlinks-on-both-sides containment check; `DetectExternalWorkflow` as the canonical prefix-check with symlink resolution on both sides
 - `src/internal/cmuxctl/errors.go` — `TimeoutError` as the canonical typed-error-struct example; replaces a string `fmt.Errorf` to enable `errors.As` classification (Phase 5 W-1, issue #264)
 - `src/internal/cmuxctl/preflight.go` — `isMethodNotFound` + preflight notify probe as the canonical inverse-capability-probe example: any error except method_not_found proves the method exists (Phase 5 W-2, issue #266)
+- `src/cmd/pr9k/cmux_classifier.go` — `classifyMidRunCmuxError` as the canonical distinct-prefix classifier example; initial version used "cmux_error:" for both the non-CmuxError branch and the unrecognized-code branch, caught in Phase 6 code review finding #3

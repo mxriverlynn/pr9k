@@ -330,7 +330,7 @@ func TestRunCmuxWorkflowAdapted_InitialModeNormalFooterSent(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	for _, m := range ch.SentMessages() {
 		if footer, ok := m.(interactionchannel.StateFooter); ok {
@@ -353,7 +353,7 @@ func TestRunCmuxWorkflowAdapted_StateHeaderSent(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	for _, m := range ch.SentMessages() {
 		if _, ok := m.(interactionchannel.StateHeader); ok {
@@ -374,7 +374,7 @@ func TestRunCmuxWorkflowAdapted_StateLogSent(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	for _, m := range ch.SentMessages() {
 		if _, ok := m.(interactionchannel.StateLog); ok {
@@ -395,7 +395,7 @@ func TestRunCmuxWorkflowAdapted_ModeDoneSentAfterWorkflow(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	msgs := ch.SentMessages()
 	var lastFooter interactionchannel.StateFooter
@@ -427,7 +427,7 @@ func TestRunCmuxWorkflowAdapted_InitialFooterBeforeFirstHeader(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	msgs := ch.SentMessages()
 	firstFooterIdx := -1
@@ -469,7 +469,7 @@ func TestRunCmuxWorkflowAdapted_WriteToLogSynchronous(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 	// The step-start banner is written by Orchestrate via runner.WriteToLog before
 	// the subprocess starts. It must appear as a StateLog in the sent messages.
@@ -512,7 +512,7 @@ func TestRunCmuxWorkflowAdapted_ContextCancelStopsKeyGoroutine(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, nil, nil)
+		runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 	}()
 
 	select {
@@ -534,7 +534,7 @@ func TestRunCmuxWorkflowAdapted_ReturnsZeroOnSuccess(t *testing.T) {
 	log := mustNewTestLogger(t)
 	ch := interactionchannel.NewFakeInteractionChannel()
 
-	code := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+	code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 	if code != 0 {
 		t.Errorf("expected exit code 0 on successful workflow, got %d", code)
 	}
@@ -635,7 +635,8 @@ func TestRunCmuxWorkflowAdapted_IntentQuitReturnsOne(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+		code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
+		done <- code
 	}()
 
 	select {

@@ -117,7 +117,16 @@ func newCmuxKeyHandler(runner *workflow.Runner, actions chan ui.StepAction) *ui.
 
 // runCmuxWorkflowAdapted constructs the adapter layer between the interaction
 // channel and workflow.Run, then drives the workflow to completion. It returns
-// the process exit code (0 = completed or loop-broken, 1 = user quit).
+// the process exit code (0 = completed or loop-broken, 1 = user quit or abort)
+// and a bool indicating whether the run was aborted via the abort gate.
+//
+// When aborted is true the abort sequence inside this function has already
+// broadcast WorkspaceDone{Aborted: true}; the caller must NOT broadcast a
+// second WorkspaceDone.
+//
+// gate and completed may be nil (tests that exercise the graceful path without
+// abort wiring). When non-nil they wire up the abort-watcher goroutine and the
+// post-run-window guard.
 //
 // Adapter responsibilities:
 //   - runner.SetSender → ch.SendStateLog (synchronous on the orchestrator
@@ -131,7 +140,7 @@ func newCmuxKeyHandler(runner *workflow.Runner, actions chan ui.StepAction) *ui.
 // The key-adapter goroutine is drained via sync.WaitGroup after workflow.Run
 // returns. keyCtx (derived from ctx) is cancelled explicitly after workflow.Run
 // so the goroutine exits promptly; the defer is a safety net for early returns.
-func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar, notifier *cmuxNotifier) int {
+func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar, notifier *cmuxNotifier, gate *abortGate, completed *runCompleted) (int, bool) {
 	runner := workflow.NewRunner(log, projectDir)
 
 	// Wire the log adapter synchronously (D-5): every WriteToLog / subprocess
@@ -185,6 +194,36 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 		keyAdapterLoop(keyCtx, ch, actions, keyHandler, notifier)
 	}()
 
+	// Abort-watcher goroutine: watches gate.C() and, when the gate fires, calls
+	// runner.Terminate() to unblock the synchronous subprocess wait inside Run()
+	// then sends ActionQuit so workflow.Run returns ExitReasonAborted. Only
+	// started when gate is non-nil (production path; tests may pass nil).
+	//
+	// The completed guard here closes the post-run window: if workflow.Run returns
+	// and the gate fires in the ~µs before completed.set(), the watcher skips its
+	// actions because the run has already finished and runner.Terminate is a no-op.
+	if gate != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case <-gate.C():
+				if completed == nil || !completed.done() {
+					runner.Terminate()
+					select {
+					case actions <- ui.ActionQuit:
+					default:
+					}
+				}
+			case <-keyCtx.Done():
+			}
+		}()
+	}
+
+	var isAborting func() bool
+	if gate != nil {
+		isAborting = gate.IsAborting
+	}
 	runCfg := workflow.RunConfig{
 		WorkflowDir:     workflowDir,
 		Iterations:      0, // unlimited; breakLoopIfEmpty governs loop exit
@@ -195,19 +234,50 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 		FinalizeSteps:   sf.Finalize,
 		RunStamp:        log.RunStamp(),
 		Runner:          nil, // no statusline runner in cmux orchestrator (D-9)
+		IsAborting:      isAborting,
 	}
 
 	result := workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
+
+	// Set the post-run-window guard BEFORE any terminal notification so
+	// detection paths that fire after this point are dropped (D-2).
+	if completed != nil {
+		completed.set()
+	}
+
 	keyHandler.SetMode(ui.ModeDone)
+
+	// ExitReasonAborted branch: five-step abort sequence (D-4, D-11).
+	if result.ExitReason == workflow.ExitReasonAborted {
+		cause := ""
+		if gate != nil {
+			cause = string(gate.Cause())
+		}
+		_ = notifier.ExitErrorMode() // stop re-fire timer before abort notification
+		_ = log.Log("abort", fmt.Sprintf("run aborted: %s", cause))
+		_ = log.Flush()
+		_ = notifier.FireRunAborted(context.Background())
+		_ = sidebar.ClearAll(context.Background())
+		// Broadcast WorkspaceDone{Aborted:true} before draining goroutines so
+		// display panes can render "run aborted" and exit promptly.
+		_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: 1, Aborted: true})
+		keyCancel()
+		wg.Wait()
+		return 1, true
+	}
 
 	// Terminal notifications fire between workflow.Run returning and
 	// sidebar.ClearAll (spec PD-9, PD-10).
+	// ExitReasonAborted is handled by the early return above; this case is here
+	// for explicit switch exhaustiveness (RAID R4).
 	switch result.ExitReason {
 	case workflow.ExitReasonCompleted, workflow.ExitReasonLoopBroken:
 		_ = notifier.FireCompletion(ctx)
 	case workflow.ExitReasonUserQuit:
 		_ = notifier.ExitErrorMode() // stop re-fire timer if active (idempotent)
 		_ = notifier.FireRunAborted(ctx)
+	case workflow.ExitReasonAborted:
+		// handled by the early-return block above; unreachable here
 	}
 
 	_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)
@@ -216,9 +286,9 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	wg.Wait()
 
 	if result.ExitReason == workflow.ExitReasonUserQuit {
-		return 1
+		return 1, false
 	}
-	return 0
+	return 0, false
 }
 
 // keyAdapterLoop translates Intent messages received from ch into StepAction

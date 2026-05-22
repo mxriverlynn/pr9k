@@ -204,6 +204,22 @@ type RunConfig struct {
 	// Runner is the optional status-line runner. When nil, all PushState and
 	// Trigger calls are skipped.
 	Runner StatusRunner
+	// IsAborting, when non-nil, is called at each ActionQuit check to
+	// distinguish a gate-raised programmatic quit from an operator-initiated
+	// quit. When it returns true the run exits with ExitReasonAborted instead
+	// of ExitReasonUserQuit. A nil value is safe: all quits are treated as
+	// operator quits. Wired to abortGate.IsAborting in cmd/pr9k (W-4).
+	IsAborting func() bool
+}
+
+// quitReason returns ExitReasonAborted when cfg.IsAborting is non-nil and
+// reports true, and ExitReasonUserQuit otherwise. Used at every ActionQuit
+// check so the distinction is consistent across all three phases.
+func quitReason(cfg RunConfig) ExitReason {
+	if cfg.IsAborting != nil && cfg.IsAborting() {
+		return ExitReasonAborted
+	}
+	return ExitReasonUserQuit
 }
 
 // stateTracker is a ui.StepHeader that records the last StepState set without
@@ -467,7 +483,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevInitStats = disp.capturedStats
 		prevInitState = st.lastState
 		if action == ui.ActionQuit {
-			return RunResult{ExitReason: ExitReasonUserQuit}
+			return RunResult{ExitReason: quitReason(cfg)}
 		}
 		if s.CaptureAs != "" {
 			captured := executor.LastCapture()
@@ -597,7 +613,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 			prevIterStats = disp.capturedStats
 			prevIterState = th.lastState
 			if action == ui.ActionQuit {
-				return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
+				return RunResult{IterationsRun: iterationsRun, ExitReason: quitReason(cfg)}
 			}
 			captured := executor.LastCapture()
 			if s.CaptureAs != "" {
@@ -731,7 +747,7 @@ func Run(executor StepExecutor, header RunHeader, keyHandler *ui.KeyHandler, cfg
 		prevFinalStats = disp.capturedStats
 		prevFinalState = th.lastState
 		if action == ui.ActionQuit {
-			return RunResult{IterationsRun: iterationsRun, ExitReason: ExitReasonUserQuit}
+			return RunResult{IterationsRun: iterationsRun, ExitReason: quitReason(cfg)}
 		}
 		captured := executor.LastCapture()
 		if s.CaptureAs != "" {

@@ -68,7 +68,8 @@ func TestCmuxErrorRecovery_RoundTrip(t *testing.T) {
 
 		done := make(chan int, 1)
 		go func() {
-			done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+			code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
+			done <- code
 		}()
 
 		// Wait for the first StateFooter(ModeError) — the step has failed and the
@@ -143,7 +144,8 @@ func TestCmuxErrorRecovery_RoundTrip(t *testing.T) {
 
 		done := make(chan int, 1)
 		go func() {
-			done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+			code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
+			done <- code
 		}()
 
 		// Wait for first StateFooter(ModeError) then inject IntentRetry.
@@ -248,7 +250,8 @@ func TestCmuxErrorRecovery_RoundTrip(t *testing.T) {
 
 		done := make(chan int, 1)
 		go func() {
-			done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+			code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
+			done <- code
 		}()
 
 		// Wait for first StateFooter(ModeError) then quit — same race window as sub-case 1.
@@ -294,7 +297,7 @@ func TestCmuxErrorRecovery_RoundTrip(t *testing.T) {
 		log := mustNewTestLogger(t)
 		ch := interactionchannel.NewFakeInteractionChannel()
 
-		runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil)
+		runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, nil, nil, nil)
 
 		// The orchestrator must never send Intent messages — Intents are inbound
 		// (footer pane → orchestrator), not outbound. Every sent message must be

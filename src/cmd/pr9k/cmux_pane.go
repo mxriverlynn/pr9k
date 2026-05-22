@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
@@ -21,6 +22,13 @@ import (
 // workspaceDoneAckTimeout is the maximum time the orchestrator waits for all
 // three display panes to send DoneAck after WorkspaceDone is broadcast.
 const workspaceDoneAckTimeout = 5 * time.Second
+
+// LivenessCadence is the interval at which the liveness emitter goroutine
+// broadcasts Liveness{} to all connected display panes. Kept well below
+// interactionchannel.StallThreshold (45s) so a healthy-but-quiet channel
+// never false-triggers the stall detector. Injectable in tests via
+// runCmuxWorkflowAdapted's livenessCadence parameter path.
+const LivenessCadence = 10 * time.Second
 
 // cmuxOrchestratorHooks builds the Architecture A (decision-log D-R1)
 // orchestrator hooks. cmux v2 has no hidden orchestrator pane: the in-pane
@@ -95,6 +103,7 @@ func newCmuxPaneCmd() *cobra.Command {
 				pd := os.Getenv("PR9K_PROJECT_DIR")
 				if pd != "" {
 					_ = os.MkdirAll(filepath.Join(pd, ".pr9k"), 0o700)
+					// O_APPEND log; exempt from atomicwrite requirement per docs/coding-standards/file-writes.md §logs.
 					if f, err := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
 						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 						_, _ = fmt.Fprintf(f, "%s role=%s pid=%d sock=%q projectDir=%q args=%v\n",
@@ -131,6 +140,7 @@ func newCmuxPaneCmd() *cobra.Command {
 			// workspace; the error + elapsed pinpoint the cause.
 			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
 				if pd := os.Getenv("PR9K_PROJECT_DIR"); pd != "" {
+					// O_APPEND log; exempt from atomicwrite requirement per docs/coding-standards/file-writes.md §logs.
 					if f, ferr := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
 						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
 						_, _ = fmt.Fprintf(f, "%s role=%s EXITED after=%s err=%v\n",
@@ -173,18 +183,52 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 		return fmt.Errorf("cmux-pane: orchestrator: create artifact dir: %w", err)
 	}
 
+	// Abort gate and post-run-window guard — created before the channel so the
+	// callbacks (set before connections arrive) can safely reference them.
+	gate := newAbortGate()
+	completed := &runCompleted{}
+
 	if ch == nil {
 		var serveErr error
-		ch, serveErr = interactionchannel.Serve(ctx, socketPath)
+		realCh, serveErr := interactionchannel.Serve(ctx, socketPath)
 		if serveErr != nil {
 			return fmt.Errorf("cmux-pane: orchestrator: serve: %w", serveErr)
 		}
+		// Wire stall and disconnect callbacks BEFORE AwaitReady so they are in
+		// place for any connections that arrive during the handshake.
+		realCh.SetStallConfig(interactionchannel.StallThreshold, func() {
+			if !completed.done() {
+				gate.trigger(AbortCauseStallDetected)
+			}
+		})
+		realCh.SetDisconnectCallback(func() {
+			if !completed.done() {
+				gate.trigger(AbortCauseDisplayPaneExit)
+			}
+		})
+		ch = realCh
 	}
 	defer ch.Close()
 
 	if err := ch.AwaitReady(ctx, interactionchannel.ReadyHandshakeTimeout); err != nil {
 		return fmt.Errorf("cmux-pane: orchestrator: handshake: %w", err)
 	}
+
+	// Start the liveness emitter AFTER AwaitReady (all panes connected) and
+	// BEFORE runCmuxWorkflowAdapted. The emitter broadcasts Liveness{} every
+	// LivenessCadence to keep per-connection stall timers from firing on a
+	// healthy-but-quiet channel (e.g. a long step with no output).
+	liveCtx, liveCancel := context.WithCancel(ctx)
+	var liveWg sync.WaitGroup
+	liveWg.Add(1)
+	go func() {
+		defer liveWg.Done()
+		runLivenessEmitter(liveCtx, ch, LivenessCadence)
+	}()
+	defer func() {
+		liveCancel()
+		liveWg.Wait()
+	}()
 
 	// Resolve the workflow bundle directory and load the step configuration.
 	workflowDir, err := cli.ResolveWorkflowDir(projectDir)
@@ -204,7 +248,15 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 	defer func() { _ = notifier.ExitErrorMode() }()
 	// Safety-net ExitErrorMode for panic/abort paths; mirrors sidebar.ClearAll above.
 
-	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar, notifier)
+	exitCode, aborted := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar, notifier, gate, completed)
+
+	if aborted {
+		// The abort sequence inside runCmuxWorkflowAdapted already broadcast
+		// WorkspaceDone{Aborted: true}. Wait for DoneAcks and return an error
+		// so the cobra RunE chain exits non-zero.
+		awaitDoneAcks(ch.Recv(), ackTimeout)
+		return fmt.Errorf("cmux-pane: orchestrator: run aborted: %s", gate.Cause())
+	}
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})
@@ -212,6 +264,25 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 	// Wait up to ackTimeout for all three display roles to acknowledge.
 	awaitDoneAcks(ch.Recv(), ackTimeout)
 	return nil
+}
+
+// runLivenessEmitter broadcasts a Liveness{} heartbeat to all connected panes
+// every cadence. It runs until ctx is cancelled and is joined via WaitGroup by
+// the caller. The emitter is started after AwaitReady so all panes are already
+// connected when the first tick fires.
+func runLivenessEmitter(ctx context.Context, ch orchChannel, cadence time.Duration) {
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if err := ch.Send(interactionchannel.Liveness{}); err != nil {
+				return // all panes lost; no point continuing
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // awaitDoneAcks collects DoneAck messages from recv until all three display
@@ -251,18 +322,27 @@ func runCmuxLogPane(ctx context.Context, socketPath string) error {
 }
 
 // runCmuxDisplayPaneWith is the testable core of runCmuxHeaderPane /
-// runCmuxLogPane. out
-// receives rendered content; in production os.Stdout is passed.
+// runCmuxLogPane. out receives rendered content; in production os.Stdout is
+// passed.
 //
-// It dials socketPath, sends Ready{role}, and loops reading messages:
+// It dials socketPath with an onLost callback that closes an internal
+// stalledCh when the connection is stalled or cleanly disconnected (W-5
+// orchestrator-death path). It then sends Ready{role} and loops reading
+// messages:
 //   - StateHeader (header role): renders the step-checkbox grid to out.
 //   - StateLog (log role): appends each line to out in arrival order.
-//   - WorkspaceDone: sends DoneAck and then loops until context cancel or EOF.
+//   - WorkspaceDone{Aborted:true}: renders RunAbortedToken and returns.
+//   - WorkspaceDone (non-abort): sends DoneAck, then blocks until ctx cancel.
+//   - stalledCh fire: renders RunAbortedToken and returns immediately.
 //
 // Both the header and log panes are display-only: this function never
 // forwards Intent messages, ensuring no key path exists on these panes.
 func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io.Writer) error {
-	ch, err := interactionchannel.Dial(ctx, socketPath, role)
+	stalledCh := make(chan struct{})
+	var stalledOnce sync.Once
+	onLost := func() { stalledOnce.Do(func() { close(stalledCh) }) }
+
+	ch, err := interactionchannel.DialWith(ctx, socketPath, onLost)
 	if err != nil {
 		// Graceful degradation: no interaction channel, run until ctx cancel.
 		<-ctx.Done()
@@ -274,12 +354,29 @@ func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io
 		return nil
 	}
 
+	// doneSeen tracks whether a non-aborted WorkspaceDone has been received.
+	// When true, a stalledCh fire (e.g. server.Close() after the run) must
+	// not render "run aborted" — the run already completed normally.
+	var doneSeen bool
 	for {
 		select {
+		case <-stalledCh:
+			// Orchestrator-death path (W-5): connection stalled or lost.
+			if !doneSeen {
+				_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+				return nil
+			}
+			// Normal completion already seen: socket close is expected cleanup.
+			// Stay alive for final renders; exit on ctx.Done().
+			<-ctx.Done()
+			return nil
 		case msg, ok := <-ch.Recv():
 			if !ok {
-				// Socket closed by orchestrator after WorkspaceDone cycle — stay
-				// alive so the final-state render is visible until dismissed.
+				// Channel closed without a prior WorkspaceDone.
+				if !doneSeen {
+					_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+					return nil
+				}
 				<-ctx.Done()
 				return nil
 			}
@@ -296,6 +393,16 @@ func runCmuxDisplayPaneWith(ctx context.Context, socketPath, role string, out io
 				}
 			case interactionchannel.WorkspaceDone:
 				_ = ch.Send(interactionchannel.DoneAck{Role: role})
+				if m.Aborted {
+					// Clean-abort path (W-5): orchestrator broadcast abort.
+					_, _ = fmt.Fprintf(out, "%s\n", interactionchannel.RunAbortedToken)
+					return nil
+				}
+				// Normal completion: continue the loop so late-arriving state
+				// messages (e.g. StateHeader arriving after WorkspaceDone due to
+				// write-goroutine scheduling) can still be rendered. The loop
+				// exits when ctx is cancelled.
+				doneSeen = true
 			}
 		case <-ctx.Done():
 			return nil
@@ -336,8 +443,12 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 	// dropped; script stderr is handled gracefully (logLine is a no-op when nil).
 	runner := statusline.New(slCfg, workflowDir, projectDir, nil)
 
-	// Dial the interaction channel.
-	paneCh, dialErr := interactionchannel.Dial(ctx, socketPath, "footer")
+	// Create the stall-signal channel and dial with an onLost callback that
+	// closes it on stall or clean disconnect (W-5 orchestrator-death path).
+	stalledCh := make(chan struct{})
+	var stalledOnce sync.Once
+	onLost := func() { stalledOnce.Do(func() { close(stalledCh) }) }
+	paneCh, dialErr := interactionchannel.DialWith(ctx, socketPath, onLost)
 
 	if !runner.Enabled() && dialErr != nil {
 		// Nothing to do — no statusline runner and no interaction channel.
@@ -371,7 +482,7 @@ func runCmuxFooterPaneWith(ctx context.Context, socketPath string, out io.Writer
 	// channel, renders mode-appropriate hints, and forwards resolved intents
 	// back to the orchestrator as Intent messages. The keystroke goroutine is
 	// WaitGroup-drained on context cancel.
-	runCmuxFooterMachineWith(ctx, noopFooterKeySource{}, paneCh, out)
+	runCmuxFooterMachineWith(ctx, noopFooterKeySource{}, paneCh, out, stalledCh)
 	return nil
 }
 

@@ -17,6 +17,18 @@ import (
 // A configurable variant was considered and deferred (YAGNI-4).
 const ReadyHandshakeTimeout = 10 * time.Second
 
+// StallThreshold is the default per-connection read stall limit. A connection
+// that delivers no message for this duration is declared silently lost and the
+// per-connection onStall callback is invoked. Override in tests via
+// SetStallConfig; production always uses this value.
+const StallThreshold = 45 * time.Second
+
+// RunAbortedToken is the canonical string value set when a workflow run ends
+// via an abort signal rather than normal completion. Consumers compare
+// WorkspaceDone.Aborted (bool) rather than this token; the token is used by
+// the sender to record the abort reason in progress artifacts.
+const RunAbortedToken = "run aborted"
+
 // recvBufSize is the capacity of the per-Channel inbound message channel.
 const recvBufSize = 64
 
@@ -80,11 +92,47 @@ type Channel struct {
 	// a Ready message is received. Protected by rolesMu.
 	rolesMu sync.Mutex
 	roles   map[string]*conn
+
+	// stallThreshold and stallOnStall configure per-connection stall detection.
+	// stallThreshold == 0 means use StallThreshold. stallOnStall == nil means
+	// close nc. Set via SetStallConfig before any connection arrives; reading
+	// them in startConn is safe provided the documented precondition holds.
+	stallThreshold time.Duration
+	stallOnStall   func()
+
+	// onDisconnect is called when a connection is cleanly lost (EOF or broken
+	// connection) and the channel context is not already done. It is invoked
+	// once per connection loss, from the connection's read goroutine after
+	// readLoop returns. Set via SetDisconnectCallback before any connection
+	// arrives (same precondition as SetStallConfig).
+	onDisconnect func()
 }
 
 // Recv returns the receive channel. Incoming messages from all connections
 // are delivered on this channel in arrival order (per connection).
 func (c *Channel) Recv() <-chan Message { return c.recv }
+
+// SetStallConfig overrides the per-connection stall threshold and callback for
+// this channel. Must be called before any connection arrives (before Dial or
+// the first accepted connection on a Serve-side channel). For test use only;
+// production always uses StallThreshold. A nil onStall closes nc (the default).
+func (c *Channel) SetStallConfig(threshold time.Duration, onStall func()) {
+	c.mu.Lock()
+	c.stallThreshold = threshold
+	c.stallOnStall = onStall
+	c.mu.Unlock()
+}
+
+// SetDisconnectCallback registers a callback invoked when any connection is
+// cleanly lost (EOF or broken connection) while the channel context is still
+// active. It is called at most once per accepted connection, from the
+// connection's read goroutine. Must be called before any connection arrives
+// (same precondition as SetStallConfig).
+func (c *Channel) SetDisconnectCallback(fn func()) {
+	c.mu.Lock()
+	c.onDisconnect = fn
+	c.mu.Unlock()
+}
 
 // Send broadcasts msg to all current connections. For a Dial-side Channel
 // there is always exactly one connection. Returns an error if no connection
@@ -216,6 +264,21 @@ func (c *Channel) Close() {
 // startConn registers nc as a new connection and launches the three goroutines
 // (read, write, watcher) that service it.
 func (c *Channel) startConn(nc net.Conn) {
+	// Snapshot config fields under c.mu so SetStallConfig/SetDisconnectCallback
+	// writes are sequenced with respect to this read (race-detector safe).
+	c.mu.Lock()
+	stallThreshold := c.stallThreshold
+	onStall := c.stallOnStall
+	onDisconnect := c.onDisconnect
+	c.mu.Unlock()
+
+	if stallThreshold == 0 {
+		stallThreshold = StallThreshold
+	}
+	if onStall == nil {
+		onStall = func() { _ = nc.Close() }
+	}
+
 	co := &conn{
 		nc:           nc,
 		wc:           make(chan Message, writeBufSize),
@@ -230,10 +293,16 @@ func (c *Channel) startConn(nc net.Conn) {
 	c.wg.Add(3)
 
 	// Read goroutine: deserializes frames and forwards to c.recv.
+	// readLoop spawns one additional pump goroutine (tracked via c.wg.Add(1)).
 	go func() {
 		defer c.wg.Done()
 		defer c.removeConn(co)
-		c.readLoop(nc, co)
+		c.readLoop(nc, co, stallThreshold, onStall)
+		// If the channel context is still active, the connection was lost rather
+		// than shutdown — notify the disconnect handler.
+		if c.ctx.Err() == nil && onDisconnect != nil {
+			onDisconnect()
+		}
 	}()
 
 	// Write goroutine: consumes all outbound channels and serializes to nc.
@@ -266,19 +335,63 @@ func (c *Channel) removeConn(co *conn) {
 	}
 }
 
-func (c *Channel) readLoop(nc net.Conn, co *conn) {
-	br := bufio.NewReaderSize(nc, 4096)
+type readResult struct {
+	msg Message
+	err error
+}
+
+func (c *Channel) readLoop(nc net.Conn, co *conn, stallThreshold time.Duration, onStall func()) {
+	// Pump goroutine: runs readMessage (blocking I/O) and forwards results to
+	// readCh so readLoop can simultaneously select on the stall timer. Tracked
+	// in c.wg so Close() joins it before returning.
+	readCh := make(chan readResult, 1)
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		br := bufio.NewReaderSize(nc, 4096)
+		for {
+			msg, err := readMessage(br)
+			select {
+			case readCh <- readResult{msg, err}:
+			case <-c.ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	stall := time.NewTimer(stallThreshold)
+	defer stall.Stop()
+
 	for {
-		msg, err := readMessage(br)
-		if err != nil {
-			return // EOF, closed, or context cancelled
-		}
-		if r, ok := msg.(Ready); ok {
-			c.notifyReady(r.Role)
-			c.bindRole(r.Role, co)
-		}
 		select {
-		case c.recv <- msg:
+		case r := <-readCh:
+			if r.err != nil {
+				return // EOF, closed, or context cancelled
+			}
+			// Stop-drain-Reset: reset the stall timer on every received message.
+			if !stall.Stop() {
+				select {
+				case <-stall.C:
+				default:
+				}
+			}
+			stall.Reset(stallThreshold)
+
+			if ready, ok := r.msg.(Ready); ok {
+				c.notifyReady(ready.Role)
+				c.bindRole(ready.Role, co)
+			}
+			select {
+			case c.recv <- r.msg:
+			case <-c.ctx.Done():
+				return
+			}
+		case <-stall.C:
+			onStall()
+			return
 		case <-c.ctx.Done():
 			return
 		}
@@ -460,6 +573,14 @@ func Serve(ctx context.Context, socketPath string) (*Channel, error) {
 // whose read and write goroutines are already running. Sending the Ready
 // message is the caller's responsibility (deferred to U2).
 func Dial(ctx context.Context, socketPath, _ string) (*Channel, error) {
+	return DialWith(ctx, socketPath, nil)
+}
+
+// DialWith is like Dial but fires onLost when the connection is stalled (stall
+// timer expires) or cleanly disconnected. The callback is invoked at most once
+// from a goroutine; callers that require close-once semantics must wrap with
+// sync.Once. Pass nil to get default Dial behavior (stall closes the net.Conn).
+func DialWith(ctx context.Context, socketPath string, onLost func()) (*Channel, error) {
 	nc, err := net.Dial("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("interactionchannel: dial %s: %w", socketPath, err)
@@ -471,6 +592,10 @@ func Dial(ctx context.Context, socketPath, _ string) (*Channel, error) {
 		ctx:    ctx,
 		cancel: cancel,
 		roles:  make(map[string]*conn),
+	}
+	if onLost != nil {
+		ch.stallOnStall = onLost
+		ch.onDisconnect = onLost
 	}
 	ch.startConn(nc)
 	return ch, nil

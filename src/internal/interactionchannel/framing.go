@@ -92,6 +92,12 @@ func UnmarshalMessage(data []byte) (Message, error) {
 			return nil, fmt.Errorf("interactionchannel: decode workspace_done: %w", err)
 		}
 		return m, nil
+	case "liveness":
+		var m Liveness
+		if err := json.Unmarshal(data, &m); err != nil {
+			return nil, fmt.Errorf("interactionchannel: decode liveness: %w", err)
+		}
+		return m, nil
 	default:
 		return nil, fmt.Errorf("interactionchannel: unknown message type %q", disc.Type)
 	}

@@ -224,3 +224,12 @@ func TestCmuxFooterRenderer_MinSizeAdvisory_NoVersionLabel(t *testing.T) {
 		t.Errorf("expected advisory-only output; got: %q", got)
 	}
 }
+
+// TestBuildFooterHelpLines_PaneCloseDisclosure verifies the AC-3 requirement
+// that the help text discloses pane-close behaviour (W-6, T1).
+func TestBuildFooterHelpLines_PaneCloseDisclosure(t *testing.T) {
+	got := buildFooterHelpLines()
+	if !strings.Contains(got, "Closing this pane closes the run") {
+		t.Errorf("buildFooterHelpLines() missing pane-close disclosure; got: %q", got)
+	}
+}

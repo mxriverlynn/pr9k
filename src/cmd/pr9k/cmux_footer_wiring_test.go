@@ -62,6 +62,7 @@ func drainIntentFromSent(fch *interactionchannel.FakeInteractionChannel) (intera
 
 // runMachineFixture starts runCmuxFooterMachineWith in a goroutine and returns
 // a cancel func and done channel. The caller must call cancel at end of test.
+// A nil stalledCh is passed so the stall arm never fires in non-W5 tests.
 func runMachineFixture(
 	t *testing.T,
 	src FooterKeySource,
@@ -73,7 +74,7 @@ func runMachineFixture(
 	doneCh := make(chan struct{})
 	go func() {
 		defer close(doneCh)
-		runCmuxFooterMachineWith(ctx, src, ch, out)
+		runCmuxFooterMachineWith(ctx, src, ch, out, nil)
 	}()
 	return cancel, doneCh
 }
