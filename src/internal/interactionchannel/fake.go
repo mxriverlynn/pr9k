@@ -23,6 +23,8 @@ type FakeInteractionChannel struct {
 	recv   chan Message
 	sent   []Message
 	closed bool
+	hold   bool      // if true, injected messages are queued in held instead of recv
+	held   []Message // messages buffered while hold is active
 }
 
 // NewFakeInteractionChannel returns an initialized FakeInteractionChannel
@@ -89,21 +91,57 @@ func (f *FakeInteractionChannel) AwaitReady(ctx context.Context, _ time.Duration
 	}
 }
 
+// HoldMessages causes subsequent InjectMessage, EnqueueReady, and InjectIntent
+// calls to buffer messages internally instead of delivering them to Recv.
+// Call ReleaseMessages to flush the buffer and resume normal delivery.
+// Idempotent.
+func (f *FakeInteractionChannel) HoldMessages() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hold = true
+}
+
+// ReleaseMessages clears the hold state and flushes all buffered messages to
+// the Recv channel in order. Idempotent (no-op if hold was not active).
+func (f *FakeInteractionChannel) ReleaseMessages() {
+	f.mu.Lock()
+	held := f.held
+	f.held = nil
+	f.hold = false
+	f.mu.Unlock()
+	for _, m := range held {
+		f.recv <- m
+	}
+}
+
+// enqueueOrHold delivers msg to the Recv channel, or buffers it if hold is
+// active. The caller must not hold f.mu.
+func (f *FakeInteractionChannel) enqueueOrHold(msg Message) {
+	f.mu.Lock()
+	if f.hold {
+		f.held = append(f.held, msg)
+		f.mu.Unlock()
+		return
+	}
+	f.mu.Unlock()
+	f.recv <- msg
+}
+
 // EnqueueReady injects a Ready{Role: role} message into the Recv channel as
 // if it arrived from the wire. Panics if the channel is full (recvBufSize
 // slots — callers must drain between bulk injections).
 func (f *FakeInteractionChannel) EnqueueReady(role string) {
-	f.recv <- Ready{Role: role}
+	f.enqueueOrHold(Ready{Role: role})
 }
 
 // InjectIntent injects an Intent{Kind: kind} message into the Recv channel.
 func (f *FakeInteractionChannel) InjectIntent(kind IntentType) {
-	f.recv <- Intent{Kind: kind}
+	f.enqueueOrHold(Intent{Kind: kind})
 }
 
 // InjectMessage injects any Message into the Recv channel.
 func (f *FakeInteractionChannel) InjectMessage(msg Message) {
-	f.recv <- msg
+	f.enqueueOrHold(msg)
 }
 
 // ExpectStatePush drains and returns the oldest message from the sent queue.

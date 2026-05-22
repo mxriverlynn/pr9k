@@ -435,6 +435,44 @@ func TestFakeFooterKeySource_KeystrokeSequence(t *testing.T) {
 // FakeInteractionChannel snapshot tests
 // ---------------------------------------------------------------------------
 
+// TestFakeInteractionChannel_HoldReleaseMessages verifies that HoldMessages
+// buffers injected messages and ReleaseMessages delivers them in order.
+func TestFakeInteractionChannel_HoldReleaseMessages(t *testing.T) {
+	t.Parallel()
+	f := interactionchannel.NewFakeInteractionChannel()
+	defer f.Close()
+
+	f.HoldMessages()
+
+	// These should be buffered, not delivered to Recv yet.
+	f.EnqueueReady("header")
+	f.InjectIntent(interactionchannel.IntentQuit)
+	f.InjectMessage(interactionchannel.StateHeader{IterationLine: "held"})
+
+	// Recv must be empty while holding.
+	select {
+	case msg := <-f.Recv():
+		t.Fatalf("Recv: got %v while messages should be held", msg)
+	default:
+		// Good: nothing delivered yet.
+	}
+
+	f.ReleaseMessages()
+
+	// All three messages should now be available in order.
+	wantTypes := []string{"ready", "intent", "state_header"}
+	for i, wantType := range wantTypes {
+		select {
+		case msg := <-f.Recv():
+			if msg.WireType() != wantType {
+				t.Errorf("message[%d]: got %q, want %q", i, msg.WireType(), wantType)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for message[%d] after ReleaseMessages", i)
+		}
+	}
+}
+
 // TestFakeInteractionChannel_SentMessages_IndependentSnapshot verifies that
 // SentMessages returns a defensive copy: mutating the returned slice does not
 // affect a subsequent call.

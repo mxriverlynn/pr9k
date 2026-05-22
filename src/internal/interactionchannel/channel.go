@@ -17,6 +17,12 @@ import (
 // A configurable variant was considered and deferred (YAGNI-4).
 const ReadyHandshakeTimeout = 10 * time.Second
 
+// StallThreshold is the default per-connection read stall limit. A connection
+// that delivers no message for this duration is declared silently lost and the
+// per-connection onStall callback is invoked. Override in tests via
+// SetStallConfig; production always uses this value.
+const StallThreshold = 45 * time.Second
+
 // RunAbortedToken is the canonical string value set when a workflow run ends
 // via an abort signal rather than normal completion. Consumers compare
 // WorkspaceDone.Aborted (bool) rather than this token; the token is used by
@@ -86,11 +92,27 @@ type Channel struct {
 	// a Ready message is received. Protected by rolesMu.
 	rolesMu sync.Mutex
 	roles   map[string]*conn
+
+	// stallThreshold and stallOnStall configure per-connection stall detection.
+	// stallThreshold == 0 means use StallThreshold. stallOnStall == nil means
+	// close nc. Set via SetStallConfig before any connection arrives; reading
+	// them in startConn is safe provided the documented precondition holds.
+	stallThreshold time.Duration
+	stallOnStall   func()
 }
 
 // Recv returns the receive channel. Incoming messages from all connections
 // are delivered on this channel in arrival order (per connection).
 func (c *Channel) Recv() <-chan Message { return c.recv }
+
+// SetStallConfig overrides the per-connection stall threshold and callback for
+// this channel. Must be called before any connection arrives (before Dial or
+// the first accepted connection on a Serve-side channel). For test use only;
+// production always uses StallThreshold. A nil onStall closes nc (the default).
+func (c *Channel) SetStallConfig(threshold time.Duration, onStall func()) {
+	c.stallThreshold = threshold
+	c.stallOnStall = onStall
+}
 
 // Send broadcasts msg to all current connections. For a Dial-side Channel
 // there is always exactly one connection. Returns an error if no connection
@@ -222,6 +244,16 @@ func (c *Channel) Close() {
 // startConn registers nc as a new connection and launches the three goroutines
 // (read, write, watcher) that service it.
 func (c *Channel) startConn(nc net.Conn) {
+	// Snapshot stall config; SetStallConfig must be called before startConn.
+	stallThreshold := c.stallThreshold
+	if stallThreshold == 0 {
+		stallThreshold = StallThreshold
+	}
+	onStall := c.stallOnStall
+	if onStall == nil {
+		onStall = func() { _ = nc.Close() }
+	}
+
 	co := &conn{
 		nc:           nc,
 		wc:           make(chan Message, writeBufSize),
@@ -236,10 +268,11 @@ func (c *Channel) startConn(nc net.Conn) {
 	c.wg.Add(3)
 
 	// Read goroutine: deserializes frames and forwards to c.recv.
+	// readLoop spawns one additional pump goroutine (tracked via c.wg.Add(1)).
 	go func() {
 		defer c.wg.Done()
 		defer c.removeConn(co)
-		c.readLoop(nc, co)
+		c.readLoop(nc, co, stallThreshold, onStall)
 	}()
 
 	// Write goroutine: consumes all outbound channels and serializes to nc.
@@ -272,19 +305,63 @@ func (c *Channel) removeConn(co *conn) {
 	}
 }
 
-func (c *Channel) readLoop(nc net.Conn, co *conn) {
-	br := bufio.NewReaderSize(nc, 4096)
+type readResult struct {
+	msg Message
+	err error
+}
+
+func (c *Channel) readLoop(nc net.Conn, co *conn, stallThreshold time.Duration, onStall func()) {
+	// Pump goroutine: runs readMessage (blocking I/O) and forwards results to
+	// readCh so readLoop can simultaneously select on the stall timer. Tracked
+	// in c.wg so Close() joins it before returning.
+	readCh := make(chan readResult, 1)
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		br := bufio.NewReaderSize(nc, 4096)
+		for {
+			msg, err := readMessage(br)
+			select {
+			case readCh <- readResult{msg, err}:
+			case <-c.ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	stall := time.NewTimer(stallThreshold)
+	defer stall.Stop()
+
 	for {
-		msg, err := readMessage(br)
-		if err != nil {
-			return // EOF, closed, or context cancelled
-		}
-		if r, ok := msg.(Ready); ok {
-			c.notifyReady(r.Role)
-			c.bindRole(r.Role, co)
-		}
 		select {
-		case c.recv <- msg:
+		case r := <-readCh:
+			if r.err != nil {
+				return // EOF, closed, or context cancelled
+			}
+			// Stop-drain-Reset: reset the stall timer on every received message.
+			if !stall.Stop() {
+				select {
+				case <-stall.C:
+				default:
+				}
+			}
+			stall.Reset(stallThreshold)
+
+			if ready, ok := r.msg.(Ready); ok {
+				c.notifyReady(ready.Role)
+				c.bindRole(ready.Role, co)
+			}
+			select {
+			case c.recv <- r.msg:
+			case <-c.ctx.Done():
+				return
+			}
+		case <-stall.C:
+			onStall()
+			return
 		case <-c.ctx.Done():
 			return
 		}
