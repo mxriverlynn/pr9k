@@ -17,6 +17,12 @@ import (
 // A configurable variant was considered and deferred (YAGNI-4).
 const ReadyHandshakeTimeout = 10 * time.Second
 
+// RunAbortedToken is the canonical string value set when a workflow run ends
+// via an abort signal rather than normal completion. Consumers compare
+// WorkspaceDone.Aborted (bool) rather than this token; the token is used by
+// the sender to record the abort reason in progress artifacts.
+const RunAbortedToken = "run aborted"
+
 // recvBufSize is the capacity of the per-Channel inbound message channel.
 const recvBufSize = 64
 

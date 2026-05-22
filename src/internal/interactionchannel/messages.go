@@ -101,13 +101,22 @@ func (StateFooter) sealed()          {}
 
 // WorkspaceDone signals that the orchestrator has finished the workflow run.
 // The ExitCode mirrors the process exit code the orchestrator will use.
+// Aborted is true when the run ended via RunAbortedToken rather than normal completion.
 // Semantic handling (DoneAck tracking, socket teardown) is deferred to U9.
 type WorkspaceDone struct {
-	ExitCode int `json:"exit_code"`
+	ExitCode int  `json:"exit_code"`
+	Aborted  bool `json:"aborted"`
 }
 
 func (WorkspaceDone) WireType() string { return "workspace_done" }
 func (WorkspaceDone) sealed()          {}
+
+// Liveness is a zero-field heartbeat message sent by the orchestrator to
+// verify that a display pane's connection is still alive.
+type Liveness struct{}
+
+func (Liveness) WireType() string { return "liveness" }
+func (Liveness) sealed()          {}
 
 // Compile-time assertions that every concrete type satisfies Message.
 var (
@@ -118,4 +127,5 @@ var (
 	_ Message = StateLog{}
 	_ Message = StateFooter{}
 	_ Message = WorkspaceDone{}
+	_ Message = Liveness{}
 )
