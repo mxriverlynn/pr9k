@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 if ! output=$(git push --set-upstream origin "$BRANCH" 2>&1); then
-  echo "git push failed (continuing):"
+  echo "git push failed:"
   echo "$output"
-  exit 0
+  exit 1
 fi
 echo "$output"

@@ -22,6 +22,7 @@ type CmuxClient interface {
     WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
     WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
     WorkspaceClearProgress(ctx context.Context, ws Workspace) error
+    WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 }
 ```
 
@@ -131,6 +132,7 @@ type FakeClient struct {
     WorkspaceClearStatusFunc   func(ctx context.Context, ws Workspace, key string) error
     WorkspaceSetProgressFunc   func(ctx context.Context, ws Workspace, fraction float64, label string) error
     WorkspaceClearProgressFunc func(ctx context.Context, ws Workspace) error
+    WorkspaceNotifyFunc        func(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 
     // Call recorders — appended under mu; read after all goroutines have joined.
     CreateCalls        []WorkspaceCreateOpts
@@ -141,11 +143,19 @@ type FakeClient struct {
     ClearStatusCalls   []ClearStatusCall   // records of WorkspaceClearStatus calls
     SetProgressCalls   []SetProgressCall   // records of WorkspaceSetProgress calls
     ClearProgressCalls []Workspace         // workspace handles from WorkspaceClearProgress calls
+    NotifyCalls        []NotifyCall        // records of WorkspaceNotify calls
 
     // Hang inject seams — both channels must be initialised by the caller.
     HangNext    chan struct{} // send to block the next call
     HangRelease chan struct{} // send to release a blocked call
 }
+
+// Record type for the notify RPC call recorder:
+type NotifyCall struct { Workspace Workspace; Class NotificationClass; Body string }
+
+// NotifyCallsSnapshot returns a race-safe copy of the NotifyCalls recorder slice.
+// Use this instead of reading NotifyCalls directly from test goroutines.
+func (f *FakeClient) NotifyCallsSnapshot() []NotifyCall
 
 // Record types for the sidebar RPC call recorders:
 type SetStatusCall  struct { Workspace Workspace; Key, Value string }
@@ -306,3 +316,49 @@ Tests live alongside production code (`*_test.go`). All tests run with the race 
 | D-18 | Package layout: interface + `RealClient` + `FakeClient` + `Preflight` + `RunPhase1` |
 
 Full decision text: [implementation-decision-log.md](../plans/cmux-rebuild/phase-1-workspace-lifecycle/artifacts/implementation-decision-log.md)
+
+## Phase 5 additions
+
+### `WorkspaceNotify` (W2)
+
+```go
+WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
+```
+
+Fires a cmux workspace notification targeting the given workspace handle. The `class` parameter is an internal semantic tag (`NotificationCompletion`, `NotificationRunAborted`, `NotificationErrorMode`); the `body` is the operator-visible text string. The `RealClient` wrapper translates to the `notification.create_for_target` wire method (verified at cmux 0.64.7, commit `2f96c15c2`). Wire param shape: `{workspace_id, workspace_ref, body}`.
+
+**`NotificationClass` typed constants:**
+
+| Constant | Value | When used |
+|---|---|---|
+| `NotificationCompletion` | `"completion"` | `FireCompletion` |
+| `NotificationRunAborted` | `"run_aborted"` | `FireRunAborted` |
+| `NotificationErrorMode` | `"error_mode"` | `EnterErrorMode` + re-fire cadence |
+
+**`FakeClient` recorder:** `NotifyCalls []NotifyCall` (guarded by `FakeClient.mu`). Use `NotifyCallsSnapshot()` for race-safe reads from tests in other packages.
+
+### `*TimeoutError` (W1)
+
+Exported typed timeout error returned by `RealClient` when a queued RPC exceeds the per-call timeout. Replaces the previous `fmt.Errorf("cmuxctl: %s timed out after %s", ...)` string.
+
+```go
+type TimeoutError struct { Method string; Duration time.Duration }
+func (e *TimeoutError) Error() string
+```
+
+Use `errors.As(err, &te)` to detect; `errors.Is(err, context.DeadlineExceeded)` does **not** match queue-level timeouts.
+
+### `Preflight` probe extension (W2)
+
+After the existing `SystemIdentify` step, `Preflight` issues one probe call to `WorkspaceNotify`. If the response error is `*CmuxError` with `Code == "method_not_found"` or `Code == "unknown_method"`, the launch aborts with a method-named error. Any other error (including zero-workspace rejection) is treated as method-exists and the probe passes.
+
+### New `IntentType` values (W3)
+
+Two new intent values added to `internal/interactionchannel`:
+
+| Constant | Emitted when |
+|---|---|
+| `IntentErrorQuitInitiated` | Footer pane: `q` pressed in `ModeError` (before `ModeQuitConfirm`) |
+| `IntentErrorQuitCancelled` | Footer pane: `n` or `esc` pressed in `ModeQuitConfirm` when prior mode was `ModeError` |
+
+Both are mechanically additive — existing intents and their wire shapes are unchanged.

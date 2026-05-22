@@ -666,6 +666,95 @@ func TestCopySelectedText_CopyFnNotCalledBeforeCmdInvoked(t *testing.T) {
 
 Apply this pattern any time a correctness property is "this must happen asynchronously" and a synchronous implementation would compile and pass all other tests.
 
+## Accumulate a history slice alongside "last value" in fakes
+
+When a fake or test double tracks the most recent call via a `lastX` field, also accumulate a `history []T` slice to support tests that need to verify ordering, call count, or the full sequence of calls. A single `lastX` field is sufficient for simple "was the right final state set?" assertions, but sequence tests require the full history.
+
+Expose the history via a snapshot accessor that returns a copy, following the same mutex-and-copy pattern as all other shared-state accessors in test doubles.
+
+```go
+type FakeFooterKeySource struct {
+    mu         sync.Mutex
+    lastIntent    IntentType
+    lastIntentSet bool
+    intents       []IntentType // full history for sequence assertions
+}
+
+func (f *FakeFooterKeySource) RecordIntent(kind IntentType) {
+    f.mu.Lock()
+    defer f.mu.Unlock()
+    f.lastIntent = kind
+    f.lastIntentSet = true
+    f.intents = append(f.intents, kind)
+}
+
+// ForwardedIntents returns a snapshot of all recorded intents in arrival order.
+func (f *FakeFooterKeySource) ForwardedIntents() []IntentType {
+    f.mu.Lock()
+    defer f.mu.Unlock()
+    out := make([]IntentType, len(f.intents))
+    copy(out, f.intents)
+    return out
+}
+```
+
+Add the history slice when first writing the fake if there is any foreseeable need to assert sequence or ordering. Retrofitting it later requires updating every test that relies on the simpler `lastX` interface.
+
+## Expose an awaitStopped method when a type manages goroutines
+
+When a type starts goroutines tracked by a `sync.WaitGroup`, expose an `awaitStopped()` (or `Wait()`) method that blocks until all goroutines have exited. This provides a deterministic test synchronization point that replaces `time.Sleep`.
+
+```go
+type cmuxNotifier struct {
+    goroutines sync.WaitGroup
+}
+
+func (n *cmuxNotifier) awaitStopped() {
+    n.goroutines.Wait()
+}
+
+// In the goroutine:
+n.goroutines.Add(1)
+go func() {
+    defer n.goroutines.Done()
+    n.firePersistent(...)
+}()
+
+// In tests — cancel the session, then wait for the goroutine to actually exit
+// before asserting on call counts or state.
+func stopAndSync(n *cmuxNotifier) {
+    _ = n.ExitErrorMode()
+    n.awaitStopped() // deterministic — no sleep required
+}
+```
+
+Without `awaitStopped`, tests must use `time.Sleep` to allow goroutines to finish, producing flaky results under load. With it, `ExitErrorMode` + `awaitStopped` is an atomic "stop and drain" sequence that is always deterministic.
+
+The method can be unexported if only tests within the package use it. If callers outside the package need to synchronize (e.g., a lifecycle caller doing orderly shutdown), make it exported and document it in the type's godoc.
+
+## Use polling with a deadline for asynchronous notification count assertions
+
+When a goroutine fires calls asynchronously in response to injected ticks, use a tight polling loop with a hard deadline rather than `time.Sleep` to wait for the expected call count. This is faster than sleeping (it returns as soon as the count is reached) and still deterministic (it fails loudly when the deadline passes).
+
+```go
+// waitForNotifyCount polls until the snapshot reaches count or the deadline passes.
+func waitForNotifyCount(t *testing.T, fc *FakeClient, count int, timeout time.Duration) {
+    t.Helper()
+    deadline := time.Now().Add(timeout)
+    for time.Now().Before(deadline) {
+        if len(fc.NotifyCallsSnapshot()) >= count {
+            return
+        }
+        time.Sleep(time.Millisecond)
+    }
+    t.Fatalf("timeout: wanted %d NotifyCalls, got %d", count, len(fc.NotifyCallsSnapshot()))
+}
+```
+
+Use this pattern when the asynchronous work is driven by a controlled channel (test-injected ticks) and you know the goroutine will complete quickly given a real CPU. Pass a tight timeout (1–5 seconds) so a real hang is caught as a test failure rather than a stuck runner.
+
+Do not use this for synchronization that can be made deterministic via `awaitStopped()` or a done channel — reserve it for cases where the goroutine itself does not signal completion (e.g., it keeps running and fires additional calls on future ticks).
+
 ## Use t.Run subtests for per-item scoping
 
 When a test function iterates over files, keys, or table rows, wrap each iteration body in `t.Run(name, ...)`. Flat test functions fail at the first failing item and hide whether later items pass or fail. Subtests let the runner continue past the first failure and report each item individually.
@@ -1029,3 +1118,5 @@ Apply this pattern whenever you add new methods to an RPC client. Even if the me
 - `src/internal/cmuxctl/fake.go` — `FakeClient` with `HangNext`/`HangRelease` as the canonical channel-based hang injection example (issue #219/221)
 - `src/cmd/pr9k/cmux_sidebar_integration_test.go` — `TestSidebarCallSequence_FullWorkflow` as the canonical "call underlying function directly to bypass hardened adapter parameters" example (Phase 4 W-7)
 - `src/internal/cmuxctl/cmuxctl_test.go` — wire-name round-trip tests for the four new Phase 4 RPC methods (`WorkspaceSetStatus`, `WorkspaceClearStatus`, `WorkspaceSetProgress`, `WorkspaceClearProgress`) as the canonical per-method wire-name verification example (Phase 4 W-2)
+- `src/internal/interactionchannel/fake.go` — `FakeFooterKeySource.intents []IntentType` + `ForwardedIntents()` as the canonical history-slice-alongside-last-value example: both `lastIntent` (simple tests) and `intents` (sequence/ordering tests) are maintained (Phase 5 W-5, issue #268)
+- `src/cmd/pr9k/cmux_notifier.go` + `cmux_notifier_test.go` — `cmuxNotifier.awaitStopped()` and `stopAndSync(n)` as the canonical WaitGroup sync-point pattern; `waitForNotifyCount` as the canonical tick-driven polling-with-deadline example (Phase 5 W-4, issue #267)

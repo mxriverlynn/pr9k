@@ -322,6 +322,33 @@ func TestRealClient_TimeoutFiresOnHangingServer(t *testing.T) {
 	}
 }
 
+func TestRealClient_TimeoutReturnsTypedTimeoutError(t *testing.T) {
+	c := cmuxctl.NewRealClient(hangingServer(t), shortTimeout)
+	defer c.Stop()
+	_, err := c.WorkspaceList(context.Background())
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	var te *cmuxctl.TimeoutError
+	if !errors.As(err, &te) {
+		t.Fatalf("want *cmuxctl.TimeoutError via errors.As, got %T: %v", err, err)
+	}
+	if te.Method == "" {
+		t.Error("TimeoutError.Method must be non-empty")
+	}
+	if te.Duration == 0 {
+		t.Error("TimeoutError.Duration must be non-zero")
+	}
+}
+
+func TestTimeoutError_ErrorMessageFormat(t *testing.T) {
+	e := &cmuxctl.TimeoutError{Method: "workspace.list", Duration: 8 * time.Second}
+	want := "cmuxctl: workspace.list timed out after 8s"
+	if got := e.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
 func TestRealClient_SerializesRequests(t *testing.T) {
 	var mu sync.Mutex
 	concurrent, maxConcurrent := 0, 0

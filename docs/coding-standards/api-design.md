@@ -528,6 +528,34 @@ Document each seam field with a comment explaining: what the production default 
 
 This pattern differs from the package-level var seam (see `testing.md` — "Document no-parallel constraint for package-level var mutation"): function fields are per-instance, so parallel tests that construct separate model values are safe. Package-level var seams require serial execution and save/restore discipline.
 
+**Ticker factory variant.** When the dependency is a `time.Ticker` (which produces both a channel and a stop function), inject a factory function rather than the channel directly. This gives tests full control over tick timing without real wall-clock waits.
+
+```go
+type cmuxNotifier struct {
+    // newTicker is injectable for tests; production uses errorReFireInterval.
+    newTicker func() (<-chan time.Time, func())
+}
+
+func newCmuxNotifier(...) *cmuxNotifier {
+    n := &cmuxNotifier{...}
+    n.newTicker = func() (<-chan time.Time, func()) {
+        t := time.NewTicker(errorReFireInterval)
+        return t.C, t.Stop
+    }
+    return n
+}
+
+// In tests: replace with a manually controlled channel.
+tickCh := make(chan time.Time, 1)
+n.newTicker = func() (<-chan time.Time, func()) {
+    return tickCh, func() {} // no-op stop; test controls the channel
+}
+// Now send to tickCh to simulate a tick; the goroutine processes it immediately.
+tickCh <- time.Now()
+```
+
+The production constructor installs the real ticker; tests replace the field before calling any method that starts the goroutine. The stop function is always called via `defer stopTicker()` inside the goroutine, so the no-op is safe.
+
 ## Nil-receiver guards on optional pointer adapters
 
 When a pointer type can legitimately be `nil` before wiring is complete — for example, an optional sidebar adapter that is constructed before it can be fully connected — add a nil-receiver guard as the first line of every method. This makes `nil` safe to use as a no-op placeholder during incremental assembly and eliminates the need for call-site guards scattered across callers.
@@ -604,3 +632,4 @@ If a type genuinely needs multiple independent observers (not a single callback)
 - `src/internal/workflowedit/model.go` — `commitDetailEdit` returning `(Model, bool)` is the canonical rejected-mutation feedback example; `DialogError` for deferred paths; `"NEW_KEY":""` placeholder for add-item visibility (workflow-builder-pt-2 review issues #4, #6, #7, #9); `nowFn`/`validateFn` as the canonical function-field injection seam examples
 - `src/cmd/pr9k/cmux_sidebar.go` — `cmuxSidebar` as the canonical nil-receiver guard example: every method opens with `if s == nil { return nil }` (Phase 4 W-5/TP-001)
 - `src/cmd/pr9k/cmux_workflow.go` — `runCmuxWorkflowAdapted` SetOnModeChange closure as the canonical augment-in-place example; comment "(D-2)" identifies the design decision (Phase 4 W-4/W-5)
+- `src/cmd/pr9k/cmux_notifier.go` — `newTicker func() (<-chan time.Time, func())` as the canonical ticker-factory injection example; `newTestNotifier` in `cmux_notifier_test.go` shows the test-side replacement (Phase 5 W-4, issue #267)

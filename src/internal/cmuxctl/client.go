@@ -94,6 +94,19 @@ type SurfaceInfo struct {
 	Exited    bool   `json:"exited"`
 }
 
+// NotificationClass identifies the semantic category of a WorkspaceNotify
+// call. The class is internal to pr9k; cmux receives one text body per call.
+type NotificationClass string
+
+const (
+	// NotificationCompletion signals a successful workflow completion.
+	NotificationCompletion NotificationClass = "completion"
+	// NotificationRunAborted signals that the workflow was aborted by the user.
+	NotificationRunAborted NotificationClass = "run_aborted"
+	// NotificationErrorMode signals that the workflow entered error-recovery mode.
+	NotificationErrorMode NotificationClass = "error_mode"
+)
+
 // CmuxClient is the cmux v2 RPC surface pr9k's cmux mode uses. All methods
 // accept a context for cancellation and deadline propagation.
 //
@@ -113,4 +126,5 @@ type CmuxClient interface {
 	WorkspaceClearStatus(ctx context.Context, ws Workspace, key string) error
 	WorkspaceSetProgress(ctx context.Context, ws Workspace, fraction float64, label string) error
 	WorkspaceClearProgress(ctx context.Context, ws Workspace) error
+	WorkspaceNotify(ctx context.Context, ws Workspace, class NotificationClass, body string) error
 }

@@ -98,6 +98,7 @@ func (m *footerStateMachine) handleError(key string) {
 	case "r":
 		m.sink.RecordIntent(interactionchannel.IntentRetry)
 	case "q":
+		m.sink.RecordIntent(interactionchannel.IntentErrorQuitInitiated)
 		m.enterMode(ui.ModeQuitConfirm)
 	}
 }
@@ -108,6 +109,12 @@ func (m *footerStateMachine) handleQuitConfirm(key string) {
 		m.sink.RecordIntent(interactionchannel.IntentQuit)
 		m.enterMode(ui.ModeQuitting)
 	case "n", "esc":
+		m.mu.Lock()
+		prevMode := m.prev
+		m.mu.Unlock()
+		if prevMode == ui.ModeError {
+			m.sink.RecordIntent(interactionchannel.IntentErrorQuitCancelled)
+		}
 		m.restoreMode()
 	}
 }

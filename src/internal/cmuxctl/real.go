@@ -217,7 +217,7 @@ func (c *RealClient) run() {
 					c.handleIOResult(call, res, disconnect)
 				default:
 					disconnect()
-					call.reply <- rpcResult{err: fmt.Errorf("cmuxctl: %s timed out after %s", call.method, c.timeout)}
+					call.reply <- rpcResult{err: &TimeoutError{Method: call.method, Duration: c.timeout}}
 				}
 			case <-c.done:
 				timer.Stop()
@@ -443,6 +443,19 @@ func (c *RealClient) WorkspaceSetProgress(ctx context.Context, ws Workspace, fra
 
 func (c *RealClient) WorkspaceClearProgress(ctx context.Context, ws Workspace) error {
 	_, err := c.do(ctx, "workspace.clear_progress", wsParam(ws))
+	return err
+}
+
+// notifyParam is the wire shape for notification.create_for_target (primary)
+// and notification.create_for_caller (fallback). Verified against cmux
+// 2f96c15c2 at the OI-1 pre-commit gate.
+type notifyParam struct {
+	workspaceParam
+	Body string `json:"body"`
+}
+
+func (c *RealClient) WorkspaceNotify(ctx context.Context, ws Workspace, _ NotificationClass, body string) error {
+	_, err := c.do(ctx, "notification.create_for_target", notifyParam{workspaceParam: wsParam(ws), Body: body})
 	return err
 }
 

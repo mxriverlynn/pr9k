@@ -22,6 +22,17 @@ const (
 	IntentQuit     IntentType = "quit"
 	IntentSkip     IntentType = "skip"
 	IntentNext     IntentType = "next"
+
+	// IntentErrorQuitInitiated is emitted by the footer pane when 'q' is pressed
+	// in ModeError, before the mode transitions to ModeQuitConfirm. The orchestrator
+	// uses this to stop the error-mode re-fire timer at the first quit keystroke
+	// (spec D5), before the two-step q/y confirmation completes.
+	IntentErrorQuitInitiated IntentType = "error_quit_initiated"
+
+	// IntentErrorQuitCancelled is emitted by the footer pane when 'n' or 'esc' is
+	// pressed in ModeQuitConfirm and the previous mode was ModeError. The orchestrator
+	// uses this to restart the error-mode re-fire timer.
+	IntentErrorQuitCancelled IntentType = "error_quit_cancelled"
 )
 
 // --- pane → orchestrator ---

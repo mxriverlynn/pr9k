@@ -118,7 +118,7 @@ Focus the footer pane and choose one of three actions:
 - **`r` — Retry** — re-run the same step. On retry, the log shows a separator line (`── <step name> (retry) ─────────────`) before any new output. A retry that fails again re-enters error mode; there is no retry-count cap and no auto-timeout — the run stays paused until you decide.
 - **`q` — Quit** — enter the two-step quit confirmation. Press `y` to abort the run or `Esc`/`n` to cancel and return to the error prompt.
 
-Control keys pressed while the header or log pane is focused are absorbed silently — those panes are read-only. If you are focused on a different pane or workspace when a step fails, the orchestrator blocks indefinitely and the footer shows the error prompt; switch to the footer pane when you are ready to respond. (A directing notification that surfaces the error elsewhere ships in Phase 5.)
+Control keys pressed while the header or log pane is focused are absorbed silently — those panes are read-only. If you are focused on a different pane or workspace when a step fails, the orchestrator blocks indefinitely and the footer shows the error prompt; pr9k fires an error-mode notification (see "Lifecycle notifications" below) that re-fires every 60 seconds to remind you. Switch to the footer pane when you are ready to respond.
 
 ### Monitoring from another workspace
 
@@ -202,8 +202,32 @@ Both are gated on the env var; with it unset the runtime is silent.
 | `cmux socket requires authentication` | cmux socket password mode is enabled | Set `CMUX_SOCKET_PASSWORD` or configure the socket password in cmux Settings |
 | `unexpected cmux identify response (no socket_path)` | cmux is an unsupported version | Use the pinned cmux v0.64.7 |
 | `cmux socket parent directory ... is world-writable` | Socket parent dir is writable by all users (e.g. a socket placed directly in `/tmp`) | Correct the directory permissions, or point `CMUX_SOCKET_PATH` at a socket whose parent is not world-writable |
+| `cmux build does not expose required notification method WorkspaceNotify` | Your cmux build predates the `notification.create_for_target` wire method (Phase 5 preflight probe) | Upgrade cmux; Phase 5 requires at least cmux 0.64.7 with commit `2f96c15c2` |
 | `ready timeout: missing roles: ...` | A display pane sub-process failed to start or connect within 10 seconds | Check that Docker is running and the `pr9k cmux-pane` sub-command is on PATH; re-run |
 | Pane shows "orchestrator unavailable — dismiss the workspace" | Orchestrator process exited before `WorkspaceDone` was sent | Check the `.pr9k/logs/` directory for the last run's error output; dismiss the workspace and re-run |
+
+## Lifecycle notifications
+
+When a step fails and pr9k enters error mode, cmux displays a notification:
+
+> `<step name> failed in <repo> — Focus the footer pane to respond`
+
+The notification re-fires every **60 seconds** until you respond, even if you dismiss it. This is intentional — pr9k keeps the interrupt signal active until you act.
+
+**To stop the re-fire cadence**, focus the footer pane and press one of:
+- `c` — continue (ignore the error, proceed to the next step)
+- `r` — retry (re-run the failed step)
+- `q` then `y` — quit the run
+
+Pressing `q` stops the cadence immediately (even before pressing `y`). If you press `q` and then cancel with `n` or `esc`, the cadence restarts from 0.
+
+When the workflow completes normally, a single completion notification appears:
+> `pr9k run completed in <repo>`
+
+If the run is aborted (quit), a single run-aborted notification appears:
+> `pr9k run aborted in <repo>`
+
+Both one-shot notifications fire before the workspace begins its close sequence.
 
 ## References
 

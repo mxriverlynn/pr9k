@@ -135,7 +135,7 @@ The operator focuses the footer pane and resolves the error:
 - **Retry (`r`)** — re-runs the step with the same resolved command and prompt. A retry that fails again re-enters error mode with the separator written first; there is no retry-count cap and no auto-timeout.
 - **Quit (`q`)** — runs the two-step confirmation (`q` then `y`). Pressing `Esc` or `n` cancels and returns the footer to the error prompt. Any non-confirmation key during the quit confirmation is ignored and not buffered for replay.
 
-Control keys pressed while the header or log pane is focused are absorbed silently — no error, no bell, no notification. The footer pane is the only control surface. If a step fails while the operator's focus is on a different pane or workspace, the orchestrator blocks indefinitely; the run stays paused until the footer pane is focused and the prompt is answered. A directing cmux notification ships in Phase 5.
+Control keys pressed while the header or log pane is focused are absorbed silently — no error, no bell. The footer pane is the only control surface. If a step fails while the operator's focus is on a different pane or workspace, pr9k fires an error-mode notification (Phase 5) that re-fires every 60 seconds until the operator answers; the run itself blocks until the footer pane is focused and the prompt is answered.
 
 The three in-workspace failure signals (header `[✗]`, error output in the log, error-mode hints in the footer) converge near-simultaneously, subject to the same small bounded cross-pane desynchronization Phase 2 accepts — each pane is an independent renderer. A keystroke delivered in the brief window between the prompt appearing and the orchestrator entering error mode is not dropped: the buffered `Actions` channel and the synchronous `onModeChange` hook ensure it is acted on once the orchestrator is ready.
 
@@ -215,9 +215,52 @@ Non-timeout sidebar RPC errors are logged and swallowed — a sidebar failure ne
 - No log surface mirroring — log lines are not forwarded to any cmux sidebar pane.
 - No failure-specific decoration beyond the `" — awaiting input"` suffix on the status pill — there is no badge, color change, or notification in the sidebar.
 
+## Lifecycle notifications (Phase 5)
+
+When a pr9k workflow runs in cmux mode, pr9k fires workspace notifications through cmux's notification chrome at three lifecycle moments.
+
+### Notification classes
+
+| Class | When fired | Body text |
+|---|---|---|
+| Completion | `workflow.Run` returns `Completed` or `LoopBroken` | `pr9k run completed in <repo-basename>` |
+| Run aborted | `workflow.Run` returns `UserQuit` | `pr9k run aborted in <repo-basename>` |
+| Error mode | A step fails and pr9k enters error mode | `<step name> failed in <repo-basename> — Focus the footer pane to respond` |
+
+`<repo-basename>` is the last path component of the `--project-dir` flag.
+
+### Completion and run-aborted (one-shot)
+
+Both fire exactly once, between `workflow.Run` returning and the workspace close sequence beginning. Activating the notification in cmux brings the pr9k workspace into focus.
+
+### Error-mode (persistent)
+
+The error-mode notification fires immediately when the step fails, then re-fires every 60 seconds until the operator answers. Dismissing the notification does not suppress the re-fire cadence — pr9k owns the cadence.
+
+**Timer-stop signals:** the first operator keystroke (`c`, `r`, or `q`) stops the re-fire timer:
+
+- `c` (continue) or `r` (retry) — `IntentContinue` / `IntentRetry` on the interaction channel → `notifier.ExitErrorMode()`.
+- `q` (begin quit confirmation) — `IntentErrorQuitInitiated` on the interaction channel → `notifier.ExitErrorMode()`. This is the spec D5 first-keystroke stop.
+- If the operator cancels the quit confirmation (`n`/`esc`) — `IntentErrorQuitCancelled` on the interaction channel → `notifier.RestartErrorModeTimer()`. The cadence restarts from 0 and continues until the operator answers.
+
+### Error semantics
+
+Non-timeout notification errors are logged to the per-run `.pr9k/logs/` file and swallowed — a notification failure never aborts the workflow. The sidebar `" — awaiting input"` pill is the persistent backstop when notifications degrade. Timeout errors are fatal per parent D15, **except** for `FireRunAborted` (abort-path timeout is non-fatal per spec D10).
+
+### Capability check
+
+Phase 5 extends the Phase 1 preflight with one probe call to `WorkspaceNotify`. If cmux returns `method_not_found` or `unknown_method`, the launch aborts with: `cmuxctl: cmux build does not expose required notification method WorkspaceNotify (notification.create_for_target); upgrade cmux`.
+
+### Out of scope (Phase 5 notifications)
+
+- Per-pane click-to-focus targeting (deferred YAGNI — notifications target the workspace handle)
+- Operator-configurable notification cadence (cadence is fixed at 60 s)
+- Distinct text per abort sub-reason (deferred YAGNI)
+- Same-repo concurrent-run disambiguation in notification text (deferred YAGNI)
+
 ## Out of scope (Phase 3)
 
-- No cmux notification on step failure directing the operator to the footer pane (planned for Phase 5)
+- No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6)
 - No completion notification to the launching terminal (planned for a later phase)
 - No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6; behavior is unchanged from Phase 2)
 - No automatic orphan cleanup after crash (orphan workspaces have the `pr9k-` prefix and must be dismissed manually via cmux)

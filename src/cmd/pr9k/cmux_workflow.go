@@ -131,7 +131,7 @@ func newCmuxKeyHandler(runner *workflow.Runner, actions chan ui.StepAction) *ui.
 // The key-adapter goroutine is drained via sync.WaitGroup after workflow.Run
 // returns. keyCtx (derived from ctx) is cancelled explicitly after workflow.Run
 // so the goroutine exits promptly; the defer is a safety net for early returns.
-func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar) int {
+func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Logger, projectDir, workflowDir string, sf steps.StepFile, sidebar *cmuxSidebar, notifier *cmuxNotifier) int {
 	runner := workflow.NewRunner(log, projectDir)
 
 	// Wire the log adapter synchronously (D-5): every WriteToLog / subprocess
@@ -152,12 +152,15 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	// The closure is augmented in place (D-2): a second SetOnModeChange call would
 	// overwrite Phase 3's footer push, so the sidebar branch lives here.
 	keyHandler.SetOnModeChange(func(mode ui.Mode, line string) {
+		// Three-step ordering (spec D12): footer broadcast → sidebar mutation →
+		// notifier mutation. Sequential in the same goroutine; ordering is structural.
 		ch.SendStateFooter(interactionchannel.StateFooter{
 			Mode:         int(mode),
 			ShortcutLine: line,
 		})
 		if mode == ui.ModeError {
 			_ = sidebar.EnterErrorMode(ctx)
+			_ = notifier.EnterErrorMode(ctx, sidebar.LastStepName())
 		}
 	})
 
@@ -179,7 +182,7 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		keyAdapterLoop(keyCtx, ch, actions, keyHandler)
+		keyAdapterLoop(keyCtx, ch, actions, keyHandler, notifier)
 	}()
 
 	runCfg := workflow.RunConfig{
@@ -196,6 +199,17 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 
 	result := workflow.Run(runner, wrappedHeader, keyHandler, runCfg)
 	keyHandler.SetMode(ui.ModeDone)
+
+	// Terminal notifications fire between workflow.Run returning and
+	// sidebar.ClearAll (spec PD-9, PD-10).
+	switch result.ExitReason {
+	case workflow.ExitReasonCompleted, workflow.ExitReasonLoopBroken:
+		_ = notifier.FireCompletion(ctx)
+	case workflow.ExitReasonUserQuit:
+		_ = notifier.ExitErrorMode() // stop re-fire timer if active (idempotent)
+		_ = notifier.FireRunAborted(ctx)
+	}
+
 	_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)
 
 	keyCancel()
@@ -211,7 +225,7 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 // sends on actions, calling kh.ForceQuit on IntentQuit. It runs until ctx is
 // done or ch.Recv() is closed. Extracted so it can be tested without calling
 // workflow.Run.
-func keyAdapterLoop(ctx context.Context, ch orchChannel, actions chan ui.StepAction, kh *ui.KeyHandler) {
+func keyAdapterLoop(ctx context.Context, ch orchChannel, actions chan ui.StepAction, kh *ui.KeyHandler, notifier *cmuxNotifier) {
 	for {
 		select {
 		case msg, ok := <-ch.Recv():
@@ -224,11 +238,13 @@ func keyAdapterLoop(ctx context.Context, ch orchChannel, actions chan ui.StepAct
 			}
 			switch intent.Kind {
 			case interactionchannel.IntentRetry:
+				_ = notifier.ExitErrorMode() // spec D5: first keystroke stops timer
 				select {
 				case actions <- ui.ActionRetry:
 				default:
 				}
 			case interactionchannel.IntentContinue:
+				_ = notifier.ExitErrorMode() // spec D5: first keystroke stops timer
 				select {
 				case actions <- ui.ActionContinue:
 				default:
@@ -245,6 +261,10 @@ func keyAdapterLoop(ctx context.Context, ch orchChannel, actions chan ui.StepAct
 				}
 			case interactionchannel.IntentQuit:
 				kh.ForceQuit()
+			case interactionchannel.IntentErrorQuitInitiated:
+				_ = notifier.ExitErrorMode() // spec D5: first 'q' keystroke stops timer
+			case interactionchannel.IntentErrorQuitCancelled:
+				notifier.RestartErrorModeTimer(ctx) // spec D5: cancel restarts from 0
 			}
 		case <-ctx.Done():
 			return

@@ -65,7 +65,25 @@ func Preflight(ctx context.Context, prober CmuxProber, client CmuxClient) []erro
 		return []error{errors.New("cmuxctl: unexpected cmux identify response (no socket_path); cmux may be an unsupported version — pinned support is cmux v0.64.7")}
 	}
 
+	// Notification probe: verify the cmux build exposes the notification method.
+	// Any error except method_not_found/unknown_method means the method exists
+	// (zero-workspace rejection, network, etc.) and the probe passes.
+	if probeErr := client.WorkspaceNotify(ctx, Workspace{}, NotificationCompletion, ""); isMethodNotFound(probeErr) {
+		return []error{errors.New("cmuxctl: cmux build does not expose required notification method WorkspaceNotify (notification.create_for_target); upgrade cmux")}
+	}
+
 	return nil
+}
+
+// isMethodNotFound reports whether err is a *CmuxError indicating the method
+// does not exist on this cmux build. Both code strings are checked because
+// different cmux versions use different names (verified at OI-1 gate).
+func isMethodNotFound(err error) bool {
+	var ce *CmuxError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	return ce.Code == "method_not_found" || ce.Code == "unknown_method"
 }
 
 // classifyIdentifyError turns a SystemIdentify failure into accurate,
