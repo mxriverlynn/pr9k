@@ -102,6 +102,8 @@ Press `q` in the footer pane. pr9k enters quit-confirmation mode; the footer sho
 
 Press `Esc` after `q` to cancel quit without effect.
 
+> **Note:** Closing a pr9k pane (the header, log, or footer pane) while a run is in progress aborts the run. pr9k detects the display loss, terminates the running step, and broadcasts `run aborted` to the remaining panes. Each pane renders a final `run aborted` line and exits. The workspace stays open in cmux for inspection; dismiss it manually when done.
+
 ### Recovering from a failed step
 
 When a workflow step exits non-zero and triggers pr9k's error mode, all three visible panes signal the failure near-simultaneously:

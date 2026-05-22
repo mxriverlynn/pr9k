@@ -267,12 +267,16 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 
 	// Terminal notifications fire between workflow.Run returning and
 	// sidebar.ClearAll (spec PD-9, PD-10).
+	// ExitReasonAborted is handled by the early return above; this case is here
+	// for explicit switch exhaustiveness (RAID R4).
 	switch result.ExitReason {
 	case workflow.ExitReasonCompleted, workflow.ExitReasonLoopBroken:
 		_ = notifier.FireCompletion(ctx)
 	case workflow.ExitReasonUserQuit:
 		_ = notifier.ExitErrorMode() // stop re-fire timer if active (idempotent)
 		_ = notifier.FireRunAborted(ctx)
+	case workflow.ExitReasonAborted:
+		// handled by the early-return block above; unreachable here
 	}
 
 	_ = sidebar.ClearAll(ctx) // graceful-path sidebar cleanup (D-6)

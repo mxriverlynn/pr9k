@@ -258,13 +258,69 @@ Phase 5 extends the Phase 1 preflight with one probe call to `WorkspaceNotify`. 
 - Distinct text per abort sub-reason (deferred YAGNI)
 - Same-repo concurrent-run disambiguation in notification text (deferred YAGNI)
 
+## Robust failure handling (Phase 6)
+
+Phase 6 hardens the cmux multi-process architecture so every failure mode — a dying display pane, an operator pane-close, a stalled interaction channel, a hung or erroring cmux API call, and orchestrator process death — converges on a predictable, inspectable outcome.
+
+### Abort gate
+
+A single one-way `abortGate` (wrapping `sync.Once`) serializes concurrent failure detections. The first detection path to call `gate.trigger(cause)` wins and names the diagnostic; every subsequent call is absorbed. The gate fires exactly once per run.
+
+### Liveness signal and stall threshold
+
+The orchestrator broadcasts a zero-field `Liveness{}` heartbeat message to every connected pane every 10 seconds (`LivenessCadence`), beginning after the readiness handshake and continuing through every workflow phase — including between steps and while paused at an error-mode prompt.
+
+Each pane connection's `readLoop` runs a 45-second stall timer (`StallThreshold`), reset on every received message. Because the liveness emitter ticks at 10 seconds, a healthy-but-quiet channel never trips the threshold. When the timer expires (no message for 45 s), the stall callback fires, signaling a lost connection.
+
+### Four detection paths
+
+Any of four events routes through the abort gate:
+
+1. **Display-pane death** — a pane connection closes (EOF/broken pipe). Detected promptly without waiting out the stall threshold.
+2. **Operator pane-close** — indistinguishable from display-pane death; treated identically.
+3. **Channel stall** — 45 seconds of silence on a connection (`readLoop` stall timer expires).
+4. **cmux API error** — the orchestrator's cmux-call wrapper observes a `*TimeoutError`, `*CmuxError`, or `*PlaintextError` during a steady-state call. The error is classified using the existing preflight vocabulary (access-denied, `auth_*`, `method_not_found`/`unknown_method`); an unrecognized code falls back to an unclassified diagnostic that preserves the raw code verbatim.
+
+The first detection to win calls `runner.Terminate()` (SIGTERM→3 s→SIGKILL) to unblock the synchronous `workflow.Run()` loop, then sends `ActionQuit`. `workflow.Run` returns `ExitReasonAborted`.
+
+### Abort sequence (clean-abort path)
+
+`runCmuxWorkflowAdapted` routes `ExitReasonAborted` through a five-step abort sequence:
+
+1. Write the classified diagnostic (`gate.Cause()`) via `logger.Log()`, then flush.
+2. `notifier.FireRunAborted(context.Background())` — fires exactly once per run; the abort gate guarantees it.
+3. `sidebar.ClearAll(context.Background())` — clears the two sidebar entries. Non-fatal: a partial clear is an accepted degraded state.
+4. Broadcast `WorkspaceDone{ExitCode: 1, Aborted: true}` so display panes can render `run aborted` and exit promptly.
+5. Return through the `cobra` `RunE` chain with a non-zero code. `os.Exit()` is prohibited so the deferred `log.Close()` flush always runs.
+
+Abort-path cmux calls pass `context.Background()` so the serial queue's `ctx.Done()` escape does not drop them.
+
+### `run aborted` token
+
+When a pane receives `WorkspaceDone{Aborted: true}` or its own stall timer fires, it renders a final line containing the exact token `run aborted` and returns promptly. Each pane acts independently — no inter-pane coordination. The workspace stays open for inspection.
+
+### Orchestrator-death behavior
+
+If the orchestrator process itself crashes, no in-process abort sequence runs (no gate, no `FireRunAborted`, no `ClearAll`, no broadcast). Each display pane detects the lost connection — promptly on a clean disconnect, or within 45 seconds via the stall timer — renders `run aborted`, and exits. The workspace remains as an orphan with stale sidebar entries. The orchestrator's final output is in the launching terminal and in the per-run `.pr9k/logs/` file (which may be truncated if the process was force-killed before `log.Close()` flushed).
+
+### Post-run window
+
+`runCompleted` is set the instant `workflow.Run()` returns, before any terminal notification or `WorkspaceDone` broadcast. Every detection path checks `runCompleted` before calling `gate.trigger`; a failure observed after the run window closes is silently dropped — no spurious run-aborted notification fires on top of a clean completion.
+
+### Out of scope (Phase 6)
+
+- No display-pane respawn or stateful recovery after an abort (YAGNI)
+- No confirmation prompt before an operator pane-close (cmux exposes no such hook)
+- No automatic orphan-workspace cleanup (Phase 7 advisory reports orphans)
+- No per-failure-class exit-code taxonomy (YAGNI)
+- No operator-configurable stall threshold or liveness cadence (YAGNI; constants are exported for test injection only)
+- No live-cmux integration test in CI (cmux v0.64.7 has no headless mode; covered by the mandatory manual in-pane gate)
+- No structured/JSON abort records or metrics (YAGNI; the classified diagnostic in the per-run log file is the single sink)
+
 ## Out of scope (Phase 3)
 
-- No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6)
 - No completion notification to the launching terminal (planned for a later phase)
-- No generalized failure handling for display-pane loss, orchestrator loss, or interaction-channel stalls during error mode (planned for Phase 6; behavior is unchanged from Phase 2)
 - No automatic orphan cleanup after crash (orphan workspaces have the `pr9k-` prefix and must be dismissed manually via cmux)
-- No live-cmux integration test in CI (deferred to Phase 6 per YAGNI-5)
 - No heartbeat indicator forwarding across the process boundary (dropped per D-10 / YAGNI-1)
 - No configurable handshake-timeout value (deferred per YAGNI-4)
 - No per-pane scrollback persistence to disk (deferred per YAGNI-3; `.pr9k/logs/` artifacts satisfy the need)

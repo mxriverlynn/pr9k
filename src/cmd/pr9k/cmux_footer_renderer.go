@@ -81,6 +81,7 @@ func (r *cmuxFooterRenderer) Render(statusLine, shortcutLine string) string {
 func buildFooterHelpLines() string {
 	return "" +
 		"  q   quit                   n   skip to next step\n" +
+		"  Closing this pane closes the run\n" +
 		"  ?   close this help"
 }
 
