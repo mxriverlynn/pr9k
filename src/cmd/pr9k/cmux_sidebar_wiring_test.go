@@ -68,7 +68,8 @@ func TestRunCmuxWorkflowAdapted_ErrorModeMarker(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, sidebar, nil)
+		code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, sidebar, nil, nil, nil)
+		done <- code
 	}()
 
 	// Wait for ModeError: fail-step has run and the orchestrator is blocking on

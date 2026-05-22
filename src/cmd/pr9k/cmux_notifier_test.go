@@ -404,7 +404,7 @@ func TestNotifier_Integration_SuccessPath(t *testing.T) {
 	fc := &cmuxctl.FakeClient{}
 	n, _ := newTestNotifier(t, fc, projectDir)
 
-	code := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n)
+	code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n, nil, nil)
 	n.awaitStopped()
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d", code)
@@ -439,7 +439,8 @@ func TestNotifier_Integration_ErrorModeContinue(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n)
+		code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n, nil, nil)
+		done <- code
 	}()
 
 	select {
@@ -486,7 +487,8 @@ func TestNotifier_Integration_ErrorModeQuitWithCancel(t *testing.T) {
 
 	done := make(chan int, 1)
 	go func() {
-		done <- runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n)
+		code, _ := runCmuxWorkflowAdapted(context.Background(), ch, log, projectDir, workflowDir, sf, nil, n, nil, nil)
+		done <- code
 	}()
 
 	select {

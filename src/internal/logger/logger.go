@@ -103,6 +103,18 @@ func (l *Logger) Writer() io.Writer {
 	return l.file
 }
 
+// Flush flushes buffered content to the log file without closing it. Safe for
+// concurrent use. Used on the abort path to ensure durability before subsequent
+// abort steps.
+func (l *Logger) Flush() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	return l.writer.Flush()
+}
+
 // Close flushes buffered content and closes the log file.
 func (l *Logger) Close() error {
 	l.mu.Lock()

@@ -99,6 +99,13 @@ type Channel struct {
 	// them in startConn is safe provided the documented precondition holds.
 	stallThreshold time.Duration
 	stallOnStall   func()
+
+	// onDisconnect is called when a connection is cleanly lost (EOF or broken
+	// connection) and the channel context is not already done. It is invoked
+	// once per connection loss, from the connection's read goroutine after
+	// readLoop returns. Set via SetDisconnectCallback before any connection
+	// arrives (same precondition as SetStallConfig).
+	onDisconnect func()
 }
 
 // Recv returns the receive channel. Incoming messages from all connections
@@ -112,6 +119,15 @@ func (c *Channel) Recv() <-chan Message { return c.recv }
 func (c *Channel) SetStallConfig(threshold time.Duration, onStall func()) {
 	c.stallThreshold = threshold
 	c.stallOnStall = onStall
+}
+
+// SetDisconnectCallback registers a callback invoked when any connection is
+// cleanly lost (EOF or broken connection) while the channel context is still
+// active. It is called at most once per accepted connection, from the
+// connection's read goroutine. Must be called before any connection arrives
+// (same precondition as SetStallConfig).
+func (c *Channel) SetDisconnectCallback(fn func()) {
+	c.onDisconnect = fn
 }
 
 // Send broadcasts msg to all current connections. For a Dial-side Channel
@@ -267,12 +283,20 @@ func (c *Channel) startConn(nc net.Conn) {
 
 	c.wg.Add(3)
 
+	// Snapshot disconnect callback; SetDisconnectCallback must be called before startConn.
+	onDisconnect := c.onDisconnect
+
 	// Read goroutine: deserializes frames and forwards to c.recv.
 	// readLoop spawns one additional pump goroutine (tracked via c.wg.Add(1)).
 	go func() {
 		defer c.wg.Done()
 		defer c.removeConn(co)
 		c.readLoop(nc, co, stallThreshold, onStall)
+		// If the channel context is still active, the connection was lost rather
+		// than shutdown — notify the disconnect handler.
+		if c.ctx.Err() == nil && onDisconnect != nil {
+			onDisconnect()
+		}
 	}()
 
 	// Write goroutine: consumes all outbound channels and serializes to nc.

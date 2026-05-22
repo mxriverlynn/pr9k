@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/mxriverlynn/pr9k/src/internal/cli"
@@ -21,6 +22,13 @@ import (
 // workspaceDoneAckTimeout is the maximum time the orchestrator waits for all
 // three display panes to send DoneAck after WorkspaceDone is broadcast.
 const workspaceDoneAckTimeout = 5 * time.Second
+
+// LivenessCadence is the interval at which the liveness emitter goroutine
+// broadcasts Liveness{} to all connected display panes. Kept well below
+// interactionchannel.StallThreshold (45s) so a healthy-but-quiet channel
+// never false-triggers the stall detector. Injectable in tests via
+// runCmuxWorkflowAdapted's livenessCadence parameter path.
+const LivenessCadence = 10 * time.Second
 
 // cmuxOrchestratorHooks builds the Architecture A (decision-log D-R1)
 // orchestrator hooks. cmux v2 has no hidden orchestrator pane: the in-pane
@@ -173,18 +181,52 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 		return fmt.Errorf("cmux-pane: orchestrator: create artifact dir: %w", err)
 	}
 
+	// Abort gate and post-run-window guard — created before the channel so the
+	// callbacks (set before connections arrive) can safely reference them.
+	gate := newAbortGate()
+	completed := &runCompleted{}
+
 	if ch == nil {
 		var serveErr error
-		ch, serveErr = interactionchannel.Serve(ctx, socketPath)
+		realCh, serveErr := interactionchannel.Serve(ctx, socketPath)
 		if serveErr != nil {
 			return fmt.Errorf("cmux-pane: orchestrator: serve: %w", serveErr)
 		}
+		// Wire stall and disconnect callbacks BEFORE AwaitReady so they are in
+		// place for any connections that arrive during the handshake.
+		realCh.SetStallConfig(interactionchannel.StallThreshold, func() {
+			if !completed.done() {
+				gate.trigger(AbortCauseStallDetected)
+			}
+		})
+		realCh.SetDisconnectCallback(func() {
+			if !completed.done() {
+				gate.trigger(AbortCauseDisplayPaneExit)
+			}
+		})
+		ch = realCh
 	}
 	defer ch.Close()
 
 	if err := ch.AwaitReady(ctx, interactionchannel.ReadyHandshakeTimeout); err != nil {
 		return fmt.Errorf("cmux-pane: orchestrator: handshake: %w", err)
 	}
+
+	// Start the liveness emitter AFTER AwaitReady (all panes connected) and
+	// BEFORE runCmuxWorkflowAdapted. The emitter broadcasts Liveness{} every
+	// LivenessCadence to keep per-connection stall timers from firing on a
+	// healthy-but-quiet channel (e.g. a long step with no output).
+	liveCtx, liveCancel := context.WithCancel(ctx)
+	var liveWg sync.WaitGroup
+	liveWg.Add(1)
+	go func() {
+		defer liveWg.Done()
+		runLivenessEmitter(liveCtx, ch, LivenessCadence)
+	}()
+	defer func() {
+		liveCancel()
+		liveWg.Wait()
+	}()
 
 	// Resolve the workflow bundle directory and load the step configuration.
 	workflowDir, err := cli.ResolveWorkflowDir(projectDir)
@@ -204,7 +246,15 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 	defer func() { _ = notifier.ExitErrorMode() }()
 	// Safety-net ExitErrorMode for panic/abort paths; mirrors sidebar.ClearAll above.
 
-	exitCode := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar, notifier)
+	exitCode, aborted := runCmuxWorkflowAdapted(ctx, ch, log, projectDir, workflowDir, sf, sidebar, notifier, gate, completed)
+
+	if aborted {
+		// The abort sequence inside runCmuxWorkflowAdapted already broadcast
+		// WorkspaceDone{Aborted: true}. Wait for DoneAcks and return an error
+		// so the cobra RunE chain exits non-zero.
+		awaitDoneAcks(ch.Recv(), ackTimeout)
+		return fmt.Errorf("cmux-pane: orchestrator: run aborted: %s", gate.Cause())
+	}
 
 	// Broadcast WorkspaceDone to all three display panes.
 	_ = ch.Send(interactionchannel.WorkspaceDone{ExitCode: exitCode})
@@ -212,6 +262,23 @@ func runCmuxOrchestratorWith(ctx context.Context, socketPath, projectDir string,
 	// Wait up to ackTimeout for all three display roles to acknowledge.
 	awaitDoneAcks(ch.Recv(), ackTimeout)
 	return nil
+}
+
+// runLivenessEmitter broadcasts a Liveness{} heartbeat to all connected panes
+// every cadence. It runs until ctx is cancelled and is joined via WaitGroup by
+// the caller. The emitter is started after AwaitReady so all panes are already
+// connected when the first tick fires.
+func runLivenessEmitter(ctx context.Context, ch orchChannel, cadence time.Duration) {
+	ticker := time.NewTicker(cadence)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_ = ch.Send(interactionchannel.Liveness{})
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // awaitDoneAcks collects DoneAck messages from recv until all three display

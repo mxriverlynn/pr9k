@@ -20,7 +20,7 @@ func TestAbortGate_CauseEmptyBeforeTrigger(t *testing.T) {
 }
 
 func TestAbortGate_TriggerSetsAbortingAndCause(t *testing.T) {
-	var g abortGate
+	g := newAbortGate()
 	g.trigger(AbortCauseStallDetected)
 	if !g.IsAborting() {
 		t.Fatal("expected IsAborting() true after trigger")
@@ -34,7 +34,7 @@ func TestAbortGate_FirstCauseWinsUnderConcurrency(t *testing.T) {
 	const goroutines = 200
 
 	for range 50 { // stress the race detector across multiple runs
-		var g abortGate
+		g := newAbortGate()
 		var wg sync.WaitGroup
 		wg.Add(goroutines)
 		for i := range goroutines {
@@ -60,11 +60,39 @@ func TestAbortGate_FirstCauseWinsUnderConcurrency(t *testing.T) {
 }
 
 func TestAbortGate_SubsequentTriggersAreNoOps(t *testing.T) {
-	var g abortGate
+	g := newAbortGate()
 	g.trigger(AbortCauseStallDetected)
 	g.trigger(AbortCauseDisplayPaneExit) // must not overwrite
 	if got := g.Cause(); got != AbortCauseStallDetected {
 		t.Fatalf("expected first cause to win, got %q", got)
+	}
+}
+
+func TestAbortGate_C_ClosedOnTrigger(t *testing.T) {
+	g := newAbortGate()
+	// Channel must be open before trigger.
+	select {
+	case <-g.C():
+		t.Fatal("gate.C() must not be closed before trigger")
+	default:
+	}
+	g.trigger(AbortCauseStallDetected)
+	select {
+	case <-g.C():
+		// correct: closed after trigger
+	default:
+		t.Fatal("gate.C() must be closed after trigger")
+	}
+}
+
+func TestAbortGate_C_ClosedExactlyOnce(t *testing.T) {
+	g := newAbortGate()
+	g.trigger(AbortCauseStallDetected)
+	g.trigger(AbortCauseDisplayPaneExit) // must not panic (double-close)
+	select {
+	case <-g.C():
+	default:
+		t.Fatal("gate.C() must be closed after first trigger")
 	}
 }
 

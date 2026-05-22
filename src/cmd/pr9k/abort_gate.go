@@ -22,11 +22,18 @@ const (
 // cause; all subsequent calls are no-ops. IsAborting and Cause are safe to
 // call from any goroutine at any time.
 //
-// The zero value is a valid, untriggered gate.
+// Use newAbortGate() to construct; the zero value is NOT valid (triggered
+// channel is uninitialized).
 type abortGate struct {
 	once      sync.Once
 	aborting  atomic.Bool
 	causeOnce AbortCause
+	triggered chan struct{} // closed by the winning trigger call
+}
+
+// newAbortGate returns an initialized, untriggered abortGate.
+func newAbortGate() *abortGate {
+	return &abortGate{triggered: make(chan struct{})}
 }
 
 // trigger fires the gate with the given cause. If the gate has already been
@@ -35,8 +42,14 @@ func (g *abortGate) trigger(cause AbortCause) {
 	g.once.Do(func() {
 		g.causeOnce = cause
 		g.aborting.Store(true)
+		close(g.triggered)
 	})
 }
+
+// C returns a channel that is closed when the gate is first triggered. The
+// returned channel can be used in a select to wait for an abort signal without
+// polling. The channel is never nil when the gate was created with newAbortGate.
+func (g *abortGate) C() <-chan struct{} { return g.triggered }
 
 // IsAborting reports whether the gate has been triggered.
 func (g *abortGate) IsAborting() bool {
