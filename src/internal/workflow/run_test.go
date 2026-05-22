@@ -2701,6 +2701,115 @@ func TestRunResult_ExitReason_UserQuit_FromFinalize(t *testing.T) {
 	}
 }
 
+// TestRunResult_ExitReason_Aborted_FromInitialize verifies that when
+// IsAborting returns true, ActionQuit during the initialize phase returns
+// ExitReasonAborted instead of ExitReasonUserQuit.
+func TestRunResult_ExitReason_Aborted_FromInitialize(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("init failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir:     t.TempDir(),
+		Iterations:      1,
+		InitializeSteps: nonClaudeSteps("init-step"),
+		Steps:           nonClaudeSteps("iter-step"),
+		IsAborting:      func() bool { return true },
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonAborted {
+		t.Errorf("expected ExitReasonAborted (gate-raised quit, initialize), got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_Aborted_FromIteration verifies that when
+// IsAborting returns true, ActionQuit during an iteration returns
+// ExitReasonAborted.
+func TestRunResult_ExitReason_Aborted_FromIteration(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("iter-step"),
+		IsAborting:  func() bool { return true },
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonAborted {
+		t.Errorf("expected ExitReasonAborted (gate-raised quit, iteration), got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_Aborted_FromFinalize verifies that when
+// IsAborting returns true, ActionQuit during a finalize step returns
+// ExitReasonAborted.
+func TestRunResult_ExitReason_Aborted_FromFinalize(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{nil, errors.New("finalize failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir:   t.TempDir(),
+		Iterations:    1,
+		Steps:         nonClaudeSteps("iter-step"),
+		FinalizeSteps: nonClaudeSteps("final-step"),
+		IsAborting:    func() bool { return true },
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonAborted {
+		t.Errorf("expected ExitReasonAborted (gate-raised quit, finalize), got %v", result.ExitReason)
+	}
+}
+
+// TestRunResult_ExitReason_IsAbortingNilMeansUserQuit verifies that when
+// IsAborting is nil (the default), ActionQuit still returns ExitReasonUserQuit.
+func TestRunResult_ExitReason_IsAbortingNilMeansUserQuit(t *testing.T) {
+	actions := make(chan ui.StepAction, 10)
+	actions <- ui.ActionQuit
+	kh := ui.NewKeyHandler(func() {}, actions)
+
+	executor := &fakeExecutor{
+		runStepErrors: []error{errors.New("step failed")},
+	}
+	header := &fakeRunHeader{}
+
+	cfg := RunConfig{
+		WorkflowDir: t.TempDir(),
+		Iterations:  1,
+		Steps:       nonClaudeSteps("iter-step"),
+		IsAborting:  nil,
+	}
+
+	result := Run(executor, header, kh, cfg)
+
+	if result.ExitReason != ExitReasonUserQuit {
+		t.Errorf("expected ExitReasonUserQuit when IsAborting is nil, got %v", result.ExitReason)
+	}
+}
+
 // lastNonBlankLine returns the last non-empty entry in lines, or "" if none.
 func lastNonBlankLine(lines []string) string {
 	for i := len(lines) - 1; i >= 0; i-- {
