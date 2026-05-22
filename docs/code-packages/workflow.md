@@ -152,6 +152,14 @@ When a step times out and the user chooses to retry, `stepDispatcher.RunStep` de
 
 `Run` (in `run.go`) drives three phases — initialize, iteration, finalize — calling `buildStep` for each step to produce a `ui.ResolvedStep`, then wrapping it in a `stepDispatcher` and handing it to `ui.Orchestrate`. Captured values are bound to the VarTable after each `captureAs` step via `executor.LastCapture()`.
 
+### RunConfig.IsAborting
+
+```go
+IsAborting func() bool
+```
+
+Optional field on `RunConfig`. When non-nil, `Run` calls it at every `ActionQuit` check to distinguish a programmatic quit (e.g. Phase 6 abort gate) from an operator `q`+`y`. Returns `ExitReasonAborted` when true, `ExitReasonUserQuit` otherwise. A nil value is safe; all quits are treated as operator quits. In `cmd/pr9k`, wired to `abortGate.IsAborting()`.
+
 ### RunResult
 
 `Run` returns a `RunResult` summarizing the outcome:
@@ -167,13 +175,14 @@ type RunResult struct {
 }
 ```
 
-`ExitReason` is a string type with three constants:
+`ExitReason` is a string type with four constants:
 
 | Value | Meaning |
 |-------|---------|
 | `"completed"` | All configured phases ran to completion |
 | `"loop_broken"` | The iteration loop exited early via `breakLoopIfEmpty`; finalization still ran |
 | `"user_quit"` | The user confirmed quit (`q`+`y`) during any phase |
+| `"aborted"` | An internal abort gate fired (e.g. a Phase 6 failure detector sent `ActionQuit` programmatically). Distinct from `"user_quit"` so callers can differentiate self-initiated from operator-initiated termination. |
 
 After every step (including prep failures), `Run` appends one `IterationRecord` to `.pr9k/iteration.jsonl`. See [Iteration log](#iteration-log) below.
 

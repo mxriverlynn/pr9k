@@ -50,7 +50,8 @@ type Message interface {
 | `StateHeader` | `IterationLine string`, `StepNames []string`, `StepStates []string` | Full header pane state snapshot. Pane re-renders on receipt. |
 | `StateLog` | `Lines [][]byte` | Batch of pre-rendered log lines. Pane appends to its viewport. |
 | `StateFooter` | `Mode int`, `ShortcutLine string` | Footer pane state: keyboard-mode identifier and the rendered shortcut bar string. |
-| `WorkspaceDone` | `ExitCode int` | Signals workflow completion. Each pane renders its final state and replies with `DoneAck`. |
+| `WorkspaceDone` | `ExitCode int`, `Aborted bool` | Signals workflow completion. `Aborted` is true when the run ended via an abort gate rather than normal completion; panes render a final `run aborted` line in that case. Each pane replies with `DoneAck`. |
+| `Liveness` | *(zero fields)* | Heartbeat sent by the orchestrator every 10 seconds (`LivenessCadence`) to keep per-connection stall timers from firing on quiet-but-healthy channels. |
 
 ### `IntentType`
 
@@ -80,6 +81,18 @@ func Dial(ctx context.Context, socketPath string, role string) (*Channel, error)
 
 Connects to the socket at `socketPath` and immediately sends a `Ready{Role: role}` message. Returns a `*Channel` ready to call `Send` and `Recv`. The `role` value must be one of `"header"`, `"log"`, or `"footer"`.
 
+```go
+func (c *Channel) SetStallConfig(threshold time.Duration, onStall func())
+```
+
+Overrides the per-connection stall threshold and callback. Must be called before any connection arrives (before `Dial` or the first accepted connection on a `Serve`-side channel). For test use only; production always uses `StallThreshold`. A nil `onStall` closes the network connection (the default behaviour).
+
+```go
+func (c *Channel) SetDisconnectCallback(fn func())
+```
+
+Registers a callback invoked when any connection is cleanly lost (EOF or broken connection) while the channel context is still active. Called at most once per accepted connection, from the connection's read goroutine. Must be called before any connection arrives (same precondition as `SetStallConfig`). In production, wired to the abort-gate trigger.
+
 ## Constants
 
 ```go
@@ -88,15 +101,27 @@ const ReadyHandshakeTimeout = 10 * time.Second
 
 The default deadline passed to `AwaitReady` by `runCmuxOrchestrator`.
 
+```go
+const StallThreshold = 45 * time.Second
+```
+
+Per-connection read stall limit. A connection that delivers no message for this duration is declared silently lost and the per-connection `onStall` callback fires (default: close the connection). The orchestrator sends `Liveness{}` heartbeats every 10 seconds so a healthy-but-quiet channel never trips this threshold. Override in tests via `SetStallConfig`; production always uses this value.
+
+```go
+const RunAbortedToken = "run aborted"
+```
+
+Canonical string recorded in progress artifacts when a run ends via an abort signal. Display panes check `WorkspaceDone.Aborted` (bool) rather than this token; the token is consumed by the sender when writing abort diagnostics to the log.
+
 ## Concurrency model
 
 ### Per-connection goroutines (D-2, D-3)
 
 Each accepted connection spawns three goroutines on the server side:
 
-- **read goroutine** — reads length-prefixed frames from the connection, unmarshals them, and sends to the shared `recvCh` channel (capacity 64).
+- **read goroutine** — reads length-prefixed frames from the connection, unmarshals them, and sends to the shared `recvCh` channel (capacity 64). Also runs a stall-detection pump goroutine (tracked in `c.wg`): if no message arrives within `StallThreshold` (45 s), the pump fires the `onStall` callback (by default, closes the connection). The stall timer resets on every received message.
 - **write goroutine** — drains four source channels (general broadcast, log, header notify, footer notify) and writes frames to the connection.
-- **watcher goroutine** — detects connection close and cancels the per-connection context so the read/write goroutines exit cleanly.
+- **watcher goroutine** — detects connection close and cancels the per-connection context so the read/write goroutines exit cleanly. If the channel's `onDisconnect` callback is set and the channel context is still active, the watcher invokes it exactly once per connection loss.
 
 The client side runs a symmetric read + write pair (no watcher; cancellation comes from the parent context).
 
@@ -166,6 +191,7 @@ begin workflow steps
   SendStateHeader(...)           receive StateHeader → re-render
   SendStateLog(...)              receive StateLog → append to viewport
   SendStateFooter(...)           receive StateFooter → re-render
+  Send(Liveness{}) (10 s tick)   receive Liveness → reset stall timer
   ...
 workflow finishes
   Send(WorkspaceDone{ExitCode})  receive WorkspaceDone → render final state
