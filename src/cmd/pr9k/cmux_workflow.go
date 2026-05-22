@@ -12,11 +12,6 @@ import (
 	"github.com/mxriverlynn/pr9k/src/internal/workflow"
 )
 
-// cmuxAbortSentinel is returned as the error value of runCmuxWorkflowAdapted
-// when the workflow was aborted via the abort gate (ExitReasonAborted path).
-// The caller uses it to skip the normal WorkspaceDone broadcast.
-var cmuxAbortSentinel = fmt.Errorf("cmux: workflow aborted via abort gate")
-
 // cmuxHeader is the workflow.RunHeader adapter for cmux mode. It tracks the
 // current header state in memory and pushes StateHeader messages to the
 // interaction channel on every mutation. The snapshot-then-unlock pattern
