@@ -103,6 +103,7 @@ func newCmuxPaneCmd() *cobra.Command {
 				pd := os.Getenv("PR9K_PROJECT_DIR")
 				if pd != "" {
 					_ = os.MkdirAll(filepath.Join(pd, ".pr9k"), 0o700)
+					// O_APPEND log; exempt from atomicwrite requirement per docs/coding-standards/file-writes.md §logs.
 					if f, err := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
 						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 						_, _ = fmt.Fprintf(f, "%s role=%s pid=%d sock=%q projectDir=%q args=%v\n",
@@ -139,6 +140,7 @@ func newCmuxPaneCmd() *cobra.Command {
 			// workspace; the error + elapsed pinpoint the cause.
 			if os.Getenv("PR9K_CMUX_DEBUG") != "" {
 				if pd := os.Getenv("PR9K_PROJECT_DIR"); pd != "" {
+					// O_APPEND log; exempt from atomicwrite requirement per docs/coding-standards/file-writes.md §logs.
 					if f, ferr := os.OpenFile(filepath.Join(pd, ".pr9k", "pane-probe.log"),
 						os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); ferr == nil {
 						_, _ = fmt.Fprintf(f, "%s role=%s EXITED after=%s err=%v\n",
@@ -274,7 +276,9 @@ func runLivenessEmitter(ctx context.Context, ch orchChannel, cadence time.Durati
 	for {
 		select {
 		case <-ticker.C:
-			_ = ch.Send(interactionchannel.Liveness{})
+			if err := ch.Send(interactionchannel.Liveness{}); err != nil {
+				return // all panes lost; no point continuing
+			}
 		case <-ctx.Done():
 			return
 		}

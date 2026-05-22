@@ -41,7 +41,9 @@ func classifyMidRunCmuxError(err error) AbortCause {
 	// Structured CmuxError: classify on Code.
 	var ce *cmuxctl.CmuxError
 	if !errors.As(err, &ce) {
-		return AbortCause(fmt.Sprintf("cmux_error: %s", err.Error()))
+		// Not a *CmuxError at all — use a distinct prefix from the CmuxError default
+		// branch below so consumers can distinguish "unrecognised code" vs "non-CmuxError".
+		return AbortCause(fmt.Sprintf("cmux_unclassified: %s", err.Error()))
 	}
 	switch ce.Code {
 	case "auth_required", "auth_failed", "auth_unconfigured":

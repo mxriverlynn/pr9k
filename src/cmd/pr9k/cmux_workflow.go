@@ -203,16 +203,22 @@ func runCmuxWorkflowAdapted(ctx context.Context, ch orchChannel, log *logger.Log
 	// runner.Terminate() to unblock the synchronous subprocess wait inside Run()
 	// then sends ActionQuit so workflow.Run returns ExitReasonAborted. Only
 	// started when gate is non-nil (production path; tests may pass nil).
+	//
+	// The completed guard here closes the post-run window: if workflow.Run returns
+	// and the gate fires in the ~µs before completed.set(), the watcher skips its
+	// actions because the run has already finished and runner.Terminate is a no-op.
 	if gate != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			select {
 			case <-gate.C():
-				runner.Terminate()
-				select {
-				case actions <- ui.ActionQuit:
-				default:
+				if completed == nil || !completed.done() {
+					runner.Terminate()
+					select {
+					case actions <- ui.ActionQuit:
+					default:
+					}
 				}
 			case <-keyCtx.Done():
 			}

@@ -117,8 +117,10 @@ func (c *Channel) Recv() <-chan Message { return c.recv }
 // the first accepted connection on a Serve-side channel). For test use only;
 // production always uses StallThreshold. A nil onStall closes nc (the default).
 func (c *Channel) SetStallConfig(threshold time.Duration, onStall func()) {
+	c.mu.Lock()
 	c.stallThreshold = threshold
 	c.stallOnStall = onStall
+	c.mu.Unlock()
 }
 
 // SetDisconnectCallback registers a callback invoked when any connection is
@@ -127,7 +129,9 @@ func (c *Channel) SetStallConfig(threshold time.Duration, onStall func()) {
 // connection's read goroutine. Must be called before any connection arrives
 // (same precondition as SetStallConfig).
 func (c *Channel) SetDisconnectCallback(fn func()) {
+	c.mu.Lock()
 	c.onDisconnect = fn
+	c.mu.Unlock()
 }
 
 // Send broadcasts msg to all current connections. For a Dial-side Channel
@@ -260,12 +264,17 @@ func (c *Channel) Close() {
 // startConn registers nc as a new connection and launches the three goroutines
 // (read, write, watcher) that service it.
 func (c *Channel) startConn(nc net.Conn) {
-	// Snapshot stall config; SetStallConfig must be called before startConn.
+	// Snapshot config fields under c.mu so SetStallConfig/SetDisconnectCallback
+	// writes are sequenced with respect to this read (race-detector safe).
+	c.mu.Lock()
 	stallThreshold := c.stallThreshold
+	onStall := c.stallOnStall
+	onDisconnect := c.onDisconnect
+	c.mu.Unlock()
+
 	if stallThreshold == 0 {
 		stallThreshold = StallThreshold
 	}
-	onStall := c.stallOnStall
 	if onStall == nil {
 		onStall = func() { _ = nc.Close() }
 	}
@@ -282,9 +291,6 @@ func (c *Channel) startConn(nc net.Conn) {
 	c.mu.Unlock()
 
 	c.wg.Add(3)
-
-	// Snapshot disconnect callback; SetDisconnectCallback must be called before startConn.
-	onDisconnect := c.onDisconnect
 
 	// Read goroutine: deserializes frames and forwards to c.recv.
 	// readLoop spawns one additional pump goroutine (tracked via c.wg.Add(1)).

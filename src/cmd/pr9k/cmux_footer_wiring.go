@@ -126,7 +126,10 @@ func runCmuxFooterMachineWith(ctx context.Context, src FooterKeySource, ch foote
 			return
 		case msg, ok := <-ch.Recv():
 			if !ok {
-				// Channel closed by orchestrator — stay alive for final render.
+				// Channel closed by orchestrator after a normal (non-aborted) run.
+				// stalledCh fires first on disconnect/stall (via onLost) and renders
+				// RunAbortedToken on that select arm; this arm only fires on a clean
+				// close, so no abort token is needed here.
 				kCancel()
 				wg.Wait()
 				<-ctx.Done()
